@@ -3,8 +3,12 @@ use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
     BilibiliProvider, PlaybackSource, SearchPage, VideoParts,
 };
+use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
+};
+use crate::infrastructure::repositories::lyrics::{
+    LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
 use crate::interface::error::CommandError;
 use serde::Serialize;
@@ -163,6 +167,73 @@ pub async fn bili_playback_source(
     source.audio_url = media_proxy.register(source.audio_url).await;
     source.backup_urls.clear();
     Ok(source)
+}
+
+#[tauri::command]
+pub async fn lyrics_search(
+    provider: State<'_, LrclibProvider>,
+    title: String,
+    artist: Option<String>,
+) -> Result<Vec<LyricCandidate>, CommandError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(CommandError::validation("歌曲名不能为空"));
+    }
+    provider
+        .search(title, artist.as_deref())
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub fn lyrics_get(
+    database: State<'_, Database>,
+    track_id: String,
+) -> Result<Option<StoredLyrics>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn lyrics_save(
+    database: State<'_, Database>,
+    track_id: String,
+    lyrics: SaveLyricsInput,
+    manual: Option<bool>,
+) -> Result<StoredLyrics, CommandError> {
+    if lyrics.raw_text.len() > 2_000_000 || lyrics.parsed_json.len() > 2_000_000 {
+        return Err(CommandError::validation("歌词内容过大"));
+    }
+    serde_json::from_str::<serde_json::Value>(&lyrics.parsed_json)
+        .map_err(|_| CommandError::validation("歌词解析数据无效"))?;
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if LibraryRepository::get(&connection, &track_id)
+        .map_err(CommandError::database)?
+        .is_none()
+    {
+        return Err(CommandError::validation("歌曲尚未加入资料库"));
+    }
+    LyricsRepository::save(&connection, &track_id, &lyrics, manual.unwrap_or(false))
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn lyrics_set_bias(
+    database: State<'_, Database>,
+    track_id: String,
+    bias_ms: i64,
+) -> Result<StoredLyrics, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LyricsRepository::set_bias(&connection, &track_id, bias_ms).map_err(CommandError::database)
 }
 
 fn valid_bvid(value: &str) -> bool {

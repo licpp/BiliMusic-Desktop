@@ -9,6 +9,9 @@ export type PlaybackSource = { audioUrl: string; backupUrls: string[]; mimeType:
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
+export type LyricLine = { timeMs: number; text: string }
+export type LyricCandidate = { id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
+export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
 
 export const inDesktopShell = isTauri()
 
@@ -36,6 +39,31 @@ export const toggleStoredFavorite = (trackId: string) => invoke<boolean>('librar
 export async function updateStoredMetadata(trackId: string, patch: MetadataPatch): Promise<Track> {
   return fromStoredTrack(await invoke<StoredTrack>('library_update_metadata', { trackId, patch }))
 }
+
+export async function searchLyrics(title: string, artist?: string): Promise<LyricCandidate[]> {
+  if (!inDesktopShell) return []
+  return invoke<LyricCandidate[]>('lyrics_search', { title, artist })
+}
+
+export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
+  if (!inDesktopShell) return null
+  return invoke<StoredLyrics | null>('lyrics_get', { trackId })
+}
+
+export async function saveStoredLyrics(trackId: string, candidate: LyricCandidate, lines: LyricLine[], manual: boolean): Promise<StoredLyrics> {
+  return invoke<StoredLyrics>('lyrics_save', {
+    trackId,
+    lyrics: {
+      providerLyricId: String(candidate.id),
+      rawText: candidate.syncedLyrics || candidate.plainLyrics || '',
+      parsedJson: JSON.stringify(lines),
+    },
+    manual,
+  })
+}
+
+export const setStoredLyricsBias = (trackId: string, biasMs: number) =>
+  invoke<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
 
 function toTrackInput(track: Track) {
   return {

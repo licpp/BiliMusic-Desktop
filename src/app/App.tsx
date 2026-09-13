@@ -25,6 +25,7 @@ import { demoTracks } from '../features/library/demoTracks'
 import { usePlayerStore } from '../features/player/playerStore'
 import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
+import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
 
 const navigation = [
@@ -42,6 +43,7 @@ export function App() {
   const [activeNav, setActiveNav] = useState('此刻')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
+  const [lyricsOpen, setLyricsOpen] = useState(false)
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
@@ -169,13 +171,14 @@ export function App() {
       </aside>
 
       <footer className="player-dock">
-        <div className="dock-track"><span className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></div>
+        <button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><span className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></button>
         <div className="dock-center">
           <div className="dock-controls"><button onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button className="play-toggle" onClick={toggle}>{status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button onClick={next}><SkipForward size={19} fill="currentColor" /></button></div>
           <div className="progress"><small>{formatDuration(progressSeconds)}</small><input aria-label="播放进度" type="range" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
         </div>
         <div className="dock-tools"><Volume2 size={18} /><span className="volume"><i /></span><button className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
       </footer>
+      {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
     </div>
   )
 }

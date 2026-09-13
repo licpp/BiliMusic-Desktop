@@ -6,6 +6,7 @@ mod interface;
 use infrastructure::database::Database;
 use infrastructure::media_proxy::MediaProxy;
 use infrastructure::providers::bilibili::BilibiliProvider;
+use infrastructure::providers::lrclib::LrclibProvider;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,6 +31,7 @@ pub fn run() {
             app.manage(database);
             app.manage(media_proxy);
             app.manage(BilibiliProvider::new()?);
+            app.manage(LrclibProvider::new()?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -42,6 +44,10 @@ pub fn run() {
             interface::commands::bili_search,
             interface::commands::bili_video_parts,
             interface::commands::bili_playback_source,
+            interface::commands::lyrics_search,
+            interface::commands::lyrics_get,
+            interface::commands::lyrics_save,
+            interface::commands::lyrics_set_bias,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Resonance");
