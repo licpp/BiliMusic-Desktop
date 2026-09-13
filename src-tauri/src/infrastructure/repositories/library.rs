@@ -115,6 +115,16 @@ impl LibraryRepository {
             .optional()
     }
 
+    pub fn recent(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
+        let mut statement = connection.prepare(&format!(
+            "{} JOIN (SELECT track_id,MAX(id) latest_id FROM play_history GROUP BY track_id) h ON h.track_id=t.id ORDER BY h.latest_id DESC LIMIT ?1",
+            Self::select_sql()
+        ))?;
+        statement
+            .query_map(params![limit.clamp(1, 500)], Self::map_row)?
+            .collect()
+    }
+
     pub fn toggle_favorite(connection: &Connection, id: &str) -> rusqlite::Result<bool> {
         let liked = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM favorites WHERE track_id=?1)",
@@ -250,5 +260,19 @@ mod tests {
                 .unwrap()
                 .liked
         );
+    }
+
+    #[test]
+    fn recent_tracks_are_unique_and_ordered_by_latest_play() {
+        let mut connection = database();
+        let first = track(10);
+        let second = track(11);
+        LibraryRepository::record_play(&mut connection, &first).unwrap();
+        LibraryRepository::record_play(&mut connection, &second).unwrap();
+        LibraryRepository::record_play(&mut connection, &first).unwrap();
+        let recent = LibraryRepository::recent(&connection, 10).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].id, first.id);
+        assert_eq!(recent[1].id, second.id);
     }
 }

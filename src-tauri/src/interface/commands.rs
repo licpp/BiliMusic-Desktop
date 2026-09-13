@@ -10,6 +10,7 @@ use crate::infrastructure::repositories::library::{
 use crate::infrastructure::repositories::lyrics::{
     LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
+use crate::infrastructure::repositories::search_history::SearchHistoryRepository;
 use crate::interface::error::CommandError;
 use serde::Serialize;
 use tauri::State;
@@ -85,6 +86,15 @@ pub fn library_tracks(
 }
 
 #[tauri::command]
+pub fn library_recent(database: State<'_, Database>) -> Result<Vec<TrackRecord>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LibraryRepository::recent(&connection, 200).map_err(CommandError::database)
+}
+
+#[tauri::command]
 pub fn library_toggle_favorite(
     database: State<'_, Database>,
     track_id: String,
@@ -122,6 +132,7 @@ pub fn library_update_metadata(
 #[tauri::command]
 pub async fn bili_search(
     provider: State<'_, BilibiliProvider>,
+    database: State<'_, Database>,
     keyword: String,
     page: Option<u32>,
     page_size: Option<u32>,
@@ -130,10 +141,32 @@ pub async fn bili_search(
     if keyword.is_empty() {
         return Err(CommandError::validation("请输入搜索关键词"));
     }
-    provider
+    let result = provider
         .search(keyword, page.unwrap_or(1), page_size.unwrap_or(20))
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::provider)?;
+    if let Ok(connection) = database.0.lock() {
+        let _ = SearchHistoryRepository::record(&connection, keyword);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn search_history_list(database: State<'_, Database>) -> Result<Vec<String>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    SearchHistoryRepository::list(&connection).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn search_history_clear(database: State<'_, Database>) -> Result<(), CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    SearchHistoryRepository::clear(&connection).map_err(CommandError::database)
 }
 
 #[tauri::command]

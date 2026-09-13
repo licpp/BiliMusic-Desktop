@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Album,
   ArrowLeft,
@@ -27,6 +28,7 @@ import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
+import { clearSearchHistory, listSearchHistory } from '../services/desktopApi'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -44,6 +46,10 @@ export function App() {
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [lyricsOpen, setLyricsOpen] = useState(false)
+  const [searchFocused, setSearchFocused] = useState(false)
+  const queryClient = useQueryClient()
+  const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
+  const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
@@ -60,7 +66,11 @@ export function App() {
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
     const normalized = query.trim()
-    if (normalized) setSubmittedQuery(normalized)
+    if (normalized) {
+      setSubmittedQuery(normalized)
+      setSearchFocused(false)
+      queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
+    }
   }
 
   return (
@@ -109,13 +119,14 @@ export function App() {
           <div className="history-buttons"><button type="button" onClick={() => setSubmittedQuery('')}><ArrowLeft size={18} /></button><button type="button"><ArrowRight size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
+            <input value={query} onFocus={() => setSearchFocused(true)} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
+            {searchFocused && !query && Boolean(searchHistory.data?.length) && <div className="search-history-popover"><header><span>最近搜索</span><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => clearHistory.mutate()}>清除</button></header>{searchHistory.data!.map((item) => <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(item); setSubmittedQuery(item); setSearchFocused(false) }}><Clock3 size={14} />{item}</button>)}</div>}
           </label>
           <button type="button" className="avatar">山</button>
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : <>
+          {submittedQuery ? <SearchView query={submittedQuery} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />

@@ -35,6 +35,21 @@ export async function listLibraryTracks(favoritesOnly = false): Promise<Track[]>
   return tracks.map(fromStoredTrack)
 }
 
+export async function listRecentTracks(): Promise<Track[]> {
+  if (!inDesktopShell) return []
+  return (await invoke<StoredTrack[]>('library_recent')).map(fromStoredTrack)
+}
+
+export async function listSearchHistory(): Promise<string[]> {
+  if (!inDesktopShell) return []
+  return invoke<string[]>('search_history_list')
+}
+
+export async function clearSearchHistory(): Promise<void> {
+  if (!inDesktopShell) return
+  await invoke('search_history_clear')
+}
+
 export const toggleStoredFavorite = (trackId: string) => invoke<boolean>('library_toggle_favorite', { trackId })
 export async function updateStoredMetadata(trackId: string, patch: MetadataPatch): Promise<Track> {
   return fromStoredTrack(await invoke<StoredTrack>('library_update_metadata', { trackId, patch }))
