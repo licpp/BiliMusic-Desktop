@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, LoaderCircle, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, Minimize2, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
 import { usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
+  getDanmaku,
+  getVideoSource,
   getStoredLyrics,
   saveStoredLyrics,
   searchLyrics,
@@ -10,6 +12,7 @@ import {
   type LyricCandidate,
   type LyricLine,
   type StoredLyrics,
+  type DanmakuItem,
 } from '../../services/desktopApi'
 import { bestCandidate, candidateLines } from './lrc'
 
@@ -18,6 +21,7 @@ type Props = { onClose: () => void }
 export function LyricsView({ onClose }: Props) {
   const current = usePlayerStore((state) => state.current)
   const progressSeconds = usePlayerStore((state) => state.progressSeconds)
+  const playbackStatus = usePlayerStore((state) => state.status)
   const [stored, setStored] = useState<StoredLyrics | null>(null)
   const [lines, setLines] = useState<LyricLine[]>([])
   const [candidates, setCandidates] = useState<LyricCandidate[]>([])
@@ -25,6 +29,14 @@ export function LyricsView({ onClose }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([])
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [mediaMode, setMediaMode] = useState<'cover' | 'video'>('cover')
+  const [videoUrl, setVideoUrl] = useState('')
+  const [videoFullscreen, setVideoFullscreen] = useState(false)
+  const [danmaku, setDanmaku] = useState<DanmakuItem[]>([])
+  const [danmakuVisible, setDanmakuVisible] = useState(true)
+  const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
+  const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
 
   useEffect(() => {
     let cancelled = false
@@ -55,6 +67,30 @@ export function LyricsView({ onClose }: Props) {
     void load()
     return () => { cancelled = true }
   }, [current?.id])
+
+  useEffect(() => {
+    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false)
+  }, [current?.id])
+
+  useEffect(() => {
+    const element = videoRef.current
+    if (!element || !videoUrl) return
+    if (Math.abs(element.currentTime - progressSeconds) > .45) element.currentTime = progressSeconds
+    if (playbackStatus === 'playing') void element.play().catch(() => undefined)
+    else element.pause()
+  }, [progressSeconds, playbackStatus, videoUrl])
+
+  const showVideo = async () => {
+    if (!current) return
+    if (mediaMode === 'video') { setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); return }
+    setMediaMode('video'); setError('')
+    try {
+      const [source, comments] = await Promise.all([getVideoSource(current.source.bvid, current.source.cid), getDanmaku(current.source.cid)])
+      setVideoUrl(source.videoUrl); setDanmaku(comments)
+    } catch (cause) { setMediaMode('cover'); setError(commandErrorMessage(cause)) }
+  }
+
+  const activeDanmaku = useMemo(() => danmaku.map((item, index) => ({ item, index })).filter(({ item }) => item.timeSeconds <= progressSeconds && item.timeSeconds > progressSeconds - 8).slice(-40), [danmaku, progressSeconds])
 
   const activeIndex = useMemo(() => {
     const currentMs = progressSeconds * 1_000 - (stored?.biasMs || 0)
@@ -102,8 +138,9 @@ export function LyricsView({ onClose }: Props) {
         <span>正在播放</span>
         <button className="lyrics-rematch" onClick={refreshCandidates}><RefreshCw size={16} />重新匹配</button>
       </header>
-      <div className="lyrics-album-pane">
-        <div className="lyrics-cover">{current.coverUrl ? <img src={current.coverUrl} alt="" /> : <div className="cover-fallback" />}</div>
+      <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
+        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <video ref={videoRef} src={videoUrl} muted playsInline preload="metadata" /> : <div className="video-loading"><LoaderCircle className="spin" />正在加载视频</div>}{danmakuVisible && <div className="danmaku-layer">{activeDanmaku.map(({ item, index }) => <span key={index} style={{ top: `${8 + (index % 9) * 9}%`, fontSize: `${Math.max(12, item.fontSize * danmakuSize)}px`, opacity: danmakuOpacity, animationDelay: `${-(progressSeconds - item.timeSeconds)}s` }}>{item.text}</span>)}</div>}</> : current.coverUrl ? <img src={current.coverUrl} alt="" /> : <div className="cover-fallback" />}</div>
+        <div className="video-tools"><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
           <h1>{current.title}</h1>

@@ -17,6 +17,10 @@ pub enum ProviderError {
     Api { code: i64, message: String },
     #[error("没有找到可播放的音频流")]
     NoAudio,
+    #[error("没有找到兼容的视频流")]
+    NoVideo,
+    #[error("弹幕数据解码失败: {0}")]
+    DanmakuDecode(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +75,25 @@ pub struct PlaybackSource {
     pub mime_type: String,
     pub codecs: String,
     pub bandwidth: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoSource {
+    pub video_url: String,
+    pub mime_type: String,
+    pub codecs: String,
+    pub bandwidth: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuItem {
+    pub time_seconds: f64,
+    pub mode: u8,
+    pub font_size: u16,
+    pub color: u32,
+    pub text: String,
 }
 
 #[derive(Deserialize)]
@@ -149,6 +172,8 @@ struct PlayData {
 struct DashData {
     #[serde(default)]
     audio: Vec<DashStream>,
+    #[serde(default)]
+    video: Vec<DashStream>,
 }
 
 #[derive(Deserialize)]
@@ -310,6 +335,67 @@ impl BilibiliProvider {
         })
     }
 
+    pub async fn video_source(&self, bvid: &str, cid: i64) -> Result<VideoSource, ProviderError> {
+        let mut url = self.api_url("/x/player/playurl");
+        url.query_pairs_mut()
+            .append_pair("bvid", bvid)
+            .append_pair("cid", &cid.to_string())
+            .append_pair("qn", "80")
+            .append_pair("fnver", "0")
+            .append_pair("fnval", "16")
+            .append_pair("fourk", "0");
+        let play: PlayData = self.get_data(url).await?;
+        let streams = play.dash.map(|dash| dash.video).unwrap_or_default();
+        let stream = streams
+            .iter()
+            .filter(|item| item.codecs.starts_with("avc"))
+            .max_by_key(|item| item.bandwidth)
+            .or_else(|| streams.iter().max_by_key(|item| item.bandwidth))
+            .ok_or(ProviderError::NoVideo)?;
+        Ok(VideoSource {
+            video_url: if stream.base_url_camel.is_empty() {
+                stream.base_url.clone()
+            } else {
+                stream.base_url_camel.clone()
+            },
+            mime_type: if stream.mime_type_camel.is_empty() {
+                stream.mime_type.clone()
+            } else {
+                stream.mime_type_camel.clone()
+            },
+            codecs: stream.codecs.clone(),
+            bandwidth: stream.bandwidth,
+        })
+    }
+
+    pub async fn danmaku(&self, cid: i64) -> Result<Vec<DanmakuItem>, ProviderError> {
+        let client = Client::builder()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .user_agent("Mozilla/5.0 Resonance/0.1")
+            .build()?;
+        let bytes = client
+            .get(format!("{API_ORIGIN}/x/v1/dm/list.so?oid={cid}"))
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let body = if bytes.starts_with(b"<") {
+            String::from_utf8_lossy(&bytes).into_owned()
+        } else {
+            use std::io::Read;
+            let mut body = String::new();
+            flate2::read::DeflateDecoder::new(bytes.as_ref())
+                .read_to_string(&mut body)
+                .map_err(|error| ProviderError::DanmakuDecode(error.to_string()))?;
+            body
+        };
+        Ok(parse_danmaku(&body))
+    }
+
     fn api_url(&self, path: &str) -> Url {
         Url::parse(&format!("{API_ORIGIN}{path}")).expect("static API URL")
     }
@@ -334,6 +420,63 @@ impl BilibiliProvider {
             message: "响应缺少 data".into(),
         })
     }
+}
+
+fn parse_danmaku(xml: &str) -> Vec<DanmakuItem> {
+    use quick_xml::{Reader, events::Event};
+    let mut reader = Reader::from_str(xml);
+    let mut result = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) if element.name().as_ref() == b"d" => {
+                let parameters = element
+                    .attributes()
+                    .flatten()
+                    .find(|attribute| attribute.key.as_ref() == b"p")
+                    .and_then(|attribute| String::from_utf8(attribute.value.into_owned()).ok());
+                if let Some(parameters) = parameters {
+                    let mut content = String::new();
+                    loop {
+                        match reader.read_event() {
+                            Ok(Event::Text(text)) => content.push_str(
+                                &text
+                                    .decode()
+                                    .map(|value| value.into_owned())
+                                    .unwrap_or_default(),
+                            ),
+                            Ok(Event::GeneralRef(entity)) => {
+                                let entity_name: &[u8] = entity.as_ref();
+                                content.push_str(match entity_name {
+                                    b"amp" => "&",
+                                    b"lt" => "<",
+                                    b"gt" => ">",
+                                    b"quot" => "\"",
+                                    b"apos" => "'",
+                                    _ => "",
+                                })
+                            }
+                            Ok(Event::End(end)) if end.name().as_ref() == b"d" => break,
+                            Ok(Event::Eof) | Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                    let values: Vec<&str> = parameters.split(',').collect();
+                    if values.len() >= 4 {
+                        result.push(DanmakuItem {
+                            time_seconds: values[0].parse().unwrap_or(0.0),
+                            mode: values[1].parse().unwrap_or(1),
+                            font_size: values[2].parse().unwrap_or(25),
+                            color: values[3].parse().unwrap_or(0xffffff),
+                            text: content,
+                        });
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    result
 }
 
 fn normalize_url(value: &str) -> String {
@@ -371,7 +514,7 @@ fn clean_html(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_html, parse_duration};
+    use super::{clean_html, parse_danmaku, parse_duration};
 
     #[test]
     fn parses_variable_length_duration() {
@@ -385,6 +528,15 @@ mod tests {
             clean_html("城市<em class=\"keyword\">音乐</em>&amp;夜"),
             "城市音乐&夜"
         );
+    }
+
+    #[test]
+    fn parses_danmaku_timing_style_and_escaped_text() {
+        let items = parse_danmaku(r#"<i><d p="1.25,1,25,16777215,0,0,x,1">你好&amp;世界</d></i>"#);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].time_seconds, 1.25);
+        assert_eq!(items[0].font_size, 25);
+        assert_eq!(items[0].text, "你好&世界");
     }
 
     #[tokio::test]
@@ -408,5 +560,28 @@ mod tests {
             .expect("audio source");
         assert!(source.audio_url.starts_with("https://"));
         assert!(source.bandwidth > 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili network access"]
+    async fn live_provider_resolves_video_and_danmaku() {
+        let provider = super::BilibiliProvider::new().expect("provider client");
+        let detail = provider
+            .video_parts("BV1GJ411x7h7")
+            .await
+            .expect("video detail");
+        let first = detail.parts.first().expect("at least one video part");
+        let video = provider
+            .video_source(&detail.bvid, first.cid)
+            .await
+            .expect("video source");
+        assert!(video.video_url.starts_with("https://"));
+        assert!(
+            !provider
+                .danmaku(first.cid)
+                .await
+                .expect("danmaku")
+                .is_empty()
+        );
     }
 }

@@ -54,6 +54,8 @@ pub fn run() {
             interface::commands::playlist_delete,
             interface::commands::bili_video_parts,
             interface::commands::bili_playback_source,
+            interface::commands::bili_video_source,
+            interface::commands::bili_danmaku,
             interface::commands::lyrics_search,
             interface::commands::metadata_catalog_search,
             interface::commands::lyrics_get,

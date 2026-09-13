@@ -6,6 +6,8 @@ export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: 
 export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string }
 export type BiliVideoParts = { bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
 export type PlaybackSource = { audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
+export type VideoSource = { videoUrl: string; mimeType: string; codecs: string; bandwidth: number }
+export type DanmakuItem = { timeSeconds: number; mode: number; fontSize: number; color: number; text: string }
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
@@ -25,6 +27,8 @@ export async function searchBilibili(keyword: string, page = 1): Promise<BiliSea
 
 export const getVideoParts = (bvid: string) => invoke<BiliVideoParts>('bili_video_parts', { bvid })
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
+export const getVideoSource = (bvid: string, cid: number) => invoke<VideoSource>('bili_video_source', { bvid, cid })
+export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku', { cid })
 
 export async function recordPlayedTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track

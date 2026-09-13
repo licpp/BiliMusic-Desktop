@@ -2,7 +2,7 @@ use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
-    BilibiliProvider, PlaybackSource, SearchPage, VideoParts,
+    BilibiliProvider, DanmakuItem, PlaybackSource, SearchPage, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -282,6 +282,35 @@ pub async fn bili_playback_source(
     source.audio_url = media_proxy.register(source.audio_url).await;
     source.backup_urls.clear();
     Ok(source)
+}
+
+#[tauri::command]
+pub async fn bili_video_source(
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    bvid: String,
+    cid: i64,
+) -> Result<VideoSource, CommandError> {
+    if !valid_bvid(&bvid) || cid <= 0 {
+        return Err(CommandError::validation("无效的视频源标识"));
+    }
+    let mut source = provider
+        .video_source(&bvid, cid)
+        .await
+        .map_err(CommandError::provider)?;
+    source.video_url = media_proxy.register(source.video_url).await;
+    Ok(source)
+}
+
+#[tauri::command]
+pub async fn bili_danmaku(
+    provider: State<'_, BilibiliProvider>,
+    cid: i64,
+) -> Result<Vec<DanmakuItem>, CommandError> {
+    if cid <= 0 {
+        return Err(CommandError::validation("无效的弹幕标识"));
+    }
+    provider.danmaku(cid).await.map_err(CommandError::provider)
 }
 
 #[tauri::command]
