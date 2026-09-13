@@ -17,6 +17,8 @@ import {
   Play,
   Search,
   Settings,
+  Repeat2,
+  Shuffle,
   SkipBack,
   SkipForward,
   Sparkles,
@@ -29,7 +31,7 @@ import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory } from '../services/desktopApi'
+import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
 import { DownloadsView } from '../features/downloads/DownloadsView'
 import { AccountControl } from '../features/account/AccountControl'
@@ -70,6 +72,13 @@ export function App() {
   const next = usePlayerStore((state) => state.next)
   const previous = usePlayerStore((state) => state.previous)
   const seek = usePlayerStore((state) => state.seek)
+  const volume = usePlayerStore((state) => state.volume)
+  const setVolume = usePlayerStore((state) => state.setVolume)
+  const shuffled = usePlayerStore((state) => state.shuffled)
+  const toggleShuffle = usePlayerStore((state) => state.toggleShuffle)
+  const repeatMode = usePlayerStore((state) => state.repeatMode)
+  const cycleRepeat = usePlayerStore((state) => state.cycleRepeat)
+  const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
@@ -79,6 +88,12 @@ export function App() {
       setSearchFocused(false)
       queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
     }
+  }
+  const toggleCurrentFavorite = async () => {
+    if (!current) return
+    const liked = await toggleStoredFavorite(current.id)
+    updatePlayerTrack({ ...current, liked })
+    await queryClient.invalidateQueries({ queryKey: ['library'] })
   }
 
   return (
@@ -181,7 +196,7 @@ export function App() {
         <header><div><span className="eyebrow coral">正在播放</span><h3>接下来</h3></div><button onClick={toggleQueue} aria-label="收起队列">×</button></header>
         <div className="now-card">
           <div className="now-art"><div className="sun" /><div className="horizon" /></div>
-          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '选择一首歌开始'}</small></div><Heart size={19} className={current?.liked ? 'liked' : ''} fill={current?.liked ? 'currentColor' : 'none'} /></div>
+          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
         <div className="queue-list">
           {queue.filter((track) => track.id !== current?.id).map((track, index) => (
@@ -191,12 +206,12 @@ export function App() {
       </aside>
 
       <footer className="player-dock">
-        <button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><span className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></button>
+        <button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><span className="dock-cover">{current?.coverUrl && <img src={current.coverUrl} alt="" />}</span><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></button>
         <div className="dock-center">
-          <div className="dock-controls"><button onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button className="play-toggle" onClick={toggle}>{status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button onClick={next}><SkipForward size={19} fill="currentColor" /></button></div>
+          <div className="dock-controls"><button className={shuffled ? 'active' : ''} onClick={toggleShuffle}><Shuffle /></button><button onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button className="play-toggle" onClick={toggle}>{status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={repeatMode !== 'off' ? 'active repeat-control' : 'repeat-control'} onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' && <i>1</i>}</button></div>
           <div className="progress"><small>{formatDuration(progressSeconds)}</small><input aria-label="播放进度" type="range" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
         </div>
-        <div className="dock-tools"><Volume2 size={18} /><span className="volume"><i /></span><button className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
+        <div className="dock-tools"><Volume2 size={18} /><input aria-label="音量" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /><button className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
       </footer>
       {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
     </div>

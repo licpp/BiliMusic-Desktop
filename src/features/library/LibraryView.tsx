@@ -10,6 +10,7 @@ import { usePlayerStore } from '../player/playerStore'
 export function LibraryView({ favoritesOnly = false, recent = false, playlist }: { favoritesOnly?: boolean; recent?: boolean; playlist?: Playlist }) {
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.play)
+  const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
   const [editing, setEditing] = useState<Track | null>(null)
   const [adding, setAdding] = useState<Track | null>(null)
   const [downloadMessage, setDownloadMessage] = useState('')
@@ -47,7 +48,7 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist }:
       <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
       {playlist ? <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => client.invalidateQueries({ queryKey: ['library'] }))} aria-label="从歌单移除"><Trash2 size={16} /></button> : <button className="icon-action" onClick={() => setAdding(track)} aria-label="添加到歌单"><ListPlus size={17} /></button>}
     </article>)}</div>}
-    {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); client.invalidateQueries({ queryKey: ['library'] }) }} />}
+    {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { updatePlayerTrack(updated); setEditing(null); client.invalidateQueries({ queryKey: ['library'] }) }} />}
     {adding && <PlaylistPicker track={adding} onClose={() => setAdding(null)} />}
     {downloadMessage && <button className="library-toast" onClick={() => setDownloadMessage('')}>{downloadMessage}</button>}
   </section>
@@ -70,7 +71,7 @@ function LibraryEmpty({ title, detail, spinning }: { title: string; detail: stri
   return <div className="library-empty"><span><Library className={spinning ? 'spin' : ''} /></span><h3>{title}</h3><p>{detail}</p></div>
 }
 
-function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: () => void; onSaved: () => void }) {
+function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: () => void; onSaved: (track: Track) => void }) {
   const [title, setTitle] = useState(track.title)
   const [artist, setArtist] = useState(track.artist || '')
   const [album, setAlbum] = useState(track.album || '')
