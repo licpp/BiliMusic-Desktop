@@ -1,0 +1,29 @@
+[package]
+name = "resonance-desktop"
+version = "0.1.0"
+description = "A clean-room desktop music client"
+authors = ["Resonance Contributors"]
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "resonance_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-store = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+url = "2"
+
