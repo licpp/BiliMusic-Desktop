@@ -355,7 +355,13 @@ fn valid_bvid(value: &str) -> bool {
 }
 
 fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
-    let expected_id = format!("bilibili:{}:{}", track.bvid, track.cid);
+    let expected_id = SourceIdentity {
+        provider: "bilibili".into(),
+        bvid: track.bvid.clone(),
+        cid: track.cid,
+        page: track.page,
+    }
+    .stable_key();
     if !valid_bvid(&track.bvid) || track.cid <= 0 || track.id != expected_id {
         return Err(CommandError::validation("歌曲来源标识不一致"));
     }
@@ -364,3 +370,4 @@ fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
     }
     Ok(())
 }
+use crate::domain::track::SourceIdentity;

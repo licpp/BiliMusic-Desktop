@@ -16,6 +16,7 @@ import {
   Pause,
   Play,
   Search,
+  Settings,
   SkipBack,
   SkipForward,
   Sparkles,
@@ -29,6 +30,7 @@ import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
 import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory } from '../services/desktopApi'
+import { SettingsView } from '../features/settings/SettingsView'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -37,6 +39,7 @@ const navigation = [
   { label: '最近播放', icon: Clock3 },
   { label: '下载', icon: Download },
   { label: '我喜欢', icon: Heart },
+  { label: '设置', icon: Settings },
 ]
 
 export function App() {
@@ -130,7 +133,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : <>
+          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '设置' ? <SettingsView /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />

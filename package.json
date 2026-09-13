@@ -12,6 +12,8 @@
   "dependencies": {
     "@tanstack/react-query": "^5.89.0",
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-store": "^2.4.4",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
