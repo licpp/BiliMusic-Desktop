@@ -59,6 +59,8 @@ pub fn run() {
             interface::commands::lyrics_get,
             interface::commands::lyrics_save,
             interface::commands::lyrics_set_bias,
+            interface::commands::downloads_list,
+            interface::commands::download_track,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Resonance");

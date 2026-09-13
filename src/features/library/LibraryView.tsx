@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
+import { addTrackToPlaylist, commandErrorMessage, downloadTrack, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
+import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
 
@@ -11,11 +12,23 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist }:
   const play = usePlayerStore((state) => state.play)
   const [editing, setEditing] = useState<Track | null>(null)
   const [adding, setAdding] = useState<Track | null>(null)
+  const [downloadMessage, setDownloadMessage] = useState('')
   const tracks = useQuery({ queryKey: ['library', favoritesOnly, recent, playlist?.id], queryFn: () => playlist ? listPlaylistTracks(playlist.id) : recent ? listRecentTracks() : listLibraryTracks(favoritesOnly) })
   const favorite = useMutation({
     mutationFn: toggleStoredFavorite,
     onSuccess: () => client.invalidateQueries({ queryKey: ['library'] }),
   })
+  const startDownload = async (track: Track) => {
+    try {
+      let directory = await getDownloadDirectory()
+      if (!directory) directory = await chooseDownloadDirectory()
+      if (!directory) return
+      setDownloadMessage(`正在下载「${track.title}」`)
+      await downloadTrack(track, directory)
+      setDownloadMessage(`「${track.title}」下载完成`)
+      await client.invalidateQueries({ queryKey: ['downloads'] })
+    } catch (cause) { setDownloadMessage(commandErrorMessage(cause)) }
+  }
 
   return <section className="library-view">
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (recent ? '最近播放' : favoritesOnly ? '我喜欢' : '音乐库')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · 本地歌单` : recent ? '按最近一次播放整理，继续上次的声音。' : favoritesOnly ? '只属于你的声音标记。' : '播放过的歌曲会自动整理到这里。'}</p></div></header>
@@ -31,10 +44,12 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist }:
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
       <button className="icon-action" onClick={() => setEditing(track)} aria-label="编辑歌曲信息"><Pencil size={16} /></button>
+      <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
       {playlist ? <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => client.invalidateQueries({ queryKey: ['library'] }))} aria-label="从歌单移除"><Trash2 size={16} /></button> : <button className="icon-action" onClick={() => setAdding(track)} aria-label="添加到歌单"><ListPlus size={17} /></button>}
     </article>)}</div>}
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); client.invalidateQueries({ queryKey: ['library'] }) }} />}
     {adding && <PlaylistPicker track={adding} onClose={() => setAdding(null)} />}
+    {downloadMessage && <button className="library-toast" onClick={() => setDownloadMessage('')}>{downloadMessage}</button>}
   </section>
 }
 

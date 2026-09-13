@@ -1,3 +1,4 @@
+use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
@@ -5,6 +6,7 @@ use crate::infrastructure::providers::bilibili::{
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
+use crate::infrastructure::repositories::downloads::{DownloadRecord, DownloadRepository};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
 };
@@ -16,6 +18,7 @@ use crate::infrastructure::repositories::search_history::SearchHistoryRepository
 use crate::interface::error::CommandError;
 use serde::Serialize;
 use tauri::State;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -363,6 +366,127 @@ pub fn lyrics_set_bias(
     LyricsRepository::set_bias(&connection, &track_id, bias_ms).map_err(CommandError::database)
 }
 
+#[tauri::command]
+pub fn downloads_list(database: State<'_, Database>) -> Result<Vec<DownloadRecord>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    DownloadRepository::list(&connection).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub async fn download_track(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    track_id: String,
+    bvid: String,
+    cid: i64,
+    title: String,
+    target_directory: String,
+) -> Result<(), CommandError> {
+    if !valid_bvid(&bvid) || cid <= 0 || track_id != format!("bilibili:{bvid}:{cid}") {
+        return Err(CommandError::validation("无效的下载歌曲标识"));
+    }
+    let directory = std::path::PathBuf::from(target_directory)
+        .canonicalize()
+        .map_err(|_| CommandError::validation("下载目录不存在或不可访问"))?;
+    if !directory.is_dir() {
+        return Err(CommandError::validation("下载位置不是目录"));
+    }
+    let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
+    let temporary = target.with_extension("m4a.part");
+    let download_id = uuid::Uuid::new_v4().to_string();
+    {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        if LibraryRepository::get(&connection, &track_id)
+            .map_err(CommandError::database)?
+            .is_none()
+        {
+            return Err(CommandError::validation("请先播放歌曲再下载"));
+        }
+        DownloadRepository::create(
+            &connection,
+            &download_id,
+            &track_id,
+            &target.to_string_lossy(),
+        )
+        .map_err(CommandError::database)?;
+    }
+    let result: Result<i64, Box<dyn std::error::Error + Send + Sync>> = async {
+        let source = provider.playback_source(&bvid, cid).await?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .user_agent("Mozilla/5.0 Resonance/0.1")
+            .build()?;
+        let mut response = client
+            .get(source.audio_url)
+            .header(reqwest::header::REFERER, "https://www.bilibili.com/")
+            .send()
+            .await?
+            .error_for_status()?;
+        let total = response.content_length().map(|value| value as i64);
+        let mut file = tokio::fs::File::create(&temporary).await?;
+        let mut received = 0_i64;
+        let mut last_reported = 0_i64;
+        while let Some(chunk) = response.chunk().await? {
+            file.write_all(&chunk).await?;
+            received += chunk.len() as i64;
+            if received - last_reported >= 512 * 1024 {
+                if let Ok(connection) = database.0.lock() {
+                    let _ =
+                        DownloadRepository::progress(&connection, &download_id, received, total);
+                }
+                last_reported = received;
+            }
+        }
+        file.flush().await?;
+        drop(file);
+        tokio::fs::rename(&temporary, &target).await?;
+        Ok(received)
+    }
+    .await;
+    match result {
+        Ok(received) => {
+            let connection = database
+                .0
+                .lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
+            DownloadRepository::complete(&connection, &download_id, received)
+                .map_err(CommandError::database)
+        }
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&temporary).await;
+            if let Ok(connection) = database.0.lock() {
+                let _ = DownloadRepository::fail(&connection, &download_id, &error.to_string());
+            }
+            Err(CommandError::provider(format!("下载失败: {error}")))
+        }
+    }
+}
+
+fn safe_filename(title: &str) -> String {
+    let value: String = title
+        .chars()
+        .filter(|character| {
+            !matches!(
+                character,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+            ) && !character.is_control()
+        })
+        .take(80)
+        .collect();
+    let value = value.trim().trim_matches('.');
+    if value.is_empty() {
+        "未命名歌曲".into()
+    } else {
+        value.into()
+    }
+}
+
 fn valid_bvid(value: &str) -> bool {
     value.len() >= 10
         && value.len() <= 16
@@ -386,4 +510,12 @@ fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
     }
     Ok(())
 }
-use crate::domain::track::SourceIdentity;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn filename_removes_cross_platform_reserved_characters() {
+        assert_eq!(super::safe_filename("a/b:c*?\"<>|"), "abc");
+        assert_eq!(super::safe_filename("..."), "未命名歌曲");
+    }
+}

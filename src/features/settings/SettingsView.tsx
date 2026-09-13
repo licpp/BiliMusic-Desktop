@@ -1,10 +1,7 @@
-import { open } from '@tauri-apps/plugin-dialog'
-import { load } from '@tauri-apps/plugin-store'
 import { Download, FolderOpen, LoaderCircle, Settings2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
-
-const settingsFile = 'settings.json'
+import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 
 export function SettingsView() {
   const [downloadDirectory, setDownloadDirectory] = useState('')
@@ -13,19 +10,14 @@ export function SettingsView() {
 
   useEffect(() => {
     if (!inDesktopShell) { setLoading(false); return }
-    void load(settingsFile, { autoSave: true }).then(async (store) => {
-      setDownloadDirectory((await store.get<string>('downloadDirectory')) || '')
-    }).catch((cause) => setError(commandErrorMessage(cause))).finally(() => setLoading(false))
+    void getDownloadDirectory().then(setDownloadDirectory).catch((cause) => setError(commandErrorMessage(cause))).finally(() => setLoading(false))
   }, [])
 
   const chooseDirectory = async () => {
     setError('')
     try {
-      const selected = await open({ directory: true, multiple: false, title: '选择音乐下载目录' })
+      const selected = await chooseDownloadDirectory()
       if (!selected) return
-      const store = await load(settingsFile, { autoSave: true })
-      await store.set('downloadDirectory', selected)
-      await store.save()
       setDownloadDirectory(selected)
     } catch (cause) { setError(commandErrorMessage(cause)) }
   }

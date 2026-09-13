@@ -31,6 +31,7 @@ import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
 import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
+import { DownloadsView } from '../features/downloads/DownloadsView'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -133,7 +134,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '设置' ? <SettingsView /> : <>
+          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '下载' ? <DownloadsView /> : activeNav === '设置' ? <SettingsView /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />
