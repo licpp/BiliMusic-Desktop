@@ -20,6 +20,8 @@ export type DownloadRecord = { id: string; trackId: string; targetPath: string; 
 export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
 export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string }
+export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
+export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
 export const inDesktopShell = isTauri()
 
@@ -120,6 +122,10 @@ export async function getAccountProfile(): Promise<AccountProfile> {
 export const generateLoginQr = () => invoke<QrLogin>('bili_qr_login_generate')
 export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login_poll', { key })
 export const logoutBilibili = () => invoke<void>('bili_logout')
+export const getComments = (aid: number, next = 1) => invoke<CommentPage>('bili_comments', { aid, next })
+export const getCommentReplies = (aid: number, root: number, page = 1) => invoke<BiliComment[]>('bili_comment_replies', { aid, root, page })
+export const setCommentLike = (aid: number, replyId: number, liked: boolean) => invoke<void>('bili_comment_like', { aid, replyId, liked })
+export const replyComment = (aid: number, message: string, root?: number, parent?: number) => invoke<void>('bili_comment_reply', { aid, message, root, parent })
 
 function toTrackInput(track: Track) {
   return {

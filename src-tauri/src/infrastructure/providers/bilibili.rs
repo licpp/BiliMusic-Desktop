@@ -24,6 +24,8 @@ pub enum ProviderError {
     NoVideo,
     #[error("弹幕数据解码失败: {0}")]
     DanmakuDecode(String),
+    #[error("请先登录 Bilibili 账号")]
+    NotAuthenticated,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,6 +126,32 @@ pub struct AccountProfile {
     pub avatar_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentPage {
+    pub items: Vec<CommentItem>,
+    pub next: i64,
+    pub is_end: bool,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentItem {
+    pub id: i64,
+    pub root_id: i64,
+    pub parent_id: i64,
+    pub user_id: i64,
+    pub user_name: String,
+    pub avatar_url: String,
+    pub message: String,
+    pub created_at: i64,
+    pub like_count: i64,
+    pub liked: bool,
+    pub reply_count: i64,
+    pub replies: Vec<CommentItem>,
+}
+
 #[derive(Deserialize)]
 struct Envelope<T> {
     code: i64,
@@ -155,6 +183,60 @@ struct NavData {
     uname: String,
     #[serde(default)]
     face: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ReplyData {
+    #[serde(default)]
+    replies: Option<Vec<RawReply>>,
+    #[serde(default)]
+    page: ReplyPageMeta,
+}
+
+#[derive(Deserialize, Default)]
+struct ReplyPageMeta {
+    #[serde(default)]
+    num: i64,
+    #[serde(default)]
+    size: i64,
+    #[serde(default)]
+    count: i64,
+}
+
+#[derive(Deserialize)]
+struct RawReply {
+    rpid: i64,
+    #[serde(default)]
+    root: i64,
+    #[serde(default)]
+    parent: i64,
+    #[serde(default, rename = "like")]
+    like_count: i64,
+    #[serde(default)]
+    action: i64,
+    #[serde(default)]
+    ctime: i64,
+    #[serde(default)]
+    rcount: i64,
+    member: ReplyMember,
+    content: ReplyContent,
+    #[serde(default)]
+    replies: Option<Vec<RawReply>>,
+}
+
+#[derive(Deserialize)]
+struct ReplyMember {
+    #[serde(default)]
+    mid: String,
+    #[serde(default)]
+    uname: String,
+    #[serde(default)]
+    avatar: String,
+}
+#[derive(Deserialize)]
+struct ReplyContent {
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -359,6 +441,97 @@ impl BilibiliProvider {
             name: data.is_login.then_some(data.uname),
             avatar_url: data.is_login.then_some(normalize_url(&data.face)),
         })
+    }
+
+    pub async fn comments(&self, aid: i64, next: i64) -> Result<CommentPage, ProviderError> {
+        let page_number = next.max(1);
+        let mut url = self.api_url("/x/v2/reply");
+        url.query_pairs_mut()
+            .append_pair("type", "1")
+            .append_pair("oid", &aid.to_string())
+            .append_pair("pn", &page_number.to_string())
+            .append_pair("sort", "2");
+        let data: ReplyData = self.get_data(url).await?;
+        let page_size = data.page.size.max(20);
+        let page = data.page.num.max(page_number);
+        Ok(CommentPage {
+            items: data
+                .replies
+                .unwrap_or_default()
+                .into_iter()
+                .map(comment_from_raw)
+                .collect(),
+            next: page + 1,
+            is_end: page * page_size >= data.page.count,
+            total: data.page.count,
+        })
+    }
+
+    pub async fn comment_replies(
+        &self,
+        aid: i64,
+        root: i64,
+        page: u32,
+    ) -> Result<Vec<CommentItem>, ProviderError> {
+        let mut url = self.api_url("/x/v2/reply/reply");
+        url.query_pairs_mut()
+            .append_pair("type", "1")
+            .append_pair("oid", &aid.to_string())
+            .append_pair("root", &root.to_string())
+            .append_pair("pn", &page.max(1).to_string())
+            .append_pair("ps", "20");
+        let data: ReplyData = self.get_data(url).await?;
+        Ok(data
+            .replies
+            .unwrap_or_default()
+            .into_iter()
+            .map(comment_from_raw)
+            .collect())
+    }
+
+    pub async fn comment_like(
+        &self,
+        aid: i64,
+        reply_id: i64,
+        liked: bool,
+    ) -> Result<(), ProviderError> {
+        let csrf = self.csrf_token().await?;
+        let url = self.api_url("/x/v2/reply/action");
+        let form = [
+            ("type", "1".to_string()),
+            ("oid", aid.to_string()),
+            ("rpid", reply_id.to_string()),
+            ("action", if liked { "1" } else { "0" }.to_string()),
+            ("csrf", csrf),
+        ];
+        let _: serde_json::Value = self.post_data(url, &form).await?;
+        Ok(())
+    }
+
+    pub async fn comment_reply(
+        &self,
+        aid: i64,
+        message: &str,
+        root: Option<i64>,
+        parent: Option<i64>,
+    ) -> Result<(), ProviderError> {
+        let csrf = self.csrf_token().await?;
+        let url = self.api_url("/x/v2/reply/add");
+        let mut form = vec![
+            ("type", "1".to_string()),
+            ("oid", aid.to_string()),
+            ("message", message.to_string()),
+            ("plat", "1".to_string()),
+            ("csrf", csrf),
+        ];
+        if let Some(root) = root {
+            form.push(("root", root.to_string()));
+        }
+        if let Some(parent) = parent {
+            form.push(("parent", parent.to_string()));
+        }
+        let _: serde_json::Value = self.post_data(url, &form).await?;
+        Ok(())
     }
 
     pub async fn search(
@@ -566,6 +739,78 @@ impl BilibiliProvider {
             None => request,
         }
     }
+
+    async fn csrf_token(&self) -> Result<String, ProviderError> {
+        let cookie = self
+            .session_cookie
+            .read()
+            .await
+            .clone()
+            .ok_or(ProviderError::NotAuthenticated)?;
+        cookie
+            .split(';')
+            .map(str::trim)
+            .find_map(|part| part.strip_prefix("bili_jct="))
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or(ProviderError::NotAuthenticated)
+    }
+
+    async fn post_data<T: DeserializeOwned>(
+        &self,
+        url: Url,
+        form: &[(&str, String)],
+    ) -> Result<T, ProviderError> {
+        let cookie = self
+            .session_cookie
+            .read()
+            .await
+            .clone()
+            .ok_or(ProviderError::NotAuthenticated)?;
+        let envelope: Envelope<T> = self
+            .client
+            .post(url)
+            .header(COOKIE, cookie)
+            .form(form)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if envelope.code != 0 {
+            return Err(ProviderError::Api {
+                code: envelope.code,
+                message: envelope.message,
+            });
+        }
+        envelope.data.ok_or_else(|| ProviderError::Api {
+            code: -1,
+            message: "响应缺少 data".into(),
+        })
+    }
+}
+
+fn comment_from_raw(raw: RawReply) -> CommentItem {
+    let id = raw.rpid;
+    CommentItem {
+        id,
+        root_id: if raw.root == 0 { id } else { raw.root },
+        parent_id: raw.parent,
+        user_id: raw.member.mid.parse().unwrap_or(0),
+        user_name: raw.member.uname,
+        avatar_url: normalize_url(&raw.member.avatar),
+        message: raw.content.message,
+        created_at: raw.ctime,
+        like_count: raw.like_count,
+        liked: raw.action == 1,
+        reply_count: raw.rcount,
+        replies: raw
+            .replies
+            .unwrap_or_default()
+            .into_iter()
+            .map(comment_from_raw)
+            .collect(),
+    }
 }
 
 fn parse_danmaku(xml: &str) -> Vec<DanmakuItem> {
@@ -738,5 +983,27 @@ mod tests {
         let login = provider.qr_login_generate().await.expect("login QR");
         assert!(!login.key.is_empty());
         assert!(login.url.starts_with("https://"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili network access"]
+    async fn live_provider_reads_comments_and_replies() {
+        let provider = super::BilibiliProvider::new().expect("provider client");
+        let detail = provider
+            .video_parts("BV1GJ411x7h7")
+            .await
+            .expect("video detail");
+        let page = provider.comments(detail.aid, 0).await.expect("comments");
+        assert!(!page.items.is_empty());
+        let first = &page.items[0];
+        if first.reply_count > 0 {
+            assert!(
+                !provider
+                    .comment_replies(detail.aid, first.root_id, 1)
+                    .await
+                    .expect("replies")
+                    .is_empty()
+            );
+        }
     }
 }

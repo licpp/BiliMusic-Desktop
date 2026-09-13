@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, Minimize2, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
 import { usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
@@ -15,6 +15,7 @@ import {
   type DanmakuItem,
 } from '../../services/desktopApi'
 import { bestCandidate, candidateLines } from './lrc'
+import { CommentsPanel } from '../comments/CommentsPanel'
 
 type Props = { onClose: () => void }
 
@@ -37,6 +38,7 @@ export function LyricsView({ onClose }: Props) {
   const [danmakuVisible, setDanmakuVisible] = useState(true)
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
+  const [commentsOpen, setCommentsOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -136,7 +138,7 @@ export function LyricsView({ onClose }: Props) {
       <header className="lyrics-topbar">
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
-        <button className="lyrics-rematch" onClick={refreshCandidates}><RefreshCw size={16} />重新匹配</button>
+        <div className="lyrics-actions"><button className="lyrics-rematch" onClick={refreshCandidates}><RefreshCw size={16} />重新匹配</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <video ref={videoRef} src={videoUrl} muted playsInline preload="metadata" /> : <div className="video-loading"><LoaderCircle className="spin" />正在加载视频</div>}{danmakuVisible && <div className="danmaku-layer">{activeDanmaku.map(({ item, index }) => <span key={index} style={{ top: `${8 + (index % 9) * 9}%`, fontSize: `${Math.max(12, item.fontSize * danmakuSize)}px`, opacity: danmakuOpacity, animationDelay: `${-(progressSeconds - item.timeSeconds)}s` }}>{item.text}</span>)}</div>}</> : current.coverUrl ? <img src={current.coverUrl} alt="" /> : <div className="cover-fallback" />}</div>
@@ -174,6 +176,7 @@ export function LyricsView({ onClose }: Props) {
           ))}</div> : <div className="chooser-status">没有搜索到可用歌词</div>}
         </div>
       </div>}
+      {commentsOpen && current.source.aid && <CommentsPanel aid={current.source.aid} onClose={() => setCommentsOpen(false)} />}
     </section>
   )
 }

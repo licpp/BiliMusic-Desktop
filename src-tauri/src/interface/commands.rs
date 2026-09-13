@@ -2,8 +2,8 @@ use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
-    AccountProfile, BilibiliProvider, DanmakuItem, PlaybackSource, QrLogin, QrLoginStatus,
-    SearchPage, VideoParts, VideoSource,
+    AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, PlaybackSource,
+    QrLogin, QrLoginStatus, SearchPage, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -370,6 +370,71 @@ pub async fn bili_logout(
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub async fn bili_comments(
+    provider: State<'_, BilibiliProvider>,
+    aid: i64,
+    next: Option<i64>,
+) -> Result<CommentPage, CommandError> {
+    if aid <= 0 {
+        return Err(CommandError::validation("无效的视频 AV 标识"));
+    }
+    provider
+        .comments(aid, next.unwrap_or(0))
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_comment_replies(
+    provider: State<'_, BilibiliProvider>,
+    aid: i64,
+    root: i64,
+    page: Option<u32>,
+) -> Result<Vec<CommentItem>, CommandError> {
+    if aid <= 0 || root <= 0 {
+        return Err(CommandError::validation("无效的评论标识"));
+    }
+    provider
+        .comment_replies(aid, root, page.unwrap_or(1))
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_comment_like(
+    provider: State<'_, BilibiliProvider>,
+    aid: i64,
+    reply_id: i64,
+    liked: bool,
+) -> Result<(), CommandError> {
+    if aid <= 0 || reply_id <= 0 {
+        return Err(CommandError::validation("无效的评论标识"));
+    }
+    provider
+        .comment_like(aid, reply_id, liked)
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_comment_reply(
+    provider: State<'_, BilibiliProvider>,
+    aid: i64,
+    message: String,
+    root: Option<i64>,
+    parent: Option<i64>,
+) -> Result<(), CommandError> {
+    let message = message.trim();
+    if aid <= 0 || message.is_empty() || message.chars().count() > 1000 {
+        return Err(CommandError::validation("回复内容需为 1 到 1000 个字符"));
+    }
+    provider
+        .comment_reply(aid, message, root, parent)
+        .await
+        .map_err(CommandError::provider)
 }
 
 #[tauri::command]
