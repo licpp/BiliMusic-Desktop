@@ -12,6 +12,7 @@ export type MetadataPatch = { title: string; artist?: string; album?: string; co
 export type LyricLine = { timeMs: number; text: string }
 export type LyricCandidate = { id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
+export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number }
 
 export const inDesktopShell = isTauri()
 
@@ -79,6 +80,19 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
 
 export const setStoredLyricsBias = (trackId: string, biasMs: number) =>
   invoke<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
+
+export async function listPlaylists(): Promise<Playlist[]> {
+  if (!inDesktopShell) return []
+  return invoke<Playlist[]>('playlists_list')
+}
+export const createPlaylist = (name: string) => invoke<Playlist>('playlist_create', { name })
+export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
+  if (!inDesktopShell) return []
+  return (await invoke<StoredTrack[]>('playlist_tracks', { playlistId })).map(fromStoredTrack)
+}
+export const addTrackToPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_add_track', { playlistId, trackId })
+export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_remove_track', { playlistId, trackId })
+export const deletePlaylist = (playlistId: string) => invoke<void>('playlist_delete', { playlistId })
 
 function toTrackInput(track: Track) {
   return {

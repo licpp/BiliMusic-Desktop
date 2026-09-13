@@ -154,7 +154,7 @@ impl LibraryRepository {
         Self::get(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
-    fn select_sql() -> &'static str {
+    pub(crate) fn select_sql() -> &'static str {
         "SELECT t.id, s.bvid, s.aid, s.cid, s.page,
            COALESCE(NULLIF(m.title,''),t.title), COALESCE(m.artist,t.artist), COALESCE(m.album,t.album),
            COALESCE(m.cover_url,t.cover_url), t.duration_seconds, s.uploader_id, s.uploader_name,
@@ -163,7 +163,7 @@ impl LibraryRepository {
          LEFT JOIN metadata_overrides m ON m.track_id=t.id LEFT JOIN favorites f ON f.track_id=t.id"
     }
 
-    fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRecord> {
+    pub(crate) fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRecord> {
         Ok(TrackRecord {
             id: row.get(0)?,
             bvid: row.get(1)?,

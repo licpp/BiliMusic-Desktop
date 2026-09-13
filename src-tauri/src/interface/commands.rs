@@ -10,6 +10,7 @@ use crate::infrastructure::repositories::library::{
 use crate::infrastructure::repositories::lyrics::{
     LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
+use crate::infrastructure::repositories::playlists::{PlaylistRecord, PlaylistRepository};
 use crate::infrastructure::repositories::search_history::SearchHistoryRepository;
 use crate::interface::error::CommandError;
 use serde::Serialize;
@@ -167,6 +168,83 @@ pub fn search_history_clear(database: State<'_, Database>) -> Result<(), Command
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     SearchHistoryRepository::clear(&connection).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlists_list(database: State<'_, Database>) -> Result<Vec<PlaylistRecord>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::list(&connection).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_create(
+    database: State<'_, Database>,
+    name: String,
+) -> Result<PlaylistRecord, CommandError> {
+    if name.trim().is_empty() || name.chars().count() > 80 {
+        return Err(CommandError::validation("歌单名称需为 1 到 80 个字符"));
+    }
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::create(&connection, &uuid::Uuid::new_v4().to_string(), &name)
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_tracks(
+    database: State<'_, Database>,
+    playlist_id: String,
+) -> Result<Vec<TrackRecord>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::tracks(&connection, &playlist_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_add_track(
+    database: State<'_, Database>,
+    playlist_id: String,
+    track_id: String,
+) -> Result<(), CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::add_track(&connection, &playlist_id, &track_id)
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_remove_track(
+    database: State<'_, Database>,
+    playlist_id: String,
+    track_id: String,
+) -> Result<(), CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::remove_track(&connection, &playlist_id, &track_id)
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_delete(
+    database: State<'_, Database>,
+    playlist_id: String,
+) -> Result<(), CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::delete(&connection, &playlist_id).map_err(CommandError::database)
 }
 
 #[tauri::command]

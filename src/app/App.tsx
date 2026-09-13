@@ -28,7 +28,7 @@ import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, listSearchHistory } from '../services/desktopApi'
+import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory } from '../services/desktopApi'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -39,17 +39,20 @@ const navigation = [
   { label: '我喜欢', icon: Heart },
 ]
 
-const collections = ['暮色公路', '夜航电台', '缓慢醒来', '无人售票']
-
 export function App() {
   const [activeNav, setActiveNav] = useState('此刻')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false)
+  const [playlistName, setPlaylistName] = useState('')
   const queryClient = useQueryClient()
   const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
+  const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
+  const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
+  const activePlaylist = playlists.data?.find((playlist) => activeNav === `playlist:${playlist.id}`)
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
@@ -101,12 +104,13 @@ export function App() {
           <h1>把声音留在身边</h1>
         </header>
         <section>
-          <div className="section-heading"><span>我的歌单</span><button aria-label="新建歌单">＋</button></div>
+          <div className="section-heading"><span>我的歌单</span><button aria-label="新建歌单" onClick={() => setCreatingPlaylist((value) => !value)}>＋</button></div>
+          {creatingPlaylist && <form className="playlist-create" onSubmit={(event) => { event.preventDefault(); if (playlistName.trim()) createList.mutate(playlistName) }}><input autoFocus maxLength={80} value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="歌单名称" /><button disabled={createList.isPending}>创建</button></form>}
           <div className="collection-list">
-            {collections.map((name, index) => (
-              <button key={name} className="collection-item">
-                <span className={`collection-cover tone-${index}`}><Album size={17} /></span>
-                <span><strong>{name}</strong><small>{18 + index * 11} 首</small></span>
+            {playlists.data?.map((playlist, index) => (
+              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery('') }}>
+                <span className={`collection-cover tone-${index % 4}`}><Album size={17} /></span>
+                <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首</small></span>
               </button>
             ))}
           </div>
@@ -126,7 +130,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : <>
+          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />
