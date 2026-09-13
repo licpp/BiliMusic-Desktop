@@ -24,4 +24,12 @@ impl CommandError {
             retryable: false,
         }
     }
+
+    pub fn database(error: impl std::fmt::Display) -> Self {
+        Self {
+            code: "database_error",
+            message: error.to_string(),
+            retryable: true,
+        }
+    }
 }

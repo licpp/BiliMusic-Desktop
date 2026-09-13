@@ -3,6 +3,9 @@ use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
     BilibiliProvider, PlaybackSource, SearchPage, VideoParts,
 };
+use crate::infrastructure::repositories::library::{
+    LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
+};
 use crate::interface::error::CommandError;
 use serde::Serialize;
 use tauri::State;
@@ -49,6 +52,67 @@ pub fn library_summary(database: State<'_, Database>) -> Result<LibrarySummary, 
         playlists: count("playlists").map_err(|error| error.to_string())?,
         favorites: count("favorites").map_err(|error| error.to_string())?,
     })
+}
+
+#[tauri::command]
+pub fn library_record_play(
+    database: State<'_, Database>,
+    track: TrackInput,
+) -> Result<TrackRecord, CommandError> {
+    validate_track(&track)?;
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LibraryRepository::record_play(&mut connection, &track).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn library_tracks(
+    database: State<'_, Database>,
+    favorites_only: Option<bool>,
+) -> Result<Vec<TrackRecord>, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LibraryRepository::list(&connection, favorites_only.unwrap_or(false), 500)
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn library_toggle_favorite(
+    database: State<'_, Database>,
+    track_id: String,
+) -> Result<bool, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if LibraryRepository::get(&connection, &track_id)
+        .map_err(CommandError::database)?
+        .is_none()
+    {
+        return Err(CommandError::validation("歌曲尚未加入资料库"));
+    }
+    LibraryRepository::toggle_favorite(&connection, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn library_update_metadata(
+    database: State<'_, Database>,
+    track_id: String,
+    patch: MetadataPatch,
+) -> Result<TrackRecord, CommandError> {
+    if patch.title.trim().is_empty() {
+        return Err(CommandError::validation("歌曲名不能为空"));
+    }
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LibraryRepository::update_metadata(&connection, &track_id, &patch)
+        .map_err(CommandError::database)
 }
 
 #[tauri::command]
@@ -106,4 +170,15 @@ fn valid_bvid(value: &str) -> bool {
         && value.len() <= 16
         && value.starts_with("BV")
         && value.chars().all(|char| char.is_ascii_alphanumeric())
+}
+
+fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
+    let expected_id = format!("bilibili:{}:{}", track.bvid, track.cid);
+    if !valid_bvid(&track.bvid) || track.cid <= 0 || track.id != expected_id {
+        return Err(CommandError::validation("歌曲来源标识不一致"));
+    }
+    if track.title.trim().is_empty() || track.duration_seconds < 0 {
+        return Err(CommandError::validation("歌曲信息不完整"));
+    }
+    Ok(())
 }

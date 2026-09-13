@@ -24,6 +24,7 @@ import {
 import { demoTracks } from '../features/library/demoTracks'
 import { usePlayerStore } from '../features/player/playerStore'
 import { SearchView } from '../features/search/SearchView'
+import { LibraryView } from '../features/library/LibraryView'
 import { formatDuration } from '../shared/time'
 
 const navigation = [
@@ -71,7 +72,7 @@ export function App() {
             <button
               className={activeNav === label ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => setActiveNav(label)}
+              onClick={() => { setActiveNav(label); setSubmittedQuery('') }}
               title={label}
               aria-label={label}
             >
@@ -112,7 +113,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : <>
+          {submittedQuery ? <SearchView query={submittedQuery} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />

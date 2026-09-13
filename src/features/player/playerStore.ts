@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Track } from '../../domain/track'
-import { getPlaybackSource, inDesktopShell } from '../../services/desktopApi'
+import { getPlaybackSource, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
 import { demoTracks } from '../library/demoTracks'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
@@ -21,13 +21,15 @@ function playerAudio() {
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
-  current: demoTracks[1], queue: demoTracks, status: 'paused', error: null, queueOpen: true, progressSeconds: 0, durationSeconds: demoTracks[1].durationSeconds,
+  current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: true, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds,
   play: async (track) => {
-    const queue = get().queue.some((item) => item.id === track.id) ? get().queue : [...get().queue, track]
-    set({ current: track, queue, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
+    set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
     try {
-      const source = await getPlaybackSource(track.source.bvid, track.source.cid)
+      const storedTrack = await recordPlayedTrack(track)
+      const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
+      set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds })
+      const source = await getPlaybackSource(storedTrack.source.bvid, storedTrack.source.cid)
       const element = playerAudio(); element.src = source.audioUrl; element.currentTime = 0; await element.play()
     } catch (error) {
       const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'

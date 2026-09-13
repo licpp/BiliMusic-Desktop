@@ -35,6 +35,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             interface::commands::app_health,
             interface::commands::library_summary,
+            interface::commands::library_record_play,
+            interface::commands::library_tracks,
+            interface::commands::library_toggle_favorite,
+            interface::commands::library_update_metadata,
             interface::commands::bili_search,
             interface::commands::bili_video_parts,
             interface::commands::bili_playback_source,
