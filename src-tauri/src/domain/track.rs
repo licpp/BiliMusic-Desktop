@@ -21,8 +21,17 @@ mod tests {
 
     #[test]
     fn stable_key_distinguishes_video_parts() {
-        let p1 = SourceIdentity { provider: "bilibili".into(), bvid: "BV1".into(), cid: 10, page: 1 };
-        let p2 = SourceIdentity { cid: 11, page: 2, ..p1.clone() };
+        let p1 = SourceIdentity {
+            provider: "bilibili".into(),
+            bvid: "BV1".into(),
+            cid: 10,
+            page: 1,
+        };
+        let p2 = SourceIdentity {
+            cid: 11,
+            page: 2,
+            ..p1.clone()
+        };
         assert_ne!(p1.stable_key(), p2.stable_key());
     }
 }

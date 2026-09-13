@@ -26,4 +26,5 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies", "stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 url = "2"
-
+axum = "0.8"
+uuid = { version = "1", features = ["v4"] }

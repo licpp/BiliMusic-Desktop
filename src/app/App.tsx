@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import {
   Album,
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { demoTracks } from '../features/library/demoTracks'
 import { usePlayerStore } from '../features/player/playerStore'
+import { SearchView } from '../features/search/SearchView'
 import { formatDuration } from '../shared/time'
 
 const navigation = [
@@ -39,22 +40,25 @@ const collections = ['暮色公路', '夜航电台', '缓慢醒来', '无人售�
 export function App() {
   const [activeNav, setActiveNav] = useState('此刻')
   const [query, setQuery] = useState('')
+  const [submittedQuery, setSubmittedQuery] = useState('')
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
+  const queue = usePlayerStore((state) => state.queue)
+  const progressSeconds = usePlayerStore((state) => state.progressSeconds)
+  const durationSeconds = usePlayerStore((state) => state.durationSeconds)
   const play = usePlayerStore((state) => state.play)
   const toggle = usePlayerStore((state) => state.toggle)
   const toggleQueue = usePlayerStore((state) => state.toggleQueue)
   const next = usePlayerStore((state) => state.next)
   const previous = usePlayerStore((state) => state.previous)
+  const seek = usePlayerStore((state) => state.seek)
 
-  const visibleTracks = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase()
-    if (!keyword) return demoTracks
-    return demoTracks.filter((track) =>
-      [track.title, track.artist, track.album].some((value) => value?.toLocaleLowerCase().includes(keyword)),
-    )
-  }, [query])
+  const submitSearch = (event: FormEvent) => {
+    event.preventDefault()
+    const normalized = query.trim()
+    if (normalized) setSubmittedQuery(normalized)
+  }
 
   return (
     <div className={`app-shell ${queueOpen ? 'queue-visible' : ''}`}>
@@ -98,16 +102,17 @@ export function App() {
       </aside>
 
       <main className="content-stage">
-        <header className="topbar">
-          <div className="history-buttons"><button><ArrowLeft size={18} /></button><button><ArrowRight size={18} /></button></div>
+        <form className="topbar" onSubmit={submitSearch}>
+          <div className="history-buttons"><button type="button" onClick={() => setSubmittedQuery('')}><ArrowLeft size={18} /></button><button type="button"><ArrowRight size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
           </label>
-          <button className="avatar">山</button>
-        </header>
+          <button type="button" className="avatar">山</button>
+        </form>
 
         <div className="stage-scroll">
+          {submittedQuery ? <SearchView query={submittedQuery} /> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />
@@ -127,10 +132,10 @@ export function App() {
           </section>
 
           <section className="tracks-section">
-            <header><div><span className="eyebrow">FOR YOU</span><h3>{query ? `“${query}”的结果` : '今天可以听这些'}</h3></div><button>查看全部 <ChevronRight size={16} /></button></header>
+            <header><div><span className="eyebrow">FOR YOU</span><h3>今天可以听这些</h3></div><button>查看全部 <ChevronRight size={16} /></button></header>
             <div className="track-table" role="table">
               <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
-              {visibleTracks.map((track, index) => {
+              {demoTracks.map((track, index) => {
                 const isCurrent = current?.id === track.id
                 return (
                   <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id}>
@@ -145,6 +150,7 @@ export function App() {
               })}
             </div>
           </section>
+          </>}
         </div>
       </main>
 
@@ -155,7 +161,7 @@ export function App() {
           <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '选择一首歌开始'}</small></div><Heart size={19} className={current?.liked ? 'liked' : ''} fill={current?.liked ? 'currentColor' : 'none'} /></div>
         </div>
         <div className="queue-list">
-          {demoTracks.filter((track) => track.id !== current?.id).map((track, index) => (
+          {queue.filter((track) => track.id !== current?.id).map((track, index) => (
             <button onClick={() => play(track)} key={track.id}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist}</small></span><small>{formatDuration(track.durationSeconds)}</small></button>
           ))}
         </div>
@@ -165,7 +171,7 @@ export function App() {
         <div className="dock-track"><span className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></div>
         <div className="dock-center">
           <div className="dock-controls"><button onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button className="play-toggle" onClick={toggle}>{status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button onClick={next}><SkipForward size={19} fill="currentColor" /></button></div>
-          <div className="progress"><small>1:42</small><span><i /></span><small>{current ? formatDuration(current.durationSeconds) : '0:00'}</small></div>
+          <div className="progress"><small>{formatDuration(progressSeconds)}</small><input aria-label="播放进度" type="range" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
         </div>
         <div className="dock-tools"><Volume2 size={18} /><span className="volume"><i /></span><button className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
       </footer>

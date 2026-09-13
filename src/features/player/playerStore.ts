@@ -1,41 +1,49 @@
 import { create } from 'zustand'
 import type { Track } from '../../domain/track'
+import { getPlaybackSource, inDesktopShell } from '../../services/desktopApi'
 import { demoTracks } from '../library/demoTracks'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
+type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; progressSeconds: number; durationSeconds: number; play: (track: Track) => Promise<void>; toggle: () => Promise<void>; toggleQueue: () => void; next: () => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void }
 
-type PlayerState = {
-  current: Track | null
-  queue: Track[]
-  status: PlaybackStatus
-  queueOpen: boolean
-  play: (track: Track) => void
-  toggle: () => void
-  toggleQueue: () => void
-  next: () => void
-  previous: () => void
+let audio: HTMLAudioElement | null = null
+function playerAudio() {
+  if (audio) return audio
+  audio = new Audio(); audio.preload = 'metadata'
+  audio.addEventListener('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
+  audio.addEventListener('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
+  audio.addEventListener('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
+  audio.addEventListener('timeupdate', () => usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }))
+  audio.addEventListener('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
+  audio.addEventListener('ended', () => void usePlayerStore.getState().next())
+  audio.addEventListener('error', () => usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重新播放' }))
+  return audio
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
-  current: demoTracks[1],
-  queue: demoTracks,
-  status: 'paused',
-  queueOpen: true,
-  play: (track) => set({ current: track, status: 'playing' }),
-  toggle: () => set(({ status, current }) => ({
-    status: !current ? 'idle' : status === 'playing' ? 'paused' : 'playing',
-  })),
+  current: demoTracks[1], queue: demoTracks, status: 'paused', error: null, queueOpen: true, progressSeconds: 0, durationSeconds: demoTracks[1].durationSeconds,
+  play: async (track) => {
+    const queue = get().queue.some((item) => item.id === track.id) ? get().queue : [...get().queue, track]
+    set({ current: track, queue, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
+    if (!inDesktopShell) { set({ status: 'playing' }); return }
+    try {
+      const source = await getPlaybackSource(track.source.bvid, track.source.cid)
+      const element = playerAudio(); element.src = source.audioUrl; element.currentTime = 0; await element.play()
+    } catch (error) {
+      const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'
+      set({ status: 'error', error: message })
+    }
+  },
+  toggle: async () => {
+    const { current, status } = get(); if (!current) return
+    if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
+    const element = playerAudio()
+    if (status === 'playing' || status === 'buffering') element.pause()
+    else if (element.src) await element.play().catch(() => set({ status: 'error', error: '恢复播放失败' }))
+    else await get().play(current)
+  },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
-  next: () => {
-    const { current, queue } = get()
-    if (!queue.length) return
-    const index = current ? queue.findIndex((track) => track.id === current.id) : -1
-    set({ current: queue[(index + 1) % queue.length], status: 'playing' })
-  },
-  previous: () => {
-    const { current, queue } = get()
-    if (!queue.length) return
-    const index = current ? queue.findIndex((track) => track.id === current.id) : 0
-    set({ current: queue[(index - 1 + queue.length) % queue.length], status: 'playing' })
-  },
+  next: async () => { const { current, queue } = get(); if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : -1; await get().play(queue[(index + 1) % queue.length]) },
+  previous: async () => { const { current, queue } = get(); if (!queue.length) return; const element = playerAudio(); if (element.currentTime > 4) { element.currentTime = 0; return }; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
+  seek: (seconds) => { const element = playerAudio(); element.currentTime = Math.max(0, Math.min(seconds, element.duration || seconds)); set({ progressSeconds: element.currentTime }) },
 }))
