@@ -8,7 +8,11 @@ use infrastructure::providers::bilibili::BilibiliProvider;
 use infrastructure::providers::lrclib::LrclibProvider;
 use infrastructure::providers::music_catalog::MusicCatalogProvider;
 use infrastructure::repositories::auth::AuthRepository;
-use tauri::Manager;
+use tauri::{
+    Emitter, Manager,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +45,35 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
+            let show = MenuItem::with_id(app, "show", "显示 Resonance", true, None::<&str>)?;
+            let play_pause =
+                MenuItem::with_id(app, "play_pause", "播放 / 暂停", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &play_pause, &quit])?;
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "play_pause" => {
+                        let _ = app.emit("tray-play-pause", ());
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            #[cfg(target_os = "macos")]
+            {
+                tray = tray.icon_as_template(true);
+            }
+            tray.build(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Album,
@@ -25,13 +26,12 @@ import {
   Volume2,
   Waves,
 } from 'lucide-react'
-import { demoTracks } from '../features/library/demoTracks'
 import { usePlayerStore } from '../features/player/playerStore'
 import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { clearSearchHistory, createPlaylist, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
 import { DownloadsView } from '../features/downloads/DownloadsView'
 import { AccountControl } from '../features/account/AccountControl'
@@ -58,6 +58,7 @@ export function App() {
   const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
+  const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
   const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
   const activePlaylist = playlists.data?.find((playlist) => activeNav === `playlist:${playlist.id}`)
   const current = usePlayerStore((state) => state.current)
@@ -95,6 +96,11 @@ export function App() {
     updatePlayerTrack({ ...current, liked })
     await queryClient.invalidateQueries({ queryKey: ['library'] })
   }
+  useEffect(() => {
+    let unlisten: undefined | (() => void)
+    void listen('tray-play-pause', () => void usePlayerStore.getState().toggle()).then((dispose) => { unlisten = dispose })
+    return () => unlisten?.()
+  }, [])
 
   return (
     <div className={`app-shell ${queueOpen ? 'queue-visible' : ''}`}>
@@ -158,7 +164,7 @@ export function App() {
               <span className="eyebrow coral">今日声场</span>
               <h2>让暮色慢一点</h2>
               <p>从熟悉的旋律出发，找到今晚的下一首歌。</p>
-              <button className="primary-action" onClick={() => play(demoTracks[0])}><Play size={17} fill="currentColor" />开始聆听</button>
+              <button className="primary-action" disabled={!homeTracks.data?.length} onClick={() => homeTracks.data?.[0] && play(homeTracks.data[0])}><Play size={17} fill="currentColor" />{homeTracks.data?.length ? '继续聆听' : '搜索后开始聆听'}</button>
             </div>
             <div className="hero-art" aria-hidden="true"><span /><span /><span /><i /></div>
           </section>
@@ -173,7 +179,7 @@ export function App() {
             <header><div><span className="eyebrow">FOR YOU</span><h3>今天可以听这些</h3></div><button>查看全部 <ChevronRight size={16} /></button></header>
             <div className="track-table" role="table">
               <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
-              {demoTracks.map((track, index) => {
+              {(homeTracks.data || []).map((track, index) => {
                 const isCurrent = current?.id === track.id
                 return (
                   <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id}>
@@ -186,6 +192,7 @@ export function App() {
                   </div>
                 )
               })}
+              {homeTracks.data?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
             </div>
           </section>
           </>}
