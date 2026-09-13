@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Trash2, X } from 'lucide-react'
+import { Check, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, toggleStoredFavorite, updateStoredMetadata, type Playlist } from '../../services/desktopApi'
+import { addTrackToPlaylist, commandErrorMessage, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
 
@@ -60,8 +60,18 @@ function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: ()
   const [artist, setArtist] = useState(track.artist || '')
   const [album, setAlbum] = useState(track.album || '')
   const [coverUrl, setCoverUrl] = useState(track.coverUrl || '')
+  const [catalog, setCatalog] = useState<CatalogCandidate[]>([])
+  const [catalogError, setCatalogError] = useState('')
+  const [catalogLoading, setCatalogLoading] = useState(false)
   const mutation = useMutation({ mutationFn: () => updateStoredMetadata(track.id, { title, artist, album, coverUrl }), onSuccess: onSaved })
   const submit = (event: FormEvent) => { event.preventDefault(); if (title.trim()) mutation.mutate() }
+  const enrich = async () => {
+    if (!title.trim() || !artist.trim()) { setCatalogError('请先填写歌曲名和歌手'); return }
+    setCatalogLoading(true); setCatalogError('')
+    try { setCatalog(await searchMetadataCatalog(title, artist)) }
+    catch (cause) { setCatalogError(commandErrorMessage(cause)) }
+    finally { setCatalogLoading(false) }
+  }
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <form className="metadata-dialog" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="metadata-title">
       <header><div><span className="eyebrow">TRACK DETAILS</span><h3 id="metadata-title">编辑歌曲信息</h3></div><button type="button" onClick={onClose} aria-label="关闭"><X /></button></header>
@@ -69,6 +79,9 @@ function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: ()
       <label>歌曲名<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
       <div className="field-pair"><label>歌手<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="歌手未知" /></label><label>专辑<input value={album} onChange={(event) => setAlbum(event.target.value)} placeholder="可选" /></label></div>
       <label>封面地址<input value={coverUrl} onChange={(event) => setCoverUrl(event.target.value)} placeholder="https://" /></label>
+      <button className="metadata-enrich" type="button" onClick={() => void enrich()} disabled={catalogLoading}>{catalogLoading ? <LoaderCircle className="spin" /> : <Sparkles />}自动补充专辑与封面</button>
+      {catalogError && <div className="dialog-error">{catalogError}</div>}
+      {catalog.length > 0 && <div className="catalog-results">{catalog.map((item) => <button type="button" key={item.trackId} onClick={() => { setAlbum(item.collectionName || ''); setCoverUrl(item.artworkUrl || ''); setCatalog([]) }}>{item.artworkUrl ? <img src={item.artworkUrl} alt="" /> : <span />}<span><strong>{item.collectionName || '专辑未知'}</strong><small>{item.trackName} · {item.artistName}</small></span></button>)}</div>}
       {mutation.isError && <div className="dialog-error">{commandErrorMessage(mutation.error)}</div>}
       <footer><button type="button" onClick={onClose}>取消</button><button className="save-button" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle className="spin" size={15} /> : null}保存修改</button></footer>
     </form>

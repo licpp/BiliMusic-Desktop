@@ -13,6 +13,7 @@ export type LyricLine = { timeMs: number; text: string }
 export type LyricCandidate = { id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number }
+export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
 
 export const inDesktopShell = isTauri()
 
@@ -93,6 +94,10 @@ export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_add_track', { playlistId, trackId })
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_remove_track', { playlistId, trackId })
 export const deletePlaylist = (playlistId: string) => invoke<void>('playlist_delete', { playlistId })
+export async function searchMetadataCatalog(title: string, artist: string): Promise<CatalogCandidate[]> {
+  if (!inDesktopShell) return []
+  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist })
+}
 
 function toTrackInput(track: Track) {
   return {

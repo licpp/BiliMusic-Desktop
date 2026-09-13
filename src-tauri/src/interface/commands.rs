@@ -4,6 +4,7 @@ use crate::infrastructure::providers::bilibili::{
     BilibiliProvider, PlaybackSource, SearchPage, VideoParts,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
+use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
 };
@@ -292,6 +293,21 @@ pub async fn lyrics_search(
     }
     provider
         .search(title, artist.as_deref())
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn metadata_catalog_search(
+    provider: State<'_, MusicCatalogProvider>,
+    title: String,
+    artist: String,
+) -> Result<Vec<CatalogCandidate>, CommandError> {
+    if title.trim().is_empty() || artist.trim().is_empty() {
+        return Err(CommandError::validation("请先填写歌曲名和歌手"));
+    }
+    provider
+        .search(title.trim(), artist.trim())
         .await
         .map_err(CommandError::provider)
 }
