@@ -17,6 +17,9 @@ export type StoredLyrics = { trackId: string; provider: string; providerLyricId:
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number }
 export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
+export type QrLogin = { key: string; url: string }
+export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
+export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string }
 
 export const inDesktopShell = isTauri()
 
@@ -110,6 +113,13 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
 export const downloadTrack = (track: Track, targetDirectory: string) => invoke<void>('download_track', {
   trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory,
 })
+export async function getAccountProfile(): Promise<AccountProfile> {
+  if (!inDesktopShell) return { loggedIn: false }
+  return invoke<AccountProfile>('bili_account_profile')
+}
+export const generateLoginQr = () => invoke<QrLogin>('bili_qr_login_generate')
+export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login_poll', { key })
+export const logoutBilibili = () => invoke<void>('bili_logout')
 
 function toTrackInput(track: Track) {
   return {

@@ -1,10 +1,13 @@
 use reqwest::{
     Client, Url,
-    header::{ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, ORIGIN, REFERER},
+    header::{
+        ACCEPT, ACCEPT_LANGUAGE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, SET_COOKIE,
+    },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 const API_ORIGIN: &str = "https://api.bilibili.com";
 const WEB_ORIGIN: &str = "https://www.bilibili.com/";
@@ -96,12 +99,62 @@ pub struct DanmakuItem {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrLogin {
+    pub key: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrLoginStatus {
+    pub status: String,
+    pub message: String,
+    #[serde(skip_serializing)]
+    pub cookie_header: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountProfile {
+    pub logged_in: bool,
+    pub user_id: Option<i64>,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct Envelope<T> {
     code: i64,
     #[serde(default)]
     message: String,
     data: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct QrGenerateData {
+    url: String,
+    qrcode_key: String,
+}
+
+#[derive(Deserialize)]
+struct QrPollData {
+    code: i64,
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct NavData {
+    #[serde(default, rename = "isLogin")]
+    is_login: bool,
+    #[serde(default)]
+    mid: i64,
+    #[serde(default)]
+    uname: String,
+    #[serde(default)]
+    face: String,
 }
 
 #[derive(Deserialize)]
@@ -198,6 +251,7 @@ struct DashStream {
 
 pub struct BilibiliProvider {
     client: Client,
+    session_cookie: RwLock<Option<String>>,
 }
 
 impl BilibiliProvider {
@@ -220,7 +274,91 @@ impl BilibiliProvider {
             .timeout(Duration::from_secs(20))
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
             .build()?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            session_cookie: RwLock::new(None),
+        })
+    }
+
+    pub async fn set_session_cookie(&self, cookie: Option<String>) {
+        *self.session_cookie.write().await = cookie;
+    }
+
+    pub async fn qr_login_generate(&self) -> Result<QrLogin, ProviderError> {
+        let data: QrGenerateData = self
+            .get_data(
+                Url::parse("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
+                    .expect("static login URL"),
+            )
+            .await?;
+        Ok(QrLogin {
+            key: data.qrcode_key,
+            url: data.url,
+        })
+    }
+
+    pub async fn qr_login_poll(&self, key: &str) -> Result<QrLoginStatus, ProviderError> {
+        let mut url = Url::parse("https://passport.bilibili.com/x/passport-login/web/qrcode/poll")
+            .expect("static login URL");
+        url.query_pairs_mut().append_pair("qrcode_key", key);
+        let response = self.client.get(url).send().await?.error_for_status()?;
+        let cookies = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter_map(|value| value.split(';').next())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let envelope: Envelope<QrPollData> = response.json().await?;
+        if envelope.code != 0 {
+            return Err(ProviderError::Api {
+                code: envelope.code,
+                message: envelope.message,
+            });
+        }
+        let data = envelope.data.ok_or_else(|| ProviderError::Api {
+            code: -1,
+            message: "响应缺少 data".into(),
+        })?;
+        let status = match data.code {
+            0 => "authenticated",
+            86090 => "confirmed",
+            86101 => "waiting",
+            86038 => "expired",
+            _ => "error",
+        };
+        let cookie_header = if data.code == 0 && !cookies.is_empty() {
+            Some(cookies)
+        } else {
+            None
+        };
+        if let Some(cookie) = &cookie_header {
+            self.set_session_cookie(Some(cookie.clone())).await;
+        }
+        Ok(QrLoginStatus {
+            status: status.into(),
+            message: data.message,
+            cookie_header,
+        })
+    }
+
+    pub async fn account_profile(&self) -> Result<AccountProfile, ProviderError> {
+        if self.session_cookie.read().await.is_none() {
+            return Ok(AccountProfile {
+                logged_in: false,
+                user_id: None,
+                name: None,
+                avatar_url: None,
+            });
+        }
+        let data: NavData = self.get_data(self.api_url("/x/web-interface/nav")).await?;
+        Ok(AccountProfile {
+            logged_in: data.is_login,
+            user_id: data.is_login.then_some(data.mid),
+            name: data.is_login.then_some(data.uname),
+            avatar_url: data.is_login.then_some(normalize_url(&data.face)),
+        })
     }
 
     pub async fn search(
@@ -402,8 +540,8 @@ impl BilibiliProvider {
 
     async fn get_data<T: DeserializeOwned>(&self, url: Url) -> Result<T, ProviderError> {
         let envelope: Envelope<T> = self
-            .client
-            .get(url)
+            .authenticated_get(url)
+            .await
             .send()
             .await?
             .error_for_status()?
@@ -419,6 +557,14 @@ impl BilibiliProvider {
             code: -1,
             message: "响应缺少 data".into(),
         })
+    }
+
+    async fn authenticated_get(&self, url: Url) -> reqwest::RequestBuilder {
+        let request = self.client.get(url);
+        match self.session_cookie.read().await.as_deref() {
+            Some(cookie) => request.header(COOKIE, cookie),
+            None => request,
+        }
     }
 }
 
@@ -583,5 +729,14 @@ mod tests {
                 .expect("danmaku")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili network access"]
+    async fn live_provider_generates_login_qr() {
+        let provider = super::BilibiliProvider::new().expect("provider client");
+        let login = provider.qr_login_generate().await.expect("login QR");
+        assert!(!login.key.is_empty());
+        assert!(login.url.starts_with("https://"));
     }
 }

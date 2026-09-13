@@ -7,6 +7,7 @@ use infrastructure::media_proxy::MediaProxy;
 use infrastructure::providers::bilibili::BilibiliProvider;
 use infrastructure::providers::lrclib::LrclibProvider;
 use infrastructure::providers::music_catalog::MusicCatalogProvider;
+use infrastructure::repositories::auth::AuthRepository;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,9 +29,16 @@ pub fn run() {
         .setup(|app| {
             let database = Database::open(app.handle())?;
             let media_proxy = tauri::async_runtime::block_on(MediaProxy::start())?;
+            let bilibili = BilibiliProvider::new()?;
+            let saved_cookie = database.0.lock().ok().and_then(|connection| {
+                AuthRepository::get_cookie(&connection, "bilibili")
+                    .ok()
+                    .flatten()
+            });
+            tauri::async_runtime::block_on(bilibili.set_session_cookie(saved_cookie));
             app.manage(database);
             app.manage(media_proxy);
-            app.manage(BilibiliProvider::new()?);
+            app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
             Ok(())
@@ -56,6 +64,10 @@ pub fn run() {
             interface::commands::bili_playback_source,
             interface::commands::bili_video_source,
             interface::commands::bili_danmaku,
+            interface::commands::bili_qr_login_generate,
+            interface::commands::bili_qr_login_poll,
+            interface::commands::bili_account_profile,
+            interface::commands::bili_logout,
             interface::commands::lyrics_search,
             interface::commands::metadata_catalog_search,
             interface::commands::lyrics_get,

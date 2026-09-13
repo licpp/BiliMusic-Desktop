@@ -32,6 +32,7 @@ import { formatDuration } from '../shared/time'
 import { clearSearchHistory, createPlaylist, listPlaylists, listSearchHistory } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
 import { DownloadsView } from '../features/downloads/DownloadsView'
+import { AccountControl } from '../features/account/AccountControl'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -130,7 +131,7 @@ export function App() {
             <input value={query} onFocus={() => setSearchFocused(true)} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
             {searchFocused && !query && Boolean(searchHistory.data?.length) && <div className="search-history-popover"><header><span>最近搜索</span><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => clearHistory.mutate()}>清除</button></header>{searchHistory.data!.map((item) => <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(item); setSubmittedQuery(item); setSearchFocused(false) }}><Clock3 size={14} />{item}</button>)}</div>}
           </label>
-          <button type="button" className="avatar">山</button>
+          <AccountControl />
         </form>
 
         <div className="stage-scroll">

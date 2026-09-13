@@ -2,10 +2,12 @@ use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
-    BilibiliProvider, DanmakuItem, PlaybackSource, SearchPage, VideoParts, VideoSource,
+    AccountProfile, BilibiliProvider, DanmakuItem, PlaybackSource, QrLogin, QrLoginStatus,
+    SearchPage, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
+use crate::infrastructure::repositories::auth::AuthRepository;
 use crate::infrastructure::repositories::downloads::{DownloadRecord, DownloadRepository};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
@@ -311,6 +313,63 @@ pub async fn bili_danmaku(
         return Err(CommandError::validation("无效的弹幕标识"));
     }
     provider.danmaku(cid).await.map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_qr_login_generate(
+    provider: State<'_, BilibiliProvider>,
+) -> Result<QrLogin, CommandError> {
+    provider
+        .qr_login_generate()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_qr_login_poll(
+    provider: State<'_, BilibiliProvider>,
+    database: State<'_, Database>,
+    key: String,
+) -> Result<QrLoginStatus, CommandError> {
+    if key.trim().is_empty() {
+        return Err(CommandError::validation("二维码登录标识为空"));
+    }
+    let status = provider
+        .qr_login_poll(&key)
+        .await
+        .map_err(CommandError::provider)?;
+    if let Some(cookie) = &status.cookie_header {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        AuthRepository::save_cookie(&connection, "bilibili", cookie)
+            .map_err(CommandError::database)?;
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn bili_account_profile(
+    provider: State<'_, BilibiliProvider>,
+) -> Result<AccountProfile, CommandError> {
+    provider
+        .account_profile()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_logout(
+    provider: State<'_, BilibiliProvider>,
+    database: State<'_, Database>,
+) -> Result<(), CommandError> {
+    provider.set_session_cookie(None).await;
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)
 }
 
 #[tauri::command]

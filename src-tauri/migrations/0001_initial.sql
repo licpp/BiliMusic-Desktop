@@ -95,4 +95,10 @@ CREATE TABLE IF NOT EXISTS downloads (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS auth_session (
+  provider TEXT PRIMARY KEY,
+  cookie_header TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 PRAGMA user_version = 1;
