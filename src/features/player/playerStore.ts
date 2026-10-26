@@ -1,59 +1,87 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
-import { getPlaybackSource, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
+import { getTrackPlaybackUrl, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
 import { demoTracks } from '../library/demoTracks'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
 export type RepeatMode = 'off' | 'all' | 'one'
-type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; progressSeconds: number; durationSeconds: number; volume: number; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track) => Promise<void>; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; updateTrack: (track: Track) => void }
+type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; progressSeconds: number; durationSeconds: number; volume: number; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; updateTrack: (track: Track) => void }
 
 let audio: HTMLAudioElement | null = null
+let playRequest = 0
+let loadedTrackId: string | null = null
+let persistTimer: ReturnType<typeof setTimeout> | undefined
+let pendingSnapshot: { key: string; value: string } | undefined
+function flushPlayerSnapshot() {
+  if (pendingSnapshot) { try { localStorage.setItem(pendingSnapshot.key, pendingSnapshot.value) } catch { /* Playback remains usable when storage is full. */ } pendingSnapshot = undefined }
+}
+const playerStorage = {
+  getItem: (key: string) => localStorage.getItem(key),
+  setItem: (key: string, value: string) => { pendingSnapshot = { key, value }; if (!persistTimer) persistTimer = setTimeout(() => { persistTimer = undefined; flushPlayerSnapshot() }, 1000) },
+  removeItem: (key: string) => localStorage.removeItem(key),
+}
+window.addEventListener('pagehide', flushPlayerSnapshot)
 function playerAudio() {
   if (audio) return audio
-  audio = new Audio(); audio.preload = 'metadata'
+  audio = new Audio(); audio.preload = 'metadata'; audio.volume = usePlayerStore.getState().volume
   audio.addEventListener('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
   audio.addEventListener('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
   audio.addEventListener('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
   audio.addEventListener('timeupdate', () => usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }))
   audio.addEventListener('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
   audio.addEventListener('ended', () => void usePlayerStore.getState().next(true))
-  audio.addEventListener('error', () => usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重新播放' }))
+  audio.addEventListener('error', () => { if (loadedTrackId === usePlayerStore.getState().current?.id) usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重新播放' }) })
   return audio
 }
 
-export const usePlayerStore = create<PlayerState>((set, get) => ({
+export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, shuffled: false, repeatMode: 'off',
-  play: async (track) => {
+  play: async (track, startAt = 0) => {
+    const request = ++playRequest
+    loadedTrackId = null
+    if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
     try {
       const storedTrack = await recordPlayedTrack(track)
+      if (request !== playRequest) return
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
       set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds })
-      const source = await getPlaybackSource(storedTrack.source.bvid, storedTrack.source.cid)
-      const element = playerAudio(); element.src = source.audioUrl; element.currentTime = 0; await element.play()
+      const url = await getTrackPlaybackUrl(storedTrack)
+      if (request !== playRequest) return
+      const element = playerAudio(); element.src = url; element.currentTime = Math.max(0, startAt); loadedTrackId = storedTrack.id; await element.play()
     } catch (error) {
+      if (request !== playRequest) return
       const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'
       set({ status: 'error', error: message })
     }
   },
+  playAll: async (tracks) => { if (!tracks.length) return; set({ queue: uniqueTracks(tracks) }); await get().play(tracks[0]) },
+  enqueue: (tracks) => set(({ queue }) => ({ queue: uniqueTracks([...queue, ...tracks]) })),
+  removeFromQueue: (id) => set(({ queue }) => ({ queue: queue.filter((track) => track.id !== id) })),
+  clearQueue: () => set({ queue: [] }),
+  moveInQueue: (id, direction) => set(({ queue }) => { const next = [...queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next } }),
   toggle: async () => {
     const { current, status } = get(); if (!current) return
     if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
     const element = playerAudio()
+    if (status === 'resolving') { ++playRequest; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
-    else if (element.src) await element.play().catch(() => set({ status: 'error', error: '恢复播放失败' }))
-    else await get().play(current)
+    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => set({ status: 'error', error: '恢复播放失败' }))
+    else await get().play(current, get().progressSeconds)
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
-  next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (!queue.length) return; if (fromEnded && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused', progressSeconds: 0 }); return } if (fromEnded && repeatMode === 'one' && current) { await get().play(current); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex]) },
-  previous: async () => { const { current, queue } = get(); if (!queue.length) return; const element = playerAudio(); if (element.currentTime > 4) { element.currentTime = 0; return }; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
-  seek: (seconds) => { const element = playerAudio(); element.currentTime = Math.max(0, Math.min(seconds, element.duration || seconds)); set({ progressSeconds: element.currentTime }) },
+  next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded && repeatMode === 'one' && current) { await get().play(current); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex]) },
+  previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
+  seek: (seconds) => { const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
   setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); playerAudio().volume = normalized; set({ volume: normalized }) },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled })),
   cycleRepeat: () => set(({ repeatMode }) => ({ repeatMode: repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off' })),
   updateTrack: (track) => set(({ current, queue }) => ({ current: current?.id === track.id ? track : current, queue: queue.map((item) => item.id === track.id ? track : item) })),
-}))
+}), { name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage), merge: (persisted, initial) => { const saved = persisted as Partial<PlayerState>; const normalize = (track: Track) => ({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') }); return { ...initial, ...saved, current: saved.current ? normalize(saved.current) : initial.current, queue: Array.isArray(saved.queue) ? saved.queue.map(normalize) : initial.queue } }, partialize: ({ current, queue, progressSeconds, durationSeconds, volume, shuffled, repeatMode }) => ({ current, queue, progressSeconds, durationSeconds, volume, shuffled, repeatMode }) }))
+
+function uniqueTracks(tracks: Track[]) { return [...new Map(tracks.map((track) => [track.id, track])).values()] }
 
 function randomOtherIndex(length: number, current: number) {
   const offset = 1 + Math.floor(Math.random() * (length - 1))

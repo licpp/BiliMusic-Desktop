@@ -26,9 +26,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build());
 
-    #[cfg(not(debug_assertions))]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
-
     builder
         .setup(|app| {
             let database = Database::open(app.handle())?;
@@ -80,6 +77,9 @@ pub fn run() {
             interface::commands::app_health,
             interface::commands::library_summary,
             interface::commands::library_record_play,
+            interface::commands::library_save_track,
+            interface::commands::track_playback_url,
+            interface::commands::playlist_rename,
             interface::commands::library_tracks,
             interface::commands::library_recent,
             interface::commands::library_toggle_favorite,
@@ -100,6 +100,8 @@ pub fn run() {
             interface::commands::bili_qr_login_generate,
             interface::commands::bili_qr_login_poll,
             interface::commands::bili_account_profile,
+            interface::commands::bili_favorite_folders,
+            interface::commands::bili_favorite_videos,
             interface::commands::bili_logout,
             interface::commands::bili_comments,
             interface::commands::bili_comment_replies,

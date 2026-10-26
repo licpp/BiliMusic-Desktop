@@ -2,23 +2,29 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, downloadTrack, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
+import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, downloadTrack, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, renamePlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
 import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
 
-export function LibraryView({ favoritesOnly = false, recent = false, playlist }: { favoritesOnly?: boolean; recent?: boolean; playlist?: Playlist }) {
+export function LibraryView({ favoritesOnly = false, recent = false, playlist, onPlaylistDeleted }: { favoritesOnly?: boolean; recent?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void }) {
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.play)
+  const playAll = usePlayerStore((state) => state.playAll)
+  const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
   const [editing, setEditing] = useState<Track | null>(null)
   const [adding, setAdding] = useState<Track | null>(null)
   const [downloadMessage, setDownloadMessage] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [name, setName] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const tracks = useQuery({ queryKey: ['library', favoritesOnly, recent, playlist?.id], queryFn: () => playlist ? listPlaylistTracks(playlist.id) : recent ? listRecentTracks() : listLibraryTracks(favoritesOnly) })
   const favorite = useMutation({
     mutationFn: toggleStoredFavorite,
-    onSuccess: () => client.invalidateQueries({ queryKey: ['library'] }),
+    onSuccess: (liked, id) => { const track = tracks.data?.find((item) => item.id === id); if (track) updatePlayerTrack({ ...track, liked }); return client.invalidateQueries({ queryKey: ['library'] }) },
   })
+  const managePlaylist = useMutation({ mutationFn: async (action: 'rename' | 'delete') => { if (!playlist) return; if (action === 'rename') await renamePlaylist(playlist.id, name); else await deletePlaylist(playlist.id); return action }, onSuccess: (action) => { setRenaming(false); setConfirmDelete(false); void client.invalidateQueries({ queryKey: ['playlists'] }); if (action === 'delete') onPlaylistDeleted?.() } })
   const startDownload = async (track: Track) => {
     try {
       let directory = await getDownloadDirectory()
@@ -33,6 +39,10 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist }:
 
   return <section className="library-view">
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (recent ? '最近播放' : favoritesOnly ? '我喜欢' : '音乐库')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · 本地歌单` : recent ? '按最近一次播放整理，继续上次的声音。' : favoritesOnly ? '只属于你的声音标记。' : '播放过的歌曲会自动整理到这里。'}</p></div></header>
+    <div className="collection-actions"><button disabled={!tracks.data?.length} onClick={() => void playAll(tracks.data || [])}><Play size={16} />播放全部</button><button disabled={!tracks.data?.length} onClick={() => enqueue(tracks.data || [])}><ListPlus size={16} />全部加入队列</button>{playlist && <><button onClick={() => { setName(playlist.name); setRenaming(true) }}><Pencil size={15} />重命名</button><button onClick={() => setConfirmDelete(true)}><Trash2 size={15} />删除歌单</button></>}</div>
+    {(renaming || confirmDelete) && <form className="playlist-management" onSubmit={(event) => { event.preventDefault(); managePlaylist.mutate(renaming ? 'rename' : 'delete') }}>{renaming ? <input autoFocus maxLength={80} value={name} onChange={(event) => setName(event.target.value)} aria-label="歌单名称" /> : <span>删除「{playlist?.name}」？歌曲仍会保留在音乐库中。</span>}<button disabled={managePlaylist.isPending || (renaming && !name.trim())}>确认</button><button type="button" onClick={() => { setRenaming(false); setConfirmDelete(false) }}>取消</button></form>}
+    {managePlaylist.isError && <p className="inline-error">{commandErrorMessage(managePlaylist.error)}</p>}
+    {favorite.isError && <p className="inline-error">{commandErrorMessage(favorite.error)}</p>}
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={playlist ? '歌单还是空的' : recent ? '还没有播放记录' : favoritesOnly ? '还没有喜欢的歌曲' : '音乐库还是空的'} detail={playlist ? '在音乐库的歌曲菜单中把歌曲加入这里。' : '从搜索结果播放歌曲后，它会自动出现在这里。'} />}
@@ -45,8 +55,9 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist }:
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
       <button className="icon-action" onClick={() => setEditing(track)} aria-label="编辑歌曲信息"><Pencil size={16} /></button>
+      <button className="icon-action" onClick={() => enqueue([track])} aria-label="加入播放队列"><ListPlus size={16} /></button>
       <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
-      {playlist ? <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(() => client.invalidateQueries({ queryKey: ['library'] }))} aria-label="从歌单移除"><Trash2 size={16} /></button> : <button className="icon-action" onClick={() => setAdding(track)} aria-label="添加到歌单"><ListPlus size={17} /></button>}
+      {playlist ? <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(async () => { await client.invalidateQueries({ queryKey: ['library'] }); await client.invalidateQueries({ queryKey: ['playlists'] }) }).catch((error) => setDownloadMessage(commandErrorMessage(error)))} aria-label="从歌单移除"><Trash2 size={16} /></button> : <button className="icon-action" onClick={() => setAdding(track)} aria-label="添加到歌单"><ListPlus size={17} /></button>}
     </article>)}</div>}
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { updatePlayerTrack(updated); setEditing(null); client.invalidateQueries({ queryKey: ['library'] }) }} />}
     {adding && <PlaylistPicker track={adding} onClose={() => setAdding(null)} />}
@@ -58,13 +69,16 @@ function PlaylistPicker({ track, onClose }: { track: Track; onClose: () => void 
   const client = useQueryClient()
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
   const [added, setAdded] = useState<string | null>(null)
+  const [error, setError] = useState('')
   const add = async (playlistId: string) => {
+    try {
     await addTrackToPlaylist(playlistId, track.id)
     setAdded(playlistId)
     await client.invalidateQueries({ queryKey: ['playlists'] })
     await client.invalidateQueries({ queryKey: ['library'] })
+    } catch (cause) { setError(commandErrorMessage(cause)) }
   }
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="playlist-picker" role="dialog" aria-modal="true"><header><div><span className="eyebrow">PLAYLIST</span><h3>添加到歌单</h3></div><button onClick={onClose}><X /></button></header><p>{track.title}</p><div>{playlists.data?.map((playlist) => <button key={playlist.id} onClick={() => void add(playlist.id)}><span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首歌曲</small></span>{added === playlist.id ? <Check size={17} /> : <ListPlus size={17} />}</button>)}{playlists.data?.length === 0 && <small>请先在左侧创建歌单</small>}</div></div></div>
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="playlist-picker" role="dialog" aria-modal="true"><header><div><span className="eyebrow">PLAYLIST</span><h3>添加到歌单</h3></div><button onClick={onClose}><X /></button></header><p>{track.title}</p>{error && <p className="inline-error">{error}</p>}<div>{playlists.data?.map((playlist) => <button key={playlist.id} onClick={() => void add(playlist.id)}><span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首歌曲</small></span>{added === playlist.id ? <Check size={17} /> : <ListPlus size={17} />}</button>)}{playlists.data?.length === 0 && <small>请先在左侧创建歌单</small>}</div></div></div>
 }
 
 function LibraryEmpty({ title, detail, spinning }: { title: string; detail: string; spinning?: boolean }) {

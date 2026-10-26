@@ -20,6 +20,8 @@ export type DownloadRecord = { id: string; trackId: string; targetPath: string; 
 export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
 export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string }
+export type FavoriteFolder = { id: number; title: string; media_count: number }
+export type FavoritePage = { medias?: { bvid: string; title: string }[]; has_more: boolean }
 export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
 export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
@@ -32,6 +34,11 @@ export async function searchBilibili(keyword: string, page = 1): Promise<BiliSea
 
 export const getVideoParts = (bvid: string) => invoke<BiliVideoParts>('bili_video_parts', { bvid })
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
+export const getTrackPlaybackUrl = (track: Track) => invoke<string>('track_playback_url', { trackId: track.id })
+export async function saveLibraryTrack(track: Track): Promise<Track> {
+  if (!inDesktopShell) return track
+  return fromStoredTrack(await invoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
+}
 export const getVideoSource = (bvid: string, cid: number) => invoke<VideoSource>('bili_video_source', { bvid, cid })
 export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku', { cid })
 
@@ -104,6 +111,7 @@ export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_add_track', { playlistId, trackId })
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_remove_track', { playlistId, trackId })
 export const deletePlaylist = (playlistId: string) => invoke<void>('playlist_delete', { playlistId })
+export const renamePlaylist = (playlistId: string, name: string) => invoke<void>('playlist_rename', { playlistId, name })
 export async function searchMetadataCatalog(title: string, artist: string): Promise<CatalogCandidate[]> {
   if (!inDesktopShell) return []
   return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist })
@@ -122,6 +130,8 @@ export async function getAccountProfile(): Promise<AccountProfile> {
 export const generateLoginQr = () => invoke<QrLogin>('bili_qr_login_generate')
 export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login_poll', { key })
 export const logoutBilibili = () => invoke<void>('bili_logout')
+export const getFavoriteFolders = () => invoke<FavoriteFolder[]>('bili_favorite_folders')
+export const getFavoriteVideos = (folderId: number, page: number) => invoke<FavoritePage>('bili_favorite_videos', { folderId, page })
 export const getComments = (aid: number, next = 1) => invoke<CommentPage>('bili_comments', { aid, next })
 export const getCommentReplies = (aid: number, root: number, page = 1) => invoke<BiliComment[]>('bili_comment_replies', { aid, root, page })
 export const setCommentLike = (aid: number, replyId: number, liked: boolean) => invoke<void>('bili_comment_like', { aid, replyId, liked })
@@ -136,7 +146,7 @@ function toTrackInput(track: Track) {
 }
 
 function fromStoredTrack(track: StoredTrack): Track {
-  return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl, durationSeconds: track.durationSeconds, liked: track.liked }
+  return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
 }
 
 export function commandErrorMessage(error: unknown): string {

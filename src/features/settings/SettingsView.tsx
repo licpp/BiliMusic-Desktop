@@ -22,5 +22,5 @@ export function SettingsView() {
     } catch (cause) { setError(commandErrorMessage(cause)) }
   }
 
-  return <section className="settings-view"><header><span className="eyebrow">PREFERENCES</span><h2>设置</h2><p>本机偏好只保存在当前设备。</p></header><div className="settings-card"><div className="settings-icon"><Download /></div><div><strong>下载目录</strong><small>{loading ? '正在读取设置' : downloadDirectory || '尚未选择，下载前会再次询问'}</small></div><button onClick={() => void chooseDirectory()} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <FolderOpen />}选择目录</button></div>{error && <div className="settings-error"><Settings2 />{error}</div>}</section>
+  return <section className="settings-view"><header><span className="eyebrow">PREFERENCES</span><h2>设置</h2><p>本机偏好只保存在当前设备。</p></header><div className="settings-card"><div className="settings-icon"><Download /></div><div><strong>下载目录</strong><small>{!inDesktopShell ? '浏览器预览不支持选择本机下载目录' : loading ? '正在读取设置' : downloadDirectory || '尚未选择，下载前会再次询问'}</small></div><button onClick={() => void chooseDirectory()} disabled={loading || !inDesktopShell}>{loading ? <LoaderCircle className="spin" /> : <FolderOpen />}选择目录</button></div>{error && <div className="settings-error"><Settings2 />{error}</div>}</section>
 }

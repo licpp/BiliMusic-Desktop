@@ -33,7 +33,7 @@
     "targets": ["dmg", "nsis"],
     "category": "Music",
     "shortDescription": "An independent desktop music client",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "macOS": {
       "minimumSystemVersion": "12.0"
     },

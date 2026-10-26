@@ -2,8 +2,8 @@ use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
-    AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, PlaybackSource,
-    QrLogin, QrLoginStatus, SearchPage, VideoParts, VideoSource,
+    AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
+    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -360,6 +360,31 @@ pub async fn bili_account_profile(
 }
 
 #[tauri::command]
+pub async fn bili_favorite_folders(
+    provider: State<'_, BilibiliProvider>,
+) -> Result<Vec<FavoriteFolder>, CommandError> {
+    provider
+        .favorite_folders()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_favorite_videos(
+    provider: State<'_, BilibiliProvider>,
+    folder_id: i64,
+    page: u32,
+) -> Result<FavoritePage, CommandError> {
+    if folder_id <= 0 || page == 0 {
+        return Err(CommandError::validation("无效的收藏夹或页码"));
+    }
+    provider
+        .favorite_videos(folder_id, page)
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
 pub async fn bili_logout(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
@@ -529,6 +554,80 @@ pub fn downloads_list(database: State<'_, Database>) -> Result<Vec<DownloadRecor
 }
 
 #[tauri::command]
+pub async fn track_playback_url(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    track_id: String,
+) -> Result<String, CommandError> {
+    let (track, paths) = {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        let track = LibraryRepository::get(&connection, &track_id)
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("歌曲不存在"))?;
+        let mut statement = connection.prepare("SELECT target_path FROM downloads WHERE track_id=?1 AND status='completed' ORDER BY updated_at DESC").map_err(CommandError::database)?;
+        let paths = statement
+            .query_map([&track_id], |row| row.get::<_, String>(0))
+            .map_err(CommandError::database)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CommandError::database)?;
+        (track, paths)
+    };
+    for path in paths {
+        let path = std::path::PathBuf::from(path);
+        if tokio::fs::metadata(&path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+        {
+            return Ok(media_proxy.register_local(path).await);
+        }
+    }
+    let source = provider
+        .playback_source(&track.bvid, track.cid)
+        .await
+        .map_err(CommandError::provider)?;
+    Ok(media_proxy.register(source.audio_url).await)
+}
+
+#[tauri::command]
+pub fn library_save_track(
+    database: State<'_, Database>,
+    track: TrackInput,
+) -> Result<TrackRecord, CommandError> {
+    validate_track(&track)?;
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    LibraryRepository::upsert(&mut connection, &track).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_rename(
+    database: State<'_, Database>,
+    playlist_id: String,
+    name: String,
+) -> Result<(), CommandError> {
+    if name.trim().is_empty() || name.chars().count() > 80 {
+        return Err(CommandError::validation("歌单名称需为 1 到 80 个字符"));
+    }
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    connection
+        .execute(
+            "UPDATE playlists SET name=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            rusqlite::params![playlist_id, name.trim()],
+        )
+        .map_err(CommandError::database)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn download_track(
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
@@ -548,8 +647,8 @@ pub async fn download_track(
         return Err(CommandError::validation("下载位置不是目录"));
     }
     let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
-    let temporary = target.with_extension("m4a.part");
     let download_id = uuid::Uuid::new_v4().to_string();
+    let temporary = target.with_extension(format!("{download_id}.part"));
     {
         let connection = database
             .0
@@ -560,6 +659,10 @@ pub async fn download_track(
             .is_none()
         {
             return Err(CommandError::validation("请先播放歌曲再下载"));
+        }
+        let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM downloads WHERE track_id=?1 AND status IN ('queued','downloading'))", [&track_id], |row| row.get(0)).map_err(CommandError::database)?;
+        if active {
+            return Err(CommandError::validation("这首歌曲正在下载中"));
         }
         DownloadRepository::create(
             &connection,
@@ -582,6 +685,9 @@ pub async fn download_track(
             .await?
             .error_for_status()?;
         let total = response.content_length().map(|value| value as i64);
+        if let Ok(connection) = database.0.lock() {
+            let _ = DownloadRepository::progress(&connection, &download_id, 0, total);
+        }
         let mut file = tokio::fs::File::create(&temporary).await?;
         let mut received = 0_i64;
         let mut last_reported = 0_i64;

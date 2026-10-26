@@ -126,6 +126,33 @@ pub struct AccountProfile {
     pub avatar_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoriteFolder {
+    pub id: i64,
+    pub title: String,
+    pub media_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoriteVideo {
+    pub bvid: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavoritePage {
+    #[serde(default)]
+    pub medias: Option<Vec<FavoriteVideo>>,
+    #[serde(default)]
+    pub has_more: bool,
+}
+
+#[derive(Deserialize)]
+struct FavoriteFoldersData {
+    #[serde(default)]
+    list: Option<Vec<FavoriteFolder>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentPage {
@@ -465,6 +492,31 @@ impl BilibiliProvider {
             is_end: page * page_size >= data.page.count,
             total: data.page.count,
         })
+    }
+
+    pub async fn favorite_folders(&self) -> Result<Vec<FavoriteFolder>, ProviderError> {
+        let profile = self.account_profile().await?;
+        let uid = profile.user_id.ok_or(ProviderError::NotAuthenticated)?;
+        let mut url = self.api_url("/x/v3/fav/folder/created/list-all");
+        url.query_pairs_mut()
+            .append_pair("up_mid", &uid.to_string());
+        let data: FavoriteFoldersData = self.get_data(url).await?;
+        Ok(data.list.unwrap_or_default())
+    }
+
+    pub async fn favorite_videos(
+        &self,
+        folder_id: i64,
+        page: u32,
+    ) -> Result<FavoritePage, ProviderError> {
+        let mut url = self.api_url("/x/v3/fav/resource/list");
+        url.query_pairs_mut()
+            .append_pair("media_id", &folder_id.to_string())
+            .append_pair("pn", &page.max(1).to_string())
+            .append_pair("ps", "20")
+            .append_pair("order", "mtime")
+            .append_pair("type", "0");
+        self.get_data(url).await
     }
 
     pub async fn comment_replies(
@@ -873,6 +925,8 @@ fn parse_danmaku(xml: &str) -> Vec<DanmakuItem> {
 fn normalize_url(value: &str) -> String {
     if value.starts_with("//") {
         format!("https:{value}")
+    } else if let Some(path) = value.strip_prefix("http://") {
+        format!("https://{path}")
     } else {
         value.to_owned()
     }

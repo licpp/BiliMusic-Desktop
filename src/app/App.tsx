@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Album,
   ArrowLeft,
-  ArrowRight,
+  ArrowUp,
+  ArrowDown,
   ChevronRight,
   Clock3,
   Compass,
@@ -13,7 +14,8 @@ import {
   Home,
   Library,
   ListMusic,
-  MoreHorizontal,
+  Plus,
+  Trash2,
   Pause,
   Play,
   Search,
@@ -27,14 +29,16 @@ import {
   Waves,
 } from 'lucide-react'
 import { usePlayerStore } from '../features/player/playerStore'
+import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
 import { LibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, createPlaylist, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { clearSearchHistory, commandErrorMessage, createPlaylist, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
 import { DownloadsView } from '../features/downloads/DownloadsView'
 import { AccountControl } from '../features/account/AccountControl'
+import { ImportFavorites } from '../features/library/ImportFavorites'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -54,6 +58,8 @@ export function App() {
   const [searchFocused, setSearchFocused] = useState(false)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const [playlistName, setPlaylistName] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
   const queryClient = useQueryClient()
   const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
@@ -80,6 +86,11 @@ export function App() {
   const repeatMode = usePlayerStore((state) => state.repeatMode)
   const cycleRepeat = usePlayerStore((state) => state.cycleRepeat)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
+  const removeFromQueue = usePlayerStore((state) => state.removeFromQueue)
+  const clearQueue = usePlayerStore((state) => state.clearQueue)
+  const moveInQueue = usePlayerStore((state) => state.moveInQueue)
+  const enqueue = usePlayerStore((state) => state.enqueue)
+  const playbackError = usePlayerStore((state) => state.error)
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
@@ -92,14 +103,30 @@ export function App() {
   }
   const toggleCurrentFavorite = async () => {
     if (!current) return
+    try {
     const liked = await toggleStoredFavorite(current.id)
     updatePlayerTrack({ ...current, liked })
     await queryClient.invalidateQueries({ queryKey: ['library'] })
+    } catch (error) { setActionError(commandErrorMessage(error)) }
   }
   useEffect(() => {
+    if (!inDesktopShell) return
     let unlisten: undefined | (() => void)
-    void listen('tray-play-pause', () => void usePlayerStore.getState().toggle()).then((dispose) => { unlisten = dispose })
-    return () => unlisten?.()
+    let disposed = false
+    void listen('tray-play-pause', () => void usePlayerStore.getState().toggle()).then((dispose) => { if (disposed) dispose(); else unlisten = dispose })
+    return () => { disposed = true; unlisten?.() }
+  }, [])
+  useEffect(connectMediaSession, [])
+  useEffect(() => { if (current) { void queryClient.invalidateQueries({ queryKey: ['home-recent'] }); void queryClient.invalidateQueries({ queryKey: ['library'] }) } }, [current?.id, queryClient])
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setLyricsOpen(false); setImportOpen(false); setSearchFocused(false); return }
+      const target = event.target as HTMLElement
+      if (target.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
+      if (event.code === 'Space') { event.preventDefault(); void usePlayerStore.getState().toggle() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   return (
@@ -121,7 +148,7 @@ export function App() {
             </button>
           ))}
         </nav>
-        <button className="profile-button" aria-label="用户资料">山</button>
+        <button className="profile-button" aria-label="打开设置" onClick={() => { setActiveNav('设置'); setSubmittedQuery('') }}><Settings size={18} /></button>
       </aside>
 
       <aside className="library-panel">
@@ -131,7 +158,9 @@ export function App() {
         </header>
         <section>
           <div className="section-heading"><span>我的歌单</span><button aria-label="新建歌单" onClick={() => setCreatingPlaylist((value) => !value)}>＋</button></div>
+          <button className="import-trigger" onClick={() => setImportOpen(true)}><Download size={14} />导入 B 站收藏夹</button>
           {creatingPlaylist && <form className="playlist-create" onSubmit={(event) => { event.preventDefault(); if (playlistName.trim()) createList.mutate(playlistName) }}><input autoFocus maxLength={80} value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="歌单名称" /><button disabled={createList.isPending}>创建</button></form>}
+          {createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}
           <div className="collection-list">
             {playlists.data?.map((playlist, index) => (
               <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery('') }}>
@@ -146,7 +175,7 @@ export function App() {
 
       <main className="content-stage">
         <form className="topbar" onSubmit={submitSearch}>
-          <div className="history-buttons"><button type="button" onClick={() => setSubmittedQuery('')}><ArrowLeft size={18} /></button><button type="button"><ArrowRight size={18} /></button></div>
+          <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setSubmittedQuery(''); setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
             <input value={query} onFocus={() => setSearchFocused(true)} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
@@ -156,7 +185,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView query={submittedQuery} /> : activePlaylist ? <LibraryView playlist={activePlaylist} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '下载' ? <DownloadsView /> : activeNav === '设置' ? <SettingsView /> : <>
+          {submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('音乐库')} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '下载' ? <DownloadsView /> : activeNav === '设置' ? <SettingsView /> : activeNav === '探索' ? <section className="discover-view"><span className="eyebrow">DISCOVER</span><h2>寻找下一首歌</h2><p>选择一个关键词，探索 B 站上的音乐现场与合集。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '独立音乐', '爵士', '钢琴', '游戏原声'].map((keyword) => <button key={keyword} onClick={() => { setQuery(keyword); setSubmittedQuery(keyword) }}><Waves /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section> : <>
           <section className="hero">
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />
@@ -170,13 +199,13 @@ export function App() {
           </section>
 
           <section className="quick-actions">
-            <button><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>为你挑选</strong><small>每日更新的声音</small></span><ChevronRight /></button>
-            <button><span className="quick-icon cyan-bg"><Waves /></span><span><strong>场景电台</strong><small>跟随此刻的氛围</small></span><ChevronRight /></button>
-            <button><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>最近加入</strong><small>回到你的收藏</small></span><ChevronRight /></button>
+            <button onClick={() => setActiveNav('探索')}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
+            <button onClick={() => { setQuery('放松 纯音乐'); setSubmittedQuery('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
+            <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
           </section>
 
           <section className="tracks-section">
-            <header><div><span className="eyebrow">FOR YOU</span><h3>今天可以听这些</h3></div><button>查看全部 <ChevronRight size={16} /></button></header>
+            <header><div><span className="eyebrow">RECENTLY PLAYED</span><h3>最近听过的声音</h3></div><button onClick={() => setActiveNav('最近播放')}>查看全部 <ChevronRight size={16} /></button></header>
             <div className="track-table" role="table">
               <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
               {(homeTracks.data || []).map((track, index) => {
@@ -188,7 +217,7 @@ export function App() {
                     </button>
                     <span className="track-title"><span className={`mini-cover tone-${index % 4}`} /> <strong>{track.title}</strong></span>
                     <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
-                    <button className="more-button" aria-label="更多操作"><MoreHorizontal size={18} /></button>
+                    <button className="more-button" aria-label="加入播放队列" onClick={() => enqueue([track])}><Plus size={18} /></button>
                   </div>
                 )
               })}
@@ -200,27 +229,30 @@ export function App() {
       </main>
 
       <aside className="queue-drawer" aria-hidden={!queueOpen}>
-        <header><div><span className="eyebrow coral">正在播放</span><h3>接下来</h3></div><button onClick={toggleQueue} aria-label="收起队列">×</button></header>
+        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3>接下来</h3></div><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">×</button></header>
         <div className="now-card">
-          <div className="now-art"><div className="sun" /><div className="horizon" /></div>
-          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
+          <div className="now-art">{current?.coverUrl ? <img src={current.coverUrl} alt="" /> : <><div className="sun" /><div className="horizon" /></>}</div>
+          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
         <div className="queue-list">
-          {queue.filter((track) => track.id !== current?.id).map((track, index) => (
-            <button onClick={() => play(track)} key={track.id}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist}</small></span><small>{formatDuration(track.durationSeconds)}</small></button>
+          {queue.map((track, index) => (
+            <div className="queue-entry" key={track.id}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></div>
           ))}
+          {!queue.length && <p className="queue-empty">队列为空，可以从音乐库或搜索结果添加歌曲。</p>}
         </div>
       </aside>
 
       <footer className="player-dock">
-        <button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><span className="dock-cover">{current?.coverUrl && <img src={current.coverUrl} alt="" />}</span><span><strong>{current?.title || '尚未播放'}</strong><small>{current?.artist || '从音乐库选择歌曲'}</small></span></button>
+        <button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><span className="dock-cover">{current?.coverUrl && <img src={current.coverUrl} alt="" />}</span><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button>
         <div className="dock-center">
-          <div className="dock-controls"><button className={shuffled ? 'active' : ''} onClick={toggleShuffle}><Shuffle /></button><button onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button className="play-toggle" onClick={toggle}>{status === 'playing' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={repeatMode !== 'off' ? 'active repeat-control' : 'repeat-control'} onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' && <i>1</i>}</button></div>
+          <div className="dock-controls"><button aria-label="随机播放" aria-pressed={shuffled} className={shuffled ? 'active' : ''} onClick={toggleShuffle}><Shuffle /></button><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button aria-label={`循环模式：${repeatMode === 'off' ? '顺序播放' : repeatMode === 'all' ? '列表循环' : '单曲循环'}`} className={repeatMode !== 'off' ? 'active repeat-control' : 'repeat-control'} onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' && <i>1</i>}</button></div>
           <div className="progress"><small>{formatDuration(progressSeconds)}</small><input aria-label="播放进度" type="range" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
         </div>
-        <div className="dock-tools"><Volume2 size={18} /><input aria-label="音量" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /><button className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
+        <div className="dock-tools"><Volume2 size={18} /><input aria-label="音量" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /><button aria-label="播放队列" aria-expanded={queueOpen} className={queueOpen ? 'active' : ''} onClick={toggleQueue}><ListMusic size={19} /></button></div>
       </footer>
+      {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
       {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
+      {importOpen && <ImportFavorites onClose={() => setImportOpen(false)} />}
     </div>
   )
 }
