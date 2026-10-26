@@ -14,7 +14,8 @@ import {
   type StoredLyrics,
   type DanmakuItem,
 } from '../../services/desktopApi'
-import { bestCandidate, candidateLines, parseLrc } from './lrc'
+import { candidateLines, parseLrc } from './lrc'
+import { Artwork } from '../../shared/Artwork'
 import { CommentsPanel } from '../comments/CommentsPanel'
 import { DanmakuCanvas } from './DanmakuCanvas'
 import { SyncedVideo } from './SyncedVideo'
@@ -45,11 +46,13 @@ export function LyricsView({ onClose }: Props) {
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
   const [lyricQuery, setLyricQuery] = useState(current?.title || '')
+  const [lyricArtist, setLyricArtist] = useState(current?.artist || '')
+  const [searched, setSearched] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const request = ++lyricRequest.current
-    setStored(null); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText('')
+    setStored(null); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
     if (!current) return () => { cancelled = true }
     const load = async () => {
       setLoading(true)
@@ -61,12 +64,6 @@ export function LyricsView({ onClose }: Props) {
           setLines(parseStoredLines(existing))
           return
         }
-        const results = await searchLyrics(current.title, current.artist)
-        if (cancelled || request !== lyricRequest.current) return
-        setCandidates(results.candidates); setWarning(results.warning || '')
-        const match = bestCandidate(results.candidates, current.durationSeconds)
-        if (match) await selectCandidate(match, false, request)
-        else setError('没有找到合适的歌词，你仍可以重新搜索')
       } catch (cause) {
         if (!cancelled && request === lyricRequest.current) setError(commandErrorMessage(cause))
       } finally {
@@ -79,7 +76,7 @@ export function LyricsView({ onClose }: Props) {
 
   useEffect(() => {
     ++videoRequest.current
-    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setLyricQuery(current?.title || '')
+    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
     return () => { ++videoRequest.current }
   }, [current?.id])
 
@@ -112,11 +109,11 @@ export function LyricsView({ onClose }: Props) {
     if (activeIndex >= 0) lineRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [activeIndex])
 
-  async function refreshCandidates(customQuery?: string, forceRefresh = false) {
+  async function refreshCandidates() {
     if (!current) return
     const request = ++lyricRequest.current
-    setChooserOpen(true); setLoading(true); setError(''); setWarning('')
-    try { const results = await searchLyrics(customQuery || current.title, customQuery ? undefined : current.artist, forceRefresh); if (request === lyricRequest.current) { setCandidates(results.candidates); setWarning(results.warning || '') } }
+    setLoading(true); setError(''); setWarning(''); setSearched(true)
+    try { const results = await searchLyrics(lyricQuery.trim(), lyricArtist.trim() || undefined, true); if (request === lyricRequest.current) { setCandidates(results.candidates); setWarning(results.warning || '') } }
     catch (cause) { if (request === lyricRequest.current) setError(commandErrorMessage(cause)) }
     finally { if (request === lyricRequest.current) setLoading(false) }
   }
@@ -153,10 +150,10 @@ export function LyricsView({ onClose }: Props) {
       <header className="lyrics-topbar">
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
-        <div className="lyrics-actions"><button className="lyrics-rematch" onClick={() => void refreshCandidates()}><RefreshCw size={16} />重新匹配</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
+        <div className="lyrics-actions"><button className="lyrics-rematch" onClick={() => setChooserOpen(true)}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
-        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} /> : <div className="video-loading"><LoaderCircle className="spin" />正在加载视频</div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : current.coverUrl ? <img src={current.coverUrl} alt="" /> : <div className="cover-fallback" />}</div>
+        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} /> : <div className="video-loading"><LoaderCircle className="spin" />正在加载视频</div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className="video-tools"><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
@@ -167,9 +164,9 @@ export function LyricsView({ onClose }: Props) {
         </div>
       </div>
       <div className="lyrics-scroll" aria-live="polite">
-        {loading && !lines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在匹配歌词</div> : lines.length ? lines.map((line, index) => (
+        {loading && !lines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : lines.length ? lines.map((line, index) => (
           <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}>{line.text}</p>
-        )) : <div className="lyrics-status"><span>{error || '暂无歌词'}</span><button className="load-more" onClick={() => void refreshCandidates(undefined, true)}>重新搜索或导入歌词</button></div>}
+        )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
       <aside className="lyrics-bias" aria-label="歌词时间调整">
         <SlidersHorizontal size={16} />
@@ -182,7 +179,7 @@ export function LyricsView({ onClose }: Props) {
       {chooserOpen && <div className="lyric-chooser-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setChooserOpen(false)}>
         <div className="lyric-chooser">
           <header><div><span className="eyebrow">LYRICS</span><h3>选择歌词版本</h3></div><button onClick={() => setChooserOpen(false)}><X /></button></header>
-          <form className="lyric-search-form" onSubmit={(event) => { event.preventDefault(); if (lyricQuery.trim()) void refreshCandidates(lyricQuery.trim(), true) }}><input aria-label="歌词搜索关键词" value={lyricQuery} onChange={(event) => setLyricQuery(event.target.value)} placeholder="输入歌曲名或歌手重新搜索" /><button disabled={loading || !lyricQuery.trim()}>搜索</button></form>
+          <form className="lyric-search-form manual-search-fields" onSubmit={(event) => { event.preventDefault(); if (lyricQuery.trim()) void refreshCandidates() }}><label>歌曲名<input aria-label="歌词搜索歌曲名" value={lyricQuery} onChange={(event) => setLyricQuery(event.target.value)} placeholder="填写正确的歌曲名" /></label><label>歌手<input aria-label="歌词搜索歌手" value={lyricArtist} onChange={(event) => setLyricArtist(event.target.value)} placeholder="可选" /></label><button disabled={loading || !lyricQuery.trim()}>搜索歌词</button></form>
           <div className="lyrics-manual-tools"><button onClick={() => setManualOpen((value) => !value)}>{manualOpen ? '收起导入' : '粘贴 LRC / 文本歌词'}</button></div>
           {manualOpen && <form className="lyrics-manual-form" onSubmit={(event) => { event.preventDefault(); void importManualLyrics() }}><textarea aria-label="粘贴歌词内容" maxLength={400000} value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder="粘贴带时间标签的 LRC，或普通文本歌词" /><button disabled={!manualText.trim()}>保存到这首歌</button></form>}
           {error && <p className="inline-error">{error}</p>}
@@ -193,7 +190,7 @@ export function LyricsView({ onClose }: Props) {
               <span>{candidate.provider === 'netease' ? '网易云 · ' : ''}{candidate.syncedLyrics ? '逐行' : '文本'}</span>
               {stored?.provider === candidate.provider && stored?.providerLyricId === String(candidate.id) ? <Check size={17} /> : <ChevronLeft className="candidate-arrow" size={17} />}
             </button>
-          ))}</div> : !error && <div className="chooser-status">没有搜索到可用歌词，可以更换关键词或粘贴歌词。</div>}
+          ))}</div> : !error && <div className="chooser-status">{searched ? '没有搜索到可用歌词，可以更换关键词或粘贴歌词。' : '确认歌曲名和歌手后，点击“搜索歌词”。'}</div>}
         </div>
       </div>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={() => setCommentsOpen(false)} />}

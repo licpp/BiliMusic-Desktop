@@ -17,11 +17,11 @@ jobs:
         include:
           - os: macos-14
             bundle: dmg
-            artifact: resonance-macos
+            artifact: bilimusic-macos
             path: src-tauri/target/release/bundle/dmg/*.dmg
           - os: windows-latest
             bundle: nsis
-            artifact: resonance-windows
+            artifact: bilimusic-windows
             path: src-tauri/target/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.os }}
     steps:

@@ -42,12 +42,13 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
-            let show = MenuItem::with_id(app, "show", "显示 Resonance", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;
             let play_pause =
                 MenuItem::with_id(app, "play_pause", "播放 / 暂停", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &play_pause, &quit])?;
             let mut tray = TrayIconBuilder::new()
+                .tooltip("BiliMusic")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -63,12 +64,15 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 });
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
             #[cfg(target_os = "macos")]
             {
-                tray = tray.icon_as_template(true);
+                tray = tray
+                    .icon(tauri::include_image!("icons/tray/32x32.png"))
+                    .icon_as_template(false);
+            }
+            #[cfg(not(target_os = "macos"))]
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
             Ok(())
@@ -116,5 +120,5 @@ pub fn run() {
             interface::commands::download_track,
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Resonance");
+        .expect("failed to run BiliMusic");
 }

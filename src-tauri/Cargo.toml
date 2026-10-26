@@ -1,13 +1,13 @@
 [package]
-name = "resonance-desktop"
-version = "0.1.2"
+name = "bilimusic-desktop"
+version = "0.1.3"
 description = "A clean-room desktop music client"
-authors = ["Resonance Contributors"]
+authors = ["BiliMusic Contributors"]
 edition = "2024"
 license = "MIT"
 
 [lib]
-name = "resonance_lib"
+name = "bilimusic_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
