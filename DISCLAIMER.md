@@ -28,8 +28,8 @@ BiliMusic 是独立开发的开源客户端，与哔哩哔哩及其他内容平�
 
 ## 联系方式与依据
 
-请使用[网站反馈表单](http://120.79.18.164/#feedback)，版权问题选择「版权与权利反馈」。网站不需要 GitHub 账号。亦可通过[项目 Issues](https://github.com/licpp/BiliMusic-Desktop/issues)反馈非敏感问题；GitHub Issue 通常公开，请勿发布联系方式或私人资料。
+请使用[网站反馈表单](https://bilimusic.cn/#feedback)，版权问题选择「版权与权利反馈」。网站不需要 GitHub 账号。亦可通过[项目 Issues](https://github.com/licpp/BiliMusic-Desktop/issues)反馈非敏感问题；GitHub Issue 通常公开，请勿发布联系方式或私人资料。
 
 请查阅并遵守[哔哩哔哩用户使用协议](https://www.bilibili.com/blackboard/protocal/licence.html)。本声明不是法律意见，不能消除潜在侵权、平台条款或其他法律风险。
 
-网站当前通过 HTTP 的 IP 地址访问，请勿提交敏感信息；正式收集个人信息前应配置域名和 HTTPS。
+网站使用 HTTPS。反馈服务不会授权客户端上传音乐库、账号凭据或其他个人数据；未来新增云同步功能时将另行说明并取得用户选择。

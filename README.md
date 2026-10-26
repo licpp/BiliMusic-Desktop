@@ -1,6 +1,6 @@
 # BiliMusic
 
-[项目网站](http://120.79.18.164) · [使用声明与隐私说明](DISCLAIMER.md) · [反馈](http://120.79.18.164/#feedback)
+[项目网站](https://bilimusic.cn) · [使用声明与隐私说明](DISCLAIMER.md) · [反馈](https://bilimusic.cn/#feedback)
 
 > 独立开源客户端，非哔哩哔哩官方产品，未获得其官方授权。音视频、歌词与封面等第三方内容的权利归相应权利人所有。代码的 MIT 许可不包含第三方内容授权；个人学习使用或确认免责声明也不当然构成合法使用依据。请仅在适用法律、平台规则和内容授权允许的范围内使用。详见 [完整声明](DISCLAIMER.md)。
 
@@ -91,4 +91,6 @@ npm run tauri build -- --bundles nsis
 
 网站代码位于 [website](website/README.md)，提供功能介绍、macOS / Windows 下载预告、下载前声明确认及无需 GitHub 账号的站内反馈。当前两个平台均显示 Coming soon，网站不分发安装包或媒体资源。
 
-反馈保存在独立 PostgreSQL 数据库，包含错误反馈、功能建议和权利人反馈。请通过 [网站表单](http://120.79.18.164/#feedback) 联系维护者，并勿提交密码、Cookie、完整私人日志等敏感信息。
+反馈保存在独立 PostgreSQL 数据库，包含错误反馈、功能建议和权利人反馈。请通过 [网站表单](https://bilimusic.cn/#feedback) 联系维护者，并勿提交密码、Cookie、完整私人日志等敏感信息。
+
+后续自有服务器同步与坚果云等 WebDAV 扩展的设计边界见 [云同步扩展约定](docs/CLOUD_SYNC_DESIGN.md)。当前尚未开启用户音乐数据上传。

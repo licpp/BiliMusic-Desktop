@@ -7,7 +7,7 @@ if (location.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(locati
 let policyPromise;
 let platform;
 function getPolicy() {
-  return policyPromise ||= fetch('/api/policy').then(r => { if (!r.ok) throw new Error('无法加载使用说明，请稍后重试。'); return r.json(); }).catch(error => { policyPromise = undefined; throw error; });
+  return policyPromise ||= fetch('/api/v1/policy').then(r => { if (!r.ok) throw new Error('无法加载使用说明，请稍后重试。'); return r.json(); }).catch(error => { policyPromise = undefined; throw error; });
 }
 async function openPolicy(downloadPlatform) {
   platform = downloadPlatform;
@@ -77,7 +77,7 @@ $('#feedback-form').addEventListener('submit', async event => {
   try {
     const policy = await getPolicy(), data = Object.fromEntries(new FormData(form));
     data.consent = form.elements.consent.checked; data.policyVersion = policy.version;
-    const response = await fetch('/api/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data), signal:AbortSignal.timeout(15000) });
+    const response = await fetch('/api/v1/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data), signal:AbortSignal.timeout(15000) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.message || '提交失败，请稍后重试。');
     status.textContent = `${result.message} 反馈编号：${result.id}。请保留编号，便于后续联系。`;

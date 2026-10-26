@@ -35,7 +35,8 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
   const json = (status, data) => { res.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' }); res.end(JSON.stringify(data)); };
   try {
-    const path = new URL(req.url, 'http://localhost').pathname;
+    // Versioned API leaves room for future account/sync services; retain original paths for existing clients.
+    const path = new URL(req.url, 'http://localhost').pathname.replace(/^\/api\/v1(?=\/)/, '/api');
     if (req.method === 'GET' && path === '/api/policy') return json(200, policy);
     if (req.method === 'GET' && path === '/api/health') {
       try { if (!pool) return json(503, { status:'preview', feedback:false }); await pool.query('SELECT 1'); return json(200, { status:'ok', feedback:true }); }
