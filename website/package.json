@@ -1,0 +1,8 @@
+{
+  "name": "bilimusic-website",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs", "feedback": "node scripts/feedback.mjs" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "pg": "^8.16.3" }
+}
