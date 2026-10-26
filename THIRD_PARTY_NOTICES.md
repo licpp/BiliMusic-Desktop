@@ -13,6 +13,7 @@ Runtime services used by the current implementation:
 
 - Bilibili: search, playback sources, account QR login, comments and danmaku. Requests originate from the native provider and are subject to platform availability and account permissions.
 - LRCLIB: lyric search and lyric candidates.
+- NetEase Cloud Music: fallback lyric search and lyric candidates when LRCLIB is unavailable or has no results. No audio is obtained from this provider.
 - Apple iTunes Search API: album and artwork candidates. Catalog results are not bundled with the application.
 
 Principal UI/runtime dependencies include React (MIT), Zustand (MIT), TanStack Query (MIT), Lucide (ISC), qrcode.react (ISC), and Tauri (MIT OR Apache-2.0). Consult the installed package/crate notices and lockfiles for exact versions and the full dependency graph.

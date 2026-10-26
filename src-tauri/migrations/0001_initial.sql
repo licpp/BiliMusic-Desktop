@@ -102,3 +102,9 @@ CREATE TABLE IF NOT EXISTS auth_session (
 );
 
 PRAGMA user_version = 1;
+
+CREATE TABLE IF NOT EXISTS lyric_search_cache (
+  cache_key TEXT PRIMARY KEY,
+  candidates_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);

@@ -11,6 +11,7 @@ type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStat
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
 let loadedTrackId: string | null = null
+export function playbackClock() { return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
 let persistTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSnapshot: { key: string; value: string } | undefined
 function flushPlayerSnapshot() {

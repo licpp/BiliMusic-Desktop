@@ -307,7 +307,11 @@ pub async fn bili_video_source(
         .await
         .map_err(CommandError::provider)?;
     source.video_url = media_proxy
-        .register_stream(source.video_url, vec![], source.mime_type.clone())
+        .register_stream(
+            source.video_url,
+            std::mem::take(&mut source.backup_urls),
+            source.mime_type.clone(),
+        )
         .await;
     Ok(source)
 }
@@ -473,17 +477,74 @@ pub async fn bili_comment_reply(
 #[tauri::command]
 pub async fn lyrics_search(
     provider: State<'_, LrclibProvider>,
+    database: State<'_, Database>,
     title: String,
     artist: Option<String>,
-) -> Result<Vec<LyricCandidate>, CommandError> {
+    force_refresh: Option<bool>,
+) -> Result<LyricSearchResult, CommandError> {
     let title = title.trim();
     if title.is_empty() {
         return Err(CommandError::validation("歌曲名不能为空"));
     }
-    provider
-        .search(title, artist.as_deref())
-        .await
-        .map_err(CommandError::provider)
+    let key = serde_json::to_string(&(
+        title.to_lowercase(),
+        artist.as_deref().unwrap_or("").trim().to_lowercase(),
+    ))
+    .expect("query key");
+    let cached = {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        LyricsRepository::cached_search(&connection, &key)
+            .map_err(CommandError::database)?
+            .and_then(|(json, fresh)| {
+                serde_json::from_str::<Vec<LyricCandidate>>(&json)
+                    .ok()
+                    .map(|candidates| (candidates, fresh))
+            })
+    };
+    if !force_refresh.unwrap_or(false) {
+        if let Some((candidates, true)) = &cached {
+            return Ok(LyricSearchResult {
+                candidates: candidates.clone(),
+                warning: None,
+            });
+        }
+    }
+    match provider.search(title, artist.as_deref()).await {
+        Ok(candidates) => {
+            if !candidates.is_empty() {
+                if let Ok(json) = serde_json::to_string(&candidates) {
+                    if json.len() <= 2_000_000 {
+                        if let Ok(connection) = database.0.lock() {
+                            let _ = LyricsRepository::cache_search(&connection, &key, &json);
+                        }
+                    }
+                }
+            }
+            Ok(LyricSearchResult {
+                candidates,
+                warning: None,
+            })
+        }
+        Err(error) => {
+            if let Some((candidates, _)) = cached {
+                Ok(LyricSearchResult {
+                    candidates,
+                    warning: Some("在线歌词服务暂时不可用，已显示本地缓存的搜索结果".into()),
+                })
+            } else {
+                Err(CommandError::provider(error))
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct LyricSearchResult {
+    candidates: Vec<LyricCandidate>,
+    warning: Option<String>,
 }
 
 #[tauri::command]
@@ -522,6 +583,9 @@ pub fn lyrics_save(
 ) -> Result<StoredLyrics, CommandError> {
     if lyrics.raw_text.len() > 2_000_000 || lyrics.parsed_json.len() > 2_000_000 {
         return Err(CommandError::validation("歌词内容过大"));
+    }
+    if !["lrclib", "netease", "local"].contains(&lyrics.provider.as_str()) {
+        return Err(CommandError::validation("不支持的歌词来源"));
     }
     serde_json::from_str::<serde_json::Value>(&lyrics.parsed_json)
         .map_err(|_| CommandError::validation("歌词解析数据无效"))?;

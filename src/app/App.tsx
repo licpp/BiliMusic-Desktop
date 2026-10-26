@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -170,7 +171,7 @@ export function App() {
             ))}
           </div>
         </section>
-        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · 0.1.1</div>
+        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
 
       <main className="content-stage">

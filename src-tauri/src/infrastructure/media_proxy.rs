@@ -403,15 +403,33 @@ mod tests {
         let bvid = std::env::var("RESONANCE_TEST_BVID").unwrap_or_else(|_| "BV1GJ411x7h7".into());
         let detail = provider.video_parts(&bvid).await.expect("detail");
         let part = detail.parts.first().expect("part");
-        let source = provider
-            .playback_source(&detail.bvid, part.cid)
-            .await
-            .expect("source");
+        let (url, backups, mime, codecs) =
+            if std::env::var("RESONANCE_MEDIA_KIND").as_deref() == Ok("video") {
+                let source = provider
+                    .video_source(&detail.bvid, part.cid)
+                    .await
+                    .expect("video source");
+                (
+                    source.video_url,
+                    source.backup_urls,
+                    source.mime_type,
+                    source.codecs,
+                )
+            } else {
+                let source = provider
+                    .playback_source(&detail.bvid, part.cid)
+                    .await
+                    .expect("audio source");
+                (
+                    source.audio_url,
+                    source.backup_urls,
+                    source.mime_type,
+                    source.codecs,
+                )
+            };
         let proxy = MediaProxy::start().await.expect("proxy");
-        eprintln!("audio type={} codecs={}", source.mime_type, source.codecs);
-        let local_url = proxy
-            .register_stream(source.audio_url, source.backup_urls, source.mime_type)
-            .await;
+        eprintln!("media type={mime} codecs={codecs}");
+        let local_url = proxy.register_stream(url, backups, mime).await;
         for range in ["bytes=0-1", "bytes=0-1023", "bytes=1024-2047"] {
             let response = reqwest::Client::new()
                 .get(&local_url)
@@ -434,7 +452,12 @@ mod tests {
             assert!(!body.is_empty());
         }
         if let Ok(probe_file) = std::env::var("RESONANCE_MEDIA_PROBE_FILE") {
-            tokio::fs::write(probe_file, &local_url)
+            let payload = if std::env::var("RESONANCE_MEDIA_KIND").as_deref() == Ok("video") {
+                serde_json::json!({"videoUrl":local_url}).to_string()
+            } else {
+                local_url.clone()
+            };
+            tokio::fs::write(probe_file, payload)
                 .await
                 .expect("probe URL file");
             eprintln!("browser media probe ready for 60 seconds");

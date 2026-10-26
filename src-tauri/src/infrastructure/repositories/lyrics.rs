@@ -4,9 +4,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveLyricsInput {
+    #[serde(default = "default_provider")]
+    pub provider: String,
     pub provider_lyric_id: String,
     pub raw_text: String,
     pub parsed_json: String,
+}
+
+fn default_provider() -> String {
+    "lrclib".into()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +30,23 @@ pub struct StoredLyrics {
 pub struct LyricsRepository;
 
 impl LyricsRepository {
+    pub fn cached_search(
+        connection: &Connection,
+        key: &str,
+    ) -> rusqlite::Result<Option<(String, bool)>> {
+        connection.query_row("SELECT candidates_json,updated_at >= unixepoch()-86400 FROM lyric_search_cache WHERE cache_key=?1", [key], |row| Ok((row.get(0)?, row.get(1)?))).optional()
+    }
+
+    pub fn cache_search(
+        connection: &Connection,
+        key: &str,
+        candidates: &str,
+    ) -> rusqlite::Result<()> {
+        connection.execute("INSERT INTO lyric_search_cache(cache_key,candidates_json) VALUES (?1,?2) ON CONFLICT(cache_key) DO UPDATE SET candidates_json=excluded.candidates_json,updated_at=unixepoch()", params![key,candidates])?;
+        connection.execute("DELETE FROM lyric_search_cache WHERE cache_key NOT IN (SELECT cache_key FROM lyric_search_cache ORDER BY updated_at DESC,rowid DESC LIMIT 100)", [])?;
+        Ok(())
+    }
+
     pub fn get(connection: &Connection, track_id: &str) -> rusqlite::Result<Option<StoredLyrics>> {
         connection.query_row(
             "SELECT track_id,provider,COALESCE(provider_lyric_id,''),raw_text,parsed_json,bias_ms,selected_manually FROM lyrics WHERE track_id=?1",
@@ -40,10 +63,10 @@ impl LyricsRepository {
     ) -> rusqlite::Result<StoredLyrics> {
         connection.execute(
             "INSERT INTO lyrics (track_id,provider,provider_lyric_id,raw_text,parsed_json,selected_manually)
-             VALUES (?1,'lrclib',?2,?3,?4,?5)
-             ON CONFLICT(track_id) DO UPDATE SET provider='lrclib',provider_lyric_id=excluded.provider_lyric_id,
+             VALUES (?1,?6,?2,?3,?4,?5)
+             ON CONFLICT(track_id) DO UPDATE SET provider=excluded.provider,provider_lyric_id=excluded.provider_lyric_id,
                raw_text=excluded.raw_text,parsed_json=excluded.parsed_json,selected_manually=excluded.selected_manually,updated_at=CURRENT_TIMESTAMP",
-            params![track_id, lyrics.provider_lyric_id, lyrics.raw_text, lyrics.parsed_json, manual],
+            params![track_id, lyrics.provider_lyric_id, lyrics.raw_text, lyrics.parsed_json, manual, lyrics.provider],
         )?;
         Self::get(connection, track_id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
@@ -85,9 +108,38 @@ mod tests {
     }
 
     #[test]
+    fn search_cache_survives_service_failure_and_reports_expiry() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        LyricsRepository::cache_search(&connection, "song", "[{\"id\":1}]").unwrap();
+        assert_eq!(
+            LyricsRepository::cached_search(&connection, "song").unwrap(),
+            Some(("[{\"id\":1}]".into(), true))
+        );
+        connection
+            .execute(
+                "UPDATE lyric_search_cache SET updated_at=unixepoch()-90000",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            LyricsRepository::cached_search(&connection, "song").unwrap(),
+            Some(("[{\"id\":1}]".into(), false))
+        );
+        assert!(
+            LyricsRepository::cached_search(&connection, "other")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn saves_manual_selection_and_persists_clamped_bias() {
         let connection = database();
         let input = SaveLyricsInput {
+            provider: "lrclib".into(),
             provider_lyric_id: "81".into(),
             raw_text: "[00:01.00]第一句".into(),
             parsed_json: r#"[{"timeMs":1000,"text":"第一句"}]"#.into(),
@@ -106,5 +158,15 @@ mod tests {
                 .bias_ms,
             30_000
         );
+        let imported = SaveLyricsInput {
+            provider: "local".into(),
+            provider_lyric_id: "0".into(),
+            raw_text: "user supplied lyrics".into(),
+            parsed_json: "[]".into(),
+        };
+        let imported =
+            LyricsRepository::save(&connection, &stored.track_id, &imported, true).unwrap();
+        assert_eq!(imported.provider, "local");
+        assert_eq!(imported.bias_ms, 30_000);
     }
 }

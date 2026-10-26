@@ -86,6 +86,7 @@ pub struct PlaybackSource {
 #[serde(rename_all = "camelCase")]
 pub struct VideoSource {
     pub video_url: String,
+    pub backup_urls: Vec<String>,
     pub mime_type: String,
     pub codecs: String,
     pub bandwidth: u64,
@@ -340,6 +341,8 @@ struct DashData {
 
 #[derive(Deserialize)]
 struct DashStream {
+    #[serde(default)]
+    height: u32,
     #[serde(default)]
     base_url: String,
     #[serde(default, rename = "baseUrl")]
@@ -712,10 +715,21 @@ impl BilibiliProvider {
         let stream = streams
             .iter()
             .filter(|item| item.codecs.starts_with("avc"))
+            .filter(|item| item.height <= 1080)
             .max_by_key(|item| item.bandwidth)
-            .or_else(|| streams.iter().max_by_key(|item| item.bandwidth))
+            .or_else(|| {
+                streams
+                    .iter()
+                    .filter(|item| item.codecs.starts_with("avc"))
+                    .min_by_key(|item| item.bandwidth)
+            })
             .ok_or(ProviderError::NoVideo)?;
         Ok(VideoSource {
+            backup_urls: if stream.backup_url_camel.is_empty() {
+                stream.backup_url.clone()
+            } else {
+                stream.backup_url_camel.clone()
+            },
             video_url: if stream.base_url_camel.is_empty() {
                 stream.base_url.clone()
             } else {

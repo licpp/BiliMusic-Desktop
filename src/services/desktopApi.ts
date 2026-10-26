@@ -12,7 +12,8 @@ export type DesktopCommandError = { code: string; message: string; retryable: bo
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
 export type LyricLine = { timeMs: number; text: string }
-export type LyricCandidate = { id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
+export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
+export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number }
 export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
@@ -74,9 +75,9 @@ export async function updateStoredMetadata(trackId: string, patch: MetadataPatch
   return fromStoredTrack(await invoke<StoredTrack>('library_update_metadata', { trackId, patch }))
 }
 
-export async function searchLyrics(title: string, artist?: string): Promise<LyricCandidate[]> {
-  if (!inDesktopShell) return []
-  return invoke<LyricCandidate[]>('lyrics_search', { title, artist })
+export async function searchLyrics(title: string, artist?: string, forceRefresh = false): Promise<LyricSearchResult> {
+  if (!inDesktopShell) return { candidates: [] }
+  return invoke<LyricSearchResult>('lyrics_search', { title, artist, forceRefresh })
 }
 
 export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
@@ -88,6 +89,7 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
   return invoke<StoredLyrics>('lyrics_save', {
     trackId,
     lyrics: {
+      provider: candidate.provider,
       providerLyricId: String(candidate.id),
       rawText: candidate.syncedLyrics || candidate.plainLyrics || '',
       parsedJson: JSON.stringify(lines),
