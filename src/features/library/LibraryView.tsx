@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, downloadTrack, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, renamePlaylist, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
+import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, downloadTrack, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, renamePlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
+import { showTrackMenu } from './trackActionStore'
 import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
@@ -46,7 +47,7 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist, o
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={playlist ? '歌单还是空的' : recent ? '还没有播放记录' : favoritesOnly ? '还没有喜欢的歌曲' : '音乐库还是空的'} detail={playlist ? '在音乐库的歌曲菜单中把歌曲加入这里。' : '从搜索结果播放歌曲后，它会自动出现在这里。'} />}
-    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((track, index) => <article className="library-track" key={track.id}>
+    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((track, index) => <article className="library-track" key={track.id} onContextMenu={(event) => showTrackMenu(event, track, playlist?.id)}>
       <button className="library-art" onClick={() => void play(track)} aria-label={`播放 ${track.title}`}>
         {track.coverUrl ? <img src={track.coverUrl} alt="" loading="lazy" /> : <span className={`tone-${index % 4}`} />}
         <i><Play fill="currentColor" /></i>
@@ -57,35 +58,40 @@ export function LibraryView({ favoritesOnly = false, recent = false, playlist, o
       <button className="icon-action" onClick={() => setEditing(track)} aria-label="编辑歌曲信息"><Pencil size={16} /></button>
       <button className="icon-action" onClick={() => enqueue([track])} aria-label="加入播放队列"><ListPlus size={16} /></button>
       <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
-      {playlist ? <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(async () => { await client.invalidateQueries({ queryKey: ['library'] }); await client.invalidateQueries({ queryKey: ['playlists'] }) }).catch((error) => setDownloadMessage(commandErrorMessage(error)))} aria-label="从歌单移除"><Trash2 size={16} /></button> : <button className="icon-action" onClick={() => setAdding(track)} aria-label="添加到歌单"><ListPlus size={17} /></button>}
+      <button className="icon-action" onClick={() => setAdding(track)} aria-label="加入歌单"><ListPlus size={17} /></button>
+      {playlist && <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(async () => { await client.invalidateQueries({ queryKey: ['library'] }); await client.invalidateQueries({ queryKey: ['playlists'] }) }).catch((error) => setDownloadMessage(commandErrorMessage(error)))} aria-label="从歌单移除"><Trash2 size={16} /></button>}
     </article>)}</div>}
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { updatePlayerTrack(updated); setEditing(null); void client.invalidateQueries({ queryKey: ['library'] }); void client.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
-    {adding && <PlaylistPicker track={adding} onClose={() => setAdding(null)} />}
+    {adding && <PlaylistPicker tracks={[adding]} onClose={() => setAdding(null)} />}
     {downloadMessage && <button className="library-toast" onClick={() => setDownloadMessage('')}>{downloadMessage}</button>}
   </section>
 }
 
-function PlaylistPicker({ track, onClose }: { track: Track; onClose: () => void }) {
+export function PlaylistPicker({ tracks, onClose }: { tracks: Track[]; onClose: () => void }) {
   const client = useQueryClient()
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
   const [added, setAdded] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
   const add = async (playlistId: string) => {
+    if (pending) return
+    setPending(true)
     try {
-    await addTrackToPlaylist(playlistId, track.id)
+    for (const track of tracks) { const stored = await saveLibraryTrack(track); await addTrackToPlaylist(playlistId, stored.id) }
     setAdded(playlistId)
     await client.invalidateQueries({ queryKey: ['playlists'] })
     await client.invalidateQueries({ queryKey: ['library'] })
     } catch (cause) { setError(commandErrorMessage(cause)) }
+    finally { setPending(false) }
   }
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="playlist-picker" role="dialog" aria-modal="true"><header><div><span className="eyebrow">PLAYLIST</span><h3>添加到歌单</h3></div><button onClick={onClose}><X /></button></header><p>{track.title}</p>{error && <p className="inline-error">{error}</p>}<div>{playlists.data?.map((playlist) => <button key={playlist.id} onClick={() => void add(playlist.id)}><span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首歌曲</small></span>{added === playlist.id ? <Check size={17} /> : <ListPlus size={17} />}</button>)}{playlists.data?.length === 0 && <small>请先在左侧创建歌单</small>}</div></div></div>
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="playlist-picker" role="dialog" aria-modal="true"><header><div><span className="eyebrow">PLAYLIST</span><h3>添加到歌单</h3></div><button onClick={onClose}><X /></button></header><p>{tracks.length === 1 ? tracks[0].title : `共 ${tracks.length} 首歌曲`}</p>{error && <p className="inline-error">{error}</p>}<div>{playlists.data?.map((playlist) => <button key={playlist.id} disabled={pending} onClick={() => void add(playlist.id)}><span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首歌曲</small></span>{added === playlist.id ? <Check size={17} /> : <ListPlus size={17} />}</button>)}{playlists.data?.length === 0 && <small>请先在左侧创建歌单</small>}</div></div></div>
 }
 
 function LibraryEmpty({ title, detail, spinning }: { title: string; detail: string; spinning?: boolean }) {
   return <div className="library-empty"><span><Library className={spinning ? 'spin' : ''} /></span><h3>{title}</h3><p>{detail}</p></div>
 }
 
-function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: () => void; onSaved: (track: Track) => void }) {
+export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: () => void; onSaved: (track: Track) => void }) {
   const [title, setTitle] = useState(track.title)
   const [artist, setArtist] = useState(track.artist || '')
   const [album, setAlbum] = useState(track.album || '')

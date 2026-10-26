@@ -5,6 +5,8 @@ import type { Track } from '../../domain/track'
 import { usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite, type BiliSearchItem, type BiliVideoParts } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
+import { PlaylistButton, TrackMenuButton } from '../library/TrackActions'
+import { chooseTrackPlaylist, showTrackMenu } from '../library/trackActionStore'
 
 type ExpandedState = { loading?: boolean; detail?: BiliVideoParts; error?: string }
 
@@ -43,6 +45,13 @@ export function SearchView({ query }: { query: string }) {
       setExpanded((state) => ({ ...state, [item.bvid]: { error: commandErrorMessage(error) } }))
     }
   }
+  const collectResult = async (item: BiliSearchItem) => {
+    try {
+      const detail = expanded[item.bvid]?.detail || await getVideoParts(item.bvid)
+      setExpanded((state) => ({ ...state, [item.bvid]: { detail } }))
+      chooseTrackPlaylist(detail.parts.map((part) => toTrack(detail, part)))
+    } catch (cause) { setActionError(commandErrorMessage(cause)) }
+  }
 
   if (!inDesktopShell) return <EmptyState icon={Waves} title="桌面搜索已准备好" detail="请使用 npm run tauri dev 启动原生窗口，浏览器预览不会直接访问平台接口。" />
   if (result.isLoading) return <EmptyState spinning icon={LoaderCircle} title="正在搜索" detail={`正在寻找与“${query}”相关的内容`} />
@@ -63,8 +72,8 @@ export function SearchView({ query }: { query: string }) {
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
         </button>
         {state?.error && <div className="inline-error"><CircleAlert size={14} />{state.error}</div>}
-        {state?.detail && <div className="result-tools"><button onClick={() => void playAll(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><Play size={14} />{open ? '播放全部分 P' : '播放'}</button><button onClick={() => enqueue(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><ListPlus size={14} />加入队列</button></div>}
-        {open && state?.detail && <div className="parts-list">{state.detail.parts.map((part) => <div className="part-entry" key={part.cid}><button onClick={() => void play(toTrack(state.detail!, part))}><span>P{part.page}</span><strong>{part.title}</strong><small>{formatDuration(part.durationSeconds)}</small><Play size={14} /></button><button className="icon-action" title="加入队列" onClick={() => void add(toTrack(state.detail!, part))}><ListPlus size={16} /></button><button className="icon-action" title="切换喜欢" onClick={() => void add(toTrack(state.detail!, part), true)}><Heart size={16} /></button></div>)}</div>}
+        <div className="result-tools">{state?.detail && <><button onClick={() => void playAll(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><Play size={14} />{open ? '播放全部分 P' : '播放'}</button><button onClick={() => enqueue(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><ListPlus size={14} />加入队列</button></>}<button onClick={() => void collectResult(item)}><ListPlus size={14} />{open ? '全部加入歌单' : '加入歌单'}</button></div>
+        {open && state?.detail && <div className="parts-list">{state.detail.parts.map((part) => <div className="part-entry" key={part.cid} onContextMenu={(event) => showTrackMenu(event, toTrack(state.detail!, part))}><button onClick={() => void play(toTrack(state.detail!, part))}><span>P{part.page}</span><strong>{part.title}</strong><small>{formatDuration(part.durationSeconds)}</small><Play size={14} /></button><button className="icon-action" title="加入队列" onClick={() => void add(toTrack(state.detail!, part))}><ListPlus size={16} /></button><button className="icon-action" title="切换喜欢" onClick={() => void add(toTrack(state.detail!, part), true)}><Heart size={16} /></button><PlaylistButton track={toTrack(state.detail!, part)} /><TrackMenuButton track={toTrack(state.detail!, part)} /></div>)}</div>}
       </article>
     })}</div>
     {result.hasNextPage && <button className="load-more" disabled={result.isFetchingNextPage} onClick={() => void result.fetchNextPage()}>{result.isFetchingNextPage ? '加载中…' : '加载更多结果'}</button>}

@@ -45,6 +45,8 @@ import { ImportFavorites } from '../features/library/ImportFavorites'
 import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
 import { useThemeStore } from '../services/theme'
+import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/library/TrackActions'
+import { showTrackMenu } from '../features/library/trackActionStore'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -135,11 +137,15 @@ export function App() {
     const handler = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setLyricsOpen(false); setImportOpen(false); setSearchFocused(false); return }
       const target = event.target as HTMLElement
-      if (target.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
+      if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
+      if (target.closest('button, a')) return
       if (event.code === 'Space') { event.preventDefault(); void usePlayerStore.getState().toggle() }
     }
     window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
+    document.addEventListener('contextmenu', disableBrowserMenu)
+    return () => { window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
   return (
@@ -221,13 +227,13 @@ export function App() {
               {(homeTracks.data || []).map((track, index) => {
                 const isCurrent = current?.id === track.id
                 return (
-                  <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id}>
+                  <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}>
                     <button className="row-play" onClick={() => play(track)} aria-label={`播放 ${track.title}`}>
                       {isCurrent && status === 'playing' ? <Waves size={17} /> : <><span>{index + 1}</span><Play className="hover-play" size={15} fill="currentColor" /></>}
                     </button>
                     <span className="track-title"><button className="home-cover-button" onClick={() => void play(track)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" /></button><strong>{track.title}</strong></span>
                     <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
-                    <button className="more-button" aria-label="加入播放队列" onClick={() => enqueue([track])}><Plus size={18} /></button>
+                    <div className="row-actions"><PlaylistButton track={track} /><TrackMenuButton track={track} /></div>
                   </div>
                 )
               })}
@@ -246,14 +252,14 @@ export function App() {
         </div>
         <div className="queue-list">
           {queue.map((track, index) => (
-            <div className="queue-entry" key={track.id}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></div>
+            <div className="queue-entry" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button><PlaylistButton track={track} /><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></div>
           ))}
           {!queue.length && <p className="queue-empty">队列为空，可以从音乐库或搜索结果添加歌曲。</p>}
         </div>
       </aside>
 
       <footer className="player-dock">
-        <div className="dock-track-group"><button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current || favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
+        <div className="dock-track-group" onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current || favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         <div className="dock-center">
           <div className="dock-controls"><button aria-label="随机播放" aria-pressed={shuffled} className={shuffled ? 'active' : ''} onClick={toggleShuffle}><Shuffle /></button><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button aria-label={`循环模式：${repeatMode === 'off' ? '顺序播放' : repeatMode === 'all' ? '列表循环' : '单曲循环'}`} className={repeatMode !== 'off' ? 'active repeat-control' : 'repeat-control'} onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' && <i>1</i>}</button></div>
           <div className="progress"><small>{formatDuration(progressSeconds)}</small><RangeControl aria-label="播放进度" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
@@ -263,6 +269,7 @@ export function App() {
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
       {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
       {importOpen && <ImportFavorites onClose={() => setImportOpen(false)} />}
+      <TrackActionsHost />
     </div>
   )
 }

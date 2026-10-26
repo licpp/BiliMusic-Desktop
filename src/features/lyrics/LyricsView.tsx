@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import type { Track } from '../../domain/track'
+import { MetadataDialog } from '../library/LibraryView'
+import { PlaylistButton } from '../library/TrackActions'
 import { usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
@@ -23,6 +27,8 @@ import { SyncedVideo } from './SyncedVideo'
 type Props = { onClose: () => void }
 
 export function LyricsView({ onClose }: Props) {
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState<Track | null>(null)
   const current = usePlayerStore((state) => state.current)
   const progressSeconds = usePlayerStore((state) => state.progressSeconds)
   const [stored, setStored] = useState<StoredLyrics | null>(null)
@@ -76,7 +82,7 @@ export function LyricsView({ onClose }: Props) {
 
   useEffect(() => {
     ++videoRequest.current
-    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
+    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
     return () => { ++videoRequest.current }
   }, [current?.id])
 
@@ -150,10 +156,10 @@ export function LyricsView({ onClose }: Props) {
       <header className="lyrics-topbar">
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
-        <div className="lyrics-actions"><button className="lyrics-rematch" onClick={() => setChooserOpen(true)}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
+        <div className="lyrics-actions"><PlaylistButton track={current} /><button aria-label="编辑歌曲信息" onClick={() => { setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑信息</button><button className="lyrics-rematch" onClick={() => setChooserOpen(true)}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
-        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} /> : <div className="video-loading"><LoaderCircle className="spin" />正在加载视频</div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
+        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className="video-tools"><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
@@ -194,6 +200,7 @@ export function LyricsView({ onClose }: Props) {
         </div>
       </div>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={() => setCommentsOpen(false)} />}
+      {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>
   )
 }

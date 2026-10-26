@@ -21,6 +21,14 @@ test('buffering does not trigger repeated seeks or play requests', () => {
   assert.equal(element.currentTime, 10)
   assert.equal(element.plays, 0)
 })
+test('already aligned first frame does not trigger another startup seek', () => {
+  let seeks = 0
+  const element = video({ currentTime: 0 })
+  Object.defineProperty(element, 'currentTime', { get: () => 0, set: () => { seeks++ } })
+  synchronizeVideo(element, .1, true, .1, true)
+  assert.equal(seeks, 0)
+  assert.equal(element.plays, 1)
+})
 test('small drift adjusts playback speed without discarding buffered frames', () => {
   const element = video()
   synchronizeVideo(element, 10.5, true, 10.25)

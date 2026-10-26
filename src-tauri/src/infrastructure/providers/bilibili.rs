@@ -5,7 +5,10 @@ use reqwest::{
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -364,6 +367,7 @@ struct DashStream {
 pub struct BilibiliProvider {
     client: Client,
     session_cookie: RwLock<Option<String>>,
+    video_sources: RwLock<HashMap<(String, i64), (Instant, VideoSource)>>,
 }
 
 impl BilibiliProvider {
@@ -389,11 +393,13 @@ impl BilibiliProvider {
         Ok(Self {
             client,
             session_cookie: RwLock::new(None),
+            video_sources: RwLock::new(HashMap::new()),
         })
     }
 
     pub async fn set_session_cookie(&self, cookie: Option<String>) {
         *self.session_cookie.write().await = cookie;
+        self.video_sources.write().await.clear();
     }
 
     pub async fn qr_login_generate(&self) -> Result<QrLogin, ProviderError> {
@@ -673,9 +679,15 @@ impl BilibiliProvider {
             .append_pair("fnval", "16")
             .append_pair("fourk", "1");
         let play: PlayData = self.get_data(url).await?;
-        let stream = play
-            .dash
-            .and_then(|dash| dash.audio.into_iter().max_by_key(|stream| stream.bandwidth))
+        let dash = play.dash.ok_or(ProviderError::NoAudio)?;
+        // Playurl already contains video metadata. Cache URLs only; no video bytes are loaded here.
+        if let Ok(source) = Self::select_video(&dash.video) {
+            self.remember_video(bvid, cid, &source).await;
+        }
+        let stream = dash
+            .audio
+            .into_iter()
+            .max_by_key(|stream| stream.bandwidth)
             .ok_or(ProviderError::NoAudio)?;
         let audio_url = if stream.base_url_camel.is_empty() {
             stream.base_url
@@ -702,6 +714,12 @@ impl BilibiliProvider {
     }
 
     pub async fn video_source(&self, bvid: &str, cid: i64) -> Result<VideoSource, ProviderError> {
+        let key = (bvid.to_owned(), cid);
+        if let Some((expires, source)) = self.video_sources.read().await.get(&key) {
+            if *expires > Instant::now() {
+                return Ok(source.clone());
+            }
+        }
         let mut url = self.api_url("/x/player/playurl");
         url.query_pairs_mut()
             .append_pair("bvid", bvid)
@@ -712,10 +730,16 @@ impl BilibiliProvider {
             .append_pair("fourk", "0");
         let play: PlayData = self.get_data(url).await?;
         let streams = play.dash.map(|dash| dash.video).unwrap_or_default();
+        let source = Self::select_video(&streams)?;
+        self.remember_video(bvid, cid, &source).await;
+        Ok(source)
+    }
+
+    fn select_video(streams: &[DashStream]) -> Result<VideoSource, ProviderError> {
         let stream = streams
             .iter()
             .filter(|item| item.codecs.starts_with("avc"))
-            .filter(|item| item.height <= 1080)
+            .filter(|item| item.height <= 720)
             .max_by_key(|item| item.bandwidth)
             .or_else(|| {
                 streams
@@ -724,7 +748,7 @@ impl BilibiliProvider {
                     .min_by_key(|item| item.bandwidth)
             })
             .ok_or(ProviderError::NoVideo)?;
-        Ok(VideoSource {
+        let source = VideoSource {
             backup_urls: if stream.backup_url_camel.is_empty() {
                 stream.backup_url.clone()
             } else {
@@ -742,7 +766,21 @@ impl BilibiliProvider {
             },
             codecs: stream.codecs.clone(),
             bandwidth: stream.bandwidth,
-        })
+        };
+        Ok(source)
+    }
+
+    async fn remember_video(&self, bvid: &str, cid: i64, source: &VideoSource) {
+        let key = (bvid.to_owned(), cid);
+        let mut cache = self.video_sources.write().await;
+        cache.retain(|_, (expires, _)| *expires > Instant::now());
+        if cache.len() >= 32 {
+            cache.clear();
+        }
+        cache.insert(
+            key,
+            (Instant::now() + Duration::from_secs(300), source.clone()),
+        );
     }
 
     pub async fn danmaku(&self, cid: i64) -> Result<Vec<DanmakuItem>, ProviderError> {

@@ -5,6 +5,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Response, StatusCode, header},
     routing::get,
 };
+use futures_util::StreamExt;
 use reqwest::Client;
 use std::{
     collections::HashMap,
@@ -145,13 +146,24 @@ async fn proxy_media(
         return serve_local(&path, &request_headers).await;
     }
 
-    let (upstream, selected) = match fetch_upstream(
-        &state.client,
-        &entry.upstream_urls,
-        request_headers.get(header::RANGE),
-    )
-    .await
-    {
+    let result = if entry.content_type.starts_with("video/") {
+        fetch_fastest_video(
+            &state.client,
+            &entry.upstream_urls,
+            request_headers.get(header::RANGE),
+        )
+        .await
+        .map(|(response, index, prefix)| (response, index, Some(prefix)))
+    } else {
+        fetch_upstream(
+            &state.client,
+            &entry.upstream_urls,
+            request_headers.get(header::RANGE),
+        )
+        .await
+        .map(|(response, index)| (response, index, None))
+    };
+    let (upstream, selected, prefix) = match result {
         Ok(response) => response,
         Err(_) => return status_response(StatusCode::BAD_GATEWAY),
     };
@@ -184,8 +196,52 @@ async fn proxy_media(
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
             HeaderValue::from_static("*"),
         )
-        .body(Body::from_stream(upstream.bytes_stream()))
+        .body(Body::from_stream(
+            futures_util::stream::once(async move {
+                Ok::<_, reqwest::Error>(prefix.unwrap_or_default())
+            })
+            .chain(upstream.bytes_stream()),
+        ))
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+async fn fetch_fastest_video(
+    client: &Client,
+    urls: &[String],
+    range: Option<&HeaderValue>,
+) -> Result<(reqwest::Response, usize, axum::body::Bytes), String> {
+    let mut attempts = tokio::task::JoinSet::new();
+    for (index, url) in urls.iter().take(3).enumerate() {
+        let client = client.clone();
+        let url = url.clone();
+        let range = range.cloned();
+        attempts.spawn(async move {
+            // Give the preferred CDN a short head start, then hedge slow connections.
+            tokio::time::sleep(Duration::from_millis(index as u64 * 180)).await;
+            let mut request = client
+                .get(url)
+                .header(header::USER_AGENT, MEDIA_USER_AGENT)
+                .header(header::REFERER, "https://www.bilibili.com/")
+                .header(header::ACCEPT_ENCODING, "identity");
+            if let Some(range) = range {
+                request = request.header(header::RANGE, range);
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                let mut response = request.send().await.ok()?.error_for_status().ok()?;
+                let prefix = response.chunk().await.ok()??;
+                Some((response, index, prefix))
+            })
+            .await
+            .ok()?
+        });
+    }
+    while let Some(result) = attempts.join_next().await {
+        if let Ok(Some(response)) = result {
+            attempts.abort_all();
+            return Ok(response);
+        }
+    }
+    Err("视频线路暂时不可用".into())
 }
 
 pub async fn fetch_upstream(
@@ -366,6 +422,13 @@ mod tests {
                         .body(Body::from("ab"))
                         .unwrap()
                 }),
+            )
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    "slow primary"
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -393,6 +456,24 @@ mod tests {
             assert_eq!(response.text().await.unwrap(), "ab");
         }
         assert_eq!(rejected.load(Ordering::SeqCst), 1);
+        let video = proxy
+            .register_stream(
+                format!("http://{address}/slow"),
+                vec![format!("http://{address}/backup")],
+                "video/mp4".into(),
+            )
+            .await;
+        let started = std::time::Instant::now();
+        let response = reqwest::Client::new()
+            .get(video)
+            .header("Range", "bytes=0-1")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["content-type"], "video/mp4");
+        // The first chunk consumed during the race must still reach the browser.
+        assert_eq!(response.text().await.unwrap(), "ab");
+        assert!(started.elapsed() < std::time::Duration::from_millis(1500));
         server.abort();
     }
 
