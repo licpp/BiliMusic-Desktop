@@ -170,7 +170,7 @@ export function App() {
             ))}
           </div>
         </section>
-        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · 0.1.0</div>
+        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · 0.1.1</div>
       </aside>
 
       <main className="content-stage">

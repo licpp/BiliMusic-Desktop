@@ -281,7 +281,13 @@ pub async fn bili_playback_source(
         .playback_source(&bvid, cid)
         .await
         .map_err(CommandError::provider)?;
-    source.audio_url = media_proxy.register(source.audio_url).await;
+    source.audio_url = media_proxy
+        .register_stream(
+            source.audio_url,
+            source.backup_urls.clone(),
+            source.mime_type.clone(),
+        )
+        .await;
     source.backup_urls.clear();
     Ok(source)
 }
@@ -300,7 +306,9 @@ pub async fn bili_video_source(
         .video_source(&bvid, cid)
         .await
         .map_err(CommandError::provider)?;
-    source.video_url = media_proxy.register(source.video_url).await;
+    source.video_url = media_proxy
+        .register_stream(source.video_url, vec![], source.mime_type.clone())
+        .await;
     Ok(source)
 }
 
@@ -589,7 +597,9 @@ pub async fn track_playback_url(
         .playback_source(&track.bvid, track.cid)
         .await
         .map_err(CommandError::provider)?;
-    Ok(media_proxy.register(source.audio_url).await)
+    Ok(media_proxy
+        .register_stream(source.audio_url, source.backup_urls, source.mime_type)
+        .await)
 }
 
 #[tauri::command]
@@ -678,12 +688,13 @@ pub async fn download_track(
             .timeout(std::time::Duration::from_secs(600))
             .user_agent("Mozilla/5.0 Resonance/0.1")
             .build()?;
-        let mut response = client
-            .get(source.audio_url)
-            .header(reqwest::header::REFERER, "https://www.bilibili.com/")
-            .send()
-            .await?
-            .error_for_status()?;
+        let urls = std::iter::once(source.audio_url)
+            .chain(source.backup_urls)
+            .collect::<Vec<_>>();
+        let (mut response, _) =
+            crate::infrastructure::media_proxy::fetch_upstream(&client, &urls, None)
+                .await
+                .map_err(std::io::Error::other)?;
         let total = response.content_length().map(|value| value as i64);
         if let Ok(connection) = database.0.lock() {
             let _ = DownloadRepository::progress(&connection, &download_id, 0, total);

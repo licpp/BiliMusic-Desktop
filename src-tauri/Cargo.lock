@@ -3172,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "resonance-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "flate2",

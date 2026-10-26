@@ -1,6 +1,6 @@
 [package]
 name = "resonance-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "A clean-room desktop music client"
 authors = ["Resonance Contributors"]
 edition = "2024"
