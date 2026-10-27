@@ -1,5 +1,22 @@
 {
   "identifier": "app.bilimusic.mobile",
-  "app": { "windows": [{ "label": "main", "title": "BiliMusic", "width": 400, "height": 800, "minWidth": 0, "minHeight": 0 }] },
-  "bundle": { "android": { "minSdkVersion": 26, "versionCode": 10601 } }
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "BiliMusic",
+        "width": 400,
+        "height": 800,
+        "minWidth": 0,
+        "minHeight": 0,
+        "useHttpsScheme": true
+      }
+    ]
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 10601
+    }
+  }
 }
