@@ -78,6 +78,12 @@ class PlaybackService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            "prepare" -> {
+                handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
+                id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
+                artist = intent.getStringExtra("artist") ?: ""; lastPosition = 0.0; lastDuration = 0.0
+                status = "buffering"; error = null; startForeground(NOTIFICATION, notification())
+            }
             "load" -> load(intent)
             "next", "previous" -> listener?.invoke(JSObject().put("action", intent.action))
             "toggle" -> control(if (status == "playing" || status == "buffering") "pause" else "resume")

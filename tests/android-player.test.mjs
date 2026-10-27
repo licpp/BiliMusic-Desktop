@@ -17,6 +17,7 @@ const output = await build({
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;
       export const controlAndroidAudio = async (...args) => globalThis.nativeTest.controls.push(args);
+      export const prepareAndroidAudio = async t => globalThis.nativeTest.controls.push(['prepare', t.id]);
       export const playAndroidAudio = async (...args) => globalThis.nativeTest.plays.push(args);
     ` }))
   } }],
@@ -34,6 +35,7 @@ const track = { id: 'bilibili:BV123:1', title: '歌曲', artist: '歌手', durat
 test('Android routes playback, seek and volume to native service and accepts only current track state', async () => {
   const s = setup(); await s.getState().play(track)
   assert.equal(nativeTest.plays.length, 1)
+  assert.deepEqual(nativeTest.controls[0], ['prepare', track.id])
   nativeTest.event({ id: track.id, status: 'playing', position: 12, duration: 120 })
   assert.equal(s.getState().status, 'playing')
   nativeTest.event({ id: 'old', status: 'error', error: 'stale' })
@@ -50,4 +52,10 @@ test('Android cancel during URL resolution prevents late native autoplay', async
   await s.getState().toggle(); resolve('http://127.0.0.1:1234/token/late'); await playing
   assert.equal(nativeTest.plays.length, 0)
   assert.equal(s.getState().status, 'paused')
+})
+test('Android URL failure stops the preparing foreground service', async () => {
+  const s = setup(); nativeTest.resolve = async () => { throw new Error('source unavailable') }
+  await s.getState().play(track)
+  assert.deepEqual(nativeTest.controls.at(-1), ['stop'])
+  assert.equal(s.getState().status, 'error')
 })

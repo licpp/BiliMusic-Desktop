@@ -23,6 +23,9 @@ class PlayArgs {
 class ControlArgs {
     lateinit var action: String
     var value: Double = 0.0
+    var id: String = ""
+    var title: String = "BiliMusic"
+    var artist: String = "歌手未知"
 }
 
 @TauriPlugin
@@ -78,7 +81,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     fun control(invoke: Invoke) {
         val args = invoke.parseArgs(ControlArgs::class.java)
         activity.runOnUiThread {
-            if (args.action == "theme") {
+            if (args.action == "prepare") {
+                // Establish foreground ownership before Rust resolves the URL, so switching
+                // tracks still works after the activity goes into the background.
+                activity.startForegroundService(Intent(activity, PlaybackService::class.java)
+                    .setAction("prepare").putExtra("id", args.id)
+                    .putExtra("title", args.title).putExtra("artist", args.artist))
+            } else if (args.action == "theme") {
                 val light = args.value > 0
                 val controller = androidx.core.view.WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                 controller.isAppearanceLightStatusBars = light

@@ -20,3 +20,5 @@ export async function playAndroidAudio(track: Track, url: string, position: numb
 export const controlAndroidAudio = (action: string, value = 0) => invoke('plugin:android-player|control', { action, value })
 export const snapshotAndroidAudio = () => invoke<State>('plugin:android-player|snapshot')
 export function androidPlaybackClock() { return Math.min(clock.duration || Infinity, clock.position + (clock.playing ? Math.max(0, performance.now() - clock.at) / 1000 : 0)) }
+
+export const prepareAndroidAudio = (track: Track) => invoke('plugin:android-player|control', { action: 'prepare', id: track.id, title: track.title, artist: track.artist || '歌手未知' })

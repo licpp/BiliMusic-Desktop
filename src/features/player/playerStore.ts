@@ -1,5 +1,5 @@
 import { isAndroid } from '../../services/platform'
-import { observeAndroidAudio, playAndroidAudio, controlAndroidAudio, snapshotAndroidAudio, androidPlaybackClock } from './androidAudio'
+import { observeAndroidAudio, prepareAndroidAudio, playAndroidAudio, controlAndroidAudio, snapshotAndroidAudio, androidPlaybackClock } from './androidAudio'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
@@ -43,11 +43,11 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   play: async (track, startAt = 0) => {
     const request = ++playRequest
     loadedTrackId = null
-    if (isAndroid) await controlAndroidAudio('stop').catch(() => undefined)
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
     try {
+      if (isAndroid) { await prepareAndroidAudio(track); if (request !== playRequest) return }
       const storedTrack = await recordPlayedTrack(track)
       if (request !== playRequest) return
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
@@ -64,6 +64,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const element = playerAudio(); element.src = url; element.currentTime = Math.max(0, startAt); loadedTrackId = storedTrack.id; await element.play()
     } catch (error) {
       if (request !== playRequest) return
+      if (isAndroid) { await controlAndroidAudio('stop').catch(() => undefined); if (request !== playRequest) return }
       const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'
       set({ status: 'error', error: message })
     }
