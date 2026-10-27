@@ -115,6 +115,16 @@ impl LibraryRepository {
             .optional()
     }
 
+    pub fn saved(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
+        let mut statement = connection.prepare(&format!(
+            "{} WHERE f.track_id IS NOT NULL OR EXISTS(SELECT 1 FROM playlist_items pi WHERE pi.track_id=t.id) ORDER BY t.updated_at DESC,t.id LIMIT ?1",
+            Self::select_sql()
+        ))?;
+        statement
+            .query_map(params![limit.clamp(1, 500)], Self::map_row)?
+            .collect()
+    }
+
     pub fn recent(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
         let mut statement = connection.prepare(&format!(
             "{} JOIN (SELECT track_id,MAX(id) latest_id FROM play_history GROUP BY track_id) h ON h.track_id=t.id ORDER BY h.latest_id DESC LIMIT ?1",
@@ -132,12 +142,24 @@ impl LibraryRepository {
             |row| row.get::<_, bool>(0),
         )?;
         if liked {
-            connection.execute("DELETE FROM favorites WHERE track_id=?1", params![id])?;
+            Self::set_favorite(connection, id, false)?;
             Ok(false)
         } else {
-            connection.execute("INSERT INTO favorites (track_id) VALUES (?1)", params![id])?;
+            Self::set_favorite(connection, id, true)?;
             Ok(true)
         }
+    }
+
+    pub fn set_favorite(connection: &Connection, id: &str, liked: bool) -> rusqlite::Result<()> {
+        if liked {
+            connection.execute(
+                "INSERT INTO favorites(track_id) VALUES(?1) ON CONFLICT(track_id) DO NOTHING",
+                params![id],
+            )?;
+        } else {
+            connection.execute("DELETE FROM favorites WHERE track_id=?1", params![id])?;
+        }
+        Ok(())
     }
 
     pub fn update_metadata(
@@ -274,5 +296,44 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].id, first.id);
         assert_eq!(recent[1].id, second.id);
+    }
+
+    #[test]
+    fn saved_collection_excludes_play_only_tracks_and_deduplicates_playlists() {
+        use crate::infrastructure::repositories::playlists::PlaylistRepository;
+        let mut connection = database();
+        let played = track(10);
+        let liked = track(11);
+        let in_playlist = track(12);
+        LibraryRepository::record_play(&mut connection, &played).unwrap();
+        LibraryRepository::upsert(&mut connection, &liked).unwrap();
+        LibraryRepository::upsert(&mut connection, &in_playlist).unwrap();
+        LibraryRepository::set_favorite(&connection, &liked.id, true).unwrap();
+        for id in ["a", "b"] {
+            PlaylistRepository::create(&connection, id, id).unwrap();
+            PlaylistRepository::add_track(&connection, id, &in_playlist.id).unwrap();
+        }
+        let saved = LibraryRepository::saved(&connection, 500).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(saved.iter().all(|item| item.id != played.id));
+        assert_eq!(
+            LibraryRepository::recent(&connection, 200).unwrap()[0].id,
+            played.id
+        );
+        LibraryRepository::set_favorite(&connection, &liked.id, false).unwrap();
+        assert_eq!(LibraryRepository::saved(&connection, 500).unwrap().len(), 1);
+        PlaylistRepository::delete(&connection, "a").unwrap();
+        assert_eq!(LibraryRepository::saved(&connection, 500).unwrap().len(), 1);
+        PlaylistRepository::delete(&connection, "b").unwrap();
+        assert!(
+            LibraryRepository::saved(&connection, 500)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            LibraryRepository::get(&connection, &in_playlist.id)
+                .unwrap()
+                .is_some()
+        );
     }
 }

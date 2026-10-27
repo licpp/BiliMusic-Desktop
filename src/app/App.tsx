@@ -34,10 +34,10 @@ import {
 import { usePlayerStore } from '../features/player/playerStore'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
-import { LibraryView } from '../features/library/LibraryView'
+import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, commandErrorMessage, createPlaylist, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { clearSearchHistory, commandErrorMessage, createPlaylist, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
 import { SettingsView } from '../features/settings/SettingsView'
 import { DownloadsView } from '../features/downloads/DownloadsView'
 import { AccountControl } from '../features/account/AccountControl'
@@ -52,14 +52,13 @@ const navigation = [
   { label: '此刻', icon: Home },
   { label: '探索', icon: Compass },
   { label: '音乐库', icon: Library },
-  { label: '最近播放', icon: Clock3 },
   { label: '下载', icon: Download },
-  { label: '我喜欢', icon: Heart },
   { label: '设置', icon: Settings },
 ]
 
 export function App() {
   const [activeNav, setActiveNav] = useState('此刻')
+  const [libraryTab, setLibraryTab] = useState<'saved' | 'recent'>('saved')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [lyricsOpen, setLyricsOpen] = useState(false)
@@ -77,7 +76,8 @@ export function App() {
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
   const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
   const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
-  const activePlaylist = playlists.data?.find((playlist) => activeNav === `playlist:${playlist.id}`)
+  const sidebarPlaylists = playlists.data || [FAVORITES_PLAYLIST]
+  const activePlaylist = sidebarPlaylists.find((playlist) => activeNav === `playlist:${playlist.id}`)
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
@@ -121,6 +121,7 @@ export function App() {
     updatePlayerTrack({ ...latest, liked })
     await queryClient.invalidateQueries({ queryKey: ['library'] })
     await queryClient.invalidateQueries({ queryKey: ['home-recent'] })
+    await queryClient.invalidateQueries({ queryKey: ['playlists'] })
     } catch (error) { setActionError(commandErrorMessage(error)) }
     finally { setFavoritePending(false) }
   }
@@ -180,10 +181,10 @@ export function App() {
           {creatingPlaylist && <form className="playlist-create" onSubmit={(event) => { event.preventDefault(); if (playlistName.trim()) createList.mutate(playlistName) }}><input autoFocus maxLength={80} value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="歌单名称" /><button disabled={createList.isPending}>创建</button></form>}
           {createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}
           <div className="collection-list">
-            {playlists.data?.map((playlist, index) => (
+            {sidebarPlaylists.map((playlist, index) => (
               <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery('') }}>
-                <span className={`collection-cover tone-${index % 4}`}><Album size={17} /></span>
-                <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首</small></span>
+                <span className={playlist.isSystem ? 'collection-cover favorites-cover' : `collection-cover tone-${index % 4}`}>{playlist.isSystem ? <Heart size={17} fill="currentColor" /> : <Album size={17} />}</span>
+                <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首{playlist.isSystem ? ' · 默认歌单' : ''}</small></span>
               </button>
             ))}
           </div>
@@ -203,7 +204,7 @@ export function App() {
         </form>
 
         <div className="stage-scroll">
-          {submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('音乐库')} /> : activeNav === '音乐库' ? <LibraryView /> : activeNav === '我喜欢' ? <LibraryView favoritesOnly /> : activeNav === '最近播放' ? <LibraryView recent /> : activeNav === '下载' ? <DownloadsView /> : activeNav === '设置' ? <SettingsView /> : activeNav === '探索' ? <section className="discover-view"><span className="eyebrow">DISCOVER</span><h2>寻找下一首歌</h2><p>选择一个关键词，探索 B 站上的音乐现场与合集。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '独立音乐', '爵士', '钢琴', '游戏原声'].map((keyword) => <button key={keyword} onClick={() => { setQuery(keyword); setSubmittedQuery(keyword) }}><Waves /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section> : <>
+          {submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('音乐库')} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '下载' ? <DownloadsView /> : activeNav === '设置' ? <SettingsView /> : activeNav === '探索' ? <section className="discover-view"><span className="eyebrow">DISCOVER</span><h2>寻找下一首歌</h2><p>选择一个关键词，探索 B 站上的音乐现场与合集。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '独立音乐', '爵士', '钢琴', '游戏原声'].map((keyword) => <button key={keyword} onClick={() => { setQuery(keyword); setSubmittedQuery(keyword) }}><Waves /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section> : <>
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
@@ -221,7 +222,7 @@ export function App() {
           </section>
 
           <section className="tracks-section">
-            <header><div><span className="eyebrow">RECENTLY PLAYED</span><h3>最近听过的声音</h3></div><button onClick={() => setActiveNav('最近播放')}>查看全部 <ChevronRight size={16} /></button></header>
+            <header><div><span className="eyebrow">RECENTLY PLAYED</span><h3>最近听过的声音</h3></div><button onClick={() => { setLibraryTab('recent'); setActiveNav('音乐库') }}>查看全部 <ChevronRight size={16} /></button></header>
             <div className="track-table" role="table">
               <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
               {(homeTracks.data || []).map((track, index) => {

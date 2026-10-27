@@ -7,6 +7,11 @@
 }
 .artwork { display: inline-grid; place-items: center; overflow: hidden; background: var(--panel-raised); color: var(--faint); }
 .artwork img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.result-cover > .artwork { width: 100%; height: 100%; }
+.favorites-cover { color: var(--coral); background: color-mix(in srgb, var(--coral) 12%, transparent); }
+.library-tabs { display: flex; gap: 22px; padding: 5px 3px 0; border-bottom: 1px solid var(--line); }
+.library-tabs button { padding: 12px 2px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: 12px; }
+.library-tabs button[aria-selected="true"] { color: var(--coral); border-bottom-color: var(--coral); }
 .artwork > svg { width: 42%; height: 42%; max-width: 72px; max-height: 72px; opacity: .65; }
 .lyrics-cover > .artwork { width: 100%; height: 100%; }
 .brand-mark { border: 0; cursor: pointer; }

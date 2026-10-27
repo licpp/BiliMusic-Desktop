@@ -15,7 +15,9 @@ use crate::infrastructure::repositories::library::{
 use crate::infrastructure::repositories::lyrics::{
     LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
-use crate::infrastructure::repositories::playlists::{PlaylistRecord, PlaylistRepository};
+use crate::infrastructure::repositories::playlists::{
+    FAVORITES_PLAYLIST_ID, PlaylistRecord, PlaylistRepository,
+};
 use crate::infrastructure::repositories::search_history::SearchHistoryRepository;
 use crate::interface::error::CommandError;
 use serde::Serialize;
@@ -83,13 +85,18 @@ pub fn library_record_play(
 pub fn library_tracks(
     database: State<'_, Database>,
     favorites_only: Option<bool>,
+    saved_only: Option<bool>,
 ) -> Result<Vec<TrackRecord>, CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    LibraryRepository::list(&connection, favorites_only.unwrap_or(false), 500)
-        .map_err(CommandError::database)
+    if saved_only.unwrap_or(false) {
+        LibraryRepository::saved(&connection, 500).map_err(CommandError::database)
+    } else {
+        LibraryRepository::list(&connection, favorites_only.unwrap_or(false), 500)
+            .map_err(CommandError::database)
+    }
 }
 
 #[tauri::command]
@@ -246,6 +253,9 @@ pub fn playlist_delete(
     database: State<'_, Database>,
     playlist_id: String,
 ) -> Result<(), CommandError> {
+    if playlist_id == FAVORITES_PLAYLIST_ID {
+        return Err(CommandError::validation("默认歌单不能删除"));
+    }
     let connection = database
         .0
         .lock()
@@ -685,6 +695,9 @@ pub fn playlist_rename(
     playlist_id: String,
     name: String,
 ) -> Result<(), CommandError> {
+    if playlist_id == FAVORITES_PLAYLIST_ID {
+        return Err(CommandError::validation("默认歌单不能重命名"));
+    }
     if name.trim().is_empty() || name.chars().count() > 80 {
         return Err(CommandError::validation("歌单名称需为 1 到 80 个字符"));
     }
@@ -692,13 +705,7 @@ pub fn playlist_rename(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    connection
-        .execute(
-            "UPDATE playlists SET name=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1",
-            rusqlite::params![playlist_id, name.trim()],
-        )
-        .map_err(CommandError::database)?;
-    Ok(())
+    PlaylistRepository::rename(&connection, &playlist_id, &name).map_err(CommandError::database)
 }
 
 #[tauri::command]

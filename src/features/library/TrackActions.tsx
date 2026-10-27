@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { FolderPlus, ListMusic, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
-import { commandErrorMessage, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
+import { commandErrorMessage, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
 import { usePlayerStore } from '../player/playerStore'
 import { MetadataDialog, PlaylistPicker } from './LibraryView'
 import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActionStore'
@@ -29,6 +29,10 @@ export function TrackActionsHost() {
   useEffect(() => { if (menu) element.current?.querySelector('button')?.focus() }, [menu])
   const refresh = () => { void client.invalidateQueries({ queryKey: ['library'] }); void client.invalidateQueries({ queryKey: ['home-recent'] }); void client.invalidateQueries({ queryKey: ['playlists'] }) }
   const edit = async (track: Track) => { useTrackActions.setState({ menu: null }); try { setEditing(await saveLibraryTrack(track)) } catch (cause) { setError(commandErrorMessage(cause)) } }
+  const remove = async (playlistId: string, track: Track) => {
+    try { await removeTrackFromPlaylist(playlistId, track.id); if (playlistId === FAVORITES_PLAYLIST_ID) usePlayerStore.getState().updateTrack({ ...track, liked: false }); refresh() }
+    catch (cause) { setError(commandErrorMessage(cause)) }
+  }
   return createPortal(<>
     {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
@@ -36,7 +40,7 @@ export function TrackActionsHost() {
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>
       <button role="menuitem" onClick={() => void edit(menu.track)}><Pencil size={15} />编辑歌曲信息</button>
-      {menu.playlistId && <button role="menuitem" onClick={() => { void removeTrackFromPlaylist(menu.playlistId!, menu.track.id).then(refresh).catch((cause) => setError(commandErrorMessage(cause))); useTrackActions.setState({ menu: null }) }}><Trash2 size={15} />从当前歌单移除</button>}
+      {menu.playlistId && <button role="menuitem" onClick={() => { void remove(menu.playlistId!, menu.track); useTrackActions.setState({ menu: null }) }}><Trash2 size={15} />{menu.playlistId === FAVORITES_PLAYLIST_ID ? '取消喜欢' : '从当前歌单移除'}</button>}
     </div>}
     {adding && <PlaylistPicker tracks={adding} onClose={() => useTrackActions.setState({ adding: null })} />}
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(track) => { usePlayerStore.getState().updateTrack(track); setEditing(null); refresh() }} />}

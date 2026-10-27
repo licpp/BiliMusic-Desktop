@@ -15,7 +15,9 @@ export type LyricLine = { timeMs: number; text: string }
 export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
 export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
-export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number }
+export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean }
+export const FAVORITES_PLAYLIST_ID = 'system:favorites'
+export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
 export type QrLogin = { key: string; url: string }
@@ -49,9 +51,9 @@ export async function recordPlayedTrack(track: Track): Promise<Track> {
   return fromStoredTrack(stored)
 }
 
-export async function listLibraryTracks(favoritesOnly = false): Promise<Track[]> {
+export async function listLibraryTracks(favoritesOnly = false, savedOnly = false): Promise<Track[]> {
   if (!inDesktopShell) return []
-  const tracks = await invoke<StoredTrack[]>('library_tracks', { favoritesOnly })
+  const tracks = await invoke<StoredTrack[]>('library_tracks', { favoritesOnly, savedOnly })
   return tracks.map(fromStoredTrack)
 }
 
@@ -102,7 +104,7 @@ export const setStoredLyricsBias = (trackId: string, biasMs: number) =>
   invoke<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
 
 export async function listPlaylists(): Promise<Playlist[]> {
-  if (!inDesktopShell) return []
+  if (!inDesktopShell) return [{ ...FAVORITES_PLAYLIST }]
   return invoke<Playlist[]>('playlists_list')
 }
 export const createPlaylist = (name: string) => invoke<Playlist>('playlist_create', { name })

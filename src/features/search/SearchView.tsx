@@ -5,6 +5,7 @@ import type { Track } from '../../domain/track'
 import { usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite, type BiliSearchItem, type BiliVideoParts } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
+import { Artwork } from '../../shared/Artwork'
 import { PlaylistButton, TrackMenuButton } from '../library/TrackActions'
 import { chooseTrackPlaylist, showTrackMenu } from '../library/trackActionStore'
 
@@ -25,6 +26,7 @@ export function SearchView({ query }: { query: string }) {
       if (favorite) { const liked = await toggleStoredFavorite(stored.id); usePlayerStore.getState().updateTrack({ ...stored, liked }) }
       else enqueue([stored])
       await client.invalidateQueries({ queryKey: ['library'] })
+      if (favorite) { await client.invalidateQueries({ queryKey: ['playlists'] }); await client.invalidateQueries({ queryKey: ['home-recent'] }) }
       setActionError(favorite ? '已更新喜欢状态' : '已加入播放队列')
     } catch (error) { setActionError(commandErrorMessage(error)) }
   }
@@ -66,7 +68,7 @@ export function SearchView({ query }: { query: string }) {
       const open = Boolean(state?.detail && state.detail.parts.length > 1)
       return <article className={open ? 'result-card expanded' : 'result-card'} key={item.bvid}>
         <button className="result-main" onClick={() => selectResult(item)}>
-          <span className="result-cover">{item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" /> : <Waves />}<i><Play size={17} fill="currentColor" /></i></span>
+          <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i></span>
           <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {item.playCount.toLocaleString()} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
