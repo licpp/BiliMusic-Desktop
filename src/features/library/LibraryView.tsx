@@ -62,12 +62,14 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTab
       </button>
       <div className="library-copy"><strong>{track.title}</strong><small>{track.artist || '歌手未知'}{track.album ? ` · ${track.album}` : ''}</small></div>
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
+      <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
       <button className="icon-action" onClick={() => setEditing(track)} aria-label="编辑歌曲信息"><Pencil size={16} /></button>
       <button className="icon-action" onClick={() => enqueue([track])} aria-label="加入播放队列"><ListPlus size={16} /></button>
       <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
       <button className="icon-action" onClick={() => setAdding(track)} aria-label="加入歌单"><ListPlus size={17} /></button>
       {playlist && !playlist.isSystem && <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(refresh).catch((error) => setDownloadMessage(commandErrorMessage(error)))} aria-label="从歌单移除"><Trash2 size={16} /></button>}
+      </div>
     </article>)}</div>}
     </div>
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { updatePlayerTrack(updated); setEditing(null); void client.invalidateQueries({ queryKey: ['library'] }); void client.invalidateQueries({ queryKey: ['home-recent'] }) }} />}

@@ -1,3 +1,4 @@
+.library-track-actions { display: contents; }
 .mobile-library-toggle, .mobile-library-close, .mobile-library-scrim, .mobile-nav-label { display: none; }
 @media (max-width: 760px) {
   html, body, #root { min-width: 0; width: 100%; height: 100%; }
@@ -23,7 +24,7 @@
   .quick-actions { grid-template-columns: 1fr; gap: 8px; margin-bottom: 22px; }.quick-actions button { grid-template-columns: 38px 1fr; }.discover-view .quick-actions { grid-template-columns: 1fr 1fr; }.discover-view .quick-actions button { grid-template-columns: 24px minmax(0,1fr); padding: 12px 8px; }
   .track-row { grid-template-columns: 32px minmax(0,1fr) 72px; padding: 6px 0; gap: 5px; }.track-row > span:nth-child(3), .track-row > span:nth-child(4), .track-row > span:nth-child(5) { display: none; }.table-head { display: none; }.track-title { min-width: 0; }.track-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.row-actions { opacity: 1; }
   .row-actions button, .icon-action { min-width: 36px; min-height: 40px; }
-  .library-track { grid-template-columns: 32px minmax(0,1fr); gap: 6px; padding: 10px 4px; }.library-track > .row-actions { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }.library-track .row-actions button { min-width: 38px; }.library-track-info { min-width: 0; }
+  .library-track { grid-template-columns: 32px minmax(0,1fr); gap: 6px; padding: 10px 4px; }.library-track > .library-track-actions { display: flex; grid-column: 1/-1; justify-content: flex-end; flex-wrap: wrap; gap: 3px; }.library-duration { display: none; }.library-copy { min-width: 0; }.library-copy strong { overflow: hidden; text-overflow: ellipsis; }.library-track .row-actions button { min-width: 38px; }.library-track-info { min-width: 0; }
   .result-main { grid-template-columns: 68px minmax(0,1fr) 24px; gap: 9px; padding: 9px; }.result-cover { width: 68px; height: 50px; }.result-duration { display: none; }.parts-list { padding: 0 8px 8px; }.result-tools { padding: 0 9px 9px; }.result-copy strong { font-size: 13px; }
   .player-dock { grid-area: 2/1; display: grid; grid-template-columns: minmax(0,1fr) auto auto; grid-template-rows: 62px 34px; gap: 0 4px; padding: 4px 12px; min-width: 0; z-index: 35; }
   .dock-track-group { min-width: 0; }.dock-track { min-width: 0; }.dock-cover { width: 42px; height: 42px; flex: 0 0 42px; }.dock-track span { min-width: 0; }.dock-heart { width: 38px; min-width: 38px; }

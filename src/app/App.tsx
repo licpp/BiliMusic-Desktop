@@ -152,6 +152,25 @@ export function App() {
     return () => { window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
+  useEffect(() => {
+    const back = (event: Event) => {
+      // Close the foremost dialog first, preserving the screen beneath it.
+      const overlays = [...document.querySelectorAll<HTMLElement>('.dialog-backdrop, .lyric-chooser-backdrop')]
+      const overlay = overlays.at(-1)
+      if (overlay) {
+        const close = overlay.querySelector<HTMLButtonElement>('header button[aria-label], header button:last-child')
+        if (close) { event.preventDefault(); close.click(); return }
+      }
+      if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
+      if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
+      if (queueOpen) { event.preventDefault(); toggleQueue(); return }
+      if (libraryOpen) { event.preventDefault(); setLibraryOpen(false); return }
+      if (submittedQuery || activeNav !== '此刻') { event.preventDefault(); setSubmittedQuery(''); setActiveNav('此刻') }
+    }
+    window.addEventListener('bilimusic-back', back)
+    return () => window.removeEventListener('bilimusic-back', back)
+  }, [lyricsOpen, queueOpen, libraryOpen, submittedQuery, activeNav, toggleQueue])
+
   return (
     <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${libraryOpen ? 'library-open' : ''}`}>
       {libraryOpen && <button className="mobile-library-scrim" aria-label="关闭歌单导航" onClick={() => setLibraryOpen(false)} />}

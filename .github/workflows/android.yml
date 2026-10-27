@@ -22,6 +22,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install Android build dependencies
         run: |
           sudo apt-get update -qq
