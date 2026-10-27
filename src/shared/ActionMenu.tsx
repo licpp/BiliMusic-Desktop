@@ -12,7 +12,12 @@ export function ActionMenu({ label = '更多操作', panel = false, children }: 
     const dismiss = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) close() }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close(); trigger.current?.focus() } }
     const back = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); close() }
-    const scroll = (event: Event) => { if (!menu.current?.contains(event.target as Node)) close() }
+    const scroll = (event: Event) => {
+      const scroller = event.target
+      // Dismiss only when scrolling moves this menu's anchor. Automatic lyric
+      // scrolling must not close a menu attached to the fixed page header.
+      if (scroller === document || scroller === window || (scroller instanceof Element && trigger.current && scroller.contains(trigger.current))) close()
+    }
     document.addEventListener('pointerdown', dismiss)
     document.addEventListener('keydown', escape)
     window.addEventListener('bilimusic-back', back, true)
