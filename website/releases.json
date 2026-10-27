@@ -1,0 +1,25 @@
+{
+  "version": "0.1.4",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.4",
+  "platforms": [
+    {
+      "id": "mac", "name": "macOS", "status": "available", "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等", "requirements": "macOS 12+ · 暂不支持 Intel Mac",
+      "file": "BiliMusic_0.1.4_aarch64.dmg", "size": 6436848,
+      "sha256": "03a2ed0a7a4ce4167bd2e86ffc72a0d2bdd196f3fb3c1a4cbffd207d22afb973",
+      "channels": [
+        { "id": "gitee", "name": "Gitee", "recommended": true, "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.4/BiliMusic_0.1.4_aarch64.dmg" },
+        { "id": "github", "name": "GitHub", "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.4/BiliMusic_0.1.4_aarch64.dmg" }
+      ]
+    },
+    {
+      "id": "windows", "name": "Windows", "status": "available", "architecture": "x64 · 64 位", "requirements": "Windows 10 / 11 · 需要 WebView2",
+      "file": "BiliMusic_0.1.4_x64-setup.exe", "size": 4456308,
+      "sha256": "73ae482aef4c087565c80549b2e4163b270720eb171345bf80b830663363f646",
+      "channels": [
+        { "id": "gitee", "name": "Gitee", "recommended": true, "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.4/BiliMusic_0.1.4_x64-setup.exe" },
+        { "id": "github", "name": "GitHub", "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.4/BiliMusic_0.1.4_x64-setup.exe" }
+      ]
+    },
+    { "id": "android", "name": "Android", "status": "coming_soon", "channels": [] }
+  ]
+}

@@ -6,6 +6,51 @@ if (location.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(locati
 }
 let policyPromise;
 let platform;
+let releaseManifest;
+let downloadPolicyVersion;
+const element = (tag, text, className) => {
+  const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node;
+};
+async function loadDownloads() {
+  const target = $('#download-platforms');
+  try {
+    const response = await fetch('/api/v1/releases', { signal:AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('发布信息加载失败');
+    releaseManifest = await response.json(); target.replaceChildren();
+    for (const item of releaseManifest.platforms) {
+      const article = element('article', null, item.id === 'android' ? 'android-card' : '');
+      article.append(element('div', item.id === 'mac' ? '⌘' : item.id === 'windows' ? '⊞' : '↗', 'os-symbol'));
+      const heading = element('div'); heading.append(element('h3',`BiliMusic for ${item.name}`));
+      heading.append(element('p',item.status === 'available' ? item.architecture : '移动端正在规划中，敬请期待。')); article.append(heading);
+      if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
+      else {
+        article.append(element('p',`v${releaseManifest.version} · ${(item.size / 1048576).toFixed(1)} MB · ${item.requirements}`,'download-version'));
+        const channels = element('div', null, 'channel-buttons');
+        for (const channel of item.channels) {
+          const button = element('button',channel.name + (channel.recommended ? ' · 国内推荐' : ''),'button' + (channel.recommended ? ' recommended' : ''));
+          button.type='button'; button.dataset.platform=item.id; button.dataset.source=channel.id;
+          button.setAttribute('aria-label',`${item.name} ${channel.name} 下载${channel.recommended ? '（国内推荐）' : ''}`);
+          button.disabled=!channel.url; if (!channel.url) button.textContent=`${channel.name} · 准备中`;
+          channels.append(button);
+        }
+        article.append(channels);
+        const checksum = element('details',null,'checksum'); checksum.append(element('summary','查看 SHA-256 校验值'),element('code',item.sha256)); article.append(checksum);
+      }
+      target.append(article);
+    }
+  } catch {
+    target.replaceChildren(element('p','下载信息暂时无法加载，请稍后重试。'));
+    const retry=element('button','重新加载','button'); retry.type='button'; retry.dataset.retry='true'; target.append(retry);
+  }
+}
+$('#download-platforms').addEventListener('click',event => {
+  const button=event.target.closest('button'); if (!button) return;
+  if (button.dataset.retry) return loadDownloads();
+  const item=releaseManifest?.platforms.find(item=>item.id===button.dataset.platform);
+  const channel=item?.channels.find(channel=>channel.id===button.dataset.source);
+  if (item && channel?.url) openPolicy({item,channel});
+});
+loadDownloads();
 function getPolicy() {
   return policyPromise ||= fetch('/api/v1/policy').then(r => { if (!r.ok) throw new Error('无法加载使用说明，请稍后重试。'); return r.json(); }).catch(error => { policyPromise = undefined; throw error; });
 }
@@ -17,12 +62,14 @@ async function openPolicy(downloadPlatform) {
   $('#download-accepted').checked = false;
   $('#confirm-download').disabled = true;
   $('#confirm-download').dataset.loaded = 'false';
-  $('#download-availability').textContent = platform ? `${platform} 安装包尚未公开发布 · Coming soon` : '';
+  $('#confirm-download').textContent = '同意并下载';
+  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。安装包未签名，下载前请确认来源与校验值。` : '';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
   dialog.showModal(); dialog.scrollTop = 0;
   try {
     const policy = await getPolicy(); content.replaceChildren();
+    downloadPolicyVersion=policy.version;
     const date = document.createElement('small'); date.textContent = `说明版本：${policy.version}`; content.append(date);
     for (const [heading, text] of policy.sections) {
       const section = document.createElement('section'), h = document.createElement('h3'), p = document.createElement('p');
@@ -30,15 +77,24 @@ async function openPolicy(downloadPlatform) {
     }
     const link = document.createElement('a'); link.href = 'https://www.bilibili.com/blackboard/protocal/licence.html'; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent='查看哔哩哔哩用户使用协议 ↗'; content.append(link);
     $('#confirm-download').dataset.loaded = 'true';
+    $('#confirm-download').disabled = !$('#download-accepted').checked;
   } catch (error) { content.textContent = error.message; $('#confirm-download').dataset.loaded='false'; }
 }
 document.querySelectorAll('[data-policy]').forEach(button => button.addEventListener('click', () => openPolicy()));
-document.querySelectorAll('[data-download]').forEach(button => button.addEventListener('click', () => openPolicy(button.dataset.download)));
 $('.close-dialog').addEventListener('click', () => $('#policy-dialog').close());
 $('#policy-close').addEventListener('click', () => $('#policy-dialog').close());
 $('#download-accepted').addEventListener('change', event => { $('#confirm-download').disabled = !event.target.checked || $('#confirm-download').dataset.loaded !== 'true'; });
-$('#confirm-download').addEventListener('click', () => {
-  $('#download-availability').textContent = `${platform} · Coming soon。当前还没有公开安装包，请关注 GitHub 后续发布。`;
+$('#confirm-download').addEventListener('click', async () => {
+  if (!platform || !$('#download-accepted').checked) return;
+  const selection=platform, button=$('#confirm-download'); button.disabled=true; button.textContent='正在准备下载…';
+  try {
+    const response=await fetch('/api/v1/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:selection.item.id,source:selection.channel.id,consent:true,policyVersion:downloadPolicyVersion}),signal:AbortSignal.timeout(15000)});
+    const result=await response.json(); if (!response.ok) throw new Error(result.message || '下载暂时不可用，请稍后重试。');
+    if (platform !== selection || !$('#policy-dialog').open) return;
+    $('#download-availability').textContent=`正在前往 ${selection.channel.name} 下载 ${result.file}。若未开始下载，可重试或选择另一个下载源。`;
+    window.location.assign(result.url);
+  } catch (error) { if (platform===selection) $('#download-availability').textContent=error.message || '网络请求失败，请稍后重试。'; }
+  finally { if (platform===selection) { button.textContent='重新下载'; button.disabled=!$('#download-accepted').checked; } }
 });
 $('#hero-play').addEventListener('click', event => {
   const active = $('.floating-player').classList.toggle('playing');

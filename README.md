@@ -89,7 +89,9 @@ npm run tauri build -- --bundles nsis
 
 ## 网站与反馈
 
-网站代码位于 [website](website/README.md)，提供功能介绍、macOS / Windows 下载预告、下载前声明确认及无需 GitHub 账号的站内反馈。当前两个平台均显示 Coming soon，网站不分发安装包或媒体资源。
+网站代码位于 [website](website/README.md)，提供功能介绍、macOS / Windows 安装包下载、下载前声明确认及无需 GitHub 账号的站内反馈。国内优先推荐 [Gitee 发行版](https://gitee.com/yoaker/BiliMusic-Desktop/releases/tag/v0.1.4)，同时提供 [GitHub Releases](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.4)。Android 显示 Coming soon。
+
+0.1.4 为公开预览版：macOS 安装包支持 macOS 12+ 与 Apple Silicon（暂不包含 Intel Mac），Windows 安装包为 x64。安装包尚未签名或公证，下载时请核对来源与发行版附件中的 SHA-256 校验清单。两边安装包来自同一次成功的 GitHub Actions 构建，文件内容一致。
 
 反馈保存在独立 PostgreSQL 数据库，包含错误反馈、功能建议和权利人反馈。请通过 [网站表单](https://bilimusic.cn/#feedback) 联系维护者，并勿提交密码、Cookie、完整私人日志等敏感信息。
 

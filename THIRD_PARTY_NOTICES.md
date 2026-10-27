@@ -2,7 +2,7 @@
 
 This project depends on third-party Rust crates and npm packages. Their respective licenses remain in effect and are not replaced by the project's MIT license.
 
-Release CI must generate and publish machine-readable dependency notices before the first public binary release. Recommended checks:
+Public releases include `THIRD_PARTY_LICENSES.json`, with dependency versions, declared licenses, and available license text, alongside `LICENSE`, this notice, and a SHA-256 file list. The first public 0.1.4 release uses dependency metadata for both macOS and Windows from the release source commit. Future release CI generates platform-specific reports with `scripts/release-notices.mjs`. Additional recommended checks:
 
 - Rust: `cargo deny check licenses`
 - npm: an SPDX-compatible license report generated from the lockfile

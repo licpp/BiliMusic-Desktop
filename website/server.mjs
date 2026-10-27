@@ -6,6 +6,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import pg from 'pg';
 import { policy } from './policy.mjs';
 import { HttpError, validateFeedback } from './validation.mjs';
+import { releases, resolveDownload } from './releases.mjs';
 
 const port = Number(process.env.PORT || 3180);
 const origin = new URL(process.env.PUBLIC_ORIGIN || `http://localhost:${port}`).origin;
@@ -42,7 +43,15 @@ const server = http.createServer(async (req, res) => {
       try { if (!pool) return json(503, { status:'preview', feedback:false }); await pool.query('SELECT 1'); return json(200, { status:'ok', feedback:true }); }
       catch { return json(503, { status:'unavailable', feedback:false }); }
     }
-    if (req.method === 'GET' && path === '/api/releases') return json(200, { version:'0.1.4', platforms:[{ id:'mac', name:'macOS', status:'coming_soon' },{ id:'windows', name:'Windows', status:'coming_soon' }] });
+    if (req.method === 'GET' && path === '/api/releases') return json(200, releases);
+    if (req.method === 'POST' && path === '/api/download') {
+      if (req.headers.origin !== origin) throw new HttpError(403, '请通过本站下载入口操作。');
+      if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, '请提交 JSON 格式。');
+      const chunks = []; let size = 0;
+      for await (const chunk of req) { size += chunk.length; if (size > 4096) throw new HttpError(413, '请求过长。'); chunks.push(chunk); }
+      let body; try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new HttpError(400, '请求格式不正确。'); }
+      return json(200, resolveDownload(body, policy.version));
+    }
     if (req.method === 'POST' && path === '/api/feedback') {
       if (req.headers.origin !== origin) throw new HttpError(403, '请通过本站反馈表单提交。');
       if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, '请提交 JSON 格式。');
