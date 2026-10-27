@@ -5,7 +5,6 @@ import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
-import { LyricsBackdrop } from './LyricsBackdrop'
 import { usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
@@ -48,6 +47,7 @@ export function LyricsView({ onClose }: Props) {
   const [manualOpen, setManualOpen] = useState(false)
   const [manualText, setManualText] = useState('')
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([])
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [mediaMode, setMediaMode] = useState<'cover' | 'video'>('cover')
   const [videoUrl, setVideoUrl] = useState('')
   const [videoFullscreen, setVideoFullscreen] = useState(false)
@@ -137,7 +137,22 @@ export function LyricsView({ onClose }: Props) {
   }, [lines, progressSeconds, stored?.biasMs, syncedLyrics])
 
   useEffect(() => {
-    if (activeIndex >= 0) lineRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const scroll = scrollRef.current
+    if (!scroll) return
+    const observer = new ResizeObserver(() => {
+      // Size spacers to the actual lyric viewport, not the complete window.
+      // Oversized vh padding can scroll the outer page and hide its toolbar.
+      const padding = `${Math.max(0, Math.floor(scroll.clientHeight / 2) - 1)}px`
+      scroll.style.paddingTop = padding; scroll.style.paddingBottom = padding
+      const active = scroll.querySelector<HTMLParagraphElement>('p.active')
+      if (active) centerLyric(scroll, active, 'auto')
+    })
+    observer.observe(scroll, { box: 'border-box' })
+    return () => observer.disconnect()
+  }, [current?.id])
+  useEffect(() => {
+    const line = lineRefs.current[activeIndex]
+    if (scrollRef.current && line) centerLyric(scrollRef.current, line, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
   }, [activeIndex])
 
   async function refreshCandidates() {
@@ -178,7 +193,6 @@ export function LyricsView({ onClose }: Props) {
 
   return (
     <section className="lyrics-view">
-      <LyricsBackdrop cover={current.coverUrl} />
       <header className="lyrics-topbar">
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
@@ -216,7 +230,7 @@ export function LyricsView({ onClose }: Props) {
           {current.source.uploaderName && <small>UP 主 · {current.source.uploaderName}</small>}
         </div>
       </div>
-      <div className="lyrics-scroll" aria-live="polite">
+      <div ref={scrollRef} className="lyrics-scroll" aria-live="polite">
         {loading && !lines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : lines.length ? lines.map((line, index) => (
           <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}>{line.text}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
@@ -259,4 +273,8 @@ function parseStoredLines(stored: StoredLyrics): LyricLine[] {
     const parsed = JSON.parse(stored.parsedJson)
     return Array.isArray(parsed) ? parsed.filter((line) => Number.isFinite(line?.timeMs) && typeof line?.text === 'string') : []
   } catch { return [] }
+}
+
+function centerLyric(scroll: HTMLDivElement, line: HTMLParagraphElement, behavior: ScrollBehavior) {
+  scroll.scrollTo({ top: line.offsetTop - (scroll.clientHeight - line.offsetHeight) / 2, behavior })
 }

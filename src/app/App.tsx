@@ -1,3 +1,6 @@
+import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
+import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
+import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
 import { useEffect, useState, type FormEvent } from 'react'
 import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
@@ -136,6 +139,9 @@ export function App() {
     return () => { disposed = true; unlisten?.() }
   }, [])
   useEffect(connectMediaSession, [])
+  useEffect(() => {
+    void setImmersiveWindow(lyricsOpen).catch((error) => setActionError(commandErrorMessage(error)))
+  }, [lyricsOpen])
   useEffect(() => { if (current) { void queryClient.invalidateQueries({ queryKey: ['home-recent'] }); void queryClient.invalidateQueries({ queryKey: ['library'] }) } }, [current?.id, queryClient])
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -173,7 +179,8 @@ export function App() {
   }, [lyricsOpen, queueOpen, libraryOpen, submittedQuery, activeNav, toggleQueue])
 
   return (
-    <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${libraryOpen ? 'library-open' : ''}`}>
+    <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${libraryOpen ? 'library-open' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
+      {lyricsOpen && <><LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" /><ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} /></>}
       {libraryOpen && <button className="mobile-library-scrim" aria-label="关闭歌单导航" onClick={() => setLibraryOpen(false)} />}
       <aside className="rail" aria-label="主导航">
         <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻'); setSubmittedQuery('') }}>
@@ -184,7 +191,7 @@ export function App() {
             <button
               className={activeNav === label ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { setActiveNav(label); setSubmittedQuery('') }}
+              onClick={() => { setActiveNav(label); setSubmittedQuery(''); setLyricsOpen(false) }}
               title={label}
               aria-label={label}
             >

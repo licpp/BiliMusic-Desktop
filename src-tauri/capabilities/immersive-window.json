@@ -1,0 +1,15 @@
+{
+  "identifier": "immersive-window",
+  "description": "Restore native desktop frames and operate window controls in immersive lyrics",
+  "platforms": ["macOS", "windows"],
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-set-title-bar-style",
+    "core:window:allow-set-decorations",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

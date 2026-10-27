@@ -30,21 +30,47 @@ class ControlArgs {
 
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
+    private var immersive = false
+    private var managedWebView: WebView? = null
+
+    @Suppress("DEPRECATION")
+    private fun updateSystemBars() {
+        activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
+        activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            activity.window.isStatusBarContrastEnforced = !immersive
+            activity.window.isNavigationBarContrastEnforced = !immersive
+        }
+    }
+
     override fun load(webView: WebView) {
+        managedWebView = webView
         // Own system-bar/IME insets, including Android 15+ enforced edge-to-edge.
         // Resize the actual WebView instead of guessing CSS safe areas on Android.
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(activity.window, false)
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
-            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
             val params = view.layoutParams as? android.view.ViewGroup.MarginLayoutParams
+            val left = if (immersive) 0 else bars.left
+            val top = if (immersive) 0 else bars.top
+            val right = if (immersive) 0 else bars.right
+            val bottom = if (immersive) keyboard.bottom else maxOf(bars.bottom, keyboard.bottom)
             params?.let {
-                val bottom = maxOf(bars.bottom, keyboard.bottom)
-                if (it.leftMargin != bars.left || it.topMargin != bars.top || it.rightMargin != bars.right || it.bottomMargin != bottom) {
-                    it.setMargins(bars.left, bars.top, bars.right, bottom)
+                if (it.leftMargin != left || it.topMargin != top || it.rightMargin != right || it.bottomMargin != bottom) {
+                    it.setMargins(left, top, right, bottom)
                     view.layoutParams = it
                 }
             }
+            val density = activity.resources.displayMetrics.density
+            val safeTop = if (immersive) bars.top / density else 0f
+            val safeBottom = if (immersive && keyboard.bottom == 0) bars.bottom / density else 0f
+            val safeLeft = if (immersive) bars.left / density else 0f
+            val safeRight = if (immersive) bars.right / density else 0f
+            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-safe-top','${safeTop}px');" +
+                "document.documentElement.style.setProperty('--native-safe-bottom','${safeBottom}px');" +
+                "document.documentElement.style.setProperty('--native-safe-left','${safeLeft}px');" +
+                "document.documentElement.style.setProperty('--native-safe-right','${safeRight}px');", null)
             insets
         }
         androidx.core.view.ViewCompat.requestApplyInsets(webView)
@@ -94,11 +120,16 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
                     .putExtra("title", args.title).putExtra("artist", args.artist))
+            } else if (args.action == "immersive") {
+                immersive = args.value > 0
+                updateSystemBars()
+                managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
             } else if (args.action == "theme") {
                 val light = args.value > 0
                 val controller = androidx.core.view.WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                 controller.isAppearanceLightStatusBars = light
                 controller.isAppearanceLightNavigationBars = light
+                updateSystemBars()
                 activity.window.decorView.setBackgroundColor(android.graphics.Color.parseColor(if (light) "#f4f6fa" else "#071019"))
             } else PlaybackService.instance?.control(args.action, args.value)
             invoke.resolve()
