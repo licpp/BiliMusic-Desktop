@@ -709,7 +709,20 @@ pub fn playlist_rename(
 }
 
 #[tauri::command]
+pub fn mobile_download_directory(app: tauri::AppHandle) -> Result<String, CommandError> {
+    use tauri::Manager;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(CommandError::database)?
+        .join("downloads");
+    std::fs::create_dir_all(&directory).map_err(CommandError::database)?;
+    Ok(directory.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 pub async fn download_track(
+    app: tauri::AppHandle,
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     track_id: String,
@@ -727,6 +740,22 @@ pub async fn download_track(
     if !directory.is_dir() {
         return Err(CommandError::validation("下载位置不是目录"));
     }
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let allowed = app
+            .path()
+            .app_data_dir()
+            .map_err(CommandError::database)?
+            .join("downloads")
+            .canonicalize()
+            .map_err(CommandError::database)?;
+        if directory != allowed {
+            return Err(CommandError::validation("Android 下载仅写入应用私有目录"));
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
     let download_id = uuid::Uuid::new_v4().to_string();
     let temporary = target.with_extension(format!("{download_id}.part"));

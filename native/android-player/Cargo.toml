@@ -1,0 +1,12 @@
+[package]
+name = "tauri-plugin-android-player"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+links = "tauri-plugin-android-player"
+
+[dependencies]
+tauri = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

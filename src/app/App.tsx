@@ -3,6 +3,8 @@ import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Menu,
+  X,
   Album,
   ArrowLeft,
   ArrowUp,
@@ -57,6 +59,7 @@ const navigation = [
 ]
 
 export function App() {
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [activeNav, setActiveNav] = useState('此刻')
   const [libraryTab, setLibraryTab] = useState<'saved' | 'recent'>('saved')
   const [query, setQuery] = useState('')
@@ -150,7 +153,8 @@ export function App() {
   }, [])
 
   return (
-    <div className={`app-shell ${queueOpen ? 'queue-visible' : ''}`}>
+    <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${libraryOpen ? 'library-open' : ''}`}>
+      {libraryOpen && <button className="mobile-library-scrim" aria-label="关闭歌单导航" onClick={() => setLibraryOpen(false)} />}
       <aside className="rail" aria-label="主导航">
         <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻'); setSubmittedQuery('') }}>
           <Waves size={23} strokeWidth={2.5} />
@@ -164,13 +168,14 @@ export function App() {
               title={label}
               aria-label={label}
             >
-              <Icon size={20} />
+              <Icon size={20} /><span className="mobile-nav-label">{label}</span>
             </button>
           ))}
         </nav>
       </aside>
 
-      <aside className="library-panel">
+      <aside className="library-panel" aria-label="歌单导航">
+        <button className="mobile-library-close" aria-label="收起歌单导航" onClick={() => setLibraryOpen(false)}><X /></button>
         <header>
           <span className="eyebrow">BILIMUSIC</span>
           <h1>把声音留在身边</h1>
@@ -182,7 +187,7 @@ export function App() {
           {createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}
           <div className="collection-list">
             {sidebarPlaylists.map((playlist, index) => (
-              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery('') }}>
+              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery(''); setLibraryOpen(false) }}>
                 <span className={playlist.isSystem ? 'collection-cover favorites-cover' : `collection-cover tone-${index % 4}`}>{playlist.isSystem ? <Heart size={17} fill="currentColor" /> : <Album size={17} />}</span>
                 <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首{playlist.isSystem ? ' · 默认歌单' : ''}</small></span>
               </button>
@@ -194,6 +199,7 @@ export function App() {
 
       <main className="content-stage">
         <form className="topbar" onSubmit={submitSearch}>
+          <button type="button" className="mobile-library-toggle" aria-label="打开歌单导航" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(true)}><Menu size={22} /></button>
           <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setSubmittedQuery(''); setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />

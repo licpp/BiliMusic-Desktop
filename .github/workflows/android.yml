@@ -1,0 +1,53 @@
+name: android-build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/android**']
+    paths: ['src/**', 'src-tauri/**', 'native/**', 'scripts/android-*', 'package*', 'vite.config.ts', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['src/**', 'src-tauri/**', 'native/**', '.github/workflows/android.yml']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npm run build
+      - run: npm run android:init
+      # A debug-signed preview is installable without sharing a production signing key.
+      # Use one stored keystore for future public releases; do not publish ephemeral CI debug builds as updates.
+      - run: npm run tauri -- android build --debug --apk --target aarch64
+      - name: Verify APK package
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | head -8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BiliMusic-Android-arm64-preview
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error

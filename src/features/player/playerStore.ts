@@ -1,3 +1,5 @@
+import { isAndroid } from '../../services/platform'
+import { observeAndroidAudio, playAndroidAudio, controlAndroidAudio, snapshotAndroidAudio, androidPlaybackClock } from './androidAudio'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
@@ -11,7 +13,7 @@ type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStat
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
 let loadedTrackId: string | null = null
-export function playbackClock() { return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
+export function playbackClock() { if (isAndroid) return androidPlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
 let persistTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSnapshot: { key: string; value: string } | undefined
 function flushPlayerSnapshot() {
@@ -41,6 +43,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   play: async (track, startAt = 0) => {
     const request = ++playRequest
     loadedTrackId = null
+    if (isAndroid) await controlAndroidAudio('stop').catch(() => undefined)
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
@@ -51,6 +54,13 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds })
       const url = await getTrackPlaybackUrl(storedTrack)
       if (request !== playRequest) return
+      if (isAndroid) {
+        await nativeReady
+        if (request !== playRequest) return
+        loadedTrackId = storedTrack.id
+        await playAndroidAudio(storedTrack, url, Math.max(0, startAt), get().volume)
+        return
+      }
       const element = playerAudio(); element.src = url; element.currentTime = Math.max(0, startAt); loadedTrackId = storedTrack.id; await element.play()
     } catch (error) {
       if (request !== playRequest) return
@@ -66,6 +76,13 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   toggle: async () => {
     const { current, status } = get(); if (!current) return
     if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
+    if (isAndroid) {
+      if (status === 'resolving') { ++playRequest; await controlAndroidAudio('stop'); set({ status: 'paused' }); return }
+      if (loadedTrackId === current.id && status !== 'error') {
+        await controlAndroidAudio(status === 'playing' || status === 'buffering' ? 'pause' : 'resume')
+      } else await get().play(current, get().progressSeconds)
+      return
+    }
     const element = playerAudio()
     if (status === 'resolving') { ++playRequest; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
@@ -75,8 +92,8 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
   next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded && repeatMode === 'one' && current) { await get().play(current); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex]) },
   previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
-  seek: (seconds) => { const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
-  setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); playerAudio().volume = normalized; set({ volume: normalized }) },
+  seek: (seconds) => { const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isAndroid) void controlAndroidAudio('seek', target).catch(nativeError); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
+  setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); if (isAndroid) void controlAndroidAudio('volume', normalized).catch(nativeError); else playerAudio().volume = normalized; set({ volume: normalized }) },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled })),
   cycleRepeat: () => set(({ repeatMode }) => ({ repeatMode: repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off' })),
   updateTrack: (track) => set(({ current, queue }) => ({ current: current?.id === track.id ? track : current, queue: queue.map((item) => item.id === track.id ? track : item) })),
@@ -88,3 +105,18 @@ function randomOtherIndex(length: number, current: number) {
   const offset = 1 + Math.floor(Math.random() * (length - 1))
   return (Math.max(0, current) + offset) % length
 }
+
+function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: String(error) }) }
+function onNativeState(state: Awaited<ReturnType<typeof snapshotAndroidAudio>>) {
+  if (state.action === 'next') { void usePlayerStore.getState().next(); return }
+  if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
+  if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
+  if (!state.id || state.id !== usePlayerStore.getState().current?.id) return
+  loadedTrackId = state.id
+  usePlayerStore.setState({ status: state.status || 'paused', progressSeconds: state.position || 0,
+    ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error || null })
+}
+const nativeReady = isAndroid ? observeAndroidAudio(onNativeState).then(async () => onNativeState(await snapshotAndroidAudio())).catch(nativeError) : Promise.resolve()
+if (isAndroid) document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void snapshotAndroidAudio().then(onNativeState).catch(nativeError)
+})

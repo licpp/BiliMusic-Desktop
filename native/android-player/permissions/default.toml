@@ -1,0 +1,3 @@
+[default]
+description = "Native playback controls for the local BiliMusic window"
+permissions = ["allow-play", "allow-control", "allow-snapshot"]

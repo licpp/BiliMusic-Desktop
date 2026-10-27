@@ -309,6 +309,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-android-player",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
@@ -4009,6 +4010,14 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-android-player"
+version = "0.1.0"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]
