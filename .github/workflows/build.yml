@@ -44,6 +44,19 @@ jobs:
       - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri build -- --bundles ${{ matrix.bundle }}
+      - name: Verify packaged macOS signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          mount_dir=$(mktemp -d)
+          trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true; rmdir "$mount_dir" 2>/dev/null || true' EXIT
+          hdiutil verify "$dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg"
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/BiliMusic.app"
+          test -f "$mount_dir/BiliMusic.app/Contents/_CodeSignature/CodeResources"
+          codesign -dv --verbose=3 "$mount_dir/BiliMusic.app"
       - name: Verify Windows GUI subsystem
         if: runner.os == 'Windows'
         shell: pwsh
