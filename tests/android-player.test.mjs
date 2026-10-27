@@ -71,3 +71,8 @@ test('Android notification pause while resolving prevents deferred autoplay', as
   assert.equal(nativeTest.plays.length, 0)
   assert.equal(s.getState().status, 'paused')
 })
+test('Android string rejections keep the actual bridge or provider error message', async () => {
+  const s = setup(); nativeTest.resolve = async () => { throw 'source service returned HTTP 403' }
+  await s.getState().play(track)
+  assert.equal(s.getState().error, 'source service returned HTTP 403')
+})

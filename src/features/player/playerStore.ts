@@ -65,7 +65,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     } catch (error) {
       if (request !== playRequest) return
       if (isAndroid) { await controlAndroidAudio('stop').catch(() => undefined); if (request !== playRequest) return }
-      const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'
+      const message = typeof error === 'string' && error.trim() ? error : error && typeof error === 'object' && 'message' in error ? String(error.message) : '无法解析播放地址'
       set({ status: 'error', error: message })
     }
   },

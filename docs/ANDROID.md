@@ -28,7 +28,7 @@ npm run tauri -- android build --debug --apk --target aarch64
 
 原生 Gradle 工程由 Tauri CLI 在 `src-tauri/gen/android` 生成，不提交含本机路径的生成物；`scripts/android-prepare.mjs` 补齐网络配置与图标。修改原生播放器请编辑 `native/android-player`。
 
-GitHub Actions 的 `android-build` 构建 ARM64 开发预览 APK，产物名为 `BiliMusic-Android-arm64-preview`，包含 APK 签名验证。未运行模拟器或真机自动化测试。每次云端构建的开发签名可能不同，跨次安装可能需要卸载旧预览版（会清除本地数据）；正式渠道必须使用固定且妥善备份的发布密钥。开发预览包不应直接替换官网正式发布版本。
+GitHub Actions 的 `android-build` 构建 ARM64 开发预览 APK，产物名为 `BiliMusic-Android-arm64-preview`，包含 APK 签名验证。未运行模拟器或真机自动化测试。本仓库的预览包通过仓库 Secrets 使用固定预览签名，后续预览版可覆盖更新。早期 versionCode 10601 使用临时开发签名，首次更换为固定签名时需要卸载旧包，卸载会清除本地数据。Fork 仓库或未配置签名 Secrets 时仍回退到临时开发签名；正式渠道必须妥善备份发布密钥。开发预览包不应直接替换官网正式发布版本。
 
 ## 体验时需留意
 

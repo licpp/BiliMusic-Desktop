@@ -62,6 +62,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             })
         PlaybackService.listener = { event -> trigger("state", event) }
     }
+    // Match the snake_case commands used by the current Tauri JS SDK. The inherited
+    // camelCase methods alone are not declared in this plugin's generated ACL.
+    @Command
+    fun register_listener(invoke: Invoke) { super.registerListener(invoke) }
+    @Command
+    fun remove_listener(invoke: Invoke) { super.removeListener(invoke) }
+
     @Command
     fun play(invoke: Invoke) {
         val args = invoke.parseArgs(PlayArgs::class.java)

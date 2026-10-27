@@ -45,6 +45,22 @@ jobs:
       # A debug-signed preview is installable without sharing a production signing key.
       # Use one stored keystore for future public releases; do not publish ephemeral CI debug builds as updates.
       - run: npm run tauri -- android build --debug --apk --target aarch64
+      - run: node scripts/android-verify-acl.mjs
+      - name: Sign preview with persistent repository key
+        env:
+          PREVIEW_KEY: ${{ secrets.BILIMUSIC_ANDROID_PREVIEW_KEY_DER }}
+          PREVIEW_CERT: ${{ secrets.BILIMUSIC_ANDROID_PREVIEW_CERT_PEM }}
+        run: |
+          if [ -n "$PREVIEW_KEY" ] && [ -n "$PREVIEW_CERT" ]; then
+            signing_dir=$(mktemp -d)
+            trap 'rm -rf "$signing_dir"' EXIT
+            printf '%s' "$PREVIEW_KEY" | base64 --decode > "$signing_dir/key.der"
+            printf '%s' "$PREVIEW_CERT" > "$signing_dir/cert.pem"
+            APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --key "$signing_dir/key.der" --cert "$signing_dir/cert.pem" "$APK"
+          else
+            echo 'Repository signing key unavailable; using the temporary development certificate.'
+          fi
       - name: Verify APK package
         run: |
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
@@ -53,5 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BiliMusic-Android-arm64-preview
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            android-bridge-acl.json
           if-no-files-found: error

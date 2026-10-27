@@ -154,6 +154,7 @@ function fromStoredTrack(track: StoredTrack): Track {
 }
 
 export function commandErrorMessage(error: unknown): string {
+  if (typeof error === 'string' && error.trim()) return error
   if (error && typeof error === 'object' && 'message' in error) return String((error as DesktopCommandError).message)
   return error instanceof Error ? error.message : '请求失败，请稍后重试'
 }
