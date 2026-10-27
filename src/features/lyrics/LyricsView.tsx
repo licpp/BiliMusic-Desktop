@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X, Shuffle, Repeat2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
-import { PlaylistButton } from '../library/TrackActions'
+import { ActionMenu } from '../../shared/ActionMenu'
+import { chooseTrackPlaylist } from '../library/trackActionStore'
+import { LyricsBackdrop } from './LyricsBackdrop'
 import { usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
@@ -54,15 +56,24 @@ export function LyricsView({ onClose }: Props) {
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const [biasOpen, setBiasOpen] = useState(false)
+  const [biasActivity, setBiasActivity] = useState(0)
+  useEffect(() => {
+    if (!biasOpen) return
+    const timer = window.setTimeout(() => setBiasOpen(false), 8000)
+    return () => window.clearTimeout(timer)
+  }, [biasOpen, biasActivity])
   useEffect(() => {
     const back = (event: Event) => {
+      if (document.querySelector('[data-overflow-panel]')) return
+      if (biasOpen) { event.preventDefault(); setBiasOpen(false); return }
       if (chooserOpen || editing) return // The shared dialog handler closes these first.
       if (commentsOpen) { event.preventDefault(); setCommentsOpen(false) }
       else if (videoFullscreen) { event.preventDefault(); setVideoFullscreen(false) }
     }
     window.addEventListener('bilimusic-back', back, true)
     return () => window.removeEventListener('bilimusic-back', back, true)
-  }, [chooserOpen, editing, commentsOpen, videoFullscreen])
+  }, [chooserOpen, editing, commentsOpen, videoFullscreen, biasOpen])
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
   const [lyricQuery, setLyricQuery] = useState(current?.title || '')
@@ -96,7 +107,7 @@ export function LyricsView({ onClose }: Props) {
 
   useEffect(() => {
     ++videoRequest.current
-    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
+    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
     return () => { ++videoRequest.current }
   }, [current?.id])
 
@@ -167,14 +178,36 @@ export function LyricsView({ onClose }: Props) {
 
   return (
     <section className="lyrics-view">
+      <LyricsBackdrop cover={current.coverUrl} />
       <header className="lyrics-topbar">
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
-        <div className="lyrics-actions"><PlaylistButton track={current} /><button aria-label="编辑歌曲信息" onClick={() => { setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑信息</button><button className="lyrics-rematch" onClick={() => setChooserOpen(true)}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button><button onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={16} />评论</button></div>
+        <div className="lyrics-actions">
+          <button className="lyrics-comments-trigger" aria-label="查看评论" title="评论" onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={18} /></button>
+          <ActionMenu label="歌词页面更多操作">{(close) => <>
+            <button role="menuitem" onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
+            <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
+            <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
+            <button role="menuitem" onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
+            <button role="menuitemcheckbox" aria-checked={shuffled} onClick={() => { toggleShuffle(); close() }}><Shuffle size={16} />{shuffled ? '关闭随机播放' : '随机播放'}</button>
+            <button role="menuitem" onClick={() => { cycleRepeat(); close() }}><Repeat2 size={16} />{repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
+          </>}</ActionMenu>
+        </div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
-        <div className="video-tools"><button className="mobile-play-option" aria-pressed={shuffled} onClick={toggleShuffle}><Shuffle />{shuffled ? '随机' : '顺序'}</button><button className="mobile-play-option" onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' ? '单曲' : repeatMode === 'all' ? '列表循环' : '不循环'}</button><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
+        <div className="video-tools">
+          <button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>
+          {mediaMode === 'video' && <>
+            <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
+            <ActionMenu label="视频与弹幕设置" panel>{(close) => <>
+              <button onClick={() => setDanmakuVisible((value) => !value)} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
+              <label>弹幕字号 <span>{danmakuSize.toFixed(1)}×</span><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label>
+              <label>弹幕透明度 <span>{Math.round(danmakuOpacity * 100)}%</span><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label>
+              <button onClick={close}>完成</button>
+            </>}</ActionMenu>
+          </>}
+        </div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
           <h1>{current.title}</h1>
@@ -188,12 +221,14 @@ export function LyricsView({ onClose }: Props) {
           <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}>{line.text}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
-      <aside className="lyrics-bias" aria-label="歌词时间调整">
-        <SlidersHorizontal size={16} />
-        <button disabled={!syncedLyrics} onClick={() => adjustBias(500)} title="歌词延后 0.5 秒">＋</button>
-        <span>{stored ? `${stored.biasMs > 0 ? '+' : ''}${(stored.biasMs / 1000).toFixed(1)}s` : '0.0s'}</span>
-        <button disabled={!syncedLyrics} onClick={() => adjustBias(-500)} title="歌词提前 0.5 秒">−</button>
-        <button className="bias-reset" onClick={() => stored && adjustBias(-stored.biasMs)} title="重置偏移"><Clock3 size={14} /></button>
+      <aside className={`lyrics-bias ${biasOpen ? 'expanded' : 'collapsed'}`} aria-label="歌词时间调整" onPointerDown={() => setBiasActivity(Date.now())} onKeyDown={() => setBiasActivity(Date.now())}>
+        <button className="bias-trigger" aria-label="调整歌词时间" title="调整歌词时间" aria-expanded={biasOpen} onClick={() => setBiasOpen((value) => !value)}><SlidersHorizontal size={16} /></button>
+        {biasOpen && <>
+          <button disabled={!syncedLyrics} onClick={() => adjustBias(500)} title="歌词延后 0.5 秒" aria-label="歌词延后 0.5 秒">＋</button>
+          <span>{stored ? `${stored.biasMs > 0 ? '+' : ''}${(stored.biasMs / 1000).toFixed(1)}s` : '0.0s'}</span>
+          <button disabled={!syncedLyrics} onClick={() => adjustBias(-500)} title="歌词提前 0.5 秒" aria-label="歌词提前 0.5 秒">−</button>
+          <button className="bias-reset" onClick={() => stored && adjustBias(-stored.biasMs)} title="重置偏移" aria-label="重置歌词偏移"><Clock3 size={14} /></button>
+        </>}
       </aside>
       {error && lines.length > 0 && <div className="lyrics-toast">{error}</div>}
       {chooserOpen && <div className="lyric-chooser-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setChooserOpen(false)}>

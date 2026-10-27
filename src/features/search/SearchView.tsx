@@ -5,8 +5,10 @@ import type { Track } from '../../domain/track'
 import { usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite, type BiliSearchItem, type BiliVideoParts } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
+import { formatPlayCount } from '../../shared/count'
+import { ActionMenu } from '../../shared/ActionMenu'
 import { Artwork } from '../../shared/Artwork'
-import { PlaylistButton, TrackMenuButton } from '../library/TrackActions'
+import { TrackMenuButton } from '../library/TrackActions'
 import { chooseTrackPlaylist, showTrackMenu } from '../library/trackActionStore'
 
 type ExpandedState = { loading?: boolean; detail?: BiliVideoParts; error?: string }
@@ -18,7 +20,7 @@ export function SearchView({ query }: { query: string }) {
   const play = usePlayerStore((state) => state.play)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const playAll = usePlayerStore((state) => state.playAll)
-  const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) })
+  const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query), retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
   const items = [...new Map(result.data?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const add = async (track: Track, favorite = false) => {
     try {
@@ -47,11 +49,14 @@ export function SearchView({ query }: { query: string }) {
       setExpanded((state) => ({ ...state, [item.bvid]: { error: commandErrorMessage(error) } }))
     }
   }
-  const collectResult = async (item: BiliSearchItem) => {
+  const resultAction = async (item: BiliSearchItem, action: 'playlist' | 'queue' | 'play') => {
     try {
       const detail = expanded[item.bvid]?.detail || await getVideoParts(item.bvid)
       setExpanded((state) => ({ ...state, [item.bvid]: { detail } }))
-      chooseTrackPlaylist(detail.parts.map((part) => toTrack(detail, part)))
+      const tracks = detail.parts.map((part) => toTrack(detail, part))
+      if (action === 'playlist') chooseTrackPlaylist(tracks)
+      else if (action === 'queue') { enqueue(tracks); setActionError('已加入播放队列') }
+      else await playAll(tracks)
     } catch (cause) { setActionError(commandErrorMessage(cause)) }
   }
 
@@ -67,15 +72,19 @@ export function SearchView({ query }: { query: string }) {
       const state = expanded[item.bvid]
       const open = Boolean(state?.detail && state.detail.parts.length > 1)
       return <article className={open ? 'result-card expanded' : 'result-card'} key={item.bvid}>
-        <button className="result-main" onClick={() => selectResult(item)}>
+        <div className="search-result-heading"><button className="result-main" onClick={() => selectResult(item)}>
           <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i></span>
-          <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {item.playCount.toLocaleString()} 次播放</small><em>{item.description || '暂无简介'}</em></span>
+          <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
-        </button>
+        </button><ActionMenu label={`视频操作：${item.title}`}>{(close) => <>
+          <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
+          <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>
+          <button role="menuitem" onClick={() => { close(); void resultAction(item, 'play') }}><Play size={16} />{open ? '播放全部分 P' : '播放'}</button>
+        </>}</ActionMenu></div>
         {state?.error && <div className="inline-error"><CircleAlert size={14} />{state.error}</div>}
-        <div className="result-tools">{state?.detail && <><button onClick={() => void playAll(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><Play size={14} />{open ? '播放全部分 P' : '播放'}</button><button onClick={() => enqueue(state.detail!.parts.map((part) => toTrack(state.detail!, part)))}><ListPlus size={14} />加入队列</button></>}<button onClick={() => void collectResult(item)}><ListPlus size={14} />{open ? '全部加入歌单' : '加入歌单'}</button></div>
-        {open && state?.detail && <div className="parts-list">{state.detail.parts.map((part) => <div className="part-entry" key={part.cid} onContextMenu={(event) => showTrackMenu(event, toTrack(state.detail!, part))}><button onClick={() => void play(toTrack(state.detail!, part))}><span>P{part.page}</span><strong>{part.title}</strong><small>{formatDuration(part.durationSeconds)}</small><Play size={14} /></button><button className="icon-action" title="加入队列" onClick={() => void add(toTrack(state.detail!, part))}><ListPlus size={16} /></button><button className="icon-action" title="切换喜欢" onClick={() => void add(toTrack(state.detail!, part), true)}><Heart size={16} /></button><PlaylistButton track={toTrack(state.detail!, part)} /><TrackMenuButton track={toTrack(state.detail!, part)} /></div>)}</div>}
+
+        {open && state?.detail && <div className="parts-list">{state.detail.parts.map((part) => <div className="part-entry" key={part.cid} onContextMenu={(event) => showTrackMenu(event, toTrack(state.detail!, part))}><button onClick={() => void play(toTrack(state.detail!, part))}><span>P{part.page}</span><strong>{part.title}</strong><small>{formatDuration(part.durationSeconds)}</small><Play size={14} /></button><button className="icon-action" title="加入队列" onClick={() => void add(toTrack(state.detail!, part))}><ListPlus size={16} /></button><button className="icon-action" title="切换喜欢" onClick={() => void add(toTrack(state.detail!, part), true)}><Heart size={16} /></button><TrackMenuButton track={toTrack(state.detail!, part)} /></div>)}</div>}
       </article>
     })}</div>
     {result.hasNextPage && <button className="load-more" disabled={result.isFetchingNextPage} onClick={() => void result.fetchNextPage()}>{result.isFetchingNextPage ? '加载中…' : '加载更多结果'}</button>}
