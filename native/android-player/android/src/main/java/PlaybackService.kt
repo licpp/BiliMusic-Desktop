@@ -112,7 +112,7 @@ class PlaybackService : Service() {
                     .putLong(MediaMetadata.METADATA_KEY_DURATION, it.duration.toLong()).build())
                 publish(); handler.post(ticker)
             }
-            media.setOnCompletionListener { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")); stopForeground(STOP_FOREGROUND_DETACH) }
+            media.setOnCompletionListener { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")); handler.postDelayed({ if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000) }
             media.setOnErrorListener { _, _, _ -> fail("音频播放失败，请重新播放"); true }
             media.setOnInfoListener { _, what, _ ->
                 if (status != "paused") {

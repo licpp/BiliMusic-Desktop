@@ -1,5 +1,5 @@
 // Run after `tauri android init`. Keep generated Gradle scaffolding reproducible.
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, cp } from 'node:fs/promises'
 const base = new URL('../src-tauri/gen/android/app/src/main/', import.meta.url)
 const manifest = new URL('AndroidManifest.xml', base)
 let xml = await readFile(manifest, 'utf8')
@@ -14,3 +14,5 @@ await writeFile(new URL('res/xml/bilimusic_network_security.xml', base), `<?xml 
 </network-security-config>
 `)
 console.log('Android: cleartext allowed only for the on-device media proxy.')
+
+await cp(new URL('../src-tauri/.android-icons/android/', import.meta.url), new URL('res/', base), { recursive: true })

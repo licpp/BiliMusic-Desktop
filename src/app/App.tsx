@@ -154,6 +154,7 @@ export function App() {
 
   useEffect(() => {
     const back = (event: Event) => {
+      if (event.defaultPrevented) return
       // Close the foremost dialog first, preserving the screen beneath it.
       const overlays = [...document.querySelectorAll<HTMLElement>('.dialog-backdrop, .lyric-chooser-backdrop')]
       const overlay = overlays.at(-1)

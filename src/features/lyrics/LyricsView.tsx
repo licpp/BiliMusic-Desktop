@@ -54,6 +54,15 @@ export function LyricsView({ onClose }: Props) {
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
   const [commentsOpen, setCommentsOpen] = useState(false)
+  useEffect(() => {
+    const back = (event: Event) => {
+      if (chooserOpen || editing) return // The shared dialog handler closes these first.
+      if (commentsOpen) { event.preventDefault(); setCommentsOpen(false) }
+      else if (videoFullscreen) { event.preventDefault(); setVideoFullscreen(false) }
+    }
+    window.addEventListener('bilimusic-back', back, true)
+    return () => window.removeEventListener('bilimusic-back', back, true)
+  }, [chooserOpen, editing, commentsOpen, videoFullscreen])
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
   const [lyricQuery, setLyricQuery] = useState(current?.title || '')
