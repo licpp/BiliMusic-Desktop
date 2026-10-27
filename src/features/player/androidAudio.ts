@@ -1,7 +1,7 @@
 import { addPluginListener, invoke } from '@tauri-apps/api/core'
 import type { Track } from '../../domain/track'
 
-type State = { id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; action?: 'next' | 'previous' | 'ended' }
+type State = { stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; action?: 'next' | 'previous' | 'ended' }
 let ready: Promise<unknown> | undefined
 let consumer: (state: State) => void = () => undefined
 let clock = { position: 0, at: 0, playing: false, duration: 0 }

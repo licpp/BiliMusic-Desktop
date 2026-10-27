@@ -77,6 +77,8 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     const { current, status } = get(); if (!current) return
     if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
     if (isAndroid) {
+      const nativeState = await snapshotAndroidAudio()
+      if (!nativeState.id || nativeState.stopped) loadedTrackId = null
       if (status === 'resolving') { ++playRequest; await controlAndroidAudio('stop'); set({ status: 'paused' }); return }
       if (loadedTrackId === current.id && status !== 'error') {
         await controlAndroidAudio(status === 'playing' || status === 'buffering' ? 'pause' : 'resume')
@@ -111,12 +113,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotAndroidAudio>>) 
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
   if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
-  if (!state.id || state.id !== usePlayerStore.getState().current?.id) return
-  loadedTrackId = state.id
+  if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
+  if (state.id !== usePlayerStore.getState().current?.id) return
+  loadedTrackId = state.stopped ? null : state.id
   usePlayerStore.setState({ status: state.status || 'paused', progressSeconds: state.position || 0,
     ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error || null })
 }
-const nativeReady = isAndroid ? observeAndroidAudio(onNativeState).then(async () => onNativeState(await snapshotAndroidAudio())).catch(nativeError) : Promise.resolve()
+const nativeReady = isAndroid ? observeAndroidAudio(onNativeState).then(async () => onNativeState(await snapshotAndroidAudio())) : Promise.resolve()
+void nativeReady.catch(nativeError)
 if (isAndroid) document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void snapshotAndroidAudio().then(onNativeState).catch(nativeError)
 })

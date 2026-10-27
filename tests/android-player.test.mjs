@@ -13,8 +13,8 @@ const output = await build({
       export const recordPlayedTrack = async t => t;
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
     ` : path === 'platform' ? 'export const isAndroid = true' : `
-      export const observeAndroidAudio = cb => { globalThis.nativeTest.event = cb; return Promise.resolve() };
-      export const snapshotAndroidAudio = async () => ({});
+      export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
+      export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;
       export const controlAndroidAudio = async (...args) => globalThis.nativeTest.controls.push(args);
       export const playAndroidAudio = async (...args) => globalThis.nativeTest.plays.push(args);
@@ -38,6 +38,7 @@ test('Android routes playback, seek and volume to native service and accepts onl
   assert.equal(s.getState().status, 'playing')
   nativeTest.event({ id: 'old', status: 'error', error: 'stale' })
   assert.equal(s.getState().status, 'playing')
+  nativeTest.state = { id: track.id, status: 'playing' }
   s.getState().seek(20); s.getState().setVolume(.3); await s.getState().toggle()
   assert.deepEqual(nativeTest.controls.slice(-3), [['seek', 20], ['volume', .3], ['pause']])
 })

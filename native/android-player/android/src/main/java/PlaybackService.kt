@@ -29,6 +29,8 @@ class PlaybackService : Service() {
     private var error: String? = null
     private var resumeOnFocus = false
     private var prepared = false
+    private var lastPosition = 0.0
+    private var lastDuration = 0.0
     private var volume = .7f
     private val ticker = object : Runnable {
         override fun run() {
@@ -88,6 +90,7 @@ class PlaybackService : Service() {
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
         id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
         artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
+        lastPosition = intent.getDoubleExtra("position", 0.0); lastDuration = 0.0
         status = "buffering"; error = null
         session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, artist).build())
@@ -112,6 +115,7 @@ class PlaybackService : Service() {
                     .putLong(MediaMetadata.METADATA_KEY_DURATION, it.duration.toLong()).build())
                 publish(); handler.post(ticker)
             }
+            media.setOnSeekCompleteListener { publish(false) }
             media.setOnCompletionListener { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")); handler.postDelayed({ if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000) }
             media.setOnErrorListener { _, _, _ -> fail("音频播放失败，请重新播放"); true }
             media.setOnInfoListener { _, what, _ ->
@@ -135,7 +139,7 @@ class PlaybackService : Service() {
     fun control(action: String, value: Double = 0.0) {
         when (action) {
             "pause" -> { resumeOnFocus = false; pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (prepared) {
+            "resume" -> if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                     player?.start(); status = "playing"; handler.removeCallbacks(ticker); handler.post(ticker); publish()
@@ -143,12 +147,17 @@ class PlaybackService : Service() {
             }
             "seek" -> if (prepared) { player?.seekTo((value.coerceAtLeast(0.0) * 1000).toLong(), MediaPlayer.SEEK_CLOSEST); publish() }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
-            "stop" -> { player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
-    fun snapshot(): JSObject = JSObject().put("id", id).put("status", status)
-        .put("position", if (prepared) (player?.currentPosition ?: 0) / 1000.0 else 0.0)
-        .put("duration", if (prepared) (player?.duration ?: 0) / 1000.0 else 0.0).put("error", error)
+    fun snapshot(): JSObject {
+        if (prepared) {
+            lastPosition = (player?.currentPosition ?: 0) / 1000.0
+            lastDuration = (player?.duration ?: 0) / 1000.0
+        }
+        return JSObject().put("id", id).put("status", status).put("position", lastPosition)
+            .put("duration", lastDuration).put("stopped", player == null).put("error", error)
+    }
     private fun publish(notify: Boolean = true) {
         val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
         session.setPlaybackState(PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
