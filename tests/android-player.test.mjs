@@ -61,3 +61,13 @@ test('Android URL failure stops the preparing foreground service', async () => {
   assert.deepEqual(nativeTest.controls.at(-1), ['stop'])
   assert.equal(s.getState().status, 'error')
 })
+test('Android notification pause while resolving prevents deferred autoplay', async () => {
+  const s = setup(); let resolve
+  nativeTest.resolve = () => new Promise(r => { resolve = r })
+  const playing = s.getState().play(track)
+  while (!resolve) await Promise.resolve()
+  nativeTest.event({ id: track.id, status: 'paused', stopped: true })
+  resolve('http://127.0.0.1:1234/token/late'); await playing
+  assert.equal(nativeTest.plays.length, 0)
+  assert.equal(s.getState().status, 'paused')
+})

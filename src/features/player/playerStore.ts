@@ -111,11 +111,13 @@ function randomOtherIndex(length: number, current: number) {
 
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: String(error) }) }
 function onNativeState(state: Awaited<ReturnType<typeof snapshotAndroidAudio>>) {
+  if (state.action === 'resume') { void usePlayerStore.getState().toggle(); return }
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
   if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
   if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
   if (state.id !== usePlayerStore.getState().current?.id) return
+  if (state.status === 'paused' && usePlayerStore.getState().status === 'resolving') ++playRequest
   loadedTrackId = state.stopped ? null : state.id
   usePlayerStore.setState({ status: state.stopped && state.status === 'buffering' ? 'resolving' : state.status || 'paused', progressSeconds: state.position || 0,
     ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error || null })

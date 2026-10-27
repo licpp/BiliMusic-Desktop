@@ -145,7 +145,7 @@ class PlaybackService : Service() {
     fun control(action: String, value: Double = 0.0) {
         when (action) {
             "pause" -> { resumeOnFocus = false; pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
+            "resume" -> if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                     player?.start(); status = "playing"; handler.removeCallbacks(ticker); handler.post(ticker); publish()
