@@ -17,6 +17,8 @@ async function loadDownloads() {
     const response = await fetch('/api/v1/releases', { signal:AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('发布信息加载失败');
     releaseManifest = await response.json(); target.replaceChildren();
+    $('#release-notes').href = releaseManifest.releaseNotes;
+    $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
     for (const item of releaseManifest.platforms) {
       const article = element('article', null, item.id === 'android' ? 'android-card' : '');
       article.append(element('div', item.id === 'mac' ? '⌘' : item.id === 'windows' ? '⊞' : '↗', 'os-symbol'));
