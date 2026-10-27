@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X, Shuffle, Repeat2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -28,6 +28,11 @@ type Props = { onClose: () => void }
 
 export function LyricsView({ onClose }: Props) {
   const queryClient = useQueryClient()
+  const shuffled = usePlayerStore((state) => state.shuffled)
+  const repeatMode = usePlayerStore((state) => state.repeatMode)
+  const toggleShuffle = usePlayerStore((state) => state.toggleShuffle)
+  const cycleRepeat = usePlayerStore((state) => state.cycleRepeat)
+
   const [editing, setEditing] = useState<Track | null>(null)
   const current = usePlayerStore((state) => state.current)
   const progressSeconds = usePlayerStore((state) => state.progressSeconds)
@@ -160,7 +165,7 @@ export function LyricsView({ onClose }: Props) {
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
-        <div className="video-tools"><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
+        <div className="video-tools"><button className="mobile-play-option" aria-pressed={shuffled} onClick={toggleShuffle}><Shuffle />{shuffled ? '随机' : '顺序'}</button><button className="mobile-play-option" onClick={cycleRepeat}><Repeat2 />{repeatMode === 'one' ? '单曲' : repeatMode === 'all' ? '列表循环' : '不循环'}</button><button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>{mediaMode === 'video' && <><button onClick={() => setDanmakuVisible((value) => !value)} className={danmakuVisible ? 'active' : ''}>弹幕</button><label>字号<input type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label><label>透明度<input type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label><button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button></>}</div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
           <h1>{current.title}</h1>

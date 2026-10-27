@@ -31,8 +31,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         webView.settings.mediaPlaybackRequiresUserGesture = false
         // CSP and the network security config limit HTTP media to loopback.
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-        (activity as? androidx.appcompat.app.AppCompatActivity)?.onBackPressedDispatcher?.addCallback(
-            activity, object : androidx.activity.OnBackPressedCallback(true) {
+        val owner = activity as? androidx.appcompat.app.AppCompatActivity
+        owner?.onBackPressedDispatcher?.addCallback(
+            owner, object : androidx.activity.OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
                     webView.evaluateJavascript("window.dispatchEvent(new Event('bilimusic-back', {cancelable:true}))") { result ->
                         if (result == "true") activity.moveTaskToBack(true)

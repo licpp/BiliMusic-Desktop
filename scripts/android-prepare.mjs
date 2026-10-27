@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 const base = new URL('../src-tauri/gen/android/app/src/main/', import.meta.url)
 const manifest = new URL('AndroidManifest.xml', base)
 let xml = await readFile(manifest, 'utf8')
+xml = xml.replace(/ android:networkSecurityConfig="[^"]*"/g, '')
 xml = xml.replace(/<application\b/, '<application android:networkSecurityConfig="@xml/bilimusic_network_security"')
 await writeFile(manifest, xml)
 await mkdir(new URL('res/xml/', base), { recursive: true })

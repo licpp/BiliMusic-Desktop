@@ -1,4 +1,5 @@
 .library-track-actions { display: contents; }
+.mobile-play-option { display: none !important; }
 .mobile-library-toggle, .mobile-library-close, .mobile-library-scrim, .mobile-nav-label { display: none; }
 @media (max-width: 760px) {
   html, body, #root { min-width: 0; width: 100%; height: 100%; }
@@ -12,7 +13,7 @@
   .rail-button.active { box-shadow: none; }
   .mobile-nav-label { display: block; font-size: 10px; }
   .library-panel { display: none; }
-  .library-open .library-panel { display: flex; position: fixed; z-index: 82; inset: 0 auto 0 0; padding-top: max(30px,env(safe-area-inset-top)); width: min(310px,85vw); overflow-y: auto; background: var(--panel); }
+  .library-open .library-panel { display: flex; opacity: 1; pointer-events: auto; padding: 30px 20px 18px; position: fixed; z-index: 82; inset: 0 auto 0 0; padding-top: max(30px,env(safe-area-inset-top)); width: min(310px,85vw); overflow-y: auto; background: var(--panel); }
   .mobile-library-close { display: grid; position: absolute; right: 12px; top: max(14px,env(safe-area-inset-top)); place-items: center; width: 40px; height: 40px; background: transparent; border: 0; }
   .mobile-library-scrim { display: block; position: fixed; inset: 0; z-index: 81; border: 0; background: #0008; }
   .mobile-library-toggle { display: grid; place-items: center; background: transparent; border: 0; width: 38px; height: 44px; }
@@ -34,6 +35,7 @@
   .lyrics-view { position: fixed; inset: env(safe-area-inset-top,0px) 0 calc(168px + env(safe-area-inset-bottom,0px)); display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto minmax(90px,1fr); z-index: 36; }
   .lyrics-topbar { grid-column: 1; grid-row: 1; min-height: 56px; height: auto; padding: 5px 10px; grid-template-columns: 40px minmax(0,1fr); gap: 4px; }.lyrics-topbar > span { display: none; }.lyrics-actions { flex-wrap: wrap; gap: 4px; }.lyrics-actions > button { padding: 8px 7px; font-size: 10px; min-height: 40px; }
   .lyrics-album-pane { display: flex; grid-row: 2; grid-column: 1; padding: 8px 14px; border: 0; flex-direction: row; gap: 12px; flex-wrap: wrap; justify-content: flex-start; }.lyrics-cover { width: 62px; border-radius: 10px; box-shadow: none; }.lyrics-track-meta { flex: 1; width: 0; padding-top: 0; order: 1; }.lyrics-track-meta .eyebrow { display: none; }.lyrics-track-meta h1 { font-size: 16px; margin-top: 0; }.lyrics-track-meta p { font-size: 12px; margin-bottom: 3px; }.lyrics-track-meta small { font-size: 10px; }.video-tools { order: 2; width: 100%; min-height: 34px; margin: 0; gap: 6px; }.video-tools button { min-height: 36px; font-size: 11px; }.video-tools label { font-size: 10px; }.video-tools input { height: 24px; }.lyrics-cover.video-active { width: 100%; max-height: 25dvh; aspect-ratio: 16/9; }.video-active ~ .lyrics-track-meta { display: none; }
+  .video-tools .mobile-play-option { display: flex !important; }
   .lyrics-scroll { grid-row: 3; grid-column: 1; padding: 12vh 54px 18vh 24px; }.lyrics-scroll p { font-size: 19px; margin-bottom: 22px; }.lyrics-bias { right: 5px; padding: 5px; top: auto; bottom: 10px; transform: none; backdrop-filter: none; }.lyrics-bias button { width: 34px; height: 34px; }.lyrics-toast { bottom: 0; right: 0; max-width: 100%; }
   .lyrics-album-pane.video-fullscreen { position: absolute; inset: 56px 0 0; padding: 0; display: flex; }.video-fullscreen .lyrics-cover { width: 100%; max-height: none; height: 100%; }.video-fullscreen .video-tools { left: 5px; right: 5px; bottom: 5px; background: #071019dd; }.video-fullscreen .lyrics-track-meta { display: none; }
   .comments-panel { top: 0; width: 100%; z-index: 40; }.comment-row p { font-size: 13px; }.comment-row strong { font-size: 12px; }.comment-row footer button { font-size: 11px; min-height: 36px; }.comment-compose textarea { font-size: 14px; }
