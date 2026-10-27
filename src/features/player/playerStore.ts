@@ -117,7 +117,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotAndroidAudio>>) 
   if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
   if (state.id !== usePlayerStore.getState().current?.id) return
   loadedTrackId = state.stopped ? null : state.id
-  usePlayerStore.setState({ status: state.status || 'paused', progressSeconds: state.position || 0,
+  usePlayerStore.setState({ status: state.stopped && state.status === 'buffering' ? 'resolving' : state.status || 'paused', progressSeconds: state.position || 0,
     ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error || null })
 }
 const nativeReady = isAndroid ? observeAndroidAudio(onNativeState).then(async () => onNativeState(await snapshotAndroidAudio())) : Promise.resolve()

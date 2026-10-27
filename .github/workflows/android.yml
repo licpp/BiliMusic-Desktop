@@ -39,6 +39,7 @@ jobs:
           workspaces: src-tauri
       - uses: gradle/actions/setup-gradle@v4
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - run: npm run android:init
       # A debug-signed preview is installable without sharing a production signing key.

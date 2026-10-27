@@ -49,6 +49,8 @@ test('Android cancel during URL resolution prevents late native autoplay', async
   nativeTest.resolve = () => new Promise(r => { resolve = r })
   const playing = s.getState().play(track)
   while (!resolve) await Promise.resolve()
+  nativeTest.event({ id: track.id, status: 'buffering', stopped: true })
+  assert.equal(s.getState().status, 'resolving')
   await s.getState().toggle(); resolve('http://127.0.0.1:1234/token/late'); await playing
   assert.equal(nativeTest.plays.length, 0)
   assert.equal(s.getState().status, 'paused')
