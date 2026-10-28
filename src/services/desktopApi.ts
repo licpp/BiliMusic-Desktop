@@ -1,3 +1,4 @@
+import { accountEpoch } from './accountScope'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import type { Track } from '../domain/track'
 import { parseLrc } from '../features/lyrics/lrc'
@@ -90,10 +91,12 @@ export async function searchLyrics(title: string, artist?: string, forceRefresh 
 
 export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
   if (!inDesktopShell) return null
+  const epoch = accountEpoch()
   const stored = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
   if (stored && !stored.rawText && stored.provider !== 'local') {
     try {
       const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+      if (epoch !== accountEpoch()) return null
       if (candidate) { const raw = candidate.syncedLyrics || candidate.plainLyrics || ''; return invoke<StoredLyrics>('lyrics_save', { trackId, manual: stored.selectedManually, lyrics: { provider: stored.provider, providerLyricId: stored.providerLyricId, rawText: raw, parsedJson: JSON.stringify(parseLrc(raw)) } }) }
     } catch { /* Keep the synced selection and bias available when the provider is offline. */ }
   }

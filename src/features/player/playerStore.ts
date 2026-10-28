@@ -1,3 +1,4 @@
+import { advanceAccountEpoch } from '../../services/accountScope'
 import { isAndroid } from '../../services/platform'
 import { observeAndroidAudio, prepareAndroidAudio, playAndroidAudio, controlAndroidAudio, snapshotAndroidAudio, androidPlaybackClock } from './androidAudio'
 import { create } from 'zustand'
@@ -14,10 +15,12 @@ let audio: HTMLAudioElement | null = null
 let playRequest = 0
 let loadedTrackId: string | null = null
 export async function resetPlayerForAccount() {
+  advanceAccountEpoch()
   ++playRequest; loadedTrackId = null
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
   if (isAndroid) await controlAndroidAudio('stop').catch(() => undefined)
   usePlayerStore.setState({ current: null, queue: [], status: 'paused', progressSeconds: 0, durationSeconds: 0, error: null })
+  flushPlayerSnapshot()
 }
 export function playbackClock() { if (isAndroid) return androidPlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
 let persistTimer: ReturnType<typeof setTimeout> | undefined

@@ -20,6 +20,11 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTab
   const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
   const [editing, setEditing] = useState<Track | null>(null)
+  useEffect(() => {
+    const clear = () => setEditing(null)
+    window.addEventListener('bilimusic-account-changing', clear)
+    return () => window.removeEventListener('bilimusic-account-changing', clear)
+  }, [])
   const [adding, setAdding] = useState<Track | null>(null)
   const [downloadMessage, setDownloadMessage] = useState('')
   const [renaming, setRenaming] = useState(false)

@@ -137,7 +137,14 @@ fn secret(
 }
 #[tauri::command]
 pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
-    let cfg = config(&database)?;
+    let mut cfg = config(&database)?;
+    // Local import/export remains available even when no cloud connection was made.
+    if cfg.uid.is_empty() {
+        let uid = std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default();
+        if !uid.is_empty() && uid.bytes().all(|c| c.is_ascii_digit()) {
+            cfg.uid = uid;
+        }
+    }
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
     let last = c
         .query_row(

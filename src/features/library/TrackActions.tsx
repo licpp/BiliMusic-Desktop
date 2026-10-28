@@ -21,6 +21,11 @@ export function TrackActionsHost() {
   const element = useRef<HTMLDivElement>(null)
   const client = useQueryClient()
   useEffect(() => {
+    const clear = () => { useTrackActions.setState({ menu: null, adding: null }); setEditing(null) }
+    window.addEventListener('bilimusic-account-changing', clear)
+    return () => window.removeEventListener('bilimusic-account-changing', clear)
+  }, [])
+  useEffect(() => {
     const dismiss = (event: PointerEvent) => { if (!element.current?.contains(event.target as Node)) useTrackActions.setState({ menu: null }) }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && (menu || adding || editing)) { event.stopPropagation(); useTrackActions.setState({ menu: null, adding: null }); setEditing(null) } }
     document.addEventListener('pointerdown', dismiss); document.addEventListener('keydown', escape)
