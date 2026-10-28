@@ -1,6 +1,7 @@
+import { hydrateVisibleTracks } from '../../services/sync'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type { Track } from '../../domain/track'
 import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, downloadTrack, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, renamePlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
 import { showTrackMenu } from './trackActionStore'
@@ -25,6 +26,7 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTab
   const [name, setName] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const tracks = useQuery({ queryKey: ['library', recent ? 'recent' : 'saved', playlist?.id], queryFn: () => playlist ? listPlaylistTracks(playlist.id) : recent ? listRecentTracks() : listLibraryTracks(false, true) })
+  useEffect(() => { void hydrateVisibleTracks(tracks.data, client).catch(() => undefined) }, [tracks.data, client])
   const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
   const refresh = () => Promise.all([client.invalidateQueries({ queryKey: ['library'] }), client.invalidateQueries({ queryKey: ['playlists'] }), client.invalidateQueries({ queryKey: ['home-recent'] })])
   const favorite = useMutation({

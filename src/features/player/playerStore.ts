@@ -13,6 +13,12 @@ type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStat
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
 let loadedTrackId: string | null = null
+export async function resetPlayerForAccount() {
+  ++playRequest; loadedTrackId = null
+  if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
+  if (isAndroid) await controlAndroidAudio('stop').catch(() => undefined)
+  usePlayerStore.setState({ current: null, queue: [], status: 'paused', progressSeconds: 0, durationSeconds: 0, error: null })
+}
 export function playbackClock() { if (isAndroid) return androidPlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
 let persistTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSnapshot: { key: string; value: string } | undefined

@@ -1,3 +1,4 @@
+import { hydrateVisibleTracks } from '../services/sync'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
 import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
@@ -81,6 +82,7 @@ export function App() {
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
   const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
+  useEffect(() => { void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined) }, [homeTracks.data, queryClient])
   const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
   const sidebarPlaylists = playlists.data || [FAVORITES_PLAYLIST]
   const activePlaylist = sidebarPlaylists.find((playlist) => activeNav === `playlist:${playlist.id}`)

@@ -92,6 +92,62 @@ impl LrclibProvider {
         })
     }
 
+    pub async fn selected(
+        &self,
+        provider: &str,
+        id: i64,
+    ) -> Result<Option<LyricCandidate>, LyricsProviderError> {
+        if id <= 0 {
+            return Ok(None);
+        }
+        if provider == "lrclib" {
+            let response = self
+                .client
+                .get(format!("{}/api/get/{id}", self.api_origin))
+                .send()
+                .await?;
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            return Ok(Some(response.error_for_status()?.json().await?));
+        }
+        if provider == "netease" {
+            let response: SongLyrics = self
+                .client
+                .get(format!("{}/api/song/lyric", self.fallback_origin))
+                .query(&[
+                    ("id", id.to_string()),
+                    ("lv", "-1".into()),
+                    ("kv", "-1".into()),
+                    ("tv", "-1".into()),
+                ])
+                .header("Referer", "https://music.163.com/")
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if response.code != 200 {
+                return Ok(None);
+            }
+            return Ok(response
+                .lrc
+                .and_then(|v| v.lyric)
+                .map(|text| LyricCandidate {
+                    provider: provider.into(),
+                    id,
+                    track_name: String::new(),
+                    artist_name: String::new(),
+                    album_name: String::new(),
+                    duration: 0.0,
+                    instrumental: false,
+                    plain_lyrics: None,
+                    synced_lyrics: Some(text),
+                }));
+        }
+        Ok(None)
+    }
+
     pub async fn search(
         &self,
         title: &str,

@@ -28,8 +28,51 @@ class ControlArgs {
     var artist: String = "歌手未知"
 }
 
+@InvokeArg
+class SecretArgs {
+    lateinit var key: String
+    var value: String? = null
+    var remove: Boolean = false
+}
+
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
+    // Called only by Rust; no frontend ACL permission is granted for this command.
+    @Command
+    fun secret(invoke: Invoke) {
+        try {
+            val args = invoke.parseArgs(SecretArgs::class.java)
+            require(args.key.matches(Regex("sync-[0-9]+-(cloud|webdav)")))
+            val prefs = activity.getSharedPreferences("bilimusic-sync-secrets", Activity.MODE_PRIVATE)
+            val store = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            val alias = "bilimusic-sync-v1"
+            if (!store.containsAlias(alias)) {
+                val generator = javax.crypto.KeyGenerator.getInstance("AES", "AndroidKeyStore")
+                generator.init(android.security.keystore.KeyGenParameterSpec.Builder(alias,
+                    android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE).build())
+                generator.generateKey()
+            }
+            val key = store.getKey(alias, null) as javax.crypto.SecretKey
+            if (args.remove) { check(prefs.edit().remove(args.key).commit()) }
+            else if (args.value != null) {
+                val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+                val bytes = cipher.iv + cipher.doFinal(args.value!!.toByteArray(Charsets.UTF_8))
+                check(prefs.edit().putString(args.key, android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)).commit())
+            }
+            val result = JSObject()
+            val encoded = prefs.getString(args.key, null)
+            if (encoded != null) {
+                val bytes = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
+                val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
+                result.put("value", String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8))
+            }
+            invoke.resolve(result)
+        } catch (_: Exception) { invoke.reject("无法访问同步安全存储，请重新连接") }
+    }
     private var immersive = false
     private var managedWebView: WebView? = null
 

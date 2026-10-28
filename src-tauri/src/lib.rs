@@ -1,6 +1,7 @@
 mod domain;
 mod infrastructure;
 mod interface;
+mod sync;
 
 use infrastructure::database::Database;
 use infrastructure::media_proxy::MediaProxy;
@@ -44,6 +45,7 @@ pub fn run() {
             });
             tauri::async_runtime::block_on(bilibili.set_session_cookie(saved_cookie));
             app.manage(database);
+            app.manage(sync::SyncState::default());
             app.manage(media_proxy);
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
@@ -87,6 +89,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            sync::sync_status,
+            sync::sync_connect,
+            sync::sync_pause,
+            sync::sync_disconnect,
+            sync::sync_now,
+            sync::sync_import_guest,
+            sync::sync_hydrate_sources,
+            sync::sync_current_track,
+            sync::sync_export,
+            sync::sync_delete_cloud,
             interface::commands::app_health,
             interface::commands::library_summary,
             interface::commands::library_record_play,
@@ -123,6 +135,7 @@ pub fn run() {
             interface::commands::lyrics_search,
             interface::commands::metadata_catalog_search,
             interface::commands::lyrics_get,
+            interface::commands::lyrics_restore_selected,
             interface::commands::lyrics_save,
             interface::commands::lyrics_set_bias,
             interface::commands::mobile_download_directory,

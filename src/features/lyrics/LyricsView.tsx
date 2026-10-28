@@ -93,6 +93,7 @@ export function LyricsView({ onClose }: Props) {
         if (existing) {
           setStored(existing)
           setLines(parseStoredLines(existing))
+          if (!existing.rawText) setWarning(existing.provider === 'local' ? '本地导入的歌词正文未上传，请在这台设备重新导入。时间偏移已保留。' : '歌词选择和时间偏移已同步，歌词服务暂未返回正文，可稍后重试匹配。')
           return
         }
       } catch (cause) {

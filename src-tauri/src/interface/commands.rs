@@ -352,7 +352,10 @@ pub async fn bili_qr_login_poll(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
     key: String,
+    sync: State<'_, crate::sync::SyncState>,
 ) -> Result<QrLoginStatus, CommandError> {
+    sync.interrupt();
+    let _gate = sync.gate.lock().await;
     if key.trim().is_empty() {
         return Err(CommandError::validation("二维码登录标识为空"));
     }
@@ -361,11 +364,16 @@ pub async fn bili_qr_login_poll(
         .await
         .map_err(CommandError::provider)?;
     if let Some(cookie) = &status.cookie_header {
-        let connection = database
-            .0
-            .lock()
-            .map_err(|_| CommandError::database("数据库正忙"))?;
-        AuthRepository::save_cookie(&connection, "bilibili", cookie)
+        let profile = provider
+            .account_profile()
+            .await
+            .map_err(CommandError::provider)?;
+        let uid = profile
+            .user_id
+            .filter(|_| profile.logged_in)
+            .ok_or_else(|| CommandError::validation("无法验证登录账号"))?;
+        database
+            .switch(Some(uid), Some(cookie))
             .map_err(CommandError::database)?;
     }
     Ok(status)
@@ -410,13 +418,18 @@ pub async fn bili_favorite_videos(
 pub async fn bili_logout(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
+    sync: State<'_, crate::sync::SyncState>,
 ) -> Result<(), CommandError> {
+    sync.interrupt();
+    let _gate = sync.gate.lock().await;
     provider.set_session_cookie(None).await;
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)
+    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)?;
+    drop(connection);
+    database.switch(None, None).map_err(CommandError::database)
 }
 
 #[tauri::command]
@@ -582,6 +595,18 @@ pub fn lyrics_get(
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub async fn lyrics_restore_selected(
+    provider: State<'_, LrclibProvider>,
+    lyric_provider: String,
+    id: i64,
+) -> Result<Option<LyricCandidate>, CommandError> {
+    provider
+        .selected(&lyric_provider, id)
+        .await
+        .map_err(CommandError::provider)
 }
 
 #[tauri::command]
