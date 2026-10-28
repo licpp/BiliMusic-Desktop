@@ -10,7 +10,7 @@ export function validateFeedback(input, policyVersion) {
   if (input.website) throw new HttpError(400, '提交未通过验证。');
   if (input.consent !== true || input.policyVersion !== policyVersion) throw new HttpError(400, '请阅读并同意最新的使用与隐私说明。');
   if (!['bug','suggestion','copyright','other'].includes(input.category)) throw new HttpError(400, '请选择反馈类型。');
-  if (!['macOS','Windows','website','other'].includes(input.platform)) throw new HttpError(400, '请选择平台。');
+  if (!['macOS','Windows','Android','website','other'].includes(input.platform)) throw new HttpError(400, '请选择平台。');
   const result = { category: input.category, platform: input.platform, title: text('title', 3, 120), message: text('message', 10, 5000), contact: text('contact', 0, 200), version: text('version', 0, 40) };
   if (result.category === 'copyright' && !result.contact) throw new HttpError(400, '版权与权利反馈请留下联系方式，以便核实和回复。');
   return result;

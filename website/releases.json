@@ -1,6 +1,6 @@
 {
-  "version": "0.1.6",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.6",
+  "version": "0.1.6-preview.6",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.6-preview.6",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.1.6_aarch64.dmg",
-      "size": 6436983,
-      "sha256": "35705a589340f7288b4414120ce835d41c667f6d0a6d5cd256a238a27c59e644",
+      "file": "BiliMusic_macOS_preview6_AppleSilicon.dmg",
+      "size": 6665901,
+      "sha256": "d257080415277f42ccbacee2cf01856b13ddcb68028100f9954f98f118c49508",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6/BiliMusic_0.1.6_aarch64.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_macOS_preview6_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6/BiliMusic_0.1.6_aarch64.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_macOS_preview6_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,28 +33,46 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.1.6_x64-setup.exe",
-      "size": 4457859,
-      "sha256": "4d5fe1d48db44a3018b18fd6bc197ef5d14810e12ff7b337528d0f1dc5acdd26",
+      "file": "BiliMusic_Windows_preview6_x64-setup.exe",
+      "size": 4710279,
+      "sha256": "50c0779dff5499ed18adf6c2bc625e6ed162fe7f2c8aada6ae6860a84b2dd706",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6/BiliMusic_0.1.6_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Windows_preview6_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6/BiliMusic_0.1.6_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Windows_preview6_x64-setup.exe"
         }
       ]
     },
     {
       "id": "android",
       "name": "Android",
-      "status": "coming_soon",
-      "channels": []
+      "status": "available",
+      "channels": [
+        {
+          "id": "gitee",
+          "name": "Gitee",
+          "recommended": true,
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Android_preview6_arm64.zip"
+        },
+        {
+          "id": "github",
+          "name": "GitHub",
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Android_preview6_arm64.zip"
+        }
+      ],
+      "file": "BiliMusic_Android_preview6_arm64.zip",
+      "size": 53781905,
+      "sha256": "2d1361b3e6f84d293de7a9f46f4411826caee509b62c2f1ff3087e01baaf5db3",
+      "architecture": "ARM64 · 64 位",
+      "requirements": "Android 8+ · ZIP 解压后安装 APK",
+      "packageFormat": "zip"
     }
   ]
 }
