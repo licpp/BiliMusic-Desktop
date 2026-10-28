@@ -1,6 +1,6 @@
 # BiliMusic 网站
 
-功能介绍、互动功能示意、macOS / Windows 双源下载、声明确认及站内反馈。国内优先推荐 Gitee，同时提供 GitHub；Android 显示 Coming soon。页面没有第三方字体、追踪脚本或媒体资源。后端 `/api/v1/releases` 从 `releases.json` 提供版本、架构、体积、SHA-256 与双源地址。
+功能介绍、互动功能示意、macOS / Windows / Android 双源下载、声明确认及站内反馈。国内优先推荐 Gitee，同时提供 GitHub；Android 提供 ZIP，解压后安装原签名 APK。页面没有第三方字体、追踪脚本或媒体资源。后端 `/api/v1/releases` 从 `releases.json` 提供版本、架构、体积、SHA-256 与双源地址。
 
 ## 本地开发
 
@@ -73,7 +73,7 @@ docker exec bilimusic-site node scripts/feedback.mjs status <反馈UUID> resolve
 
 ### 发布安装包
 
-当前 0.1.6 安装包已发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon 与 Windows x64；Android 暂无安装包。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
+当前 0.1.6 Preview 6 安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon、Windows x64 和 Android ARM64。Gitee 单附件上限100MB，Android 使用无损 ZIP，内含原签名 APK；GitHub 同时提供 APK。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
 
 更新版本时先在两处上传相同安装包、许可与校验清单，验证下载后更新 `releases.json` 并重启网站；镜像未完成时地址设为 null，界面显示准备中并禁用该来源。`releases.json` 是唯一下载配置，按钮及确认 API 共用，避免平台和地址错配。当前 macOS 使用临时签名但未 Apple 公证，Windows 未发布者签名，页面已说明架构、限制及 macOS 按应用单独允许打开的方法。直接文件 URL 仍可被转发，不能把网页勾选当作版权授权或访问控制。
 
