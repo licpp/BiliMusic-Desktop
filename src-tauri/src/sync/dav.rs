@@ -335,15 +335,51 @@ fn check(status: reqwest::StatusCode) -> Result<(), String> {
         Ok(())
     } else if matches!(status.as_u16(), 401 | 403) {
         Err("同步授权失效，请重新连接（已停止自动重试）".into())
+    } else if status.as_u16() == 409 {
+        Err("坚果云目录冲突（HTTP 409），请检查服务器地址是否指向已存在的文件夹".into())
+    } else if status.as_u16() == 429 {
+        Err("坚果云请求过于频繁，请稍后重试".into())
     } else {
         Err(format!("坚果云返回 HTTP {}", status.as_u16()))
+    }
+}
+fn missing_ancestor(data: &[u8]) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(data);
+    let mut exception = false;
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(e)) => {
+                exception = e.local_name().as_ref() == b"exception";
+            }
+            Ok(quick_xml::events::Event::Text(e)) if exception => {
+                return e.decode().is_ok_and(|s| s == "AncestorsNotFound");
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
     }
 }
 pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
     let http = client()?;
     let root = folder(c);
     let response=request(&http,"PROPFIND",root.clone(),s).header("Depth","1").header("Content-Type","application/xml").body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>").send().await.map_err(|_|"无法连接坚果云")?;
-    if response.status().as_u16() == 404 {
+    // Nutstore returns 409 AncestorsNotFound, rather than 404, when the
+    // application parent directory has never been created. Keep connect read-only.
+    let status = response.status();
+    let data = bytes(response).await?;
+    if status.as_u16() == 404 || (status.as_u16() == 409 && missing_ancestor(&data)) {
+        // A typo/nonexistent user-supplied base must not masquerade as an empty vault.
+        let base = request(
+            &http,
+            "PROPFIND",
+            format!("{}/", c.url.trim_end_matches('/')),
+            s,
+        )
+        .header("Depth", "0")
+        .send()
+        .await
+        .map_err(|_| "无法检查坚果云服务器地址")?;
+        check(base.status()).map_err(|e| format!("检查坚果云根目录失败：{e}"))?;
         return Ok(Remote {
             snapshot: Snapshot::empty(&c.uid),
             version: None,
@@ -354,8 +390,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             conflicts: vec![],
         });
     }
-    check(response.status())?;
-    let data = bytes(response).await?;
+    check(status)?;
     let mut reader = quick_xml::Reader::from_reader(data.as_slice());
     let mut href = false;
     let mut files = BTreeSet::new();
@@ -456,6 +491,56 @@ pub async fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn first_connect_handles_missing_parents_without_writing_or_hiding_errors() {
+        for (vault_status, error, base_status, succeeds, requests) in [
+            (409, "AncestorsNotFound", 207, true, 2),
+            (404, "NotFound", 207, true, 2),
+            (409, "Conflict", 207, false, 1),
+            (409, "AncestorsNotFound", 404, false, 2),
+            (409, "AncestorsNotFound", 401, false, 2),
+        ] {
+            let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = calls.clone();
+            let router = axum::Router::new().fallback(move |req: axum::extract::Request| {
+                let calls = captured.clone();
+                async move {
+                    calls.lock().unwrap().push((req.method().to_string(), req.uri().path().to_string()));
+                    let status = if req.uri().path() == "/dav/" { base_status } else { vault_status };
+                    (reqwest::StatusCode::from_u16(status).unwrap(), format!("<d:error xmlns:d=\"DAV:\" xmlns:s=\"http://ns.jianguoyun.com\"><s:exception>{error}</s:exception></d:error>"))
+                }
+            });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let mut config = Config::default();
+            config.uid = "42".into();
+            config.url = format!("http://{addr}/dav/");
+            let result = read(
+                &config,
+                &Secret {
+                    username: "test".into(),
+                    password: "test".into(),
+                },
+            )
+            .await;
+            server.abort();
+            assert_eq!(
+                result.is_ok(),
+                succeeds,
+                "{vault_status}/{error}/{base_status}"
+            );
+            if let Ok(remote) = result {
+                assert!(remote.snapshot.records.is_empty());
+            }
+            let calls = calls.lock().unwrap();
+            assert_eq!(calls.len(), requests);
+            assert!(
+                calls.iter().all(|(method, _)| method == "PROPFIND"),
+                "connection preview must not write"
+            );
+        }
+    }
     fn sample() -> Snapshot {
         let mut s = Snapshot::empty("42");
         s.records.insert("playlist:12345678-1234-4234-8234-123456789abc".into(),Record{kind:"playlist".into(),fields:serde_json::from_value(json!({"id":"12345678-1234-4234-8234-123456789abc","name":"first","description":"old"})).unwrap()});
@@ -523,6 +608,26 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "requires explicitly supplied WebDAV test credentials; read-only"]
+    async fn live_nutstore_first_connection_is_read_only() {
+        let mut config = Config::default();
+        config.url = std::env::var("SYNC_TEST_ROOT").expect("WebDAV base directory");
+        config.uid = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+        let credentials = Secret {
+            username: std::env::var("SYNC_TEST_USERNAME").expect("test username"),
+            password: std::env::var("SYNC_TEST_PASSWORD").expect("application password"),
+        };
+        let remote = read(&config, &credentials)
+            .await
+            .expect("first connection preview");
+        assert!(remote.snapshot.records.is_empty());
+        assert!(remote.version.is_none());
+    }
     #[tokio::test]
     #[ignore = "requires explicitly supplied WebDAV test credentials"]
     async fn live_nutstore_two_devices_merge_and_delete() {

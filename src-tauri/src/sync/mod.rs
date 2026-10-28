@@ -265,6 +265,7 @@ pub async fn sync_disconnect(
     let _gate = state.gate.lock().await;
     let mut c = config(&database)?;
     c.enabled = false;
+    c.initialized = false;
     save(&database, &c)?;
     let mut revoke_error = None;
     if !c.uid.is_empty() {
