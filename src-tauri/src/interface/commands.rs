@@ -919,3 +919,19 @@ mod tests {
         assert_eq!(super::safe_filename("..."), "未命名歌曲");
     }
 }
+
+#[tauri::command]
+pub async fn app_check_update()
+-> Result<crate::infrastructure::updates::UpdateRelease, CommandError> {
+    crate::infrastructure::updates::check_update()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
+        .map_err(CommandError::provider)
+}

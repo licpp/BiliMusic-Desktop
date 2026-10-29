@@ -1,6 +1,6 @@
 [package]
 name = "bilimusic-desktop"
-version = "0.1.6"
+version = "0.1.7"
 description = "A clean-room desktop music client"
 authors = ["BiliMusic Contributors"]
 edition = "2024"
@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

@@ -93,3 +93,7 @@ img { -webkit-user-drag: none; }
 .stage-scroll[hidden] { display: none; }
 .metadata-search-panel select { width: 100%; min-width: 0; padding: 10px; font: inherit; color: var(--ink); background: var(--base); border: 1px solid var(--line); border-radius: 8px; }
 .metadata-search-panel select option { color: var(--ink); background: var(--base); }
+.update-settings .update-status { grid-column: 2 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.update-settings .update-error { color: var(--coral); }
+.update-settings .update-status button { white-space: nowrap; }
+@media (max-width: 600px) { .update-settings .update-status { grid-column: 1 / -1; } }

@@ -31,6 +31,11 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_android_player::init());
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_store::Builder::default().build());
 
     builder
@@ -100,6 +105,8 @@ pub fn run() {
             sync::sync_export,
             sync::sync_delete_cloud,
             interface::commands::app_health,
+            interface::commands::app_check_update,
+            interface::commands::app_open_download_page,
             interface::commands::library_summary,
             interface::commands::library_record_play,
             interface::commands::library_save_track,
