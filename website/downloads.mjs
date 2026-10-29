@@ -15,12 +15,19 @@ export async function recordDownload(db, version, platform, source) {
     DO UPDATE SET downloads=download_counts.downloads+1, updated_at=now()`, [version,platform,source]);
 }
 export async function getDownloadStats(db, currentVersion) {
-  const counts = await db.query(`SELECT version, sum(downloads)::text AS downloads
-    FROM download_counts GROUP BY version ORDER BY max(updated_at) DESC, version DESC`);
+  const counts = await db.query(`SELECT version, platform, sum(downloads)::text AS downloads
+    FROM download_counts GROUP BY version, platform ORDER BY max(updated_at) DESC, version DESC`);
   const meta = await db.query('SELECT started_at FROM download_stats_meta WHERE id=1');
-  const versions = counts.rows.map(row => ({ version:row.version, downloads:Number(row.downloads) }));
+  const platforms = { mac:0, windows:0, android:0 };
+  const byVersion = new Map();
+  for (const row of counts.rows) {
+    const count = Number(row.downloads);
+    platforms[row.platform] = (platforms[row.platform] || 0) + count;
+    byVersion.set(row.version, (byVersion.get(row.version) || 0) + count);
+  }
+  const versions = [...byVersion].map(([version,downloads]) => ({version,downloads}));
   if (!versions.some(row => row.version === currentVersion)) versions.unshift({ version:currentVersion, downloads:0 });
   const total = versions.reduce((sum,row) => sum+row.downloads,0);
   if (!Number.isSafeInteger(total) || total < 0) throw new Error('Invalid download counter');
-  return { total, currentVersion, versions, startedAt:meta.rows[0].started_at };
+  return { total, platforms, currentVersion, versions, startedAt:meta.rows[0].started_at };
 }
