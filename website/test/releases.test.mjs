@@ -18,6 +18,6 @@ test('three platforms provide both declared download channels', () => {
     const result=resolveDownload({...request,platform,source},'current');
     assert.ok(result.url.endsWith(result.file));
     assert.match(result.sha256,/^[a-f0-9]{64}$/);
-    if(platform==='android') assert.ok(result.file.endsWith('.zip'));
+    if(platform==='android') assert.ok(result.file.endsWith('.apk'));
   }
 });
