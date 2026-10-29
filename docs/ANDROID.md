@@ -5,9 +5,9 @@ Android 8.0（API 26）及以上，首批提供 ARM64 APK。应用 ID 为 `app.b
 ## 已接入
 
 - 共用 Rust 后端：B 站搜索、分 P 展开与独立收藏、歌单、历史搜索、metadata 编辑与手动补全、歌词选择/导入/偏移持久化、视频与弹幕、评论/回复/点赞。
-- 手机布局：底部导航、左上角歌单抽屉、紧凑播放栏、触控歌曲操作、歌词/视频/评论、浅色与深色主题，适配安全区域与键盘。
+- 手机布局：此刻/搜索/音乐库/歌单/我的底部导航、紧凑播放栏、触控歌曲操作、歌词/视频/评论、浅色与深色主题，适配安全区域与键盘。
 - 音频由 Android MediaPlayer 前台服务播放，独立于 WebView；接入系统 MediaSession、通知和锁屏控制、音频焦点、耳机断开暂停、播放唤醒锁。视频仍然按需加载并静音，跟随原生音频时钟。
-- 系统返回键优先关闭弹窗、评论、视频全屏、歌词、队列和导航抽屉；主页返回进入后台，播放继续。
+- 系统返回键优先关闭弹窗、评论、视频全屏、歌词和队列；主页返回进入后台，播放继续。
 - 下载写入应用私有目录，SQLite 与桌面沿用同一数据结构，无需请求全盘文件权限。卸载应用会删除这些数据。暂不支持导出到公共下载目录/SAF。
 - 网络安全配置只允许本机 `127.0.0.1`/`localhost` 媒体代理使用 HTTP，其余连接使用 HTTPS。不开放任意明文网络访问。
 
@@ -22,13 +22,13 @@ npm run android:init
 npm run android:dev
 # 正式 release（发布前需要配置自己的签名）
 npm run android:build
-# 可直接安装的开发预览包
-npm run tauri -- android build --debug --apk --target aarch64
+# 优化后的 Release APK（签名后可安装）
+npm run tauri -- android build --apk --target aarch64
 ```
 
 原生 Gradle 工程由 Tauri CLI 在 `src-tauri/gen/android` 生成，不提交含本机路径的生成物；`scripts/android-prepare.mjs` 补齐网络配置与图标。修改原生播放器请编辑 `native/android-player`。
 
-GitHub Actions 的 `android-build` 构建 ARM64 开发预览 APK，产物名为 `BiliMusic-Android-arm64-preview`，包含 APK 签名验证。未运行模拟器或真机自动化测试。本仓库的预览包通过仓库 Secrets 使用固定预览签名，后续预览版可覆盖更新。早期 versionCode 10601 使用临时开发签名，首次更换为固定签名时需要卸载旧包，卸载会清除本地数据。Fork 仓库或未配置签名 Secrets 时仍回退到临时开发签名；正式渠道必须妥善备份发布密钥。开发预览包不应直接替换官网正式发布版本。
+GitHub Actions 的 `android-build` 构建经过优化和符号剥离的 ARM64 Release 预览 APK，产物名为 `BiliMusic-Android-arm64-preview`，包含 APK 签名、体积及原生桥接类保留验证；避免发布包含大型调试符号的 APK。未运行模拟器或真机自动化测试。本仓库的预览包通过仓库 Secrets 使用固定预览签名，后续预览版可覆盖更新。早期 versionCode 10601 使用临时开发签名，首次更换为固定签名时需要卸载旧包，卸载会清除本地数据。Fork 仓库或未配置签名 Secrets 时会停止签名步骤，需配置自己的固定密钥；正式渠道必须妥善备份发布密钥。开发预览包不应直接替换官网正式发布版本。
 
 ## 体验时需留意
 
