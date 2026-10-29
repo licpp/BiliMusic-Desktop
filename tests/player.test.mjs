@@ -101,3 +101,25 @@ test('restored Bilibili covers use HTTPS allowed by the desktop CSP', () => {
   assert.equal(store.getState().queue[0].coverUrl, 'https://i0.hdslb.com/cover.jpg')
   listeners.pagehide()
 })
+
+test('one playback mode control cycles mutually exclusive modes and persists them', async () => {
+  const { store, listeners, storage } = setup()
+  const modes = []
+  for (let i=0;i<4;i++) {
+    store.getState().cyclePlaybackMode()
+    modes.push([store.getState().shuffled,store.getState().repeatMode])
+  }
+  assert.deepEqual(modes, [[false,'all'],[false,'one'],[true,'all'],[false,'off']])
+  store.getState().cyclePlaybackMode(); store.getState().cyclePlaybackMode()
+  store.setState({ queue:[track('1'),track('2')],current:track('1') })
+  await store.getState().next(true)
+  assert.equal(store.getState().current.id,'1','single repeat must replay the same song')
+  store.getState().cyclePlaybackMode()
+  await store.getState().next(true)
+  assert.equal(store.getState().current.id,'2','random mode must not retain single-repeat behavior')
+  listeners.pagehide()
+  const restored=setup(JSON.parse(storage.get('resonance-player-v1')))
+  assert.equal(restored.store.getState().shuffled,true)
+  assert.equal(restored.store.getState().repeatMode,'all')
+  restored.listeners.pagehide()
+})

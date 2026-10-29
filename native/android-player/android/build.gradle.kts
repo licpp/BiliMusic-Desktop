@@ -5,7 +5,7 @@ plugins {
 android {
     namespace = "app.bilimusic.player"
     compileSdk = 36
-    defaultConfig { minSdk = 26 }
+    defaultConfig { minSdk = 26; consumerProguardFiles("proguard-rules.pro") }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8

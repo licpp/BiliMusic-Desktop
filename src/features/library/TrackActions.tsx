@@ -1,9 +1,10 @@
+import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { FolderPlus, ListMusic, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
+import { Download, FolderPlus, ListMusic, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
-import { commandErrorMessage, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
+import { commandErrorMessage, downloadTrack, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
 import { usePlayerStore } from '../player/playerStore'
 import { MetadataDialog, PlaylistPicker } from './LibraryView'
 import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActionStore'
@@ -44,6 +45,7 @@ export function TrackActionsHost() {
       <button role="menuitem" onClick={() => { void usePlayerStore.getState().play(menu.track); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>
+      <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); void (async()=>{try{const directory=await getDownloadDirectory() || await chooseDownloadDirectory();if(!directory)return;await downloadTrack(track,directory);void client.invalidateQueries({queryKey:['downloads']})}catch(cause){setError(commandErrorMessage(cause))}})() }}><Download size={15} />下载歌曲</button>
       <button role="menuitem" onClick={() => void edit(menu.track)}><Pencil size={15} />编辑歌曲信息</button>
       {menu.playlistId && <button role="menuitem" onClick={() => { void remove(menu.playlistId!, menu.track); useTrackActions.setState({ menu: null }) }}><Trash2 size={15} />{menu.playlistId === FAVORITES_PLAYLIST_ID ? '取消喜欢' : '从当前歌单移除'}</button>}
     </div>}

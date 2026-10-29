@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, Video, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -31,8 +31,7 @@ export function LyricsView({ onClose }: Props) {
   const queryClient = useQueryClient()
   const shuffled = usePlayerStore((state) => state.shuffled)
   const repeatMode = usePlayerStore((state) => state.repeatMode)
-  const toggleShuffle = usePlayerStore((state) => state.toggleShuffle)
-  const cycleRepeat = usePlayerStore((state) => state.cycleRepeat)
+  const cyclePlaybackMode = usePlayerStore((state) => state.cyclePlaybackMode)
 
   const [editing, setEditing] = useState<Track | null>(null)
   const current = usePlayerStore((state) => state.current)
@@ -204,15 +203,14 @@ export function LyricsView({ onClose }: Props) {
             <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
             <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
             <button role="menuitem" onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
-            <button role="menuitemcheckbox" aria-checked={shuffled} onClick={() => { toggleShuffle(); close() }}><Shuffle size={16} />{shuffled ? '关闭随机播放' : '随机播放'}</button>
-            <button role="menuitem" onClick={() => { cycleRepeat(); close() }}><Repeat2 size={16} />{repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
+            <button role="menuitem" onClick={() => { cyclePlaybackMode(); close() }}><Repeat2 size={16} />播放模式：{shuffled ? '随机播放' : repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
           </>}</ActionMenu>
         </div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className="video-tools">
-          <button onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image /> : <Video />}{mediaMode === 'video' ? '显示封面' : '播放视频'}</button>
+          <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>
           {mediaMode === 'video' && <>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
             <ActionMenu label="视频与弹幕设置" panel>{(close) => <>

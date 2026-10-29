@@ -42,9 +42,8 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run android:init
-      # A debug-signed preview is installable without sharing a production signing key.
-      # Use one stored keystore for future public releases; do not publish ephemeral CI debug builds as updates.
-      - run: npm run tauri -- android build --debug --apk --target aarch64
+      # Optimized native code and stripped symbols; sign the release APK with the existing preview key.
+      - run: npm run tauri -- android build --apk --target aarch64
       - run: node scripts/android-verify-acl.mjs
       - name: Sign preview with persistent repository key
         env:
@@ -59,13 +58,26 @@ jobs:
             APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --key "$signing_dir/key.der" --cert "$signing_dir/cert.pem" "$APK"
           else
-            echo 'Repository signing key unavailable; using the temporary development certificate.'
+            echo 'Persistent signing key is required to preserve upgrade compatibility.'
+            exit 1
           fi
       - name: Verify APK package
         run: |
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | head -8
+          python3 - "$APK" <<'PYAPK'
+          import sys, zipfile, os
+          path=sys.argv[1]
+          with zipfile.ZipFile(path) as z:
+            libraries=[f for f in z.infolist() if f.filename.endswith('.so')]
+            for f in libraries: print(f.filename, f.file_size, 'bytes')
+            assert all(f.file_size < 30*1024*1024 for f in libraries), 'Unstripped native library in APK'
+            dex=b''.join(z.read(f.filename) for f in z.infolist() if f.filename.endswith('.dex'))
+            for cls in ['PlayerPlugin','PlayArgs','ControlArgs','SecretArgs']:
+              assert ('Lapp/bilimusic/player/'+cls+';').encode() in dex, 'Native bridge removed by shrinker: '+cls
+          assert os.path.getsize(path) < 40*1024*1024, 'APK unexpectedly exceeds 40MB'
+          PYAPK
       - uses: actions/upload-artifact@v4
         with:
           name: BiliMusic-Android-arm64-preview

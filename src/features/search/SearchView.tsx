@@ -35,6 +35,7 @@ export function SearchView({ query }: { query: string }) {
 
   const selectResult = async (item: BiliSearchItem) => {
     const existing = expanded[item.bvid]
+    if (existing?.loading) return
     if (existing?.detail) {
       if (existing.detail.parts.length > 1) setExpanded((state) => ({ ...state, [item.bvid]: {} }))
       else if (existing.detail.parts[0]) void play(toTrack(existing.detail, existing.detail.parts[0]))
@@ -44,7 +45,7 @@ export function SearchView({ query }: { query: string }) {
     try {
       const detail = await getVideoParts(item.bvid)
       setExpanded((state) => ({ ...state, [item.bvid]: { detail } }))
-      if (detail.parts[0]) void play(toTrack(detail, detail.parts[0]))
+      if (detail.parts.length === 1 && detail.parts[0]) void play(toTrack(detail, detail.parts[0]))
     } catch (error) {
       setExpanded((state) => ({ ...state, [item.bvid]: { error: commandErrorMessage(error) } }))
     }

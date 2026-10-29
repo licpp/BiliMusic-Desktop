@@ -15,16 +15,16 @@
 .immersive-window-controls .window-close:hover { background:#c42b1c;color:white; }
 .app-shell.lyrics-immersive.frame-windows .lyrics-view,.app-shell.lyrics-immersive.frame-macos .lyrics-view { top:32px; }
 @media (max-width:960px) {
-  .app-shell.lyrics-immersive { padding-top:var(--native-safe-top,env(safe-area-inset-top,0px));padding-left:var(--native-safe-left,0px);padding-right:var(--native-safe-right,0px);grid-template-rows:minmax(0,1fr) 108px calc(60px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+  .app-shell.lyrics-immersive { padding-top:var(--native-safe-top,env(safe-area-inset-top,0px));padding-left:var(--native-safe-left,0px);padding-right:var(--native-safe-right,0px);grid-template-rows:minmax(0,1fr) 132px calc(60px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   .app-shell.lyrics-immersive > .rail { z-index:40;visibility:visible;pointer-events:auto;background:transparent;border:0;padding-bottom:var(--native-safe-bottom,env(safe-area-inset-bottom,0px)); }
-  .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(168px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
+  .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(192px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
   .app-shell.lyrics-immersive.frame-windows .lyrics-view,.app-shell.lyrics-immersive.frame-macos .lyrics-view { top:32px; }
   .dialog-backdrop,.lyric-chooser-backdrop { padding-top:max(12px,var(--native-safe-top,env(safe-area-inset-top,0px)));padding-bottom:max(12px,var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
 }
 .immersive-titlebar { z-index:200; }
 .app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
 @media (max-width:960px) {
-  .app-shell.lyrics-immersive > .queue-drawer { top:var(--native-safe-top,env(safe-area-inset-top,0px));bottom:calc(168px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+  .app-shell.lyrics-immersive > .queue-drawer { top:var(--native-safe-top,env(safe-area-inset-top,0px));bottom:calc(192px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   .app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
 }
 

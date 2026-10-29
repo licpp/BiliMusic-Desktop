@@ -1,3 +1,5 @@
+import { TrackMenuButton } from './TrackActions'
+import { DownloadsView } from '../downloads/DownloadsView'
 import { hydrateVisibleTracks } from '../../services/sync'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
@@ -9,24 +11,18 @@ import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/se
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
 
-export function MusicLibraryView({ tab, onTabChange }: { tab: 'saved' | 'recent'; onTabChange: (tab: 'saved' | 'recent') => void }) {
-  return <LibraryView recent={tab === 'recent'} onTabChange={onTabChange} />
+export type LibraryTab = 'saved' | 'recent' | 'downloads'
+export function MusicLibraryView({ tab, onTabChange }: { tab: LibraryTab; onTabChange: (tab: LibraryTab) => void }) {
+  const tabs: [LibraryTab,string][] = [['saved','已收藏'],['recent','最近播放'],['downloads','下载']]
+  return <div className="music-library"><div className="library-tabs" role="tablist" aria-label="音乐库视图" onKeyDown={e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const i=tabs.findIndex(t=>t[0]===tab);const next=tabs[(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length][0];onTabChange(next);e.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()}}>{tabs.map(([id,label])=><button id={`library-tab-${id}`} key={id} role="tab" data-tab={id} aria-selected={tab===id} tabIndex={tab===id?0:-1} aria-controls="music-library-panel" onClick={()=>onTabChange(id)}>{label}</button>)}</div><div id="music-library-panel" role="tabpanel" aria-labelledby={`library-tab-${tab}`}>{tab==='downloads' ? <DownloadsView /> : <LibraryView recent={tab==='recent'} />}</div></div>
 }
 
-export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTabChange }: { recent?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void; onTabChange?: (tab: 'saved' | 'recent') => void }) {
+export function LibraryView({ recent = false, playlist, onPlaylistDeleted }: { recent?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void }) {
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.play)
   const playAll = usePlayerStore((state) => state.playAll)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
-  const [editing, setEditing] = useState<Track | null>(null)
-  useEffect(() => {
-    const clear = () => setEditing(null)
-    window.addEventListener('bilimusic-account-changing', clear)
-    return () => window.removeEventListener('bilimusic-account-changing', clear)
-  }, [])
-  const [adding, setAdding] = useState<Track | null>(null)
-  const [downloadMessage, setDownloadMessage] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -39,26 +35,16 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTab
     onSuccess: (liked, id) => { const track = tracks.data?.find((item) => item.id === id); if (track) updatePlayerTrack({ ...track, liked }); return refresh() },
   })
   const managePlaylist = useMutation({ mutationFn: async (action: 'rename' | 'delete') => { if (!playlist || playlist.isSystem) return; if (action === 'rename') await renamePlaylist(playlist.id, name); else await deletePlaylist(playlist.id); return action }, onSuccess: (action) => { setRenaming(false); setConfirmDelete(false); void refresh(); if (action === 'delete') onPlaylistDeleted?.() } })
-  const startDownload = async (track: Track) => {
-    try {
-      let directory = await getDownloadDirectory()
-      if (!directory) directory = await chooseDownloadDirectory()
-      if (!directory) return
-      setDownloadMessage(`正在下载「${track.title}」`)
-      await downloadTrack(track, directory)
-      setDownloadMessage(`「${track.title}」下载完成`)
-      await client.invalidateQueries({ queryKey: ['downloads'] })
-    } catch (cause) { setDownloadMessage(commandErrorMessage(cause)) }
-  }
+
 
   return <section className="library-view">
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || '音乐库'}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
-    {!playlist && onTabChange && <div className="library-tabs" role="tablist" aria-label="音乐库视图" onKeyDown={(event) => { if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return; event.preventDefault(); const next = recent ? 'saved' : 'recent'; onTabChange(next); event.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus() }}><button id="library-tab-saved" type="button" role="tab" data-tab="saved" aria-controls="library-tracks-panel" aria-selected={!recent} tabIndex={recent ? -1 : 0} onClick={() => onTabChange('saved')}>已收藏</button><button id="library-tab-recent" type="button" role="tab" data-tab="recent" aria-controls="library-tracks-panel" aria-selected={recent} tabIndex={recent ? 0 : -1} onClick={() => onTabChange('recent')}>最近播放</button></div>}
+
     <div className="collection-actions"><button disabled={!tracks.data?.length} onClick={() => void playAll(tracks.data || [])}><Play size={16} />播放全部</button><button disabled={!tracks.data?.length} onClick={() => enqueue(tracks.data || [])}><ListPlus size={16} />全部加入队列</button>{playlist && !playlist.isSystem && <><button onClick={() => { setName(playlist.name); setRenaming(true) }}><Pencil size={15} />重命名</button><button onClick={() => setConfirmDelete(true)}><Trash2 size={15} />删除歌单</button></>}</div>
     {(renaming || confirmDelete) && <form className="playlist-management" onSubmit={(event) => { event.preventDefault(); managePlaylist.mutate(renaming ? 'rename' : 'delete') }}>{renaming ? <input autoFocus maxLength={80} value={name} onChange={(event) => setName(event.target.value)} aria-label="歌单名称" /> : <span>删除「{playlist?.name}」？仅删除此歌单，保留歌曲信息、播放记录和其他歌单。</span>}<button disabled={managePlaylist.isPending || (renaming && !name.trim())}>确认</button><button type="button" onClick={() => { setRenaming(false); setConfirmDelete(false) }}>取消</button></form>}
     {managePlaylist.isError && <p className="inline-error">{commandErrorMessage(managePlaylist.error)}</p>}
     {favorite.isError && <p className="inline-error">{commandErrorMessage(favorite.error)}</p>}
-    <div id={playlist ? undefined : 'library-tracks-panel'} role={playlist ? undefined : 'tabpanel'} aria-labelledby={playlist ? undefined : recent ? 'library-tab-recent' : 'library-tab-saved'}>
+    <div>
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={isFavorites ? '还没有喜欢的歌曲' : playlist ? '歌单还是空的' : recent ? '还没有播放记录' : '还没有收藏的歌曲'} detail={isFavorites ? '点击歌曲旁的红心，或通过“加入歌单”添加到我喜欢。' : playlist ? '通过歌曲菜单把歌曲加入这里。' : recent ? '播放过的歌曲会出现在这里。' : '点击红心，或把歌曲加入歌单后，它会出现在这里。'} />}
@@ -71,17 +57,11 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onTab
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
-      <button className="icon-action" onClick={() => setEditing(track)} aria-label="编辑歌曲信息"><Pencil size={16} /></button>
-      <button className="icon-action" onClick={() => enqueue([track])} aria-label="加入播放队列"><ListPlus size={16} /></button>
-      <button className="icon-action" onClick={() => void startDownload(track)} aria-label="下载歌曲"><Download size={16} /></button>
-      <button className="icon-action" onClick={() => setAdding(track)} aria-label="加入歌单"><ListPlus size={17} /></button>
-      {playlist && !playlist.isSystem && <button className="icon-action" onClick={() => void removeTrackFromPlaylist(playlist.id, track.id).then(refresh).catch((error) => setDownloadMessage(commandErrorMessage(error)))} aria-label="从歌单移除"><Trash2 size={16} /></button>}
+      <TrackMenuButton track={track} playlistId={playlist?.id} />
       </div>
     </article>)}</div>}
     </div>
-    {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { updatePlayerTrack(updated); setEditing(null); void client.invalidateQueries({ queryKey: ['library'] }); void client.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
-    {adding && <PlaylistPicker tracks={[adding]} onClose={() => setAdding(null)} />}
-    {downloadMessage && <button className="library-toast" onClick={() => setDownloadMessage('')}>{downloadMessage}</button>}
+
   </section>
 }
 
