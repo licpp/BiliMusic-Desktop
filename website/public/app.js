@@ -8,18 +8,18 @@ let policyPromise;
 let platform;
 let releaseManifest;
 let downloadPolicyVersion;
+let latestDownloadStats;
 const element = (tag, text, className) => {
   const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node;
 };
 function renderDownloadStats(stats) {
+  latestDownloadStats = stats;
   const target = $('#download-stats');
   const format = value => new Intl.NumberFormat('zh-CN').format(value);
-  const current = stats.versions.find(row => row.version === stats.currentVersion);
-  target.replaceChildren(element('span', `本版本累计 ${format(current?.downloads || 0)} 次 · 总下载 ${format(stats.total)} 次`));
-  const details = element('details'); details.append(element('summary','各版本下载量'));
-  const list = element('ul');
-  for (const row of stats.versions) list.append(element('li',`v${row.version}：${format(row.downloads)} 次`));
-  details.append(list); target.append(details);
+  for (const count of document.querySelectorAll('[data-download-count]')) {
+    count.textContent = ` · 累计下载 ${format(stats.platforms[count.dataset.downloadCount] || 0)} 次`;
+  }
+  target.replaceChildren(element('span', `三端累计下载 ${format(stats.total)} 次`));
   const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
   target.append(element('small',`自 ${date} 起统计官网发起下载次数`));
 }
@@ -46,7 +46,9 @@ async function loadDownloads() {
       heading.append(element('p',item.status === 'available' ? item.architecture : '移动端正在规划中，敬请期待。')); article.append(heading);
       if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
       else {
-        article.append(element('p',`v${releaseManifest.version} · ${(item.size / 1048576).toFixed(1)} MB · ${item.requirements}`,'download-version'));
+        const version = element('p',`v${releaseManifest.version} · ${(item.size / 1048576).toFixed(1)} MB · ${item.requirements}`,'download-version');
+        const count = element('span',' · 累计下载 —','platform-download-count');
+        count.dataset.downloadCount = item.id; version.append(count); article.append(version);
         const channels = element('div', null, 'channel-buttons');
         for (const channel of item.channels) {
           const button = element('button',channel.name + (channel.recommended ? ' · 国内推荐' : ''),'button' + (channel.recommended ? ' recommended' : ''));
@@ -60,6 +62,7 @@ async function loadDownloads() {
       }
       target.append(article);
     }
+    if (latestDownloadStats) renderDownloadStats(latestDownloadStats);
   } catch {
     target.replaceChildren(element('p','下载信息暂时无法加载，请稍后重试。'));
     const retry=element('button','重新加载','button'); retry.type='button'; retry.dataset.retry='true'; target.append(retry);

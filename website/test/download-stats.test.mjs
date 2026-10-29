@@ -53,15 +53,17 @@ test('download counts survive concurrent requests/restarts and isolate versions'
     }));
     await recordDownload(db,'old-version','windows','github');
     await recordDownload(db,'old-version','android','gitee');
+    await recordDownload(db,'old-version','mac','github');
     const stats=await get('/api/v1/download-stats');
-    assert.equal(stats.total,34);
+    assert.equal(stats.total,35);
+    assert.deepEqual(stats.platforms,{mac:33,windows:1,android:1});
     assert.equal(stats.versions.find(x=>x.version===manifest.version).downloads,32);
-    assert.equal(stats.versions.find(x=>x.version==='old-version').downloads,2);
+    assert.equal(stats.versions.find(x=>x.version==='old-version').downloads,3);
     const future=await getDownloadStats(db,'future-version');
-    assert.equal(future.total,34);assert.equal(future.versions.find(x=>x.version==='future-version').downloads,0);
+    assert.equal(future.total,35);assert.equal(future.versions.find(x=>x.version==='future-version').downloads,0);
     await stop();await start();
     const restored=await get('/api/v1/download-stats');
-    assert.equal(restored.total,34);assert.equal(restored.startedAt,initial.startedAt);
+    assert.equal(restored.total,35);assert.equal(restored.startedAt,initial.startedAt);
     // Only the disposable schema is affected. Statistics failures must not block downloads.
     await db.query('DROP TABLE download_counts');
     assert.equal((await fetch(base+'/api/v1/download-stats')).status,503);
