@@ -7,6 +7,7 @@ import './styles/global.css'
 import './styles/theme.css'
 import './styles/mobile.css'
 import './styles/immersive.css'
+import './styles/comments.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {

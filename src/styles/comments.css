@@ -1,0 +1,45 @@
+/* One glass layer for the panel; scrolling rows do not blur independently. */
+.comments-panel {
+  --comments-glass: rgba(10, 24, 34, .76);
+  --comments-input: rgba(4, 14, 22, .38);
+  top: 78px;
+  right: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100% - 32px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--comments-glass);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  backdrop-filter: blur(16px) saturate(115%);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .22);
+}
+.comments-panel > header { padding: 18px 20px; }
+.comments-panel > header > button { width: 32px; height: 32px; border-radius: 11px; }
+.comments-panel .comments-scroll { padding: 4px 18px; }
+.comments-panel .nested-comments { padding: 0 8px; border-radius: 12px; background: rgba(164, 191, 207, .06); }
+.comments-panel .comment-compose { padding: 14px 16px 16px; background: transparent; }
+.comments-panel .comment-compose textarea { border-radius: 13px; background: var(--comments-input); }
+.comments-panel .comment-compose > button { border-radius: 11px; }
+:root[data-theme="light"] .comments-panel {
+  --comments-glass: rgba(255, 255, 255, .76);
+  --comments-input: rgba(255, 255, 255, .56);
+  background: var(--comments-glass);
+  box-shadow: 0 16px 48px rgba(50, 75, 100, .14);
+}
+:root[data-theme="light"] .comments-panel .comment-compose { background: transparent; }
+:root[data-theme="light"] .comments-panel .comment-compose textarea { background: var(--comments-input); }
+@media (max-width: 960px) {
+  .comments-panel { inset: 8px; width: auto; border-radius: 20px; }
+  .comments-panel > header { padding: 14px 16px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .comments-panel, :root[data-theme="light"] .comments-panel {
+    background: var(--panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comments-panel { animation: none; }
+}
