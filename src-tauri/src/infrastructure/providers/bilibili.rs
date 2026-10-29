@@ -1,5 +1,6 @@
 use reqwest::{
     Client, Url,
+    cookie::{CookieStore, Jar},
     header::{
         ACCEPT, ACCEPT_LANGUAGE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, SET_COOKIE,
     },
@@ -7,10 +8,11 @@ use reqwest::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const API_ORIGIN: &str = "https://api.bilibili.com";
 const WEB_ORIGIN: &str = "https://www.bilibili.com/";
@@ -366,6 +368,8 @@ struct DashStream {
 
 pub struct BilibiliProvider {
     client: Client,
+    cookies: Arc<Jar>,
+    search_session: Mutex<bool>,
     session_cookie: RwLock<Option<String>>,
     video_sources: RwLock<HashMap<(String, i64), (Instant, VideoSource)>>,
 }
@@ -383,8 +387,9 @@ impl BilibiliProvider {
         );
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.bilibili.com"));
         headers.insert(REFERER, HeaderValue::from_static(WEB_ORIGIN));
+        let cookies = Arc::new(Jar::default());
         let client = Client::builder()
-            .cookie_store(true)
+            .cookie_provider(cookies.clone())
             .default_headers(headers)
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(20))
@@ -392,6 +397,8 @@ impl BilibiliProvider {
             .build()?;
         Ok(Self {
             client,
+            cookies,
+            search_session: Mutex::new(false),
             session_cookie: RwLock::new(None),
             video_sources: RwLock::new(HashMap::new()),
         })
@@ -607,7 +614,9 @@ impl BilibiliProvider {
             .append_pair("keyword", keyword)
             .append_pair("page", &page.max(1).to_string())
             .append_pair("pagesize", &page_size.clamp(1, 50).to_string());
-        let data: SearchData = self.get_data(url).await?;
+        let data = self
+            .search_response(url, Url::parse(WEB_ORIGIN).expect("web origin"))
+            .await?;
         Ok(SearchPage {
             page: data.page.max(1),
             page_size: data.page_size.max(1),
@@ -627,6 +636,43 @@ impl BilibiliProvider {
                 })
                 .collect(),
         })
+    }
+
+    async fn ensure_search_session(
+        &self,
+        web_url: Url,
+        refresh: bool,
+    ) -> Result<(), ProviderError> {
+        let mut ready = self.search_session.lock().await;
+        if *ready && !refresh {
+            return Ok(());
+        }
+        // Complete the ordinary website cookie handshake before the search API call.
+        // The shared jar also retains Set-Cookie headers on non-success API responses.
+        self.authenticated_get(web_url)
+            .await
+            .header(ACCEPT, "text/html")
+            .send()
+            .await?
+            .error_for_status()?;
+        *ready = true;
+        Ok(())
+    }
+
+    async fn search_response(&self, url: Url, web_url: Url) -> Result<SearchData, ProviderError> {
+        self.ensure_search_session(web_url.clone(), false).await?;
+        match self.get_data(url.clone()).await {
+            Err(error)
+                if matches!(&error,
+                ProviderError::Network(e) if e.status() == Some(reqwest::StatusCode::PRECONDITION_FAILED))
+                    || matches!(&error, ProviderError::Api { code: -412, .. }) =>
+            {
+                // Recover a stale visitor session once; persistent restrictions remain errors.
+                self.ensure_search_session(web_url, true).await?;
+                self.get_data(url).await
+            }
+            result => result,
+        }
     }
 
     pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
@@ -837,9 +883,31 @@ impl BilibiliProvider {
     }
 
     async fn authenticated_get(&self, url: Url) -> reqwest::RequestBuilder {
-        let request = self.client.get(url);
+        let request = self.client.get(url.clone());
         match self.session_cookie.read().await.as_deref() {
-            Some(cookie) => request.header(COOKIE, cookie),
+            Some(session) => {
+                // Explicit login headers otherwise replace the jar's visitor cookies.
+                let visitor = self.cookies.cookies(&url);
+                let visitor = visitor
+                    .as_ref()
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("");
+                let mut cookies: HashMap<&str, &str> = visitor
+                    .split(';')
+                    .chain(session.split(';'))
+                    .filter_map(|entry| entry.trim().split_once('='))
+                    .collect();
+                let mut entries: Vec<_> = cookies.drain().collect();
+                entries.sort_by_key(|entry| entry.0);
+                request.header(
+                    COOKIE,
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )
+            }
             None => request,
         }
     }
@@ -1017,6 +1085,77 @@ mod tests {
     fn parses_variable_length_duration() {
         assert_eq!(parse_duration("04:12"), 252);
         assert_eq!(parse_duration("1:02:03"), 3723);
+    }
+
+    #[tokio::test]
+    async fn search_initializes_visitor_cookie_and_retries_412_only_once() {
+        use super::{Arc, BilibiliProvider, COOKIE, HeaderMap, SET_COOKIE, Url};
+        use axum::{
+            Router,
+            body::Body,
+            http::{Response, StatusCode},
+            routing::get,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for failures in [0usize, 1, usize::MAX] {
+            let homes = Arc::new(AtomicUsize::new(0));
+            let searches = Arc::new(AtomicUsize::new(0));
+            let home_count = homes.clone();
+            let search_count = searches.clone();
+            let router = Router::new()
+                .route("/", get(move || {
+                    let count = home_count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        Response::builder().header(SET_COOKIE, "buvid3=visitor-session; Path=/")
+                            .body(Body::from("website")).unwrap()
+                    }
+                }))
+                .route("/search", get(move |headers: HeaderMap| {
+                    let count = search_count.clone();
+                    async move {
+                        let cookie = headers.get(COOKIE).unwrap().to_str().unwrap();
+                        assert!(cookie.contains("buvid3=visitor-session"));
+                        assert!(cookie.contains("SESSDATA=saved-login"));
+                        let call = count.fetch_add(1, Ordering::SeqCst);
+                        if call < failures { return Response::builder().status(StatusCode::PRECONDITION_FAILED).body(Body::empty()).unwrap(); }
+                        Response::builder().header("content-type", "application/json")
+                            .body(Body::from(r#"{"code":0,"message":"ok","data":{"page":1,"pagesize":20,"numResults":1,"result":[]}}"#)).unwrap()
+                    }
+                }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            let provider = BilibiliProvider::new().unwrap();
+            provider
+                .set_session_cookie(Some("SESSDATA=saved-login".into()))
+                .await;
+            let web: Url = format!("http://{address}/").parse().unwrap();
+            let search: Url = format!("http://{address}/search").parse().unwrap();
+            let result = provider.search_response(search.clone(), web.clone()).await;
+            assert_eq!(
+                searches.load(Ordering::SeqCst),
+                if failures == 0 { 1 } else { 2 }
+            );
+            assert_eq!(
+                homes.load(Ordering::SeqCst),
+                if failures == 0 { 1 } else { 2 }
+            );
+            if failures == usize::MAX {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap().num_results, 1);
+                // An initialized provider does not reload the website for each keyword.
+                provider.search_response(search, web).await.unwrap();
+                assert_eq!(
+                    homes.load(Ordering::SeqCst),
+                    if failures == 0 { 1 } else { 2 }
+                );
+            }
+            server.abort();
+        }
     }
 
     #[test]

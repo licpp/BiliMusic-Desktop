@@ -1,5 +1,7 @@
+import { accountEpoch } from './accountScope'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import type { Track } from '../domain/track'
+import { parseLrc } from '../features/lyrics/lrc'
 
 export type BiliSearchItem = { bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
@@ -18,7 +20,8 @@ export type StoredLyrics = { trackId: string; provider: string; providerLyricId:
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
-export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
+export type CatalogSource = 'auto' | 'itunes' | 'musicbrainz'
+export type CatalogCandidate = { trackId: string; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string; source: string }
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
 export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
@@ -29,6 +32,11 @@ export type BiliComment = { id: number; rootId: number; parentId: number; userId
 export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
 export const inDesktopShell = isTauri()
+async function write<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  const value = await invoke<T>(command, args)
+  window.dispatchEvent(new Event('bilimusic-data-changed'))
+  return value
+}
 
 export async function searchBilibili(keyword: string, page = 1): Promise<BiliSearchPage> {
   if (!inDesktopShell) return { items: [], page, pageSize: 20, total: 0 }
@@ -47,7 +55,7 @@ export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku',
 
 export async function recordPlayedTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
-  const stored = await invoke<StoredTrack>('library_record_play', { track: toTrackInput(track) })
+  const stored = await write<StoredTrack>('library_record_play', { track: toTrackInput(track) })
   return fromStoredTrack(stored)
 }
 
@@ -72,9 +80,9 @@ export async function clearSearchHistory(): Promise<void> {
   await invoke('search_history_clear')
 }
 
-export const toggleStoredFavorite = (trackId: string) => invoke<boolean>('library_toggle_favorite', { trackId })
+export const toggleStoredFavorite = (trackId: string) => write<boolean>('library_toggle_favorite', { trackId })
 export async function updateStoredMetadata(trackId: string, patch: MetadataPatch): Promise<Track> {
-  return fromStoredTrack(await invoke<StoredTrack>('library_update_metadata', { trackId, patch }))
+  return fromStoredTrack(await write<StoredTrack>('library_update_metadata', { trackId, patch }))
 }
 
 export async function searchLyrics(title: string, artist?: string, forceRefresh = false): Promise<LyricSearchResult> {
@@ -84,11 +92,20 @@ export async function searchLyrics(title: string, artist?: string, forceRefresh 
 
 export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
   if (!inDesktopShell) return null
-  return invoke<StoredLyrics | null>('lyrics_get', { trackId })
+  const epoch = accountEpoch()
+  const stored = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
+  if (stored && !stored.rawText && stored.provider !== 'local') {
+    try {
+      const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+      if (epoch !== accountEpoch()) return null
+      if (candidate) { const raw = candidate.syncedLyrics || candidate.plainLyrics || ''; return invoke<StoredLyrics>('lyrics_save', { trackId, manual: stored.selectedManually, lyrics: { provider: stored.provider, providerLyricId: stored.providerLyricId, rawText: raw, parsedJson: JSON.stringify(parseLrc(raw)) } }) }
+    } catch { /* Keep the synced selection and bias available when the provider is offline. */ }
+  }
+  return stored
 }
 
 export async function saveStoredLyrics(trackId: string, candidate: LyricCandidate, lines: LyricLine[], manual: boolean): Promise<StoredLyrics> {
-  return invoke<StoredLyrics>('lyrics_save', {
+  return write<StoredLyrics>('lyrics_save', {
     trackId,
     lyrics: {
       provider: candidate.provider,
@@ -101,24 +118,24 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
 }
 
 export const setStoredLyricsBias = (trackId: string, biasMs: number) =>
-  invoke<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
+  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
 
 export async function listPlaylists(): Promise<Playlist[]> {
   if (!inDesktopShell) return [{ ...FAVORITES_PLAYLIST }]
   return invoke<Playlist[]>('playlists_list')
 }
-export const createPlaylist = (name: string) => invoke<Playlist>('playlist_create', { name })
+export const createPlaylist = (name: string) => write<Playlist>('playlist_create', { name })
 export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
   if (!inDesktopShell) return []
   return (await invoke<StoredTrack[]>('playlist_tracks', { playlistId })).map(fromStoredTrack)
 }
-export const addTrackToPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_add_track', { playlistId, trackId })
-export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => invoke<void>('playlist_remove_track', { playlistId, trackId })
-export const deletePlaylist = (playlistId: string) => invoke<void>('playlist_delete', { playlistId })
-export const renamePlaylist = (playlistId: string, name: string) => invoke<void>('playlist_rename', { playlistId, name })
-export async function searchMetadataCatalog(title: string, artist: string): Promise<CatalogCandidate[]> {
+export const addTrackToPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_add_track', { playlistId, trackId })
+export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_remove_track', { playlistId, trackId })
+export const deletePlaylist = (playlistId: string) => write<void>('playlist_delete', { playlistId })
+export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
+export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto'): Promise<CatalogCandidate[]> {
   if (!inDesktopShell) return []
-  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist })
+  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist, source })
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
@@ -149,11 +166,12 @@ function toTrackInput(track: Track) {
   }
 }
 
-function fromStoredTrack(track: StoredTrack): Track {
+export function fromStoredTrack(track: StoredTrack): Track {
   return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
 }
 
 export function commandErrorMessage(error: unknown): string {
+  if (typeof error === 'string' && error.trim()) return error
   if (error && typeof error === 'object' && 'message' in error) return String((error as DesktopCommandError).message)
   return error instanceof Error ? error.message : '请求失败，请稍后重试'
 }

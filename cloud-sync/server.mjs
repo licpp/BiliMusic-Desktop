@@ -1,0 +1,13 @@
+import http from 'node:http';
+import pg from 'pg';
+import { createHandler } from './app.mjs';
+import { PgStore } from './store.mjs';
+if(!process.env.DATABASE_URL)throw Error('DATABASE_URL is required');
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:4,connectionTimeoutMillis:5000,statement_timeout:5000});
+pool.on('error',()=>console.error('Sync database connection error'));
+const store=new PgStore(pool);await store.init();await store.cleanup();
+const timer=setInterval(()=>store.cleanup().catch(()=>console.error('Sync cleanup failed')),3600000);timer.unref();
+const server=http.createServer(createHandler(store,{trustProxy:process.env.TRUST_PROXY==='true'}));
+server.requestTimeout=45000;server.headersTimeout=10000;
+server.listen(Number(process.env.PORT||3181),process.env.HOST||'127.0.0.1',()=>console.log('BiliMusic sync ready'));
+process.on('SIGTERM',()=>{clearInterval(timer);server.close(()=>void pool.end());});

@@ -89,3 +89,11 @@ img { -webkit-user-drag: none; }
 .track-context-menu > small { display: block; padding: 8px; font-size: 10px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .track-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; font-size: 12px; }
 .track-context-menu button:hover,.track-context-menu button:focus-visible { background: var(--line); outline: none; }
+
+.stage-scroll[hidden] { display: none; }
+.metadata-search-panel select { width: 100%; min-width: 0; padding: 10px; font: inherit; color: var(--ink); background: var(--base); border: 1px solid var(--line); border-radius: 8px; }
+.metadata-search-panel select option { color: var(--ink); background: var(--base); }
+.update-settings .update-status { grid-column: 2 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.update-settings .update-error { color: var(--coral); }
+.update-settings .update-status button { white-space: nowrap; }
+@media (max-width: 600px) { .update-settings .update-status { grid-column: 1 / -1; } }

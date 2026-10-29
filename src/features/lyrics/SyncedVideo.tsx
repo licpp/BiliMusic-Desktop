@@ -28,10 +28,13 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: str
     }
     let previousTime = playbackClock()
     const sync = (force = false) => {
+      if (document.hidden) { video.pause(); return }
       const time = playbackClock()
       synchronizeVideo(video, time, usePlayerStore.getState().status === 'playing', previousTime, force)
       previousTime = time
     }
+    const visibility = () => sync(true)
+    document.addEventListener('visibilitychange', visibility)
     const metadata = () => sync(true)
     const ready = () => { sync(); if (!supportsFrames) markVisible() }
     const failed = () => setError(video.error?.code === 4 ? '当前视频编码不受支持，请重新加载' : '视频加载失败，请重试')
@@ -48,7 +51,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: str
     const timer = window.setInterval(ready, 250)
     const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status) sync() })
     return () => {
-      window.clearInterval(timer); unsubscribe()
+      window.clearInterval(timer); unsubscribe(); document.removeEventListener('visibilitychange', visibility)
       disposed = true; window.clearTimeout(slowTimer)
       if (frameCallback !== undefined) video.cancelVideoFrameCallback(frameCallback)
       video.removeEventListener('loadedmetadata', metadata); video.removeEventListener('canplay', ready); video.removeEventListener('loadeddata', ready); video.removeEventListener('seeked', ready); video.removeEventListener('error', failed)

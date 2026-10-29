@@ -1,0 +1,38 @@
+/* One continuous cover layer for the complete window, including playback chrome. */
+.app-shell.lyrics-immersive { --lyrics-shade:rgba(3,10,17,.68); }
+:root[data-theme="light"] .app-shell.lyrics-immersive { --lyrics-shade:rgba(248,250,253,.73); }
+.app-shell.lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:var(--base); }
+.app-shell.lyrics-immersive .lyrics-view { background:transparent; }
+.app-shell.lyrics-immersive .lyrics-topbar,.app-shell.lyrics-immersive .lyrics-album-pane { border-color:transparent; }
+.app-shell.lyrics-immersive > .player-dock { z-index:40;background:transparent;border:0;box-shadow:none; }
+.app-shell.lyrics-immersive > .rail { visibility:hidden;pointer-events:none; }
+.app-shell.lyrics-immersive > .queue-drawer { z-index:45; }
+.immersive-titlebar { position:fixed;inset:0 0 auto;height:32px;display:flex;align-items:center;justify-content:space-between;z-index:50;background:transparent;color:var(--muted);user-select:none; }
+.immersive-titlebar > span { padding-left:14px;font-size:11px; }
+.immersive-window-controls { display:flex;height:32px; }
+.immersive-window-controls button { display:grid;place-items:center;width:46px;height:32px;border:0;border-radius:0;background:transparent;color:var(--ink);cursor:default; }
+.immersive-window-controls button:hover { background:var(--line); }
+.immersive-window-controls .window-close:hover { background:#c42b1c;color:white; }
+.app-shell.lyrics-immersive.frame-windows .lyrics-view,.app-shell.lyrics-immersive.frame-macos .lyrics-view { top:32px; }
+@media (max-width:960px) {
+  .app-shell.lyrics-immersive { padding-top:var(--native-safe-top,env(safe-area-inset-top,0px));padding-left:var(--native-safe-left,0px);padding-right:var(--native-safe-right,0px);grid-template-rows:minmax(0,1fr) 132px calc(60px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+  .app-shell.lyrics-immersive > .rail { z-index:40;visibility:visible;pointer-events:auto;background:transparent;border:0;padding-bottom:var(--native-safe-bottom,env(safe-area-inset-bottom,0px)); }
+  .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(192px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
+  .app-shell.lyrics-immersive.frame-windows .lyrics-view,.app-shell.lyrics-immersive.frame-macos .lyrics-view { top:32px; }
+  .dialog-backdrop,.lyric-chooser-backdrop { padding-top:max(12px,var(--native-safe-top,env(safe-area-inset-top,0px)));padding-bottom:max(12px,var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+}
+.immersive-titlebar { z-index:200; }
+.app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
+@media (max-width:960px) {
+  .app-shell.lyrics-immersive > .queue-drawer { top:var(--native-safe-top,env(safe-area-inset-top,0px));bottom:calc(192px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+  .app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
+}
+
+.lyrics-scroll { position:relative;padding-top:0;padding-bottom:0; }
+@media (min-width:961px) {
+  /* Android tablets use the wide layout but still need system-bar/cutout space. */
+  .app-shell.lyrics-immersive.frame-browser { grid-template-rows:minmax(0,1fr) calc(80px + var(--native-safe-bottom,0px)); }
+  .app-shell.lyrics-immersive.frame-browser .lyrics-view { inset:var(--native-safe-top,0px) var(--native-safe-right,0px) calc(80px + var(--native-safe-bottom,0px)) var(--native-safe-left,0px); }
+  .app-shell.lyrics-immersive.frame-browser > .player-dock { padding-bottom:var(--native-safe-bottom,0px);padding-left:calc(20px + var(--native-safe-left,0px));padding-right:calc(20px + var(--native-safe-right,0px)); }
+  .app-shell.lyrics-immersive.frame-browser > .queue-drawer { top:var(--native-safe-top,0px);right:var(--native-safe-right,0px);bottom:calc(80px + var(--native-safe-bottom,0px)); }
+}

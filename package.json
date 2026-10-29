@@ -1,14 +1,17 @@
 {
   "name": "bilimusic-desktop",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "node --test tests/*.test.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:init": "tauri icon public/app-icon.png --output src-tauri/.android-icons && tauri android init --ci --skip-targets-install && node scripts/android-prepare.mjs",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk --target aarch64"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.89.0",

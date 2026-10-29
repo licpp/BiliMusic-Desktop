@@ -1,0 +1,1 @@
+{"identifier":"android-player","description":"Native playback for the Android main window","platforms":["android"],"windows":["main"],"permissions":["android-player:default"]}

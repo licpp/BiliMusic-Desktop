@@ -352,7 +352,10 @@ pub async fn bili_qr_login_poll(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
     key: String,
+    sync: State<'_, crate::sync::SyncState>,
 ) -> Result<QrLoginStatus, CommandError> {
+    sync.interrupt();
+    let _gate = sync.gate.lock().await;
     if key.trim().is_empty() {
         return Err(CommandError::validation("二维码登录标识为空"));
     }
@@ -361,11 +364,16 @@ pub async fn bili_qr_login_poll(
         .await
         .map_err(CommandError::provider)?;
     if let Some(cookie) = &status.cookie_header {
-        let connection = database
-            .0
-            .lock()
-            .map_err(|_| CommandError::database("数据库正忙"))?;
-        AuthRepository::save_cookie(&connection, "bilibili", cookie)
+        let profile = provider
+            .account_profile()
+            .await
+            .map_err(CommandError::provider)?;
+        let uid = profile
+            .user_id
+            .filter(|_| profile.logged_in)
+            .ok_or_else(|| CommandError::validation("无法验证登录账号"))?;
+        database
+            .switch(Some(uid), Some(cookie))
             .map_err(CommandError::database)?;
     }
     Ok(status)
@@ -410,13 +418,18 @@ pub async fn bili_favorite_videos(
 pub async fn bili_logout(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
+    sync: State<'_, crate::sync::SyncState>,
 ) -> Result<(), CommandError> {
+    sync.interrupt();
+    let _gate = sync.gate.lock().await;
     provider.set_session_cookie(None).await;
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)
+    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)?;
+    drop(connection);
+    database.switch(None, None).map_err(CommandError::database)
 }
 
 #[tauri::command]
@@ -562,12 +575,17 @@ pub async fn metadata_catalog_search(
     provider: State<'_, MusicCatalogProvider>,
     title: String,
     artist: String,
+    source: Option<String>,
 ) -> Result<Vec<CatalogCandidate>, CommandError> {
-    if title.trim().is_empty() || artist.trim().is_empty() {
-        return Err(CommandError::validation("请先填写歌曲名和歌手"));
+    if title.trim().is_empty() {
+        return Err(CommandError::validation("请先填写歌曲名"));
+    }
+    let source = source.as_deref().unwrap_or("auto");
+    if !["auto", "itunes", "musicbrainz"].contains(&source) {
+        return Err(CommandError::validation("不支持的歌曲信息来源"));
     }
     provider
-        .search(title.trim(), artist.trim())
+        .search(title.trim(), artist.trim(), source)
         .await
         .map_err(CommandError::provider)
 }
@@ -582,6 +600,18 @@ pub fn lyrics_get(
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub async fn lyrics_restore_selected(
+    provider: State<'_, LrclibProvider>,
+    lyric_provider: String,
+    id: i64,
+) -> Result<Option<LyricCandidate>, CommandError> {
+    provider
+        .selected(&lyric_provider, id)
+        .await
+        .map_err(CommandError::provider)
 }
 
 #[tauri::command]
@@ -709,7 +739,20 @@ pub fn playlist_rename(
 }
 
 #[tauri::command]
+pub fn mobile_download_directory(app: tauri::AppHandle) -> Result<String, CommandError> {
+    use tauri::Manager;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(CommandError::database)?
+        .join("downloads");
+    std::fs::create_dir_all(&directory).map_err(CommandError::database)?;
+    Ok(directory.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 pub async fn download_track(
+    app: tauri::AppHandle,
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     track_id: String,
@@ -727,6 +770,22 @@ pub async fn download_track(
     if !directory.is_dir() {
         return Err(CommandError::validation("下载位置不是目录"));
     }
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let allowed = app
+            .path()
+            .app_data_dir()
+            .map_err(CommandError::database)?
+            .join("downloads")
+            .canonicalize()
+            .map_err(CommandError::database)?;
+        if directory != allowed {
+            return Err(CommandError::validation("Android 下载仅写入应用私有目录"));
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
     let download_id = uuid::Uuid::new_v4().to_string();
     let temporary = target.with_extension(format!("{download_id}.part"));
@@ -859,4 +918,20 @@ mod tests {
         assert_eq!(super::safe_filename("a/b:c*?\"<>|"), "abc");
         assert_eq!(super::safe_filename("..."), "未命名歌曲");
     }
+}
+
+#[tauri::command]
+pub async fn app_check_update()
+-> Result<crate::infrastructure::updates::UpdateRelease, CommandError> {
+    crate::infrastructure::updates::check_update()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
+        .map_err(CommandError::provider)
 }

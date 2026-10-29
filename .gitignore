@@ -12,3 +12,5 @@ vite.config.d.ts
 .env
 .env.*
 !.env.example
+
+src-tauri/.android-icons/
