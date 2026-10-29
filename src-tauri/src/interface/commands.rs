@@ -575,12 +575,17 @@ pub async fn metadata_catalog_search(
     provider: State<'_, MusicCatalogProvider>,
     title: String,
     artist: String,
+    source: Option<String>,
 ) -> Result<Vec<CatalogCandidate>, CommandError> {
-    if title.trim().is_empty() || artist.trim().is_empty() {
-        return Err(CommandError::validation("请先填写歌曲名和歌手"));
+    if title.trim().is_empty() {
+        return Err(CommandError::validation("请先填写歌曲名"));
+    }
+    let source = source.as_deref().unwrap_or("auto");
+    if !["auto", "itunes", "musicbrainz"].contains(&source) {
+        return Err(CommandError::validation("不支持的歌曲信息来源"));
     }
     provider
-        .search(title.trim(), artist.trim())
+        .search(title.trim(), artist.trim(), source)
         .await
         .map_err(CommandError::provider)
 }

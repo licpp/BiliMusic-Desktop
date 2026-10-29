@@ -20,7 +20,8 @@ export type StoredLyrics = { trackId: string; provider: string; providerLyricId:
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
-export type CatalogCandidate = { trackId: number; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string }
+export type CatalogSource = 'auto' | 'itunes' | 'musicbrainz'
+export type CatalogCandidate = { trackId: string; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string; source: string }
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
 export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
@@ -132,9 +133,9 @@ export const addTrackToPlaylist = (playlistId: string, trackId: string) => write
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_remove_track', { playlistId, trackId })
 export const deletePlaylist = (playlistId: string) => write<void>('playlist_delete', { playlistId })
 export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
-export async function searchMetadataCatalog(title: string, artist: string): Promise<CatalogCandidate[]> {
+export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto'): Promise<CatalogCandidate[]> {
   if (!inDesktopShell) return []
-  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist })
+  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist, source })
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []

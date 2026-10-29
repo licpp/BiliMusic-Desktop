@@ -13,14 +13,14 @@ import { chooseTrackPlaylist, showTrackMenu } from '../library/trackActionStore'
 
 type ExpandedState = { loading?: boolean; detail?: BiliVideoParts; error?: string }
 
-export function SearchView({ query }: { query: string }) {
+export function SearchView({ query, active = true }: { query: string; active?: boolean }) {
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({})
   const [actionError, setActionError] = useState('')
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.play)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const playAll = usePlayerStore((state) => state.playAll)
-  const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query), retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
+  const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
   const items = [...new Map(result.data?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const add = async (track: Track, favorite = false) => {
     try {

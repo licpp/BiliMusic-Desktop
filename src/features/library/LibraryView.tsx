@@ -4,6 +4,8 @@ import { hydrateVisibleTracks } from '../../services/sync'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
+import type { CatalogSource } from '../../services/desktopApi'
+import { Artwork } from '../../shared/Artwork'
 import type { Track } from '../../domain/track'
 import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, downloadTrack, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTrackFromPlaylist, renamePlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type Playlist } from '../../services/desktopApi'
 import { showTrackMenu } from './trackActionStore'
@@ -101,12 +103,14 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [searchTitle, setSearchTitle] = useState(title)
   const [searchArtist, setSearchArtist] = useState(artist)
+  const [catalogSource, setCatalogSource] = useState<CatalogSource>('auto')
   const mutation = useMutation({ mutationFn: () => updateStoredMetadata(track.id, { title, artist, album, coverUrl }), onSuccess: onSaved })
   const submit = (event: FormEvent) => { event.preventDefault(); if (title.trim()) mutation.mutate() }
-  const enrich = async () => {
-    if (!searchTitle.trim() || !searchArtist.trim()) { setCatalogError('请填写用于搜索的歌曲名和歌手'); return }
-    setCatalogLoading(true); setCatalogError('')
-    try { const results = await searchMetadataCatalog(searchTitle, searchArtist); setCatalog(results); if (!results.length) setCatalogError('没有匹配结果，请调整搜索信息') }
+  const enrich = async (lookupTitle = searchTitle, lookupArtist = searchArtist, source = catalogSource) => {
+    setCatalogOpen(true)
+    if (!lookupTitle.trim()) { setCatalogError('请填写用于搜索的歌曲名'); return }
+    setCatalogLoading(true); setCatalogError(''); setCatalog([])
+    try { const results = await searchMetadataCatalog(lookupTitle.trim(), lookupArtist.trim(), source); setCatalog(results); if (!results.length) setCatalogError('没有匹配结果，可以调整搜索信息或切换来源') }
     catch (cause) { setCatalogError(commandErrorMessage(cause)) }
     finally { setCatalogLoading(false) }
   }
@@ -117,10 +121,10 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
       <label>歌曲名<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
       <div className="field-pair"><label>歌手<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="歌手未知" /></label><label>专辑<input value={album} onChange={(event) => setAlbum(event.target.value)} placeholder="可选" /></label></div>
       <label>封面地址<input value={coverUrl} onChange={(event) => setCoverUrl(event.target.value)} placeholder="https://" /></label>
-      <button className="metadata-enrich" type="button" onClick={() => { setSearchTitle(title); setSearchArtist(artist); setCatalogOpen((value) => !value) }}><Sparkles />匹配歌曲信息</button>
-      {catalogOpen && <div className="metadata-search-panel"><p>修改搜索信息，选择结果后再保存。</p><div className="field-pair"><label>搜索歌曲名<input aria-label="匹配搜索歌曲名" value={searchTitle} onChange={(event) => setSearchTitle(event.target.value)} /></label><label>搜索歌手<input aria-label="匹配搜索歌手" value={searchArtist} onChange={(event) => setSearchArtist(event.target.value)} /></label></div><button type="button" className="metadata-enrich" onClick={() => void enrich()} disabled={catalogLoading}>{catalogLoading && <LoaderCircle className="spin" />}搜索歌曲信息</button></div>}
+      <button className="metadata-enrich" type="button" disabled={catalogLoading} onClick={() => { setSearchTitle(title); setSearchArtist(artist); void enrich(title, artist) }}>{catalogLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{catalogLoading ? '正在匹配…' : '匹配歌曲信息'}</button>
+      {catalogOpen && <div className="metadata-search-panel"><p>选择结果后再保存，也可以调整关键词或切换来源。</p><div className="field-pair"><label>搜索歌曲名<input aria-label="匹配搜索歌曲名" value={searchTitle} onChange={(event) => setSearchTitle(event.target.value)} /></label><label>搜索歌手<input aria-label="匹配搜索歌手" value={searchArtist} onChange={(event) => setSearchArtist(event.target.value)} placeholder="可选" /></label></div><label>资料来源<select aria-label="歌曲信息来源" value={catalogSource} disabled={catalogLoading} onChange={event => { const source = event.target.value as CatalogSource; setCatalogSource(source); void enrich(searchTitle, searchArtist, source) }}><option value="auto">自动 · 优先 iTunes 华语曲库</option><option value="itunes">iTunes · 台湾 / 香港 / 美国</option><option value="musicbrainz">MusicBrainz / Cover Art Archive</option></select></label><button type="button" className="metadata-enrich" onClick={() => void enrich()} disabled={catalogLoading}>重新搜索</button></div>}
       {catalogError && <div className="dialog-error">{catalogError}</div>}
-      {catalog.length > 0 && <div className="catalog-results">{catalog.map((item) => <button type="button" key={item.trackId} onClick={() => { setTitle(item.trackName); setArtist(item.artistName); setAlbum(item.collectionName || ''); setCoverUrl(item.artworkUrl || ''); setCatalog([]); setCatalogOpen(false) }}>{item.artworkUrl ? <img src={item.artworkUrl} alt="" /> : <span />}<span><strong>{item.trackName} · {item.artistName}</strong><small>{item.collectionName || '专辑未知'}</small></span></button>)}</div>}
+      {catalog.length > 0 && <div className="catalog-results">{catalog.map((item) => <button type="button" key={item.trackId} onClick={() => { setTitle(item.trackName); setArtist(item.artistName); if (item.collectionName) setAlbum(item.collectionName); if (item.artworkUrl) setCoverUrl(item.artworkUrl); setCatalog([]); setCatalogOpen(false) }}><Artwork src={item.artworkUrl} /><span><strong>{item.trackName} · {item.artistName}</strong><small>{item.collectionName || '专辑未知'} · {item.source}</small></span></button>)}</div>}
       {mutation.isError && <div className="dialog-error">{commandErrorMessage(mutation.error)}</div>}
       <footer><button type="button" onClick={onClose}>取消</button><button className="save-button" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle className="spin" size={15} /> : null}保存修改</button></footer>
     </form>

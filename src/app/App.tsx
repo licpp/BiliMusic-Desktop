@@ -5,7 +5,7 @@ import { hydrateVisibleTracks } from '../services/sync'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
 import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -63,6 +63,8 @@ export function App() {
   const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads'>('saved')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
+  const searchScroll = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (searchScroll.current) searchScroll.current.scrollTop = 0 }, [submittedQuery])
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
@@ -168,7 +170,7 @@ export function App() {
       if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
       if (queueOpen) { event.preventDefault(); toggleQueue(); return }
       if (activePlaylist) { event.preventDefault(); setActiveNav('歌单'); return }
-      if (activeNav !== '此刻') { event.preventDefault(); setSubmittedQuery(''); setActiveNav('此刻') }
+      if (activeNav !== '此刻') { event.preventDefault(); setActiveNav('此刻') }
     }
     window.addEventListener('bilimusic-back', back)
     return () => window.removeEventListener('bilimusic-back', back)
@@ -178,7 +180,7 @@ export function App() {
     <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
       {lyricsOpen && <><LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" /><ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} /></>}
       <aside className="rail" aria-label="主导航">
-        <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻'); setSubmittedQuery('') }}>
+        <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻') }}>
           <Waves size={23} strokeWidth={2.5} />
         </button>
         <nav className="rail-nav">
@@ -208,7 +210,7 @@ export function App() {
 
           <div className="collection-list">
             {sidebarPlaylists.map((playlist, index) => (
-              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setSubmittedQuery(''); setLyricsOpen(false) }}>
+              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setLyricsOpen(false) }}>
                 <span className={playlist.isSystem ? 'collection-cover favorites-cover' : `collection-cover tone-${index % 4}`}>{playlist.isSystem ? <Heart size={17} fill="currentColor" /> : <Album size={17} />}</span>
                 <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首{playlist.isSystem ? ' · 默认歌单' : ''}</small></span>
               </button>
@@ -221,7 +223,7 @@ export function App() {
       <main className="content-stage">
         <form className={`topbar ${activeNav === '搜索' ? 'searching' : ''}`} onSubmit={submitSearch}>
 <div className="mobile-page-heading">{activePlaylist && <button type="button" aria-label="返回歌单列表" onClick={() => setActiveNav('歌单')}><ArrowLeft size={18} /></button>}<strong>{activePlaylist?.name || activeNav}</strong></div>
-          <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setSubmittedQuery(''); setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
+          <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
             <input value={query} onFocus={() => { setSearchFocused(true); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
@@ -231,8 +233,9 @@ export function App() {
           <div className="topbar-actions"><button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
         </form>
 
-        <div className="stage-scroll">
-          {activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('歌单')} /> : activeNav === '歌单' || activeNav.startsWith('playlist:') ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id) => setActiveNav(`playlist:${id}`)} onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section> : <>
+        <div className="stage-scroll" ref={searchScroll} hidden={activeNav !== '搜索'}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={activeNav === '搜索'} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
+        <div className="stage-scroll" hidden={activeNav === '搜索'}>
+          {activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('歌单')} /> : activeNav === '歌单' || activeNav.startsWith('playlist:') ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id) => setActiveNav(`playlist:${id}`)} onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
