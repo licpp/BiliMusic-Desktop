@@ -6,3 +6,5 @@
 
 .download-grid article.android-card{display:grid;grid-template-columns:43px 1fr;gap:17px;padding:28px}.download-grid .android-card .channel-buttons,.download-grid .android-card .download-version,.download-grid .android-card .checksum{grid-column:1/-1}
 @media(max-width:720px){.download-grid article.android-card{padding:23px}.feature-notes{grid-template-columns:1fr}}
+
+.download-stats{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:11px;color:#a3b3a9}.download-stats details{position:relative}.download-stats summary{cursor:pointer;text-decoration:underline;text-underline-offset:3px}.download-stats ul{list-style:none;padding:10px 14px;margin:8px 0 0;border:1px solid #435549;border-radius:6px;background:#202824;max-height:180px;overflow:auto}.download-stats li{padding:3px 0;white-space:nowrap}.download-stats small{font-size:10px;color:#82998a}@media(max-width:440px){.download-stats small{flex-basis:100%}}

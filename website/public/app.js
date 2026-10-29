@@ -11,6 +11,26 @@ let downloadPolicyVersion;
 const element = (tag, text, className) => {
   const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node;
 };
+function renderDownloadStats(stats) {
+  const target = $('#download-stats');
+  const format = value => new Intl.NumberFormat('zh-CN').format(value);
+  const current = stats.versions.find(row => row.version === stats.currentVersion);
+  target.replaceChildren(element('span', `本版本累计 ${format(current?.downloads || 0)} 次 · 总下载 ${format(stats.total)} 次`));
+  const details = element('details'); details.append(element('summary','各版本下载量'));
+  const list = element('ul');
+  for (const row of stats.versions) list.append(element('li',`v${row.version}：${format(row.downloads)} 次`));
+  details.append(list); target.append(details);
+  const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
+  target.append(element('small',`自 ${date} 起统计官网发起下载次数`));
+}
+async function loadDownloadStats() {
+  try {
+    const response = await fetch('/api/v1/download-stats', { signal:AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('unavailable');
+    renderDownloadStats(await response.json());
+  } catch { $('#download-stats').replaceChildren(element('span','下载统计暂不可用')); }
+}
+loadDownloadStats();
 async function loadDownloads() {
   const target = $('#download-platforms');
   try {
@@ -92,6 +112,7 @@ $('#confirm-download').addEventListener('click', async () => {
   try {
     const response=await fetch('/api/v1/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:selection.item.id,source:selection.channel.id,consent:true,policyVersion:downloadPolicyVersion}),signal:AbortSignal.timeout(15000)});
     const result=await response.json(); if (!response.ok) throw new Error(result.message || '下载暂时不可用，请稍后重试。');
+    if (result.downloadStats) renderDownloadStats(result.downloadStats);
     if (platform !== selection || !$('#policy-dialog').open) return;
     $('#download-availability').textContent=`正在前往 ${selection.channel.name} 下载 ${result.file}。若未开始下载，可重试或选择另一个下载源。`;
     window.location.assign(result.url);
