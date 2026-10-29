@@ -13,7 +13,7 @@
 - **跨设备同步**：同步歌单、收藏、修改后的歌曲信息和歌词设置，可选最近播放；默认关闭。
 - **专注聆听**：队列、循环播放、按需视频与弹幕，让电脑和手机都成为你的音乐空间。
 
-最新公开预览版为 **0.1.7**，包含歌曲信息多源匹配、搜索状态保留、安卓底部评论面板与检查更新。macOS 使用完整 ad-hoc 签名，尚未 Apple 公证；Windows 尚未发布者签名。Android 直接下载 APK 安装，固定预览签名支持覆盖上一版。
+最新版本为 **0.1.7**，包含歌曲信息多源匹配、搜索状态保留、安卓底部评论面板与检查更新。macOS 使用完整 ad-hoc 签名，尚未 Apple 公证；Windows 尚未发布者签名。Android 直接下载 APK 安装，固定预览签名支持覆盖上一版。
 
 > 独立开源客户端，非哔哩哔哩官方产品，未获得其官方授权。音视频、歌词与封面等第三方内容的权利归相应权利人所有。MIT 代码许可不包含第三方内容授权。请在适用法律、平台规则和内容授权允许的范围内使用，详见 [使用声明与隐私说明](DISCLAIMER.md)。
 
@@ -95,7 +95,7 @@ macOS 使用完整应用包的 ad-hoc 临时签名，并从最终 DMG 验证签�
 
 网站代码位于 [website](website/README.md)，提供功能介绍、macOS / Windows 安装包下载、下载前声明确认及无需 GitHub 账号的站内反馈。国内优先推荐 [Gitee 发行版](https://gitee.com/yoaker/BiliMusic-Desktop/releases/tag/v0.1.6)，同时提供 [GitHub Releases](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.6)。Android 显示 Coming soon。
 
-0.1.6 为公开预览版：macOS 安装包支持 macOS 12+ 与 Apple Silicon（暂不包含 Intel Mac），Windows 安装包为 x64。macOS 使用临时签名，尚未 Apple 公证；Windows 尚未发布者签名。下载时请核对来源与发行版附件中的 SHA-256 校验清单。两边安装包来自同一次成功的 GitHub Actions 构建，文件内容一致。
+0.1.7 支持以下平台：macOS 安装包支持 macOS 12+ 与 Apple Silicon（暂不包含 Intel Mac），Windows 安装包为 x64。macOS 使用临时签名，尚未 Apple 公证；Windows 尚未发布者签名。下载时请核对来源与发行版附件中的 SHA-256 校验清单。两边安装包来自同一次成功的 GitHub Actions 构建，文件内容一致。
 
 反馈保存在独立 PostgreSQL 数据库，包含错误反馈、功能建议和权利人反馈。请通过 [网站表单](https://bilimusic.cn/#feedback) 联系维护者，并勿提交密码、Cookie、完整私人日志等敏感信息。
 
