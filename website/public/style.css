@@ -8,3 +8,9 @@
 @media(max-width:720px){.download-grid article.android-card{padding:23px}.feature-notes{grid-template-columns:1fr}}
 
 .download-stats{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:11px;color:#a3b3a9}.download-stats small{font-size:10px;color:#82998a}.download-grid .platform-download-count{color:#bdcfc2}@media(max-width:440px){.download-stats small{flex-basis:100%}}
+
+/* Keep consent and download actions visible; only the statement body scrolls. */
+#policy-dialog { height: min(88dvh, 850px); max-height: calc(100dvh - 24px); overflow: hidden; }
+#policy-dialog[open] { display: flex; flex-direction: column; }
+#policy-dialog .dialog-heading, #download-consent, #policy-close { flex: 0 0 auto; }
+#policy-dialog .policy-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }

@@ -91,7 +91,7 @@ async function openPolicy(downloadPlatform) {
   $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'android' ? 'Android 为 ARM64 预览版，使用固定预览签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
-  dialog.showModal(); dialog.scrollTop = 0;
+  dialog.showModal(); dialog.scrollTop = 0; content.scrollTop = 0;
   try {
     const policy = await getPolicy(); content.replaceChildren();
     downloadPolicyVersion=policy.version;
