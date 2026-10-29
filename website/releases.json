@@ -1,6 +1,6 @@
 {
-  "version": "0.1.6-preview.6",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.6-preview.6",
+  "version": "0.1.6-preview.7",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.6-preview.7",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_macOS_preview6_AppleSilicon.dmg",
-      "size": 6665901,
-      "sha256": "d257080415277f42ccbacee2cf01856b13ddcb68028100f9954f98f118c49508",
+      "file": "BiliMusic_macOS_preview7_AppleSilicon.dmg",
+      "size": 4911776,
+      "sha256": "e6b968d3b0e712d43e74bd97b012bef24f13a74edb6b818b0f4f23d592b60be6",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_macOS_preview6_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_macOS_preview7_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_macOS_preview6_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_macOS_preview7_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_Windows_preview6_x64-setup.exe",
-      "size": 4710279,
-      "sha256": "50c0779dff5499ed18adf6c2bc625e6ed162fe7f2c8aada6ae6860a84b2dd706",
+      "file": "BiliMusic_Windows_preview7_x64-setup.exe",
+      "size": 3603811,
+      "sha256": "26a042e146f47df8bc4f04554293f91a83c36f4c1a93d2be16ebb4740cb7dad4",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Windows_preview6_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_Windows_preview7_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Windows_preview6_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_Windows_preview7_x64-setup.exe"
         }
       ]
     },
@@ -59,20 +59,20 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Android_preview6_arm64.zip"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_Android_preview7_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.6/BiliMusic_Android_preview6_arm64.zip"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.6-preview.7/BiliMusic_Android_preview7_arm64.apk"
         }
       ],
-      "file": "BiliMusic_Android_preview6_arm64.zip",
-      "size": 53781905,
-      "sha256": "2d1361b3e6f84d293de7a9f46f4411826caee509b62c2f1ff3087e01baaf5db3",
+      "file": "BiliMusic_Android_preview7_arm64.apk",
+      "size": 13166950,
+      "sha256": "b62d087a66efcc24d0357076aaaead58245ae60d2d44f0ec60231afe3ad41e8f",
       "architecture": "ARM64 · 64 位",
-      "requirements": "Android 8+ · ZIP 解压后安装 APK",
-      "packageFormat": "zip"
+      "requirements": "Android 8+ · 下载 APK 后安装",
+      "packageFormat": "apk"
     }
   ]
 }
