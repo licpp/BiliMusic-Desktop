@@ -7,6 +7,7 @@ import pg from 'pg';
 import { policy } from './policy.mjs';
 import { HttpError, validateFeedback } from './validation.mjs';
 import { releases, resolveDownload } from './releases.mjs';
+import { initializeDownloadStats, recordDownload, getDownloadStats } from './downloads.mjs';
 
 const port = Number(process.env.PORT || 3180);
 const origin = new URL(process.env.PUBLIC_ORIGIN || `http://localhost:${port}`).origin;
@@ -21,6 +22,7 @@ if (pool) {
     policy_version text NOT NULL, status text NOT NULL DEFAULT 'new', created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS feedback_limits (address_hash text PRIMARY KEY, count integer NOT NULL, window_start timestamptz NOT NULL);
     CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback(created_at DESC);`);
+  await initializeDownloadStats(pool);
 }
 async function housekeeping() {
   await pool?.query("DELETE FROM feedback_limits WHERE window_start < now() - interval '24 hours'; DELETE FROM feedback WHERE created_at < now() - interval '180 days' AND category <> 'copyright' AND status <> 'in_progress'");
@@ -44,13 +46,26 @@ const server = http.createServer(async (req, res) => {
       catch { return json(503, { status:'unavailable', feedback:false }); }
     }
     if (req.method === 'GET' && path === '/api/releases') return json(200, releases);
+    if (req.method === 'GET' && path === '/api/download-stats') {
+      if (!pool) throw new HttpError(503, '下载统计暂不可用。');
+      return json(200, await getDownloadStats(pool, releases.version));
+    }
     if (req.method === 'POST' && path === '/api/download') {
       if (req.headers.origin !== origin) throw new HttpError(403, '请通过本站下载入口操作。');
       if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, '请提交 JSON 格式。');
       const chunks = []; let size = 0;
       for await (const chunk of req) { size += chunk.length; if (size > 4096) throw new HttpError(413, '请求过长。'); chunks.push(chunk); }
       let body; try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new HttpError(400, '请求格式不正确。'); }
-      return json(200, resolveDownload(body, policy.version));
+      const download = resolveDownload(body, policy.version);
+      let downloadStats;
+      // Stats are best-effort; a database outage must not prevent installation.
+      if (pool) {
+        try {
+          await recordDownload(pool, releases.version, body.platform, body.source);
+          downloadStats = await getDownloadStats(pool, releases.version);
+        } catch { console.error('Download statistics unavailable'); }
+      }
+      return json(200, { ...download, ...(downloadStats ? { downloadStats } : {}) });
     }
     if (req.method === 'POST' && path === '/api/feedback') {
       if (req.headers.origin !== origin) throw new HttpError(403, '请通过本站反馈表单提交。');
