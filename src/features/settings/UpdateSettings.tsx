@@ -27,6 +27,6 @@ export function UpdateSettings() {
     <div className="settings-icon"><ArrowUpCircle /></div>
     <div><strong>应用更新</strong><small>当前版本 {currentRelease}</small></div>
     <button type="button" disabled={checking} onClick={() => void check()}>{checking && <LoaderCircle className="spin" />}{checking ? '正在检查…' : '检查更新'}</button>
-    {(checking || message || error) && <div className="update-status" role="status" aria-live="polite"><span className={error ? 'update-error' : ''}>{error || (checking ? '正在查询官网最新版本…' : message)}</span>{result?.status === 'available' && <button type="button" disabled={checking || opening} onClick={() => void download()}><ExternalLink />{opening ? '正在打开…' : '前往官网下载'}</button>}</div>}
+    {(checking || message || error) && <div className="update-status" role="status" aria-live="polite"><span className={error ? 'update-error' : ''}>{error || (checking ? '正在检查最新版本…' : message)}</span>{result?.status === 'available' && <button type="button" disabled={checking || opening} onClick={() => void download()}><ExternalLink />{opening ? '正在打开…' : '前往官网下载'}</button>}</div>}
   </section>
 }
