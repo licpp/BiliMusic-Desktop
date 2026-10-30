@@ -66,6 +66,9 @@ jobs:
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | head -8
+          expected_code=$(node -p "const [major,minor,patch]=require('./package.json').version.split('.').map(Number);major*1000000+minor*10000+patch*100")
+          actual_badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK")
+          [[ "$actual_badging" == *"versionCode='$expected_code'"* ]] || { echo 'APK upgrade versionCode mismatch'; exit 1; }
           python3 - "$APK" <<'PYAPK'
           import sys, zipfile, os
           path=sys.argv[1]
