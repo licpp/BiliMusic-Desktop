@@ -1,6 +1,6 @@
 [package]
 name = "bilimusic-desktop"
-version = "0.1.7"
+version = "0.1.8"
 description = "A clean-room desktop music client"
 authors = ["BiliMusic Contributors"]
 edition = "2024"

@@ -10,7 +10,7 @@ export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export const syncNow = (preview = false, resolution?: 'local' | 'remote', automatic = false) => invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
 export async function refreshSyncedLibrary(client: QueryClient) {
-  await Promise.all(['library', 'playlists', 'home-recent'].map((key) => client.invalidateQueries({ queryKey: [key] })))
+  await Promise.all(['library', 'playlists', 'home-recent', 'collections'].map((key) => client.invalidateQueries({ queryKey: [key] })))
   const current = usePlayerStore.getState().current
   if (current) {
     const stored = await invoke<import('./desktopApi').StoredTrack | null>('sync_current_track', { trackId: current.id })

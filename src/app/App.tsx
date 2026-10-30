@@ -1,3 +1,4 @@
+import { CollectionsView } from '../features/collections/CollectionsView'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaylistsView } from '../features/library/PlaylistsView'
 import { MyView } from '../features/settings/MyView'
@@ -169,7 +170,7 @@ export function App() {
       if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
       if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
       if (queueOpen) { event.preventDefault(); toggleQueue(); return }
-      if (activePlaylist) { event.preventDefault(); setActiveNav('歌单'); return }
+      if (activePlaylist || activeNav.startsWith('collections:')) { event.preventDefault(); setActiveNav('歌单'); return }
       if (activeNav !== '此刻') { event.preventDefault(); setActiveNav('此刻') }
     }
     window.addEventListener('bilimusic-back', back)
@@ -186,12 +187,12 @@ export function App() {
         <nav className="rail-nav">
           {navigation.map(({ label, icon: Icon }) => (
             <button
-              className={(activeNav === label || (label === '歌单' && activeNav.startsWith('playlist:'))) ? 'rail-button active' : 'rail-button'}
+              className={(activeNav === label || (label === '歌单' && (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')))) ? 'rail-button active' : 'rail-button'}
               key={label}
               onClick={() => { setActiveNav(label); setLyricsOpen(false) }}
               title={label}
               aria-label={label}
-              aria-current={activeNav === label || (label === '歌单' && activeNav.startsWith('playlist:')) ? 'page' : undefined}
+              aria-current={activeNav === label || (label === '歌单' && (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:'))) ? 'page' : undefined}
             >
               <Icon size={20} /><span className="mobile-nav-label">{label}</span>
             </button>
@@ -217,12 +218,13 @@ export function App() {
             ))}
           </div>
         </section>
+        <CollectionsView sidebar onOpen={id=>{setActiveNav(`collections:${id}`);setLyricsOpen(false)}}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
 
       <main className="content-stage">
         <form className={`topbar ${activeNav === '搜索' ? 'searching' : ''}`} onSubmit={submitSearch}>
-<div className="mobile-page-heading">{activePlaylist && <button type="button" aria-label="返回歌单列表" onClick={() => setActiveNav('歌单')}><ArrowLeft size={18} /></button>}<strong>{activePlaylist?.name || activeNav}</strong></div>
+<div className="mobile-page-heading">{activePlaylist && <button type="button" aria-label="返回歌单列表" onClick={() => setActiveNav('歌单')}><ArrowLeft size={18} /></button>}<strong>{activePlaylist?.name || (activeNav.startsWith('collections:') ? '收藏合集' : activeNav)}</strong></div>
           <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
@@ -235,7 +237,7 @@ export function App() {
 
         <div className="stage-scroll" ref={searchScroll} hidden={activeNav !== '搜索'}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={activeNav === '搜索'} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
         <div className="stage-scroll" hidden={activeNav === '搜索'}>
-          {activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('歌单')} /> : activeNav === '歌单' || activeNav.startsWith('playlist:') ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id) => setActiveNav(`playlist:${id}`)} onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
+          {activeNav.startsWith('collections:') ? <CollectionsView initialFolder={activeNav.slice(12)} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('歌单')} /> : activeNav === '歌单' || (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')) ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id) => setActiveNav(`playlist:${id}`)} onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>

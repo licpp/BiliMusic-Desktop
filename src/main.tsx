@@ -28,3 +28,6 @@ createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </StrictMode>,
 )
+
+import './styles/collections.css'
+import './styles/downloads.css'

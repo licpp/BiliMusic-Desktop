@@ -1,3 +1,5 @@
+import { toTrack } from '../../services/collectionTrack'
+import { CollectionBookmark } from '../collections/CollectionsView'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, CircleAlert, Heart, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
@@ -78,7 +80,7 @@ export function SearchView({ query, active = true }: { query: string; active?: b
           <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
-        </button><ActionMenu label={`视频操作：${item.title}`}>{(close) => <>
+        </button><CollectionBookmark item={item}/><ActionMenu label={`视频操作：${item.title}`}>{(close) => <>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'play') }}><Play size={16} />{open ? '播放全部分 P' : '播放'}</button>
@@ -93,9 +95,6 @@ export function SearchView({ query, active = true }: { query: string; active?: b
   </section>
 }
 
-function toTrack(detail: BiliVideoParts, part: BiliVideoParts['parts'][number]): Track {
-  return { id: `bilibili:${detail.bvid}:${part.cid}`, source: { provider: 'bilibili', bvid: detail.bvid, aid: detail.aid, cid: part.cid, page: part.page, uploaderId: detail.uploaderId, uploaderName: detail.uploaderName }, title: part.title || detail.title, coverUrl: part.coverUrl || detail.coverUrl, durationSeconds: part.durationSeconds, liked: false }
-}
 
 function EmptyState({ icon: Icon, title, detail, spinning, action }: { icon: typeof Waves; title: string; detail: string; spinning?: boolean; action?: ReactNode }) {
   return <div className="search-empty"><span><Icon className={spinning ? 'spin' : ''} /></span><h2>{title}</h2><p>{detail}</p>{action}</div>

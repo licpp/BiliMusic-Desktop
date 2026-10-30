@@ -449,6 +449,9 @@ pub async fn sync_import_guest(
     active(&database, &uid)?;
     let guest = rusqlite::Connection::open(database.1.join("resonance.sqlite3"))
         .map_err(|_| "无法打开本机访客资料库")?;
+    guest
+        .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+        .map_err(|e| e.to_string())?;
     let source = storage::export(&guest, &uid, true)?;
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
     let current = storage::export(&c, &uid, true)?;

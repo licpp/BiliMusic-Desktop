@@ -1,6 +1,7 @@
 export const MAX_BYTES = 3 * 1024 * 1024;
 export class ApiError extends Error { constructor(status,message) { super(message); this.status=status; } }
 const fields = {
+  collectionFolder:["id","name"], collection:["bvid","folderId"],
   track:['id','bvid','cid','overrideTitle','overrideArtist','overrideAlbum','overrideCover'],
   playlist:['id','name','description','coverUrl'], item:['playlistId','trackId','position'],
   favorite:['trackId'], history:['trackId','playedAt'], lyric:['id','provider','providerLyricId','biasMs','manual'],
@@ -21,6 +22,8 @@ export function validateSnapshot(value, uid) {
     }
     const f=r.fields;
     if (r.kind==='track') {if(!/^BV[a-zA-Z0-9]+$/.test(f.bvid)||!Number.isSafeInteger(f.cid)||f.cid<=0||f.id!==`bilibili:${f.bvid}:${f.cid}`||key!==`track:${f.id}`) fail();tracks.add(f.id);}
+    else if(r.kind==='collectionFolder'){if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||[...f.name].length>80||key!==`collectionFolder:${f.id}`)fail();}
+    else if(r.kind==='collection'){if(typeof f.bvid!=='string'||!/^BV[a-zA-Z0-9]+$/.test(f.bvid)||f.bvid.length>32||key!==`collection:${f.bvid}`||typeof f.folderId!=='string'||(f.folderId!==''&&value.records[`collectionFolder:${f.folderId}`]?.kind!=='collectionFolder'))fail();}
     else if(r.kind==='playlist') {if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
     else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}
     else {
@@ -33,6 +36,6 @@ export function validateSnapshot(value, uid) {
   for(const id of referenced)if(!tracks.has(id))fail();
   for(const id of tracks)if(!referenced.has(id))fail();
   for(const r of Object.values(value.records))if(r.kind==='lyric'&&!tracks.has(r.fields.id))fail();
-  for(const [kind,max] of Object.entries({playlist:500,track:5000,item:10000,history:200,lyric:5000,favorite:5000}))if((counts[kind]||0)>max)throw new ApiError(413,`${kind}超过数量上限${max}`);
+  for(const [kind,max] of Object.entries({collectionFolder:100,collection:2000,playlist:500,track:5000,item:10000,history:200,lyric:5000,favorite:5000}))if((counts[kind]||0)>max)throw new ApiError(413,`${kind}超过数量上限${max}`);
   return value;
 }

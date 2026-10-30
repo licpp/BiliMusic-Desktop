@@ -53,6 +53,20 @@ impl Snapshot {
             .filter(|(_, r)| r.kind == "playlist")
             .map(|(k, _)| k.clone())
             .collect();
+        let folders: BTreeSet<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "collectionFolder")
+            .map(|(k, _)| k.clone())
+            .collect();
+        for r in self.records.values_mut().filter(|r| r.kind == "collection") {
+            if !text(r, "folderId").is_empty()
+                && !folders.contains(&format!("collectionFolder:{}", text(r, "folderId")))
+            {
+                r.fields
+                    .insert("folderId".into(), Value::String(String::new()));
+            }
+        }
         self.records.retain(|_, r| {
             r.kind != "item" || lists.contains(&format!("playlist:{}", text(r, "playlistId")))
         });
@@ -95,6 +109,8 @@ impl Snapshot {
                     "overrideCover",
                 ],
                 "playlist" => &["id", "name", "description", "coverUrl"],
+                "collectionFolder" => &["id", "name"],
+                "collection" => &["bvid", "folderId"],
                 "item" => &["playlistId", "trackId", "position"],
                 "favorite" => &["trackId"],
                 "history" => &["trackId", "playedAt"],
@@ -125,6 +141,23 @@ impl Snapshot {
                         && text(r, "bvid").starts_with("BV")
                         && text(r, "bvid").bytes().all(|c| c.is_ascii_alphanumeric())
                         && number(r, "cid") > 0
+                }
+                "collectionFolder" => {
+                    key == &format!("collectionFolder:{id}")
+                        && uuid::Uuid::parse_str(id).is_ok()
+                        && !text(r, "name").trim().is_empty()
+                        && text(r, "name").chars().count() <= 80
+                }
+                "collection" => {
+                    key == &format!("collection:{}", text(r, "bvid"))
+                        && text(r, "bvid").starts_with("BV")
+                        && text(r, "bvid").len() <= 32
+                        && text(r, "bvid").bytes().all(|b| b.is_ascii_alphanumeric())
+                        && (text(r, "folderId").is_empty()
+                            || self
+                                .records
+                                .get(&format!("collectionFolder:{}", text(r, "folderId")))
+                                .is_some_and(|r| r.kind == "collectionFolder"))
                 }
                 "playlist" => {
                     key == &format!("playlist:{id}")
@@ -168,6 +201,8 @@ impl Snapshot {
             }
         }
         for (kind, limit) in [
+            ("collectionFolder", 100),
+            ("collection", 2000),
             ("playlist", 500),
             ("track", 5000),
             ("item", 10000),

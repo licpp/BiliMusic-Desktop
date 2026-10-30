@@ -17,6 +17,24 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
         );
     };
     let result = (|| -> rusqlite::Result<()> {
+        let mut q = c.prepare("SELECT id,name FROM collection_folders LIMIT 101")?;
+        for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, name) = row?;
+            add(
+                format!("collectionFolder:{id}"),
+                "collectionFolder",
+                json!({"id":id,"name":name}),
+            );
+        }
+        let mut q = c.prepare("SELECT bvid,folder_id FROM collections LIMIT 2001")?;
+        for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+            let (bvid, folder) = row?;
+            add(
+                format!("collection:{bvid}"),
+                "collection",
+                json!({"bvid":bvid,"folderId":folder}),
+            );
+        }
         let mut q =
             c.prepare("SELECT id,name,description,cover_url FROM playlists ORDER BY id LIMIT 501")?;
         for row in q.query_map([], |r| {
@@ -110,6 +128,31 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         .map_err(|e| e.to_string())?;
     let tx = c;
     let result = (|| -> rusqlite::Result<()> {
+        tx.execute("DELETE FROM collection_folders", [])?;
+        for r in s.records.values().filter(|r| r.kind == "collectionFolder") {
+            tx.execute(
+                "INSERT INTO collection_folders(id,name) VALUES(?1,?2)",
+                params![text(r, "id"), text(r, "name")],
+            )?;
+        }
+        let keep: std::collections::BTreeSet<_> = s
+            .records
+            .values()
+            .filter(|r| r.kind == "collection")
+            .map(|r| text(r, "bvid").to_owned())
+            .collect();
+        let mut q = tx.prepare("SELECT bvid FROM collections")?;
+        let existing = q
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in existing {
+            if !keep.contains(&id) {
+                tx.execute("DELETE FROM collections WHERE bvid=?1", [id])?;
+            }
+        }
+        for r in s.records.values().filter(|r| r.kind == "collection") {
+            tx.execute("INSERT INTO collections(bvid,folder_id) VALUES(?1,?2) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id",params![text(r,"bvid"),text(r,"folderId")])?;
+        }
         for r in s.records.values().filter(|r| r.kind == "track") {
             let id = text(r, "id");
             tx.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![id,text(r,"bvid"),r.fields.get("aid").and_then(Value::as_i64),number(r,"cid"),1,"",r.fields.get("uploaderId").and_then(Value::as_i64),optional(r,"uploaderName")])?;
@@ -190,6 +233,41 @@ pub fn prune(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collections_round_trip_without_uploading_source_cache() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        use crate::infrastructure::repositories::collections::{self, Collection};
+        collections::change(&mut c, "create", "", "听书", None).unwrap();
+        let id = collections::list(&c).unwrap().folders.remove(0).id;
+        collections::change(
+            &mut c,
+            "save",
+            "",
+            "",
+            Some(Collection {
+                bvid: "BV123".into(),
+                folder_id: id.clone(),
+                title: "local cache".into(),
+                cover_url: "".into(),
+                uploader_name: "local uploader".into(),
+            }),
+        )
+        .unwrap();
+        let s = export(&c, "42", false).unwrap();
+        assert_eq!(s.records.len(), 2);
+        assert!(!serde_json::to_string(&s).unwrap().contains("local cache"));
+        let d = Connection::open_in_memory().unwrap();
+        d.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        apply(&d, &s, false).unwrap();
+        assert_eq!(s, export(&d, "42", false).unwrap());
+        collections::change(&mut c, "delete", &id, "", None).unwrap();
+        let deleted = export(&c, "42", false).unwrap();
+        apply(&d, &deleted, false).unwrap();
+        assert_eq!(collections::list(&d).unwrap().items[0].folder_id, "");
+    }
     #[test]
     fn bounded_export_excludes_unreferenced_metadata_and_secrets() {
         let c = Connection::open_in_memory().unwrap();

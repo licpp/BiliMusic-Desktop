@@ -1,0 +1,50 @@
+.collections-view {margin-top:32px;border-top:1px solid var(--line);padding-top:22px}
+.collections-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.collections-heading>button{display:flex;align-items:center;gap:8px;background:none;border:0;color:var(--ink);cursor:pointer;padding:6px 0}.collections-heading h3{margin:0;font-size:18px}.collections-heading small{color:var(--muted)}
+.collections-view button,.collection-detail>button,.collection-dialog button,.collections-sidebar button{color:var(--ink);cursor:pointer}
+.collections-heading>button:last-child,.collections-toolbar>button,.collection-detail>button{display:inline-flex;align-items:center;gap:5px;padding:8px;border:1px solid var(--line);background:var(--panel);border-radius:9px;font-size:12px}
+.collections-heading>button:first-child{border:0;background:none}
+.collection-folder-list{display:grid;gap:4px}.collection-folder-list>button{display:flex;align-items:center;gap:8px;text-align:left;padding:10px 6px;background:none;border:0;border-radius:8px;font-size:12px}.collection-folder-list>button span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.collection-folder-list small{color:var(--muted)}.collection-folder-list>button:hover{background:var(--panel-raised)}
+.collections-sidebar{margin-top:22px}.collections-sidebar .collections-heading{flex-wrap:wrap}.collections-sidebar .collections-heading>button{font-size:12px}
+.collection-filters{display:flex;gap:8px;overflow-x:auto;padding:0 0 12px}.collection-filters>button{flex-shrink:0;border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:7px 12px;font-size:12px}.collection-filters>button[aria-pressed=true]{color:var(--coral);border-color:var(--coral)}
+.collections-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 18px}.collections-toolbar input,.collection-detail input,.collection-dialog input{background:var(--base);color:var(--ink);border:1px solid var(--line);border-radius:9px;min-width:0;padding:10px;font:inherit}
+.collection-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}.collection-cards article{position:relative;min-width:0;border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}.collection-card-main{display:flex;flex-direction:column;gap:8px;width:100%;padding:12px 12px 16px;text-align:left;border:0;background:none}.collection-card-main>.artwork{width:100%;aspect-ratio:16/10;border-radius:9px;overflow:hidden}.collection-card-main strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13px;line-height:1.5;padding-right:20px}.collection-card-main small{color:var(--muted);font-size:11px}.collection-cards .collection-bookmark{position:absolute;bottom:10px;right:8px;background:var(--panel);border-radius:7px}.collection-bookmark.saved{color:var(--coral)}.collection-empty{padding:32px 12px;color:var(--muted);line-height:1.8}
+.collection-dialog{width:min(440px,calc(100vw - 28px));max-height:80dvh;overflow:auto;padding:20px;border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink)}.collection-dialog header{display:flex;align-items:center;justify-content:space-between}.collection-dialog h3{margin:0}.collection-dialog p{color:var(--muted);overflow-wrap:anywhere;font-size:13px}.collection-dialog button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:12px 4px;text-align:left;font:inherit}.collection-dialog header button{width:auto}.collection-dialog input{width:100%;margin:16px 0}.collection-dialog form{width:100%}
+.collection-detail>header{display:flex;align-items:center;gap:20px;margin:24px 0}.collection-detail>header>.artwork{width:150px;aspect-ratio:16/10;border-radius:12px;overflow:hidden;flex-shrink:0}.collection-detail h2{font-size:22px;overflow-wrap:anywhere}.collection-detail header p{color:var(--muted);font-size:12px}.collection-detail header>div{min-width:0;flex:1}.collection-detail .collection-actions{flex-wrap:wrap}.collection-detail .part-entry strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:760px){
+ .collection-cards{grid-template-columns:minmax(0,1fr);gap:6px}.collection-cards article{display:flex;align-items:center;padding-right:8px;border-radius:12px}.collection-card-main{flex:1;min-width:0;flex-direction:row;align-items:center;gap:10px;width:auto;padding:7px 8px}.collection-card-main>.artwork{flex:0 0 40px;width:40px;height:40px;aspect-ratio:auto;border-radius:7px}.collection-card-main strong{display:block;padding-right:0;font-size:13px;line-height:18px;white-space:nowrap;text-overflow:ellipsis}.collection-cards .collection-bookmark{position:static;flex:0 0 36px;width:36px;margin:0}.collection-detail>header{gap:12px}.collection-detail>header>.artwork{width:90px}.collection-detail h2{font-size:17px}.collections-heading{gap:6px}.collection-dialog{align-self:flex-end;width:100%;max-height:85dvh;border-radius:22px 22px 0 0;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
+ .search-landing .quick-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.search-landing .quick-actions>button{display:flex;align-items:center;justify-content:flex-start;gap:9px;min-width:0;padding:14px 12px}.search-landing .quick-actions>button>svg:first-child{display:block;width:18px;height:18px;flex:0 0 18px}.search-landing .quick-actions>button>svg:last-child{display:none}.search-landing .quick-actions strong{min-width:0;white-space:normal;word-break:normal;overflow-wrap:break-word;font-size:13px;line-height:1.5}
+}
+.library-panel{overflow-y:auto;overscroll-behavior:contain}.library-footer{flex-shrink:0}
+.search-result-heading>.collection-bookmark{flex:0 0 32px}
+
+.collection-card-copy{display:grid;gap:5px;min-width:0;width:100%}
+.collection-card-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.collections-heading-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.collections-heading-actions>button{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font-size:12px;cursor:pointer}
+.collections-heading-actions>button[aria-expanded=true]{color:var(--coral);border-color:var(--coral)}
+.collections-search{display:flex;align-items:center;gap:7px;width:min(320px,100%);height:36px;padding:0 9px;border:1px solid var(--line);border-radius:9px;background:var(--base);color:var(--muted)}
+.collections-toolbar .collections-search input{flex:1;width:100%;min-width:0;border:0;background:none;padding:0;font-size:13px;outline:none}
+.collections-search:focus-within{border-color:var(--cyan)}
+.collections-search button{display:grid;place-items:center;border:0;background:none;color:var(--muted);padding:2px;cursor:pointer}
+@media(max-width:760px){
+ .collections-view{margin-top:14px;padding-top:12px}.collections-heading{margin-bottom:10px}.collections-heading h3{font-size:16px}.collections-heading-actions>button{width:36px;padding:0}.collections-heading-actions>button>span{display:none}.collection-filters{gap:6px;padding-bottom:10px}.collection-filters>button{padding:6px 10px;font-size:12px}.collections-toolbar{margin:0 0 10px}.collections-search{width:100%;height:34px}
+}
+
+@media(max-width:760px){
+ .playlist-grid{gap:6px}
+ .playlist-card{min-height:56px;gap:10px;padding:7px 8px;border-radius:10px}
+ .playlist-card-cover{width:40px;height:40px;flex:0 0 40px;border-radius:7px}
+ .playlist-card-cover>svg{width:18px;height:18px}
+ .playlist-card>span:last-child{gap:2px}
+ .playlist-card strong{font-size:13px;line-height:18px}
+ .playlist-card small{font-size:10px;line-height:14px}
+ .collection-cards article{min-height:56px;border-radius:10px}
+ .collection-card-copy{gap:2px}
+ .collection-card-copy small{font-size:10px;line-height:14px}
+ .collection-card-main>.artwork>svg{width:18px;height:18px}
+ .playlists-view>header>.eyebrow,.playlists-view>header>p{display:none}
+ .playlists-view>header>h2{font-size:16px;line-height:22px;margin:0 0 8px}
+ .playlists-view>.collection-actions{margin:0 0 10px;gap:8px}
+ .playlists-view>.collection-actions>button{padding:7px 10px;min-height:32px}
+}

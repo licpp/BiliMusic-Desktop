@@ -935,3 +935,28 @@ pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), Command
         .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
         .map_err(CommandError::provider)
 }
+
+#[tauri::command]
+pub fn collections_list(
+    database: State<'_, Database>,
+) -> Result<crate::infrastructure::repositories::collections::Collections, String> {
+    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    crate::infrastructure::repositories::collections::list(&c).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn collections_change(
+    database: State<'_, Database>,
+    action: String,
+    id: Option<String>,
+    name: Option<String>,
+    item: Option<crate::infrastructure::repositories::collections::Collection>,
+) -> Result<(), String> {
+    let mut c = database.0.lock().map_err(|_| "数据库正忙")?;
+    crate::infrastructure::repositories::collections::change(
+        &mut c,
+        &action,
+        id.as_deref().unwrap_or(""),
+        name.as_deref().unwrap_or(""),
+        item,
+    )
+}

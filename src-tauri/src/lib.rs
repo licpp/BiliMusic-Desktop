@@ -94,6 +94,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            interface::commands::collections_list,
+            interface::commands::collections_change,
             sync::sync_status,
             sync::sync_connect,
             sync::sync_pause,
