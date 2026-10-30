@@ -12,8 +12,8 @@ import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActi
 export function PlaylistButton({ track, tracks }: { track?: Track; tracks?: Track[] }) {
   return <button type="button" className="icon-action playlist-action" aria-label="加入歌单" title="加入歌单" onClick={(event) => { event.stopPropagation(); chooseTrackPlaylist(tracks || (track ? [track] : [])) }}><FolderPlus size={16} /></button>
 }
-export function TrackMenuButton({ track, playlistId }: { track: Track; playlistId?: string }) {
-  return <button type="button" className="icon-action" aria-label="歌曲操作" title="更多操作" onClick={(event) => showTrackMenu(event, track, playlistId)}><MoreHorizontal size={17} /></button>
+export function TrackMenuButton({ track, playlistId, tracks }: { track: Track; playlistId?: string; tracks?: Track[] }) {
+  return <button type="button" className="icon-action" aria-label="歌曲操作" title="更多操作" onClick={(event) => showTrackMenu(event, track, playlistId, tracks)}><MoreHorizontal size={17} /></button>
 }
 export function TrackActionsHost() {
   const { menu, adding } = useTrackActions()
@@ -42,7 +42,7 @@ export function TrackActionsHost() {
   return createPortal(<>
     {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
-      <button role="menuitem" onClick={() => { void usePlayerStore.getState().play(menu.track); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
+      <button role="menuitem" onClick={() => { void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>
       <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); void (async()=>{try{const directory=await getDownloadDirectory() || await chooseDownloadDirectory();if(!directory)return;await downloadTrack(track,directory);void client.invalidateQueries({queryKey:['downloads']})}catch(cause){setError(commandErrorMessage(cause))}})() }}><Download size={15} />下载歌曲</button>

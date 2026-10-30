@@ -1,4 +1,6 @@
-import { CollectionsView } from '../features/collections/CollectionsView'
+import type { Collection } from '../services/collections'
+import { useCompactLayout } from '../shared/useCompactLayout'
+import { CollectionsView, CollectionDetail } from '../features/collections/CollectionsView'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaylistsView } from '../features/library/PlaylistsView'
 import { MyView } from '../features/settings/MyView'
@@ -60,6 +62,15 @@ const navigation = [
 ]
 
 export function App() {
+  const compact=useCompactLayout()
+  const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
+  const [collectionFolder,setCollectionFolder]=useState('*')
+  const [hubSection,setHubSection]=useState<'playlists'|'collections'>('playlists')
+  const contentScroll=useRef<HTMLDivElement>(null)
+  const returnScroll=useRef(0)
+  const openCollection=(item:Collection)=>{returnScroll.current=contentScroll.current?.scrollTop||0;setSelectedCollection(item);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=0})}
+  const closeCollection=()=>{setSelectedCollection(null);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=returnScroll.current})}
+  useEffect(()=>{const clear=()=>setSelectedCollection(null);window.addEventListener('bilimusic-account-changing',clear);return()=>window.removeEventListener('bilimusic-account-changing',clear)},[])
   const [activeNav, setActiveNav] = useState('此刻')
   const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads'>('saved')
   const [query, setQuery] = useState('')
@@ -84,6 +95,8 @@ export function App() {
   const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
   const sidebarPlaylists = playlists.data || [FAVORITES_PLAYLIST]
   const activePlaylist = sidebarPlaylists.find((playlist) => activeNav === `playlist:${playlist.id}`)
+  const navIsActive=(label:string)=>compact&&label==='此刻' ? activeNav==='此刻'||!!activePlaylist||activeNav.startsWith('collections:') : activeNav===label||(label==='歌单'&&(activeNav.startsWith('playlist:')||activeNav.startsWith('collections:')))
+  useEffect(()=>setSelectedCollection(null),[activeNav])
   const current = usePlayerStore((state) => state.current)
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
@@ -170,12 +183,13 @@ export function App() {
       if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
       if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
       if (queueOpen) { event.preventDefault(); toggleQueue(); return }
-      if (activePlaylist || activeNav.startsWith('collections:')) { event.preventDefault(); setActiveNav('歌单'); return }
+      if(selectedCollection){event.preventDefault();closeCollection();return}
+      if (activePlaylist || activeNav.startsWith('collections:')) { event.preventDefault(); setActiveNav(compact?'此刻':'歌单'); return }
       if (activeNav !== '此刻') { event.preventDefault(); setActiveNav('此刻') }
     }
     window.addEventListener('bilimusic-back', back)
     return () => window.removeEventListener('bilimusic-back', back)
-  }, [lyricsOpen, queueOpen, activePlaylist, submittedQuery, activeNav, toggleQueue])
+  }, [lyricsOpen, queueOpen, activePlaylist, selectedCollection, compact, submittedQuery, activeNav, toggleQueue])
 
   return (
     <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
@@ -185,14 +199,14 @@ export function App() {
           <Waves size={23} strokeWidth={2.5} />
         </button>
         <nav className="rail-nav">
-          {navigation.map(({ label, icon: Icon }) => (
+          {navigation.filter(item=>!compact||item.label!=='歌单').map(({ label, icon: Icon }) => (
             <button
-              className={(activeNav === label || (label === '歌单' && (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')))) ? 'rail-button active' : 'rail-button'}
+              className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { setActiveNav(label); setLyricsOpen(false) }}
+              onClick={() => { setActiveNav(label); setSelectedCollection(null); setLyricsOpen(false) }}
               title={label}
               aria-label={label}
-              aria-current={activeNav === label || (label === '歌单' && (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:'))) ? 'page' : undefined}
+              aria-current={navIsActive(label) ? 'page' : undefined}
             >
               <Icon size={20} /><span className="mobile-nav-label">{label}</span>
             </button>
@@ -211,20 +225,20 @@ export function App() {
 
           <div className="collection-list">
             {sidebarPlaylists.map((playlist, index) => (
-              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`); setLyricsOpen(false) }}>
+              <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`);setSelectedCollection(null);setLyricsOpen(false) }}>
                 <span className={playlist.isSystem ? 'collection-cover favorites-cover' : `collection-cover tone-${index % 4}`}>{playlist.isSystem ? <Heart size={17} fill="currentColor" /> : <Album size={17} />}</span>
                 <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首{playlist.isSystem ? ' · 默认歌单' : ''}</small></span>
               </button>
             ))}
           </div>
         </section>
-        <CollectionsView sidebar onOpen={id=>{setActiveNav(`collections:${id}`);setLyricsOpen(false)}}/>
+        <CollectionsView sidebar onOpen={id=>{setActiveNav(`collections:${id}`);setSelectedCollection(null);setLyricsOpen(false)}}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
 
       <main className="content-stage">
         <form className={`topbar ${activeNav === '搜索' ? 'searching' : ''}`} onSubmit={submitSearch}>
-<div className="mobile-page-heading">{activePlaylist && <button type="button" aria-label="返回歌单列表" onClick={() => setActiveNav('歌单')}><ArrowLeft size={18} /></button>}<strong>{activePlaylist?.name || (activeNav.startsWith('collections:') ? '收藏合集' : activeNav)}</strong></div>
+<div className="mobile-page-heading">{(activePlaylist||selectedCollection)&&<button type="button" aria-label="返回收藏列表" onClick={()=>selectedCollection?closeCollection():setActiveNav(compact?'此刻':'歌单')}><ArrowLeft size={18}/></button>}<strong>{selectedCollection?'合集详情':activePlaylist?.name||(activeNav.startsWith('collections:')?'收藏合集':activeNav)}</strong></div>
           <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
@@ -236,19 +250,19 @@ export function App() {
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={activeNav !== '搜索'}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={activeNav === '搜索'} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
-        <div className="stage-scroll" hidden={activeNav === '搜索'}>
-          {activeNav.startsWith('collections:') ? <CollectionsView initialFolder={activeNav.slice(12)} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav('歌单')} /> : activeNav === '歌单' || (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')) ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id) => setActiveNav(`playlist:${id}`)} onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)} /> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
+        <div className="stage-scroll" ref={contentScroll} hidden={activeNav === '搜索'}>
+          {selectedCollection ? <CollectionDetail item={selectedCollection} onBack={closeCollection}/> : activeNav.startsWith('collections:') ? <CollectionsView initialFolder={activeNav.slice(12)} onSelect={openCollection}/> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav(compact?'此刻':'歌单')} /> : activeNav === '歌单' || (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')) ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id)=>setActiveNav(`playlist:${id}`)} onCreate={()=>setCreatingPlaylist(true)} onImport={()=>setImportOpen(true)} onCollectionOpen={openCollection} section={hubSection} onSectionChange={setHubSection} collectionFolder={collectionFolder} onCollectionFolderChange={setCollectionFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
               <h2>{current?.title || '你的音乐，从这里开始'}</h2>
               <p>{current ? `${current.artist || '歌手未知'}${current.album ? ` · ${current.album}` : ''}` : '搜索 B 站音乐，收藏喜欢的分 P，整理自己的歌单。'}</p>
-              <button className="primary-action" onClick={() => { if (current) void toggle(); else if (homeTracks.data?.[0]) void play(homeTracks.data[0]); else openSearch() }}>{status === 'playing' ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{current ? status === 'playing' ? '暂停播放' : '继续聆听' : homeTracks.data?.length ? '继续聆听' : '开始探索'}</button>
+              <button className="primary-action" onClick={() => { if (current) void toggle(); else if (homeTracks.data?.[0]) void usePlayerStore.getState().playFromList(homeTracks.data,homeTracks.data[0].id); else openSearch() }}>{status === 'playing' ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{current ? status === 'playing' ? '暂停播放' : '继续聆听' : homeTracks.data?.length ? '继续聆听' : '开始探索'}</button>
             </div>
             {current && <button className="hero-cover-button" onClick={() => setLyricsOpen(true)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} /></button>}
           </section>
 
-          <section className="quick-actions">
+          {compact?<PlaylistsView playlists={sidebarPlaylists} onOpen={(id)=>setActiveNav(`playlist:${id}`)} onCreate={()=>setCreatingPlaylist(true)} onImport={()=>setImportOpen(true)} onCollectionOpen={openCollection} section={hubSection} onSectionChange={setHubSection} collectionFolder={collectionFolder} onCollectionFolderChange={setCollectionFolder}/>:<><section className="quick-actions">
             <button onClick={() => openSearch()}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
             <button onClick={() => { openSearch('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
             <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
@@ -261,19 +275,19 @@ export function App() {
               {(homeTracks.data || []).map((track, index) => {
                 const isCurrent = current?.id === track.id
                 return (
-                  <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}>
-                    <button className="row-play" onClick={() => play(track)} aria-label={`播放 ${track.title}`}>
+                  <div className={isCurrent ? 'track-row current' : 'track-row'} role="row" key={track.id} onContextMenu={(event) => showTrackMenu(event, track,undefined,homeTracks.data)}>
+                    <button className="row-play" onClick={() => usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title}`}>
                       {isCurrent && status === 'playing' ? <Waves size={17} /> : <><span>{index + 1}</span><Play className="hover-play" size={15} fill="currentColor" /></>}
                     </button>
-                    <span className="track-title"><button className="home-cover-button" onClick={() => void play(track)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" /></button><strong>{track.title}</strong></span>
+                    <span className="track-title"><button className="home-cover-button" onClick={() => void usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" /></button><strong>{track.title}</strong></span>
                     <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
-                    <div className="row-actions"><PlaylistButton track={track} /><TrackMenuButton track={track} /></div>
+                    <div className="row-actions"><PlaylistButton track={track} /><TrackMenuButton track={track} tracks={homeTracks.data}/></div>
                   </div>
                 )
               })}
               {homeTracks.data?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
             </div>
-          </section>
+          </section></>}
           </>}
         </div>
       </main>

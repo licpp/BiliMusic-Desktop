@@ -123,3 +123,23 @@ test('one playback mode control cycles mutually exclusive modes and persists the
   assert.equal(restored.store.getState().repeatMode,'all')
   restored.listeners.pagehide()
 })
+
+test('clicking a list song replaces the queue and starts at its original index', async()=>{
+ const {store,listeners}=setup();store.getState().enqueue([track('9')]);
+ await store.getState().playFromList([track('1'),track('2'),track('3')],'2');
+ assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2','3']);assert.equal(store.getState().current.id,'2');
+ await store.getState().next();assert.equal(store.getState().current.id,'3');
+ await store.getState().previous();assert.equal(store.getState().current.id,'2');
+ await store.getState().previous();assert.equal(store.getState().current.id,'1');listeners.pagehide();
+});
+test('changing list during resolution cannot restore the old queue or song',async()=>{
+ const {store,listeners}=setup(),pending=deferred();globalThis.testApi.record=async value=>value.id==='1'?pending.promise:value;
+ const first=store.getState().playFromList([track('1'),track('2')],'1');
+ await store.getState().playFromList([track('3'),track('4')],'4');pending.resolve(track('1'));await first;
+ assert.equal(store.getState().current.id,'4');assert.deepEqual(store.getState().queue.map(t=>t.id),['3','4']);listeners.pagehide();
+});
+test('invalid list selection leaves the existing queue intact and duplicates are removed',async()=>{
+ const {store,listeners}=setup();await store.getState().playFromList([track('1'),track('1'),track('2')],'2');
+ assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);
+ await store.getState().playFromList([track('3')],'missing');assert.equal(store.getState().current.id,'2');assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);listeners.pagehide();
+});

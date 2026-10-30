@@ -21,7 +21,7 @@ export function MusicLibraryView({ tab, onTabChange }: { tab: LibraryTab; onTabC
 
 export function LibraryView({ recent = false, playlist, onPlaylistDeleted }: { recent?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void }) {
   const client = useQueryClient()
-  const play = usePlayerStore((state) => state.play)
+  const play = usePlayerStore((state) => state.playFromList)
   const playAll = usePlayerStore((state) => state.playAll)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
@@ -50,8 +50,8 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted }: { r
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={isFavorites ? '还没有喜欢的歌曲' : playlist ? '歌单还是空的' : recent ? '还没有播放记录' : '还没有收藏的歌曲'} detail={isFavorites ? '点击歌曲旁的红心，或通过“加入歌单”添加到我喜欢。' : playlist ? '通过歌曲菜单把歌曲加入这里。' : recent ? '播放过的歌曲会出现在这里。' : '点击红心，或把歌曲加入歌单后，它会出现在这里。'} />}
-    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((track, index) => <article className="library-track" key={track.id} onContextMenu={(event) => showTrackMenu(event, track, playlist?.id)}>
-      <button className="library-art" onClick={() => void play(track)} aria-label={`播放 ${track.title}`}>
+    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((track, index) => <article className="library-track" key={track.id} onContextMenu={(event) => showTrackMenu(event, track, playlist?.id, tracks.data)}>
+      <button className="library-art" onClick={() => void play(tracks.data || [], track.id)} aria-label={`播放 ${track.title}`}>
         {track.coverUrl ? <img src={track.coverUrl} alt="" loading="lazy" /> : <span className={`tone-${index % 4}`} />}
         <i><Play fill="currentColor" /></i>
       </button>
@@ -59,7 +59,7 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted }: { r
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
-      <TrackMenuButton track={track} playlistId={playlist?.id} />
+      <TrackMenuButton track={track} playlistId={playlist?.id} tracks={tracks.data} />
       </div>
     </article>)}</div>}
     </div>

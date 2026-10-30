@@ -9,7 +9,7 @@ import { demoTracks } from '../library/demoTracks'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
 export type RepeatMode = 'off' | 'all' | 'one'
-type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; progressSeconds: number; durationSeconds: number; volume: number; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+type PlayerState = { current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; progressSeconds: number; durationSeconds: number; volume: number; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
@@ -78,7 +78,14 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       set({ status: 'error', error: message })
     }
   },
-  playAll: async (tracks) => { if (!tracks.length) return; set({ queue: uniqueTracks(tracks) }); await get().play(tracks[0]) },
+  playFromList: async (tracks, trackId) => {
+    const queue = uniqueTracks(tracks)
+    const selected = queue.find(track => track.id === trackId)
+    if (!selected) return
+    set({ queue })
+    await get().play(selected)
+  },
+  playAll: async (tracks) => { if (tracks[0]) await get().playFromList(tracks, tracks[0].id) },
   enqueue: (tracks) => set(({ queue }) => ({ queue: uniqueTracks([...queue, ...tracks]) })),
   removeFromQueue: (id) => set(({ queue }) => ({ queue: queue.filter((track) => track.id !== id) })),
   clearQueue: () => set({ queue: [] }),
