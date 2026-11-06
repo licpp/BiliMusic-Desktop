@@ -1,47 +1,20 @@
+import { CollectionDialog } from '../../shared/CollectionDialog'
 import { invoke } from '@tauri-apps/api/core'
-import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderInput, ListPlus, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { changeCollection, listCollections, type Collection } from '../../services/collections'
-import { commandErrorMessage, getVideoParts } from '../../services/desktopApi'
+import { commandErrorMessage, getVideoParts, type Playlist } from '../../services/desktopApi'
 import { Artwork } from '../../shared/Artwork'
 import { ActionMenu } from '../../shared/ActionMenu'
-import { useCompactLayout } from '../../shared/useCompactLayout'
 import { toTrack } from '../../services/collectionTrack'
 import { usePlayerStore } from '../player/playerStore'
-import { BatchTrackActions, useTrackSelection } from '../library/useTrackSelection'
-import { TrackMenuButton } from '../library/TrackActions'
-import { showTrackMenu } from '../library/trackActionStore'
-import { formatDuration } from '../../shared/time'
+import { VideoPartsList } from '../library/VideoPartsList'
+import { PlaylistEntry } from '../library/PlaylistEntry'
+import { useRowContextMenu } from '../../shared/useRowContextMenu'
 
 const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: listCollections })
 type CollectionInfo = Omit<Collection, 'folderId'>
-
-function CollectionDialog({ title, onClose, children }: {title:string;onClose:()=>void;children:ReactNode}) {
-  const layer=useRef<HTMLDivElement>(null), dismiss=useRef(onClose)
-  dismiss.current=onClose
-  useEffect(()=>{
-    const root=document.getElementById('root'),previous=document.activeElement as HTMLElement|null
-    const wasInert=root?.inert || false
-    if(root)root.inert=true
-    const top=()=>[...document.querySelectorAll('.collection-dialog-layer')].at(-1)===layer.current
-    const keyboard=(e:KeyboardEvent)=>{
-      if(!top())return
-      if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();dismiss.current()}
-      if(e.key==='Tab'){
-        const buttons=[...layer.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled)')]
-        const index=buttons.indexOf(document.activeElement as HTMLElement)
-        if((e.shiftKey&&index<=0)||(!e.shiftKey&&index===buttons.length-1)){e.preventDefault();buttons[e.shiftKey?buttons.length-1:0]?.focus()}
-      }
-    }
-    const back=(e:Event)=>{if(top()){e.preventDefault();e.stopImmediatePropagation();dismiss.current()}}
-    document.addEventListener('keydown',keyboard,true);window.addEventListener('bilimusic-back',back,true)
-    layer.current?.querySelector<HTMLElement>('input,button')?.focus()
-    return()=>{document.removeEventListener('keydown',keyboard,true);window.removeEventListener('bilimusic-back',back,true);if(root)root.inert=wasInert;if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus()}
-  },[])
-  return createPortal(<div ref={layer} className="dialog-backdrop collection-dialog-layer" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="collection-dialog" role="dialog" aria-modal="true" aria-label={title}><header><h3>{title}</h3><button className="collection-icon" aria-label="关闭" onClick={onClose}><X size={19}/></button></header>{children}</section></div>,document.body)
-}
 
 export function CollectionBookmark({ item }: { item: CollectionInfo }) {
   const query=useCollections(),client=useQueryClient(),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -78,44 +51,131 @@ function FolderEditor({action,id='',initial='',onDone,controlledOpen,onClose}:{a
   return <>{controlledOpen===undefined&&<button className="collection-flat-button" aria-label={title} onClick={()=>{setName(initial);setError('');setOpen(true)}}>{action==='create'?<><Plus size={16}/><span>新建收藏夹</span></>:action==='rename'?'重命名':'删除收藏夹'}</button>}{visible&&<CollectionDialog title={title} onClose={close}><form onSubmit={async e=>{e.preventDefault();setBusy(true);try{await changeCollection(action,id,name);close();onDone()}catch(e){setError(commandErrorMessage(e))}finally{setBusy(false)}}}>{action==='delete'?<p>里面的合集会移回默认收藏夹，不会取消收藏。</p>:<input aria-label="收藏夹名称" value={name} maxLength={80} onChange={e=>setName(e.target.value)} placeholder="收藏夹名称"/>}{error&&<p role="alert" className="inline-error">{error}</p>}<footer><button type="button" className="collection-flat-button" onClick={close}>取消</button><button className="collection-primary" type="submit" disabled={busy||(action!=='delete'&&!name.trim())}>{busy?'处理中…':'确认'}</button></footer></form></CollectionDialog>}</>
 }
 
-export function CollectionsView({sidebar=false,initialFolder='*',onOpen,onSelect,collapsible=true,onFolderChange}:{sidebar?:boolean;initialFolder?:string;onOpen?:(id:string)=>void;onSelect?:(item:Collection)=>void;collapsible?:boolean;onFolderChange?:(id:string)=>void}){
-  const q=useCollections(),client=useQueryClient(),[expanded,setExpanded]=useState(()=>localStorage.getItem('collection-expanded')!=='false'),[folder,setFolder]=useState(initialFolder),[filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[folderAction,setFolderAction]=useState<'rename'|'delete'|null>(null)
-  const refresh=()=>void client.invalidateQueries({queryKey:['collections']})
-  useEffect(()=>setFolder(initialFolder),[initialFolder])
-  const folders=[{id:'*',name:'全部合集'},{id:'',name:'默认收藏夹'},...(q.data?.folders||[])]
-  const active=folders.find(f=>f.id===folder)||folders[1],visible=!collapsible||expanded
-  const toggle=()=>setExpanded(v=>{localStorage.setItem('collection-expanded',String(!v));return !v})
-  const items=(q.data?.items||[]).filter(i=>(active.id==='*'||i.folderId===active.id)&&(!filter||i.title.toLowerCase().includes(filter.toLowerCase())))
-  if(sidebar)return <section className="collections-sidebar"><div className="collections-heading"><button className="collections-collapse" aria-expanded={expanded} onClick={toggle}>{expanded?<ChevronDown size={16}/>:<ChevronRight size={16}/>}收藏合集</button>{expanded&&<FolderEditor action="create" onDone={refresh}/>}</div>{expanded&&<div className="collection-folder-list">{folders.map(f=><button key={f.id} onClick={()=>onOpen?.(f.id)}><Folder size={16}/><span>{f.name}</span><small>{q.data?.items.filter(i=>f.id==='*'||i.folderId===f.id).length||0}</small></button>)}</div>}</section>
-  return <section className={`collections-view ${!collapsible?'collections-embedded':''}`}><div className="collections-heading">{collapsible?<button className="collections-collapse" aria-expanded={visible} onClick={toggle}>{visible?<ChevronDown size={18}/>:<ChevronRight size={18}/>}<h3>收藏合集</h3><small>{q.data?.items.length||0}</small></button>:<span className="collections-total">{q.data?.items.length||0} 个合集</span>}{visible&&<div className="collections-heading-actions"><button className="collection-icon" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button><FolderEditor action="create" onDone={refresh}/></div>}</div>{visible&&<>
-    <div className="collection-filters" role="group" aria-label="收藏夹分类">{folders.map(f=><button key={f.id} aria-pressed={active.id===f.id} onClick={()=>{setFolder(f.id);onFolderChange?.(f.id)}}>{f.name}</button>)}</div>
-    {(searchOpen||active.id&&active.id!=='*')&&<div className="collections-toolbar">{searchOpen&&<label className="collections-search"><Search size={16}/><input autoFocus aria-label="搜索收藏合集" placeholder="搜索合集名称" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭合集搜索" onClick={()=>{setFilter('');setSearchOpen(false)}}><X size={16}/></button></label>}{active.id&&active.id!=='*'&&<ActionMenu sheet label="收藏夹管理">{close=><><button role="menuitem" onClick={()=>{close();setFolderAction('rename')}}>重命名收藏夹</button><button role="menuitem" onClick={()=>{close();setFolderAction('delete')}}>删除收藏夹</button></>}</ActionMenu>}</div>}
-    {q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button onClick={()=>void q.refetch()}>重试</button></p>}
-    {!q.isLoading&&!items.length&&<p className="collection-empty">{filter?'没有匹配的合集':'点击搜索结果中的书签，收藏合集；打开后选择想听的歌曲。'}</p>}
-    {folderAction&&<FolderEditor key={`${active.id}:${folderAction}`} action={folderAction} id={active.id} initial={active.name} controlledOpen onClose={()=>setFolderAction(null)} onDone={()=>{if(folderAction==='delete'){setFolder('');onFolderChange?.('')}refresh()}}/>}
-    <div className="collection-cards">{items.map(item=><CollectionCard key={item.bvid} item={item} onOpen={()=>onSelect?.(item)}/>)}</div>
-  </>}</section>
-}
-function CollectionCard({item,onOpen}:{item:Collection;onOpen:()=>void}){
-  const [context,setContext]=useState<{left:number;top:number;nonce:number}>()
-  return <article onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><button className="collection-card-main" onClick={onOpen}><Artwork src={item.coverUrl}/><span className="collection-card-copy"><strong>{item.title||`合集 ${item.bvid}`}</strong><small>{item.uploaderName||'打开查看分 P'}</small></span></button><CollectionMenu item={item} onOpen={onOpen} contextPosition={context}/></article>
+export function CollectionsView({ sidebar = false, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
+  sidebar?: boolean
+  folderId?: string
+  linkedFolders?: Playlist[]
+  onOpenFolder: (id: string) => void
+  onOpenLinked: (id: string) => void
+  onLinkedRemoved: (id: string) => void
+  onSelect: (item: Collection) => void
+  onFolderRemoved?: (id: string) => void
+}) {
+  const query = useCollections()
+  const client = useQueryClient()
+  const [expanded, setExpanded] = useState(() => localStorage.getItem('collection-expanded') !== 'false')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [filter, setFilter] = useState('')
+  const refresh = () => void client.invalidateQueries({ queryKey: ['collections'] })
+  const root = folderId === undefined
+  const folders = query.data?.folders || []
+  const items = query.data?.items || []
+  const needle = filter.trim().toLowerCase()
+  const matches = (value: string) => value.toLowerCase().includes(needle)
+  const visibleItems = items.filter(item => (root && needle ? true : item.folderId === (folderId || '')) && matches(item.title || item.bvid))
+  const folder = folders.find(item => item.id === folderId)
+  const children = root ? <>
+    {folders.filter(item => matches(item.name)).map(item => <FolderEntry
+      key={item.id} folder={item} count={items.filter(video => video.folderId === item.id).length}
+      onOpen={() => onOpenFolder(item.id)} onChanged={refresh} onRemoved={() => onFolderRemoved?.(item.id)}
+    />)}
+    {linkedFolders.filter(item => matches(item.name)).map(item => <PlaylistEntry
+      key={item.id} playlist={item} sidebar={sidebar} onOpen={() => onOpenLinked(item.id)} onRemoved={() => onLinkedRemoved(item.id)}
+    />)}
+  </> : null
+  const toggle = () => setExpanded(previous => {
+    localStorage.setItem('collection-expanded', String(!previous))
+    return !previous
+  })
+  const entries = <div className="collection-cards">
+    {visibleItems.map(item => <CollectionCard key={item.bvid} item={item} onOpen={() => onSelect(item)} />)}
+    {children}
+  </div>
+  if (sidebar) return <section className="collections-sidebar">
+    <div className="collections-heading">
+      <button type="button" className="collections-collapse" aria-expanded={expanded} onClick={toggle}>
+        {expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}收藏合集
+      </button>
+      {expanded && <FolderEditor action="create" onDone={refresh}/>}
+    </div>
+    {expanded && entries}
+  </section>
+  return <section className="collections-view collections-embedded">
+    <div className="collections-heading">
+      <h3>{folder?.name || '收藏合集'}</h3>
+      <div className="collections-heading-actions">
+        <button type="button" className="collection-icon" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setFilter('') }}><Search size={18}/></button>
+        {root ? <FolderEditor action="create" onDone={refresh}/> : folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
+      </div>
+    </div>
+    {searchOpen && <label className="collections-search detail-search"><Search size={16}/>
+      <input autoFocus aria-label="搜索收藏合集" placeholder="搜索合集或收藏夹" value={filter} onChange={event => setFilter(event.target.value)}/>
+      <button type="button" aria-label="关闭合集搜索" onClick={() => { setFilter(''); setSearchOpen(false) }}><X size={16}/></button>
+    </label>}
+    {query.error && <p className="inline-error">{commandErrorMessage(query.error)} <button className="collection-flat-button" onClick={() => void query.refetch()}>重试</button></p>}
+    {!query.isLoading && !visibleItems.length && (!root || (!folders.some(item => matches(item.name)) && !linkedFolders.some(item => matches(item.name)))) &&
+      <p className="collection-empty">{needle ? '没有匹配的收藏' : root ? '点击搜索结果中的书签，收藏喜欢的合集。' : '这个收藏夹还没有合集。'}</p>}
+    {entries}
+  </section>
 }
 
-export function CollectionDetail({item,onBack}:{item:Collection;onBack:()=>void}){
+type FolderInfo = { id: string; name: string }
+
+function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
+  folder: FolderInfo
+  contextPosition?: ReturnType<typeof useRowContextMenu>['position']
+  onOpen?: () => void
+  onChanged: () => void
+  onRemoved: () => void
+}) {
+  const [action, setAction] = useState<'rename' | 'delete'>()
+  return <>
+    <ActionMenu sheet label={`收藏夹操作：${folder.name}`} contextPosition={contextPosition}>{close => <>
+      {onOpen && <button role="menuitem" onClick={() => { close(); onOpen() }}><Folder size={16}/>打开收藏夹</button>}
+      <button role="menuitem" onClick={() => { close(); setAction('rename') }}>重命名收藏夹</button>
+      <button role="menuitem" onClick={() => { close(); setAction('delete') }}>删除收藏夹</button>
+    </>}</ActionMenu>
+    {action && <FolderEditor action={action} id={folder.id} initial={folder.name} controlledOpen
+      onClose={() => setAction(undefined)} onDone={() => { if (action === 'delete') onRemoved(); onChanged() }} />}
+  </>
+}
+
+function FolderEntry({ folder, count, onOpen, onChanged, onRemoved }: {
+  folder: FolderInfo; count: number; onOpen: () => void; onChanged: () => void; onRemoved: () => void
+}) {
+  const { position, onContextMenu } = useRowContextMenu()
+  return <article className="collection-folder-entry" onContextMenu={onContextMenu}>
+    <button type="button" className="collection-card-main" onClick={onOpen}>
+      <span className="artwork collection-folder-icon"><Folder size={20}/></span>
+      <span className="collection-card-copy"><strong>{folder.name}</strong><small>{count} 个合集</small></span>
+    </button>
+    <FolderMenu folder={folder} onOpen={onOpen} contextPosition={position} onChanged={onChanged} onRemoved={onRemoved}/>
+  </article>
+}
+
+function CollectionCard({ item, onOpen }: { item: Collection; onOpen: () => void }) {
+  const { position, onContextMenu } = useRowContextMenu()
+  return <article onContextMenu={onContextMenu}>
+    <button type="button" className="collection-card-main" onClick={onOpen}>
+      <Artwork src={item.coverUrl}/>
+      <span className="collection-card-copy"><strong>{item.title || `合集 ${item.bvid}`}</strong><small>{item.uploaderName || '打开查看分 P'}</small></span>
+    </button>
+    <CollectionMenu item={item} onOpen={onOpen} contextPosition={position}/>
+  </article>
+}
+
+export function CollectionDetail({item,onBack,fromSearch=false}:{item:Collection;onBack:()=>void;fromSearch?:boolean}){
   const q=useQuery({queryKey:['collection-parts',item.bvid],queryFn:()=>getVideoParts(item.bvid)}),[filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
-  const client=useQueryClient(),compact=useCompactLayout()
+  const client=useQueryClient()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:d.bvid,folderId:'',title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client])
   const detail=q.data,player=usePlayerStore.getState(),tracks=detail?.parts.map(p=>toTrack(detail,p))||[]
   const visibleTracks = tracks.filter(track => track.title.toLowerCase().includes(filter.toLowerCase()))
-  const selection = useTrackSelection(visibleTracks)
   const run=(id=tracks[0]?.id)=>{if(id)void player.playFromList(tracks,id)}
-  return <section className="collection-detail"><button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>返回收藏合集</button><header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||`合集 ${item.bvid}`}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} 个分 P`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
+  return <section className="collection-detail"><button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{fromSearch?'返回搜索结果':'返回收藏合集'}</button><header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||`合集 ${item.bvid}`}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} 个分 P`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
     <div className="collection-detail-toolbar"><button className="collection-primary" disabled={!tracks.length} onClick={()=>run()}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button><div><button className="collection-icon" aria-label="搜索分P" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button><ActionMenu sheet label="合集播放选项">{close=><><button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button><button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新分 P</button></>}</ActionMenu></div></div>
-    <div className="collection-actions">{!selection.selecting && <button disabled={!visibleTracks.length} onClick={selection.enter}>多选分 P</button>}</div>
-    {selection.selecting && <BatchTrackActions selection={selection} total={visibleTracks.length} />}
     {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input autoFocus aria-label="搜索分P" placeholder="搜索分 P" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭分P搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
     {q.isLoading&&<p>正在加载分 P…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
     {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放的分 P</p>}
-    <div className="parts-list">{visibleTracks.map(track=><div className="part-entry" key={track.id} onContextMenu={e=>{ if (!selection.selecting) showTrackMenu(e,track,undefined,tracks) }}>{selection.selecting && <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} />}<button disabled={selection.selecting} onClick={()=>run(track.id)}><span>P{track.source.page}</span><strong>{track.title}</strong>{!compact&&<small>{formatDuration(track.durationSeconds)}</small>}<Play size={14}/></button>{!selection.selecting && <TrackMenuButton track={track} tracks={tracks}/>}</div>)}</div>
+    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} />
   </section>
 }

@@ -1,3 +1,4 @@
+import { PlaylistMenu } from './PlaylistEntry'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isAndroid } from '../../services/platform'
 import { accountEpoch } from '../../services/accountScope'
@@ -6,12 +7,12 @@ import { TrackMenuButton } from './TrackActions'
 import { DownloadsView } from '../downloads/DownloadsView'
 import { hydrateVisibleTracks } from '../../services/sync'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Pencil, Play, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Download, Heart, Library, ListPlus, LoaderCircle, Play, Sparkles, X } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import type { CatalogSource } from '../../services/desktopApi'
 import { Artwork } from '../../shared/Artwork'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, deletePlaylist, importLocalAudio, listLocalAudio, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, renamePlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type LocalImportResult, type Playlist } from '../../services/desktopApi'
+import { addTrackToPlaylist, commandErrorMessage, importLocalAudio, listLocalAudio, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type LocalImportResult, type Playlist } from '../../services/desktopApi'
 import { showTrackMenu } from './trackActionStore'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
@@ -29,9 +30,6 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
   const playAll = usePlayerStore((state) => state.playAll)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
-  const [renaming, setRenaming] = useState(false)
-  const [name, setName] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const tracks = useQuery({ queryKey: ['library', local ? 'local' : recent ? 'recent' : 'saved', playlist?.id], queryFn: () => local ? listLocalAudio() : playlist ? listPlaylistTracks(playlist.id) : recent ? listRecentTracks() : listLibraryTracks(false, true) })
   const selection = useTrackSelection(tracks.data || [])
   const [importResult, setImportResult] = useState<LocalImportResult>()
@@ -52,9 +50,6 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
     mutationFn: toggleStoredFavorite,
     onSuccess: (liked, id) => { const track = tracks.data?.find((item) => item.id === id); if (track) updatePlayerTrack({ ...track, liked }); return refresh() },
   })
-  const managePlaylist = useMutation({ mutationFn: async (action: 'rename' | 'delete') => { if (!playlist || playlist.isSystem) return; if (action === 'rename') await renamePlaylist(playlist.id, name); else await deletePlaylist(playlist.id); return action }, onSuccess: (action) => { setRenaming(false); setConfirmDelete(false); void refresh(); if (action === 'delete') onPlaylistDeleted?.() } })
-
-
   return <section className="library-view">
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (local ? '本地音乐' : '音乐库')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : local ? '导入 MP3、M4A 或 WAV 文件，在本机播放。' : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
@@ -65,14 +60,12 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
     } : undefined} /> : <div className="collection-actions">
       {local && <button disabled={importFiles.isPending} onClick={() => { setImportError(''); importFiles.mutate() }}><Download size={16} />导入本地歌曲</button>}
       <button disabled={!tracks.data?.length} onClick={selection.enter}>多选</button>
-      <button disabled={!tracks.data?.length} onClick={() => void playAll(tracks.data || [])}><Play size={16} />播放全部</button><button disabled={!tracks.data?.length} onClick={() => enqueue(tracks.data || [])}><ListPlus size={16} />全部加入队列</button>{playlist && !playlist.isSystem && <><button onClick={() => { setName(playlist.name); setRenaming(true) }}><Pencil size={15} />重命名</button><button onClick={() => setConfirmDelete(true)}><Trash2 size={15} />删除歌单</button></>}</div>}
+      <button className="collection-primary" disabled={!tracks.data?.length} onClick={() => void playAll(tracks.data || [])}><Play size={16} />播放全部</button><button disabled={!tracks.data?.length} onClick={() => enqueue(tracks.data || [])}><ListPlus size={16} />全部加入队列</button>{playlist && <PlaylistMenu playlist={playlist} onRemoved={onPlaylistDeleted}/>}</div>}
     {importError && <p className="inline-error">{importError}</p>}
     {importResult && <div className="batch-message" role="status">
       已导入 {importResult.added} 首，跳过 {importResult.alreadyImported} 首重复歌曲
       {importResult.failed.length > 0 && <details><summary>{importResult.failed.length} 个文件未导入</summary>{importResult.failed.map((error, index) => <p key={index}>{error}</p>)}</details>}
     </div>}
-    {(renaming || confirmDelete) && <form className="playlist-management" onSubmit={(event) => { event.preventDefault(); managePlaylist.mutate(renaming ? 'rename' : 'delete') }}>{renaming ? <input autoFocus maxLength={80} value={name} onChange={(event) => setName(event.target.value)} aria-label="歌单名称" /> : <span>删除「{playlist?.name}」？仅删除此歌单，保留歌曲信息、播放记录和其他歌单。</span>}<button disabled={managePlaylist.isPending || (renaming && !name.trim())}>确认</button><button type="button" onClick={() => { setRenaming(false); setConfirmDelete(false) }}>取消</button></form>}
-    {managePlaylist.isError && <p className="inline-error">{commandErrorMessage(managePlaylist.error)}</p>}
     {favorite.isError && <p className="inline-error">{commandErrorMessage(favorite.error)}</p>}
     <div>
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}

@@ -1,4 +1,5 @@
 import { toTrack } from '../../services/collectionTrack'
+import type { Collection } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, CircleAlert, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
@@ -8,15 +9,14 @@ import { usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite, type BiliSearchItem, type BiliVideoParts } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
 import { formatPlayCount } from '../../shared/count'
-import { ActionMenu } from '../../shared/ActionMenu'
 import { Artwork } from '../../shared/Artwork'
 import { LinkedFolderPicker } from '../library/LinkedFolderView'
-import { TrackMenuButton } from '../library/TrackActions'
-import { chooseTrackPlaylist, showTrackMenu } from '../library/trackActionStore'
+import { VideoPartsList } from '../library/VideoPartsList'
+import { chooseTrackPlaylist } from '../library/trackActionStore'
 
 type ExpandedState = { loading?: boolean; detail?: BiliVideoParts; error?: string }
 
-export function SearchView({ query, active = true }: { query: string; active?: boolean }) {
+export function SearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
   const [linking, setLinking] = useState<string>()
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({})
@@ -83,7 +83,7 @@ export function SearchView({ query, active = true }: { query: string; active?: b
           <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
-        </button><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
+        </button><CollectionBookmark item={item}/><CollectionMenu item={item} onOpen={onCollectionOpen ? () => onCollectionOpen({ ...item, folderId: '' }) : undefined} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
           <button role="menuitem" onClick={() => { close(); setLinking(item.bvid) }}><Link2 size={16} />添加到关联收藏夹…</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>
@@ -91,7 +91,10 @@ export function SearchView({ query, active = true }: { query: string; active?: b
         </>}/></div>
         {state?.error && <div className="inline-error"><CircleAlert size={14} />{state.error}</div>}
 
-        {open && state?.detail && <div className="parts-list">{state.detail.parts.map((part) => <div className="part-entry" key={part.cid} onContextMenu={(event) => showTrackMenu(event, toTrack(state.detail!, part),undefined,state.detail!.parts.map(p=>toTrack(state.detail!,p)))}><button onClick={() => void play(state.detail!.parts.map(p=>toTrack(state.detail!,p)),toTrack(state.detail!, part).id)}><span>P{part.page}</span><strong>{part.title}</strong><small>{formatDuration(part.durationSeconds)}</small><Play size={14} /></button><button className="icon-action" title="加入队列" onClick={() => void add(toTrack(state.detail!, part))}><ListPlus size={16} /></button><button className="icon-action" title="切换喜欢" onClick={() => void add(toTrack(state.detail!, part), true)}><Heart size={16} /></button><TrackMenuButton track={toTrack(state.detail!, part)} tracks={state.detail!.parts.map(p=>toTrack(state.detail!,p))} /></div>)}</div>}
+        {open && state?.detail && <VideoPartsList tracks={state.detail.parts.map(part => toTrack(state.detail!, part))} renderActions={track => <>
+          <button className="icon-action" aria-label="加入队列" title="加入队列" onClick={() => void add(track)}><ListPlus size={16} /></button>
+          <button className="icon-action" aria-label="切换喜欢" title="切换喜欢" onClick={() => void add(track, true)}><Heart size={16} /></button>
+        </>} />}
       </article>
     })}</div>
     {active && linking && <LinkedFolderPicker bvid={linking} onClose={() => setLinking(undefined)} />}
