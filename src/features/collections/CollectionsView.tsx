@@ -11,8 +11,9 @@ import { toTrack } from '../../services/collectionTrack'
 import { usePlayerStore } from '../player/playerStore'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { PlaylistEntry } from '../library/PlaylistEntry'
+import { LibraryEntry } from '../library/LibraryEntry'
 import { useCompactLayout } from '../../shared/useCompactLayout'
-import { useRowContextMenu } from '../../shared/useRowContextMenu'
+import type { MenuPosition } from '../../shared/useRowContextMenu'
 import { accountEpoch } from '../../services/accountScope'
 import { CollectionDragHandle } from './CollectionDragHandle'
 
@@ -91,8 +92,12 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
   const children = root ? <>
     {folders.filter(item => matches(item.name)).map(folder => {
       const contents = items.filter(item => item.folderId === folder.id)
-      return <FolderEntry key={folder.id} folder={folder} count={contents.length} coverUrl={contents[0]?.coverUrl}
-        onOpen={() => onOpenFolder(folder.id)} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />
+      const onOpen = () => onOpenFolder(folder.id)
+      return <LibraryEntry key={folder.id} title={folder.name} subtitle={`${contents.length} 个视频`} sidebar={sidebar}
+        cover={<Artwork src={contents[0]?.coverUrl} fallback={<Folder aria-hidden="true"/>}/>}
+        dropFolderId={folder.id} onOpen={onOpen}
+        menu={position => <FolderMenu folder={folder} contextPosition={position} onOpen={onOpen}
+          onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)}/>}/>
     })}
     {linkedFolders.filter(item => matches(item.name)).map(item => <PlaylistEntry
       key={item.id} playlist={item} sidebar={sidebar} onOpen={() => onOpenLinked(item.id)} onRemoved={() => onLinkedRemoved(item.id)}
@@ -102,9 +107,16 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
     localStorage.setItem('collection-expanded', String(!previous))
     return !previous
   })
-  const entries = <div className="collection-cards">
-    {visibleItems.map(item => <CollectionCard key={item.bvid} item={item} onOpen={() => onSelect(item)}
-      onMove={(root || !compact) && folders.some(folder => folder.id !== item.folderId) && !move.isPending ? target => move.mutate({ item, target }) : undefined}/>)}
+  const entries = <div className="collection-entries">
+    {visibleItems.map(item => {
+      const title = item.title || `合集 ${item.bvid}`
+      const onOpen = () => onSelect(item)
+      const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
+      return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || '打开查看分 P'} sidebar={sidebar}
+        cover={<Artwork src={item.coverUrl}/>} onOpen={onOpen}
+        leading={canMove && <CollectionDragHandle title={title} folderId={item.folderId} onMove={target => move.mutate({ item, target })}/>}
+        menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
+    })}
     {children}
   </div>
   if (sidebar) return <section className="collections-sidebar">
@@ -141,7 +153,7 @@ type FolderInfo = { id: string; name: string }
 
 function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   folder: FolderInfo
-  contextPosition?: ReturnType<typeof useRowContextMenu>['position']
+  contextPosition?: MenuPosition
   onOpen?: () => void
   onChanged: () => void
   onRemoved: () => void
@@ -156,31 +168,6 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
     {action && <FolderEditor action={action} id={folder.id} initial={folder.name} controlledOpen
       onClose={() => setAction(undefined)} onDone={() => { if (action === 'delete') onRemoved(); onChanged() }} />}
   </>
-}
-
-function FolderEntry({ folder, count, coverUrl, onOpen, onChanged, onRemoved }: {
-  folder: FolderInfo; count: number; coverUrl?: string; onOpen: () => void; onChanged: () => void; onRemoved: () => void
-}) {
-  const { position, onContextMenu } = useRowContextMenu()
-  return <article className="collection-folder-entry" data-collection-folder={folder.id} onContextMenu={onContextMenu}>
-    <button type="button" className="collection-card-main" onClick={onOpen}>
-      <Artwork src={coverUrl} fallback={<Folder aria-hidden="true"/>}/>
-      <span className="collection-card-copy"><strong>{folder.name}</strong><small>{count} 个合集</small></span>
-    </button>
-    <FolderMenu folder={folder} onOpen={onOpen} contextPosition={position} onChanged={onChanged} onRemoved={onRemoved}/>
-  </article>
-}
-
-function CollectionCard({ item, onOpen, onMove }: { item: Collection; onOpen: () => void; onMove?: (target: string) => void }) {
-  const { position, onContextMenu } = useRowContextMenu()
-  return <article onContextMenu={onContextMenu}>
-    {onMove && <CollectionDragHandle title={item.title || item.bvid} folderId={item.folderId} onMove={onMove}/>}
-    <button type="button" className="collection-card-main" onClick={onOpen}>
-      <Artwork src={item.coverUrl}/>
-      <span className="collection-card-copy"><strong>{item.title || `合集 ${item.bvid}`}</strong><small>{item.uploaderName || '打开查看分 P'}</small></span>
-    </button>
-    <CollectionMenu item={item} onOpen={onOpen} contextPosition={position}/>
-  </article>
 }
 
 export function CollectionDetail({item,onBack,fromSearch=false}:{item:Collection;onBack:()=>void;fromSearch?:boolean}){

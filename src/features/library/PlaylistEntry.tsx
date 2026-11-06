@@ -7,8 +7,9 @@ import { linkedFolderKey, reloadLinkedFolder } from '../../services/linkedFolder
 import { ActionMenu } from '../../shared/ActionMenu'
 import { Artwork } from '../../shared/Artwork'
 import { CollectionDialog } from '../../shared/CollectionDialog'
-import { useRowContextMenu, type MenuPosition } from '../../shared/useRowContextMenu'
+import type { MenuPosition } from '../../shared/useRowContextMenu'
 import { usePlayerStore } from '../player/playerStore'
+import { LibraryEntry } from './LibraryEntry'
 
 export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, contextPosition }: {
   playlist: Playlist
@@ -96,15 +97,11 @@ export function PlaylistEntry({ playlist, sidebar = false, active = false, onOpe
   onOpen: () => void
   onRemoved?: () => void
 }) {
-  const { position, onContextMenu } = useRowContextMenu()
-  const coverClass = sidebar ? 'collection-cover' : 'playlist-card-cover'
-  return <div className={`library-entry ${sidebar ? 'library-entry-sidebar' : ''}`} onContextMenu={onContextMenu}>
-    <button type="button" className={sidebar ? `collection-item${active ? ' active' : ''}` : 'playlist-card'} onClick={onOpen} aria-current={active ? 'page' : undefined}>
-      <span className={`${coverClass}${playlist.isSystem ? ' favorites-cover' : ''}`}>
-        {playlist.biliFolderId ? <Artwork src={playlist.coverUrl} fallback={<Link2 aria-hidden="true"/>}/> : playlist.coverUrl ? <Artwork src={playlist.coverUrl}/> : playlist.isSystem ? <Heart size={17} fill="currentColor"/> : <Album size={17}/>}
-      </span>
-      <span className="library-entry-copy"><strong>{playlist.name}</strong><small>{playlist.trackCount}{playlist.biliFolderId ? ' 个视频 · B 站同步' : playlist.isSystem ? ' 首 · 默认歌单' : ' 首'}</small></span>
-    </button>
-    <PlaylistMenu playlist={playlist} contextPosition={position} onOpen={onOpen} onRemoved={onRemoved}/>
-  </div>
+  const cover = playlist.biliFolderId ? <Artwork src={playlist.coverUrl} fallback={<Link2 aria-hidden="true"/>}/>
+    : playlist.coverUrl ? <Artwork src={playlist.coverUrl}/>
+    : playlist.isSystem ? <Heart size={17} fill="currentColor"/> : <Album size={17}/>
+  const subtitle = `${playlist.trackCount}${playlist.biliFolderId ? ' 个视频 · B 站同步' : playlist.isSystem ? ' 首 · 默认歌单' : ' 首'}`
+  return <LibraryEntry title={playlist.name} subtitle={subtitle} cover={cover} sidebar={sidebar} active={active} onOpen={onOpen}
+    coverClassName={playlist.isSystem ? 'favorites-cover' : undefined}
+    menu={position => <PlaylistMenu playlist={playlist} contextPosition={position} onOpen={onOpen} onRemoved={onRemoved}/>}/>
 }
