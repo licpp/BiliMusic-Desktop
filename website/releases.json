@@ -1,6 +1,6 @@
 {
-  "version": "0.1.10",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.10",
+  "version": "0.2.0",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.0",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.1.10_macOS_AppleSilicon.dmg",
-      "size": 5056640,
-      "sha256": "8d5dd567b65b3f6879d4f2b426c7d3c06f288f15d02e25d0f8268df51231f985",
+      "file": "BiliMusic_0.2.0_macOS_AppleSilicon.dmg",
+      "size": 4977313,
+      "sha256": "5b32444566a6bfd4984ce527ffb021b860eb1a1e3c3070c9f5653d3a5eb5c035",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.1.10_Windows_x64-setup.exe",
-      "size": 3707823,
-      "sha256": "afef5fc80bb92442c8afa51c86d3e1b2608b7c3c3edbf991de9af7808a6cb3e3",
+      "file": "BiliMusic_0.2.0_Windows_x64-setup.exe",
+      "size": 3710914,
+      "sha256": "1386af863cae9d2dce9d3ca2a490d280c4731bca639cfaa39d055a36aa3d85eb",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,23 +59,33 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.0/BiliMusic_0.2.0_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.1.10_Android_arm64.apk",
+      "file": "BiliMusic_0.2.0_Android_arm64.apk",
       "size": 13548133,
-      "sha256": "71105ffaa77277ab32ac7c59786b731f91c5fc8affafd6e0d8858f69be41d2c3",
+      "sha256": "4cd581ddd8f2a3ec71ce65427acb6ff16153450b02153edf2a2b845f09b2d713",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
     }
   ],
   "history": [
+    {
+      "version": "0.2.0",
+      "publishedAt": "2026-11-06T16:41:50Z",
+      "changes": [
+        "自建和 B 站同步的收藏夹统一成列表，封面取自第一条视频。",
+        "默认收藏直接显示，拖动视频就能放入自建收藏夹。",
+        "进入关联收藏夹会自动同步，复制的收藏夹会放进「我的歌单」。",
+        "搜索和收藏里的分 P 可以多选，批量下载或加入歌单。"
+      ]
+    },
     {
       "version": "0.1.10",
       "changes": [
