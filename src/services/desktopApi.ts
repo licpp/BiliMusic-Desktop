@@ -17,7 +17,7 @@ export type LyricLine = { timeMs: number; text: string }
 export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
 export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
-export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean }
+export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean; biliFolderId?: number }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 export type CatalogSource = 'auto' | 'itunes' | 'musicbrainz'
@@ -27,7 +27,10 @@ export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
 export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string }
 export type FavoriteFolder = { id: number; title: string; media_count: number }
-export type FavoritePage = { medias?: { bvid: string; title: string }[]; has_more: boolean }
+export type FavoriteVideo = { bvid: string; title: string; cover: string }
+export type FavoritePage = { medias?: FavoriteVideo[]; has_more: boolean }
+export type LinkedFolder = { folderId: number; name: string; refreshedAt: number; videos: FavoriteVideo[] }
+export type LocalImportResult = { added: number; alreadyImported: number; failed: string[] }
 export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
 export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
@@ -131,6 +134,7 @@ export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
 }
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_add_track', { playlistId, trackId })
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_remove_track', { playlistId, trackId })
+export const removeTracksFromPlaylist = (playlistId: string, trackIds: string[]) => write<void>('playlist_remove_tracks', { playlistId, trackIds })
 export const deletePlaylist = (playlistId: string) => write<void>('playlist_delete', { playlistId })
 export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
 export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto'): Promise<CatalogCandidate[]> {
@@ -141,8 +145,8 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
   return invoke<DownloadRecord[]>('downloads_list')
 }
-export const downloadTrack = (track: Track, targetDirectory: string) => invoke<void>('download_track', {
-  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory,
+export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false) => invoke<boolean>('download_track', {
+  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting,
 })
 export async function getAccountProfile(): Promise<AccountProfile> {
   if (!inDesktopShell) return { loggedIn: false }
@@ -153,6 +157,12 @@ export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login
 export const logoutBilibili = () => invoke<void>('bili_logout')
 export const getFavoriteFolders = () => invoke<FavoriteFolder[]>('bili_favorite_folders')
 export const getFavoriteVideos = (folderId: number, page: number) => invoke<FavoritePage>('bili_favorite_videos', { folderId, page })
+export const listLocalAudio = () => invoke<StoredTrack[]>('local_audio_list').then(tracks => tracks.map(fromStoredTrack))
+export const importLocalAudio = (paths: string[]) => invoke<LocalImportResult>('local_audio_import', { paths })
+export const getLinkedFolder = (folderId: number) => invoke<LinkedFolder | null>('bili_linked_folder', { folderId })
+export const refreshLinkedFolder = (folderId: number, link = false) => invoke<LinkedFolder>('bili_linked_refresh', { folderId, link })
+export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => invoke<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
+export const unlinkBiliFolder = (folderId: number) => invoke<void>('bili_linked_unlink', { folderId })
 export const getComments = (aid: number, next = 1) => invoke<CommentPage>('bili_comments', { aid, next })
 export const getCommentReplies = (aid: number, root: number, page = 1) => invoke<BiliComment[]>('bili_comment_replies', { aid, root, page })
 export const setCommentLike = (aid: number, replyId: number, liked: boolean) => invoke<void>('bili_comment_like', { aid, replyId, liked })
@@ -167,7 +177,7 @@ function toTrackInput(track: Track) {
 }
 
 export function fromStoredTrack(track: StoredTrack): Track {
-  return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
+  return { id: track.id, source: { provider: track.id.startsWith('local:') ? 'local' : 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
 }
 
 export function commandErrorMessage(error: unknown): string {

@@ -52,7 +52,7 @@ export function startCloudSync(client: QueryClient) {
 
 export async function hydrateVisibleTracks(tracks: import('../domain/track').Track[] | undefined, client: QueryClient) {
   if (!inDesktopShell || !tracks?.length) return
-  const ids = tracks.filter((t) => !t.durationSeconds).slice(0, 10).map((t) => t.id)
+  const ids = tracks.filter((t) => t.source.provider === 'bilibili' && !t.durationSeconds).slice(0, 10).map((t) => t.id)
   if (!ids.length) return
   const changed = await invoke<number>('sync_hydrate_sources', { trackIds: ids })
   if (changed) await refreshSyncedLibrary(client)

@@ -13,6 +13,8 @@ pub struct PlaylistRecord {
     pub cover_url: Option<String>,
     pub track_count: i64,
     pub is_system: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bili_folder_id: Option<i64>,
 }
 
 #[cfg(test)]
@@ -157,6 +159,7 @@ impl PlaylistRepository {
                 track_count: connection
                     .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))?,
                 is_system: true,
+                bili_folder_id: None,
             });
         }
         connection.query_row("SELECT p.id,p.name,p.description,p.cover_url,COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id", params![id], Self::map_row)
@@ -245,6 +248,7 @@ impl PlaylistRepository {
             cover_url: row.get(3)?,
             track_count: row.get(4)?,
             is_system: false,
+            bili_folder_id: None,
         })
     }
 }

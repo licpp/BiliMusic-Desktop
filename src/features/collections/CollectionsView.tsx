@@ -10,6 +10,7 @@ import { ActionMenu } from '../../shared/ActionMenu'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import { toTrack } from '../../services/collectionTrack'
 import { usePlayerStore } from '../player/playerStore'
+import { BatchTrackActions, useTrackSelection } from '../library/useTrackSelection'
 import { TrackMenuButton } from '../library/TrackActions'
 import { showTrackMenu } from '../library/trackActionStore'
 import { formatDuration } from '../../shared/time'
@@ -105,12 +106,16 @@ export function CollectionDetail({item,onBack}:{item:Collection;onBack:()=>void}
   const client=useQueryClient(),compact=useCompactLayout()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:d.bvid,folderId:'',title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client])
   const detail=q.data,player=usePlayerStore.getState(),tracks=detail?.parts.map(p=>toTrack(detail,p))||[]
+  const visibleTracks = tracks.filter(track => track.title.toLowerCase().includes(filter.toLowerCase()))
+  const selection = useTrackSelection(visibleTracks)
   const run=(id=tracks[0]?.id)=>{if(id)void player.playFromList(tracks,id)}
   return <section className="collection-detail"><button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>返回收藏合集</button><header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||`合集 ${item.bvid}`}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} 个分 P`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
     <div className="collection-detail-toolbar"><button className="collection-primary" disabled={!tracks.length} onClick={()=>run()}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button><div><button className="collection-icon" aria-label="搜索分P" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button><ActionMenu sheet label="合集播放选项">{close=><><button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button><button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新分 P</button></>}</ActionMenu></div></div>
+    <div className="collection-actions">{!selection.selecting && <button disabled={!visibleTracks.length} onClick={selection.enter}>多选分 P</button>}</div>
+    {selection.selecting && <BatchTrackActions selection={selection} total={visibleTracks.length} />}
     {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input autoFocus aria-label="搜索分P" placeholder="搜索分 P" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭分P搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
     {q.isLoading&&<p>正在加载分 P…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
     {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放的分 P</p>}
-    <div className="parts-list">{tracks.filter(t=>t.title.toLowerCase().includes(filter.toLowerCase())).map(track=><div className="part-entry" key={track.id} onContextMenu={e=>showTrackMenu(e,track,undefined,tracks)}><button onClick={()=>run(track.id)}><span>P{track.source.page}</span><strong>{track.title}</strong>{!compact&&<small>{formatDuration(track.durationSeconds)}</small>}<Play size={14}/></button><TrackMenuButton track={track} tracks={tracks}/></div>)}</div>
+    <div className="parts-list">{visibleTracks.map(track=><div className="part-entry" key={track.id} onContextMenu={e=>{ if (!selection.selecting) showTrackMenu(e,track,undefined,tracks) }}>{selection.selecting && <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} />}<button disabled={selection.selecting} onClick={()=>run(track.id)}><span>P{track.source.page}</span><strong>{track.title}</strong>{!compact&&<small>{formatDuration(track.durationSeconds)}</small>}<Play size={14}/></button>{!selection.selecting && <TrackMenuButton track={track} tracks={tracks}/>}</div>)}</div>
   </section>
 }

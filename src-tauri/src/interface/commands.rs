@@ -20,6 +20,7 @@ use crate::infrastructure::repositories::playlists::{
 };
 use crate::infrastructure::repositories::search_history::SearchHistoryRepository;
 use crate::interface::error::CommandError;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
@@ -189,7 +190,9 @@ pub fn playlists_list(database: State<'_, Database>) -> Result<Vec<PlaylistRecor
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    PlaylistRepository::list(&connection).map_err(CommandError::database)
+    let mut playlists = PlaylistRepository::list(&connection).map_err(CommandError::database)?;
+    playlists.extend(super::linked_folders::list_as_playlists(&connection)?);
+    Ok(playlists)
 }
 
 #[tauri::command]
@@ -246,6 +249,21 @@ pub fn playlist_remove_track(
         .map_err(|_| CommandError::database("数据库正忙"))?;
     PlaylistRepository::remove_track(&connection, &playlist_id, &track_id)
         .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playlist_remove_tracks(
+    database: State<'_, Database>,
+    playlist_id: String,
+    track_ids: Vec<String>,
+) -> Result<(), CommandError> {
+    let mut connection = database.0.lock().map_err(CommandError::database)?;
+    let transaction = connection.transaction().map_err(CommandError::database)?;
+    for track_id in track_ids {
+        PlaylistRepository::remove_track(&transaction, &playlist_id, &track_id)
+            .map_err(CommandError::database)?;
+    }
+    transaction.commit().map_err(CommandError::database)
 }
 
 #[tauri::command]
@@ -672,7 +690,7 @@ pub async fn track_playback_url(
     media_proxy: State<'_, MediaProxy>,
     track_id: String,
 ) -> Result<String, CommandError> {
-    let (track, paths) = {
+    let (track, paths, local_path) = {
         let connection = database
             .0
             .lock()
@@ -686,8 +704,26 @@ pub async fn track_playback_url(
             .map_err(CommandError::database)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CommandError::database)?;
-        (track, paths)
+        let local_path = connection
+            .query_row(
+                "SELECT path FROM local_audio WHERE track_id=?1",
+                [&track_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(CommandError::database)?;
+        (track, paths, local_path)
     };
+    if let Some(local_path) = local_path {
+        let path = std::path::PathBuf::from(local_path);
+        if !tokio::fs::metadata(&path)
+            .await
+            .is_ok_and(|m| m.is_file() && m.len() > 0)
+        {
+            return Err(CommandError::validation("本地音频文件已移动或无法访问"));
+        }
+        return Ok(media_proxy.register_local(path).await);
+    }
     for path in paths {
         let path = std::path::PathBuf::from(path);
         if tokio::fs::metadata(&path)
@@ -716,6 +752,11 @@ pub fn library_save_track(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    if track.id.starts_with("local:") {
+        return LibraryRepository::get(&connection, &track.id)
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("本地歌曲尚未导入"));
+    }
     LibraryRepository::upsert(&mut connection, &track).map_err(CommandError::database)
 }
 
@@ -760,7 +801,8 @@ pub async fn download_track(
     cid: i64,
     title: String,
     target_directory: String,
-) -> Result<(), CommandError> {
+    skip_existing: Option<bool>,
+) -> Result<bool, CommandError> {
     if !valid_bvid(&bvid) || cid <= 0 || track_id != format!("bilibili:{bvid}:{cid}") {
         return Err(CommandError::validation("无效的下载歌曲标识"));
     }
@@ -799,6 +841,23 @@ pub async fn download_track(
             .is_none()
         {
             return Err(CommandError::validation("请先播放歌曲再下载"));
+        }
+        if skip_existing.unwrap_or(false) {
+            let mut query = connection
+                .prepare(
+                    "SELECT target_path FROM downloads WHERE track_id=?1 AND status='completed'",
+                )
+                .map_err(CommandError::database)?;
+            let paths = query
+                .query_map([&track_id], |row| row.get::<_, String>(0))
+                .map_err(CommandError::database)?;
+            for path in paths {
+                if std::fs::metadata(path.map_err(CommandError::database)?)
+                    .is_ok_and(|m| m.is_file() && m.len() > 0)
+                {
+                    return Ok(false);
+                }
+            }
         }
         let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM downloads WHERE track_id=?1 AND status IN ('queued','downloading'))", [&track_id], |row| row.get(0)).map_err(CommandError::database)?;
         if active {
@@ -856,6 +915,7 @@ pub async fn download_track(
                 .lock()
                 .map_err(|_| CommandError::database("数据库正忙"))?;
             DownloadRepository::complete(&connection, &download_id, received)
+                .map(|_| true)
                 .map_err(CommandError::database)
         }
         Err(error) => {
@@ -887,7 +947,7 @@ fn safe_filename(title: &str) -> String {
     }
 }
 
-fn valid_bvid(value: &str) -> bool {
+pub(super) fn valid_bvid(value: &str) -> bool {
     value.len() >= 10
         && value.len() <= 16
         && value.starts_with("BV")
@@ -895,6 +955,13 @@ fn valid_bvid(value: &str) -> bool {
 }
 
 fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
+    if track
+        .id
+        .strip_prefix("local:")
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+    {
+        return Ok(());
+    }
     let expected_id = SourceIdentity {
         provider: "bilibili".into(),
         bvid: track.bvid.clone(),

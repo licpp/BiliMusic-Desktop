@@ -1,3 +1,4 @@
+import { LinkedFolderView } from '../features/library/LinkedFolderView'
 import type { Collection } from '../services/collections'
 import { useCompactLayout } from '../shared/useCompactLayout'
 import { CollectionsView, CollectionDetail } from '../features/collections/CollectionsView'
@@ -70,9 +71,9 @@ export function App() {
   const returnScroll=useRef(0)
   const openCollection=(item:Collection)=>{returnScroll.current=contentScroll.current?.scrollTop||0;setSelectedCollection(item);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=0})}
   const closeCollection=()=>{setSelectedCollection(null);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=returnScroll.current})}
-  useEffect(()=>{const clear=()=>setSelectedCollection(null);window.addEventListener('bilimusic-account-changing',clear);return()=>window.removeEventListener('bilimusic-account-changing',clear)},[])
+  useEffect(()=>{const clear=()=>{ setSelectedCollection(null); setActiveNav('此刻'); setImportOpen(false) };window.addEventListener('bilimusic-account-changing',clear);return()=>window.removeEventListener('bilimusic-account-changing',clear)},[])
   const [activeNav, setActiveNav] = useState('此刻')
-  const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads'>('saved')
+  const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads' | 'local'>('saved')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const searchScroll = useRef<HTMLDivElement>(null)
@@ -124,11 +125,9 @@ export function App() {
   const submitSearch = (event: FormEvent) => {
     event.preventDefault()
     const normalized = query.trim()
-    if (normalized) {
-      openSearch(normalized)
-      setSearchFocused(false)
-      queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
-    }
+    if (!normalized) { openSearch(''); return }
+    openSearch(normalized)
+    queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
   }
   const toggleCurrentFavorite = async () => {
     if (!current || favoritePending) return
@@ -185,6 +184,7 @@ export function App() {
       if (queueOpen) { event.preventDefault(); toggleQueue(); return }
       if(selectedCollection){event.preventDefault();closeCollection();return}
       if (activePlaylist || activeNav.startsWith('collections:')) { event.preventDefault(); setActiveNav(compact?'此刻':'歌单'); return }
+      if (activeNav === '搜索' && submittedQuery) { event.preventDefault(); openSearch(''); return }
       if (activeNav !== '此刻') { event.preventDefault(); setActiveNav('此刻') }
     }
     window.addEventListener('bilimusic-back', back)
@@ -227,7 +227,7 @@ export function App() {
             {sidebarPlaylists.map((playlist, index) => (
               <button key={playlist.id} className={activeNav === `playlist:${playlist.id}` ? 'collection-item active' : 'collection-item'} onClick={() => { setActiveNav(`playlist:${playlist.id}`);setSelectedCollection(null);setLyricsOpen(false) }}>
                 <span className={playlist.isSystem ? 'collection-cover favorites-cover' : `collection-cover tone-${index % 4}`}>{playlist.isSystem ? <Heart size={17} fill="currentColor" /> : <Album size={17} />}</span>
-                <span><strong>{playlist.name}</strong><small>{playlist.trackCount} 首{playlist.isSystem ? ' · 默认歌单' : ''}</small></span>
+                <span><strong>{playlist.name}</strong><small>{playlist.trackCount}{playlist.biliFolderId ? ' 个视频 · B 站同步' : playlist.isSystem ? ' 首 · 默认歌单' : ' 首'}</small></span>
               </button>
             ))}
           </div>
@@ -242,7 +242,8 @@ export function App() {
           <div className="history-buttons"><button type="button" aria-label="返回主页" onClick={() => { setActiveNav('此刻') }}><ArrowLeft size={18} /></button></div>
           <label className="search-field">
             <Search size={18} />
-            <input value={query} onFocus={() => { setSearchFocused(true); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌曲、歌手或专辑" />
+            <input value={query} onFocus={() => { setSearchFocused(true); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => { const value = event.target.value; setQuery(value); if (!value.trim()) setSubmittedQuery('') }} placeholder="搜索歌曲、歌手或专辑" />
+            {(query || submittedQuery) && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页" onClick={() => openSearch('')}><X size={16} /></button>}
             {searchFocused && !query && Boolean(searchHistory.data?.length) && <div className="search-history-popover"><header><span>最近搜索</span><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => clearHistory.mutate()}>清除</button></header>{searchHistory.data!.map((item) => <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { openSearch(item) }}><Clock3 size={14} />{item}</button>)}</div>}
           </label>
           <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => openSearch()}><Search size={20} /></button>
@@ -251,7 +252,7 @@ export function App() {
 
         <div className="stage-scroll" ref={searchScroll} hidden={activeNav !== '搜索'}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={activeNav === '搜索'} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
         <div className="stage-scroll" ref={contentScroll} hidden={activeNav === '搜索'}>
-          {selectedCollection ? <CollectionDetail item={selectedCollection} onBack={closeCollection}/> : activeNav.startsWith('collections:') ? <CollectionsView initialFolder={activeNav.slice(12)} onSelect={openCollection}/> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav(compact?'此刻':'歌单')} /> : activeNav === '歌单' || (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')) ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id)=>setActiveNav(`playlist:${id}`)} onCreate={()=>setCreatingPlaylist(true)} onImport={()=>setImportOpen(true)} onCollectionOpen={openCollection} section={hubSection} onSectionChange={setHubSection} collectionFolder={collectionFolder} onCollectionFolderChange={setCollectionFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
+          {selectedCollection ? <CollectionDetail item={selectedCollection} onBack={closeCollection}/> : activeNav.startsWith('collections:') ? <CollectionsView initialFolder={activeNav.slice(12)} onSelect={openCollection}/> : activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} folderId={activePlaylist.biliFolderId} name={activePlaylist.name} onUnlink={() => setActiveNav(compact ? '此刻' : '歌单')} /> : activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={() => setActiveNav(compact?'此刻':'歌单')} /> : activeNav === '歌单' || (activeNav.startsWith('playlist:') || activeNav.startsWith('collections:')) ? <PlaylistsView playlists={sidebarPlaylists} onOpen={(id)=>setActiveNav(`playlist:${id}`)} onCreate={()=>setCreatingPlaylist(true)} onImport={()=>setImportOpen(true)} onCollectionOpen={openCollection} section={hubSection} onSectionChange={setHubSection} collectionFolder={collectionFolder} onCollectionFolderChange={setCollectionFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} /> : activeNav === '我的' ? <MyView /> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
@@ -316,7 +317,7 @@ export function App() {
       </footer>
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
       {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
-      {importOpen && <ImportFavorites onClose={() => setImportOpen(false)} />}
+      {importOpen && <ImportFavorites onLinked={id => { setImportOpen(false); setActiveNav(`playlist:${id}`) }} onClose={() => setImportOpen(false)} />}
       {creatingPlaylist && <div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus maxLength={80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" />{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
     </div>

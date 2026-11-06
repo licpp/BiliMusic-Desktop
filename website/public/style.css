@@ -14,3 +14,15 @@
 #policy-dialog[open] { display: flex; flex-direction: column; }
 #policy-dialog .dialog-heading, #download-consent, #policy-close { flex: 0 0 auto; }
 #policy-dialog .policy-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+
+.release-history-section { padding-block: 48px; }
+.release-history-section .section-heading { margin-bottom: 22px; }
+.release-history-card { padding: 20px 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.release-history-version { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.release-history-version h3 { margin: 0; }
+.release-history-version small { color: var(--muted); }
+.current-release-label { padding: 3px 9px; border-radius: 12px; background: var(--mint); color: var(--bg); font-size: 12px; }
+.release-history-card ul { margin: 12px 0 0; padding-inline-start: 20px; line-height: 1.75; }
+.release-history-details { margin-top: 16px; }
+.release-history-details summary { padding-block: 10px; color: var(--mint); cursor: pointer; }
+#past-release-changes { display: grid; gap: 12px; margin-top: 10px; }

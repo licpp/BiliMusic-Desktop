@@ -141,8 +141,14 @@ pub struct FavoriteFolder {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteVideo {
+    #[serde(default, rename = "id")]
+    pub aid: i64,
+    #[serde(default)]
     pub bvid: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
+    pub cover: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -513,6 +519,13 @@ impl BilibiliProvider {
     pub async fn favorite_folders(&self) -> Result<Vec<FavoriteFolder>, ProviderError> {
         let profile = self.account_profile().await?;
         let uid = profile.user_id.ok_or(ProviderError::NotAuthenticated)?;
+        self.favorite_folders_for(uid).await
+    }
+
+    pub async fn favorite_folders_for(
+        &self,
+        uid: i64,
+    ) -> Result<Vec<FavoriteFolder>, ProviderError> {
         let mut url = self.api_url("/x/v3/fav/folder/created/list-all");
         url.query_pairs_mut()
             .append_pair("up_mid", &uid.to_string());
@@ -533,6 +546,29 @@ impl BilibiliProvider {
             .append_pair("order", "mtime")
             .append_pair("type", "0");
         self.get_data(url).await
+    }
+
+    pub async fn change_favorite_video(
+        &self,
+        folder_id: i64,
+        aid: i64,
+        add: bool,
+    ) -> Result<(), ProviderError> {
+        let field = if add {
+            "add_media_ids"
+        } else {
+            "del_media_ids"
+        };
+        let form = [
+            ("rid", aid.to_string()),
+            ("type", "2".into()),
+            (field, folder_id.to_string()),
+            ("csrf", self.csrf_token().await?),
+        ];
+        let _: serde_json::Value = self
+            .post_data(self.api_url("/x/v3/fav/resource/deal"), &form)
+            .await?;
+        Ok(())
     }
 
     pub async fn comment_replies(

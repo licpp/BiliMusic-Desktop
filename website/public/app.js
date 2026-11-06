@@ -31,6 +31,31 @@ async function loadDownloadStats() {
   } catch { $('#download-stats').replaceChildren(element('span','下载统计暂不可用')); }
 }
 loadDownloadStats();
+function renderReleaseHistory(manifest) {
+  const entries = Array.isArray(manifest.history) ? manifest.history : [];
+  const currentIndex = entries.findIndex(entry => entry.version === manifest.version);
+  const section = $('#changelog');
+  if (currentIndex < 0) { section.hidden = true; return; }
+  const render = (entry, current = false) => {
+    const card = element('article', null, 'release-history-card');
+    const heading = element('div', null, 'release-history-version');
+    heading.append(element('h3', `v${entry.version}`));
+    if (current) heading.append(element('span', '当前版本', 'current-release-label'));
+    if (entry.publishedAt) {
+      const date = new Date(entry.publishedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
+      heading.append(element('small', date));
+    }
+    const list = element('ul');
+    for (const change of entry.changes) list.append(element('li', change));
+    card.append(heading, list);
+    return card;
+  };
+  const previous = entries.slice(currentIndex + 1);
+  $('#current-release-changes').replaceChildren(render(entries[currentIndex], true));
+  $('#past-release-changes').replaceChildren(...previous.map(entry => render(entry)));
+  $('#past-releases').hidden = previous.length === 0;
+  section.hidden = false;
+}
 async function loadDownloads() {
   const target = $('#download-platforms');
   try {
@@ -38,6 +63,7 @@ async function loadDownloads() {
     if (!response.ok) throw new Error('发布信息加载失败');
     releaseManifest = await response.json(); target.replaceChildren();
     $('#release-notes').href = releaseManifest.releaseNotes;
+    renderReleaseHistory(releaseManifest);
     $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
     for (const item of releaseManifest.platforms) {
       const article = element('article', null, item.id === 'android' ? 'android-card' : '');

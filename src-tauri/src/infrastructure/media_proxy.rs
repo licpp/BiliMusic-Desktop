@@ -306,7 +306,10 @@ async fn serve_local(path: &std::path::Path, headers: &HeaderMap) -> Response<Bo
         } else {
             StatusCode::OK
         })
-        .header(header::CONTENT_TYPE, "audio/mp4")
+        .header(
+            header::CONTENT_TYPE,
+            crate::interface::local_audio::audio_mime(path).unwrap_or("audio/mp4"),
+        )
         .header(header::CONTENT_LENGTH, length)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");

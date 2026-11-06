@@ -112,7 +112,7 @@ export function LyricsView({ onClose }: Props) {
   }, [current?.id])
 
   const showVideo = async () => {
-    if (!current) return
+    if (!current || current.source.provider === 'local') return
     const request = ++videoRequest.current
     if (mediaMode === 'video') { setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); return }
     setMediaMode('video'); setError('')
@@ -210,7 +210,7 @@ export function LyricsView({ onClose }: Props) {
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className="video-tools">
-          <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>
+          {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
             <ActionMenu label="视频与弹幕设置" panel>{(close) => <>

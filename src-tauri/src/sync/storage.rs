@@ -53,7 +53,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
         let mut q =
-            c.prepare("SELECT playlist_id,track_id,position FROM playlist_items LIMIT 10001")?;
+            c.prepare("SELECT playlist_id,track_id,position FROM playlist_items WHERE track_id NOT IN (SELECT track_id FROM local_audio) LIMIT 10001")?;
         for row in q.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -68,13 +68,13 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
                 json!({"playlistId":p,"trackId":t,"position":pos}),
             );
         }
-        let mut q = c.prepare("SELECT track_id FROM favorites LIMIT 5001")?;
+        let mut q = c.prepare("SELECT track_id FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio) LIMIT 5001")?;
         for row in q.query_map([], |r| r.get::<_, String>(0))? {
             let t = row?;
             add(format!("favorite:{t}"), "favorite", json!({"trackId":t}));
         }
         if history {
-            let mut q=c.prepare("SELECT track_id,MAX(played_at) FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200")?;
+            let mut q=c.prepare("SELECT track_id,MAX(played_at) FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio) GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200")?;
             for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
                 let (t, time) = row?;
                 add(
@@ -171,7 +171,9 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             }
         }
         tx.execute_batch(
-            "DELETE FROM playlist_items; DELETE FROM playlists; DELETE FROM favorites;",
+            "CREATE TEMP TABLE sync_local_items AS SELECT playlist_id,track_id,position,created_at FROM playlist_items WHERE track_id IN (SELECT track_id FROM local_audio);
+             DELETE FROM playlist_items; DELETE FROM playlists;
+             DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio);",
         )?;
         for r in s.records.values().filter(|r| r.kind == "playlist") {
             tx.execute(
@@ -184,6 +186,9 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 ],
             )?;
         }
+        tx.execute_batch("INSERT INTO playlist_items(playlist_id,track_id,position,created_at)
+            SELECT i.playlist_id,i.track_id,i.position,i.created_at FROM sync_local_items i JOIN playlists p ON p.id=i.playlist_id;
+            DROP TABLE sync_local_items;")?;
         for r in s.records.values() {
             match r.kind.as_str() {
                 "favorite" => {
@@ -202,7 +207,10 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             }
         }
         if history {
-            tx.execute("DELETE FROM play_history", [])?;
+            tx.execute(
+                "DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)",
+                [],
+            )?;
             for r in s.records.values().filter(|r| r.kind == "history") {
                 tx.execute(
                     "INSERT INTO play_history(track_id,played_at) VALUES(?1,?2)",
@@ -226,8 +234,8 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
 pub fn prune(c: &Connection) -> rusqlite::Result<()> {
     // Keep exactly the visible recent-list references, never an unbounded metadata archive.
     c.execute("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200)",[])?;
-    c.execute("DELETE FROM metadata_overrides WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history)",[])?;
-    c.execute("DELETE FROM lyrics WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history)",[])?;
+    c.execute("DELETE FROM metadata_overrides WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
+    c.execute("DELETE FROM lyrics WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
     Ok(())
 }
 #[cfg(test)]
@@ -267,6 +275,33 @@ mod tests {
         let deleted = export(&c, "42", false).unwrap();
         apply(&d, &deleted, false).unwrap();
         assert_eq!(collections::list(&d).unwrap().items[0].folder_id, "");
+    }
+    #[test]
+    fn cloud_round_trip_preserves_device_only_audio_memberships() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        c.execute_batch("
+            INSERT INTO source_items(id,provider,bvid,cid) VALUES('local:fixture','local','local:fixture',0);
+            INSERT INTO tracks(id,source_item_id,title) VALUES('local:fixture','local:fixture','Device audio');
+            INSERT INTO local_audio(track_id,path) VALUES('local:fixture','/private/example.mp3');
+            INSERT INTO playlists(id,name) VALUES('8076ad4b-2861-4be1-8b08-a6a0fb0b0579','Mixed playlist');
+            INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('8076ad4b-2861-4be1-8b08-a6a0fb0b0579','local:fixture',0);
+            INSERT INTO favorites(track_id) VALUES('local:fixture');
+            INSERT INTO play_history(track_id) VALUES('local:fixture');
+        ").unwrap();
+        let snapshot = export(&c, "42", true).unwrap();
+        assert_eq!(snapshot.records.len(), 1);
+        assert!(
+            snapshot
+                .records
+                .contains_key("playlist:8076ad4b-2861-4be1-8b08-a6a0fb0b0579")
+        );
+        apply(&c, &snapshot, true).unwrap();
+        assert_eq!(
+            c.query_row("SELECT (SELECT COUNT(*) FROM playlist_items) + (SELECT COUNT(*) FROM favorites) + (SELECT COUNT(*) FROM play_history)", [], |row| row.get::<_, i64>(0)).unwrap(),
+            3
+        );
     }
     #[test]
     fn bounded_export_excludes_unreferenced_metadata_and_secrets() {

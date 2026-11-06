@@ -1,5 +1,5 @@
 export type TrackSource = {
-  provider: 'bilibili'
+  provider: 'bilibili' | 'local'
   bvid: string
   aid?: number
   cid: number

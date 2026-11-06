@@ -76,7 +76,11 @@ impl LibraryRepository {
         connection: &mut Connection,
         track: &TrackInput,
     ) -> rusqlite::Result<TrackRecord> {
-        let record = Self::upsert(connection, track)?;
+        let record = if track.id.starts_with("local:") {
+            Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?
+        } else {
+            Self::upsert(connection, track)?
+        };
         connection.execute(
             "INSERT INTO play_history (track_id) VALUES (?1)",
             params![track.id],
