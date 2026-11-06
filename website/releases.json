@@ -1,6 +1,6 @@
 {
-  "version": "0.1.9",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.9",
+  "version": "0.1.10",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.1.10",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.1.9_macOS_AppleSilicon.dmg",
-      "size": 5020896,
-      "sha256": "7b9738a71f0ed862b76c924e8398e8c6291f0f2c56b00e6dce6a50355493b2e9",
+      "file": "BiliMusic_0.1.10_macOS_AppleSilicon.dmg",
+      "size": 5056640,
+      "sha256": "8d5dd567b65b3f6879d4f2b426c7d3c06f288f15d02e25d0f8268df51231f985",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.1.9_Windows_x64-setup.exe",
-      "size": 3680242,
-      "sha256": "2e5e8f4f1743d4b1741cad26a98c2a7cfbdc6898c172ba58896269f9050eb548",
+      "file": "BiliMusic_0.1.10_Windows_x64-setup.exe",
+      "size": 3707823,
+      "sha256": "afef5fc80bb92442c8afa51c86d3e1b2608b7c3c3edbf991de9af7808a6cb3e3",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,17 +59,17 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.9/BiliMusic_0.1.9_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.1.10/BiliMusic_0.1.10_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.1.9_Android_arm64.apk",
-      "size": 13470309,
-      "sha256": "32d312f2a0a2c95163429b2a533fcefe45736a99ec75e8caccc7c6122c9561a6",
+      "file": "BiliMusic_0.1.10_Android_arm64.apk",
+      "size": 13548133,
+      "sha256": "71105ffaa77277ab32ac7c59786b731f91c5fc8affafd6e0d8858f69be41d2c3",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
@@ -79,66 +79,67 @@
     {
       "version": "0.1.10",
       "changes": [
-        "清空搜索框即可返回搜索首页，切换标签仍保留上次搜索结果。",
-        "歌单与合集支持多选、批量加入队列或歌单，以及批量下载。",
-        "Windows 和 macOS 可导入并播放本地 MP3、M4A、WAV 文件。",
-        "导入 B 站收藏夹时可选择关联或复制。关联歌单按整条视频同步增删，分 P 可展开播放。"
-      ]
+        "点搜索框里的 ×，就能回到搜索首页。",
+        "一次选多首歌，批量下载、加入歌单或播放队列。",
+        "Windows 和 Mac 可以导入电脑里的歌曲。",
+        "B 站收藏夹可以关联同步，也可以复制成自己的歌单。"
+      ],
+      "publishedAt": "2026-11-06T15:20:09Z"
     },
     {
       "version": "0.1.9",
       "publishedAt": "2026-10-30T07:01:55Z",
       "changes": [
-        "支持分类收藏整个分 P 合集，打开合集后再选歌播放。",
-        "安卓「此刻」集中管理歌单和收藏，合集使用独立详情页。",
-        "从列表选歌时保留完整的播放队列；检查更新新增 Gitee 备用源。"
+        "可以收藏整套合集，再展开选歌或选章节。",
+        "安卓首页可以继续聆听，也能直接管理歌单和收藏。",
+        "从列表点歌后，可以顺着同一个列表接着听。"
       ]
     },
     {
       "version": "0.1.7",
       "publishedAt": "2026-10-29T08:07:40Z",
       "changes": [
-        "应用内可检查更新，官网下载时确认按钮始终可见。",
-        "歌曲信息匹配新增更多来源，切换标签页后保留搜索结果。",
-        "安卓评论改为可展开的底部面板，桌面评论适配深浅主题。"
+        "应用内可以检查更新。",
+        "切换页面时保留搜索结果，歌曲信息也更容易匹配。",
+        "安卓评论改成更好操作的底部面板。"
       ]
     },
     {
       "version": "0.1.6-preview.7",
       "publishedAt": "2026-10-29T04:05:22Z",
       "changes": [
-        "大幅缩小安卓安装包，保留固定签名以支持覆盖安装。",
-        "整理三端导航与音乐库，更新安卓页面布局。"
+        "安卓安装包大幅缩小。",
+        "重新整理手机和电脑上的导航与音乐库。"
       ]
     },
     {
       "version": "0.1.6-preview.6",
       "publishedAt": "2026-10-28T14:57:11Z",
       "changes": [
-        "提供 macOS、Windows 和 Android 安装包。",
-        "增加坚果云与 BiliMusic 云同步，修复坚果云首次连接和浅色模式下载目录问题。"
+        "新增安卓版，并支持在设备间同步歌单。",
+        "修复坚果云连接和浅色模式下的下载目录问题。"
       ]
     },
     {
       "version": "0.1.6",
       "publishedAt": "2026-10-27T03:51:14Z",
       "changes": [
-        "修复 macOS 应用打包签名，构建时验证 DMG 内的应用资源签名。"
+        "修复 Mac 安装后提示应用已损坏的问题。"
       ]
     },
     {
       "version": "0.1.5",
       "publishedAt": "2026-10-27T02:47:32Z",
       "changes": [
-        "修复 Windows 搜索封面加载和运行时弹出的命令行窗口。",
-        "整理音乐库标签，加入不可删除的默认「我喜欢」歌单。"
+        "修复 Windows 搜索封面和启动时弹出的黑窗口。",
+        "整理音乐库，新增默认的「我喜欢」歌单。"
       ]
     },
     {
       "version": "0.1.4",
       "publishedAt": "2026-10-27T02:01:36Z",
       "changes": [
-        "首个公开预览版，支持 B 站搜索、分 P、歌单、歌词匹配和按需播放视频与弹幕。"
+        "首个公开预览版。可以搜索 B 站内容、整理歌单、匹配歌词，也可以看视频和弹幕。"
       ]
     }
   ]
