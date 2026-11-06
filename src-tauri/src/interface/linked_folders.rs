@@ -40,9 +40,13 @@ fn read(connection: &Connection, folder_id: i64) -> Result<Option<LinkedFolder>,
 pub(super) fn list_as_playlists(
     connection: &Connection,
 ) -> Result<Vec<PlaylistRecord>, CommandError> {
-    let mut query = connection.prepare(
-        "SELECT folder_id,name,json_array_length(videos_json) FROM linked_bili_folders ORDER BY name,folder_id",
-    ).map_err(CommandError::database)?;
+    let mut query = connection
+        .prepare(
+            "SELECT folder_id,name,json_array_length(videos_json),
+                NULLIF(json_extract(videos_json,'$[0].cover'),'')
+         FROM linked_bili_folders ORDER BY name,folder_id",
+        )
+        .map_err(CommandError::database)?;
     query
         .query_map([], |row| {
             let folder_id: i64 = row.get(0)?;
@@ -50,7 +54,7 @@ pub(super) fn list_as_playlists(
                 id: format!("bili-folder:{folder_id}"),
                 name: row.get(1)?,
                 description: "关联 B 站收藏夹".into(),
-                cover_url: None,
+                cover_url: row.get(3)?,
                 track_count: row.get(2)?,
                 is_system: false,
                 bili_folder_id: Some(folder_id),
@@ -258,4 +262,34 @@ pub fn bili_linked_unlink(
         )
         .map_err(CommandError::database)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_cover_tracks_the_first_cached_video() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        let save = |videos: &str| {
+            connection.execute(
+                "INSERT INTO linked_bili_folders(folder_id,owner_uid,name,videos_json,refreshed_at)
+                 VALUES(1,2,'Test',?1,0) ON CONFLICT(folder_id) DO UPDATE SET videos_json=excluded.videos_json",
+                [videos],
+            ).unwrap();
+            list_as_playlists(&connection).unwrap().remove(0).cover_url
+        };
+        assert_eq!(
+            save(r#"[{"cover":"https://example.com/first.jpg"},{"cover":"https://example.com/next.jpg"}]"#).as_deref(),
+            Some("https://example.com/first.jpg")
+        );
+        assert_eq!(
+            save(r#"[{"cover":""},{"cover":"https://example.com/next.jpg"}]"#),
+            None
+        );
+        assert_eq!(save("[]"), None);
+    }
 }

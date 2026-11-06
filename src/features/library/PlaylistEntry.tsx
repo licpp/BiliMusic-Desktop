@@ -101,7 +101,7 @@ export function PlaylistEntry({ playlist, sidebar = false, active = false, onOpe
   return <div className={`library-entry ${sidebar ? 'library-entry-sidebar' : ''}`} onContextMenu={onContextMenu}>
     <button type="button" className={sidebar ? `collection-item${active ? ' active' : ''}` : 'playlist-card'} onClick={onOpen} aria-current={active ? 'page' : undefined}>
       <span className={`${coverClass}${playlist.isSystem ? ' favorites-cover' : ''}`}>
-        {playlist.coverUrl ? <Artwork src={playlist.coverUrl}/> : playlist.isSystem ? <Heart size={17} fill="currentColor"/> : playlist.biliFolderId ? <Link2 size={17}/> : <Album size={17}/>}
+        {playlist.biliFolderId ? <Artwork src={playlist.coverUrl} fallback={<Link2 aria-hidden="true"/>}/> : playlist.coverUrl ? <Artwork src={playlist.coverUrl}/> : playlist.isSystem ? <Heart size={17} fill="currentColor"/> : <Album size={17}/>}
       </span>
       <span className="library-entry-copy"><strong>{playlist.name}</strong><small>{playlist.trackCount}{playlist.biliFolderId ? ' 个视频 · B 站同步' : playlist.isSystem ? ' 首 · 默认歌单' : ' 首'}</small></span>
     </button>

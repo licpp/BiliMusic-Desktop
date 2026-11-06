@@ -1,7 +1,7 @@
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, type ReactNode } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderInput, ListPlus, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { changeCollection, listCollections, type Collection } from '../../services/collections'
 import { commandErrorMessage, getVideoParts, type Playlist } from '../../services/desktopApi'
@@ -11,7 +11,10 @@ import { toTrack } from '../../services/collectionTrack'
 import { usePlayerStore } from '../player/playerStore'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { PlaylistEntry } from '../library/PlaylistEntry'
+import { useCompactLayout } from '../../shared/useCompactLayout'
 import { useRowContextMenu } from '../../shared/useRowContextMenu'
+import { accountEpoch } from '../../services/accountScope'
+import { CollectionDragHandle } from './CollectionDragHandle'
 
 const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: listCollections })
 type CollectionInfo = Omit<Collection, 'folderId'>
@@ -68,17 +71,29 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
   const [filter, setFilter] = useState('')
   const refresh = () => void client.invalidateQueries({ queryKey: ['collections'] })
   const root = folderId === undefined
+  const compact = useCompactLayout()
   const folders = query.data?.folders || []
+  const move = useMutation({
+    mutationFn: async ({ item, target }: { item: Collection; target: string }) => {
+      const epoch = accountEpoch()
+      await changeCollection('move', item.bvid, target)
+      if (epoch === accountEpoch()) await client.invalidateQueries({ queryKey: ['collections'] })
+    },
+  })
+  const moveError = move.error && <button type="button" className="library-toast" role="alert" onClick={move.reset}>
+    移动失败：{commandErrorMessage(move.error)}
+  </button>
   const items = query.data?.items || []
   const needle = filter.trim().toLowerCase()
   const matches = (value: string) => value.toLowerCase().includes(needle)
   const visibleItems = items.filter(item => (root && needle ? true : item.folderId === (folderId || '')) && matches(item.title || item.bvid))
   const folder = folders.find(item => item.id === folderId)
   const children = root ? <>
-    {folders.filter(item => matches(item.name)).map(item => <FolderEntry
-      key={item.id} folder={item} count={items.filter(video => video.folderId === item.id).length}
-      onOpen={() => onOpenFolder(item.id)} onChanged={refresh} onRemoved={() => onFolderRemoved?.(item.id)}
-    />)}
+    {folders.filter(item => matches(item.name)).map(folder => {
+      const contents = items.filter(item => item.folderId === folder.id)
+      return <FolderEntry key={folder.id} folder={folder} count={contents.length} coverUrl={contents[0]?.coverUrl}
+        onOpen={() => onOpenFolder(folder.id)} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />
+    })}
     {linkedFolders.filter(item => matches(item.name)).map(item => <PlaylistEntry
       key={item.id} playlist={item} sidebar={sidebar} onOpen={() => onOpenLinked(item.id)} onRemoved={() => onLinkedRemoved(item.id)}
     />)}
@@ -88,7 +103,8 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
     return !previous
   })
   const entries = <div className="collection-cards">
-    {visibleItems.map(item => <CollectionCard key={item.bvid} item={item} onOpen={() => onSelect(item)} />)}
+    {visibleItems.map(item => <CollectionCard key={item.bvid} item={item} onOpen={() => onSelect(item)}
+      onMove={(root || !compact) && folders.some(folder => folder.id !== item.folderId) && !move.isPending ? target => move.mutate({ item, target }) : undefined}/>)}
     {children}
   </div>
   if (sidebar) return <section className="collections-sidebar">
@@ -99,6 +115,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
       {expanded && <FolderEditor action="create" onDone={refresh}/>}
     </div>
     {expanded && entries}
+    {moveError}
   </section>
   return <section className="collections-view collections-embedded">
     <div className="collections-heading">
@@ -116,6 +133,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
     {!query.isLoading && !visibleItems.length && (!root || (!folders.some(item => matches(item.name)) && !linkedFolders.some(item => matches(item.name)))) &&
       <p className="collection-empty">{needle ? '没有匹配的收藏' : root ? '点击搜索结果中的书签，收藏喜欢的合集。' : '这个收藏夹还没有合集。'}</p>}
     {entries}
+    {moveError}
   </section>
 }
 
@@ -140,22 +158,23 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-function FolderEntry({ folder, count, onOpen, onChanged, onRemoved }: {
-  folder: FolderInfo; count: number; onOpen: () => void; onChanged: () => void; onRemoved: () => void
+function FolderEntry({ folder, count, coverUrl, onOpen, onChanged, onRemoved }: {
+  folder: FolderInfo; count: number; coverUrl?: string; onOpen: () => void; onChanged: () => void; onRemoved: () => void
 }) {
   const { position, onContextMenu } = useRowContextMenu()
-  return <article className="collection-folder-entry" onContextMenu={onContextMenu}>
+  return <article className="collection-folder-entry" data-collection-folder={folder.id} onContextMenu={onContextMenu}>
     <button type="button" className="collection-card-main" onClick={onOpen}>
-      <span className="artwork collection-folder-icon"><Folder size={20}/></span>
+      <Artwork src={coverUrl} fallback={<Folder aria-hidden="true"/>}/>
       <span className="collection-card-copy"><strong>{folder.name}</strong><small>{count} 个合集</small></span>
     </button>
     <FolderMenu folder={folder} onOpen={onOpen} contextPosition={position} onChanged={onChanged} onRemoved={onRemoved}/>
   </article>
 }
 
-function CollectionCard({ item, onOpen }: { item: Collection; onOpen: () => void }) {
+function CollectionCard({ item, onOpen, onMove }: { item: Collection; onOpen: () => void; onMove?: (target: string) => void }) {
   const { position, onContextMenu } = useRowContextMenu()
   return <article onContextMenu={onContextMenu}>
+    {onMove && <CollectionDragHandle title={item.title || item.bvid} folderId={item.folderId} onMove={onMove}/>}
     <button type="button" className="collection-card-main" onClick={onOpen}>
       <Artwork src={item.coverUrl}/>
       <span className="collection-card-copy"><strong>{item.title || `合集 ${item.bvid}`}</strong><small>{item.uploaderName || '打开查看分 P'}</small></span>
