@@ -83,6 +83,8 @@
   .action-menu-panel > button { min-height:44px; }
   .search-result-heading { padding-right:6px; }
   .search-result-heading .result-main { grid-template-columns:60px minmax(0,1fr) 18px;gap:8px; }
+  .search-results .search-result-heading .result-main { grid-template-columns:60px minmax(0,1fr); }
+  .search-result-heading > .result-expand { height:40px; }
   .search-result-heading .result-cover { width:60px; }
   .part-entry { flex-wrap:wrap; }
   .part-entry > button:first-child { flex-basis:calc(100% - 108px); }

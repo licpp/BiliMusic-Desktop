@@ -14,7 +14,7 @@ import { LinkedFolderPicker } from '../library/LinkedFolderView'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
 
-type ExpandedState = { loading?: boolean; detail?: BiliVideoParts; error?: string }
+type ExpandedState = { open?: boolean; loading?: boolean; detail?: BiliVideoParts; error?: string }
 
 export function SearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
@@ -38,19 +38,27 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
     } catch (error) { setActionError(commandErrorMessage(error)) }
   }
 
-  const selectResult = async (item: BiliSearchItem) => {
+  const selectResult = async (item: BiliSearchItem, expandOnly = false) => {
     const existing = expanded[item.bvid]
     if (existing?.loading) return
     if (existing?.detail) {
-      if (existing.detail.parts.length > 1) setExpanded((state) => ({ ...state, [item.bvid]: {} }))
-      else if (existing.detail.parts[0]) void play(existing.detail.parts.map(p=>toTrack(existing.detail!,p)),toTrack(existing.detail, existing.detail.parts[0]).id)
+      if (!expandOnly && existing.detail.parts.length === 1) {
+        const tracks = existing.detail.parts.map(part => toTrack(existing.detail!, part))
+        void play(tracks, tracks[0].id)
+      } else {
+        setExpanded(state => ({ ...state, [item.bvid]: { ...state[item.bvid], open: !state[item.bvid]?.open } }))
+      }
       return
     }
-    setExpanded((state) => ({ ...state, [item.bvid]: { loading: true } }))
+    setExpanded((state) => ({ ...state, [item.bvid]: { loading: true, open: true } }))
     try {
       const detail = await getVideoParts(item.bvid)
-      setExpanded((state) => ({ ...state, [item.bvid]: { detail } }))
-      if (detail.parts.length === 1 && detail.parts[0]) void play(detail.parts.map(p=>toTrack(detail,p)),toTrack(detail, detail.parts[0]).id)
+      const playSingle = !expandOnly && detail.parts.length === 1
+      setExpanded((state) => ({ ...state, [item.bvid]: { detail, open: !playSingle } }))
+      if (playSingle) {
+        const tracks = detail.parts.map(part => toTrack(detail, part))
+        void play(tracks, tracks[0].id)
+      }
     } catch (error) {
       setExpanded((state) => ({ ...state, [item.bvid]: { error: commandErrorMessage(error) } }))
     }
@@ -58,7 +66,7 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
   const resultAction = async (item: BiliSearchItem, action: 'playlist' | 'queue' | 'play') => {
     try {
       const detail = expanded[item.bvid]?.detail || await getVideoParts(item.bvid)
-      setExpanded((state) => ({ ...state, [item.bvid]: { detail } }))
+      setExpanded((state) => ({ ...state, [item.bvid]: { ...state[item.bvid], detail } }))
       const tracks = detail.parts.map((part) => toTrack(detail, part))
       if (action === 'playlist') chooseTrackPlaylist(tracks)
       else if (action === 'queue') { enqueue(tracks); setActionError('已加入播放队列') }
@@ -76,12 +84,13 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
     {actionError && <button className="library-toast" onClick={() => setActionError('')}>{actionError}</button>}
     <div className="result-list">{items.map((item) => {
       const state = expanded[item.bvid]
-      const open = Boolean(state?.detail && state.detail.parts.length > 1)
+      const open = Boolean(state?.open)
       return <article className={open ? 'result-card expanded' : 'result-card'} key={item.bvid} onContextMenu={e=>{e.preventDefault();setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>
-        <div className="search-result-heading"><button className="result-main" onClick={() => selectResult(item)}>
+        <div className="search-result-heading"><button type="button" className="result-main" onClick={() => void selectResult(item)}>
           <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i></span>
           <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
+        </button><button type="button" className="icon-action result-expand" aria-label={`${open ? '收起' : '展开'}分 P：${item.title}`} aria-expanded={open} aria-controls={`search-parts-${item.bvid}`} disabled={state?.loading} onClick={() => void selectResult(item, true)}>
           {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
         </button><CollectionBookmark item={item}/><CollectionMenu item={item} onOpen={onCollectionOpen ? () => onCollectionOpen({ ...item, folderId: '' }) : undefined} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
@@ -91,10 +100,10 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
         </>}/></div>
         {state?.error && <div className="inline-error"><CircleAlert size={14} />{state.error}</div>}
 
-        {open && state?.detail && <VideoPartsList tracks={state.detail.parts.map(part => toTrack(state.detail!, part))} renderActions={track => <>
+        {open && state?.detail && <div id={`search-parts-${item.bvid}`}><VideoPartsList tracks={state.detail.parts.map(part => toTrack(state.detail!, part))} renderActions={track => <>
           <button className="icon-action" aria-label="加入队列" title="加入队列" onClick={() => void add(track)}><ListPlus size={16} /></button>
           <button className="icon-action" aria-label="切换喜欢" title="切换喜欢" onClick={() => void add(track, true)}><Heart size={16} /></button>
-        </>} />}
+        </>} />{!state.detail.parts.length && <p className="batch-message">暂无可播放的分 P</p>}</div>}
       </article>
     })}</div>
     {active && linking && <LinkedFolderPicker bvid={linking} onClose={() => setLinking(undefined)} />}
