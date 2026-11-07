@@ -83,6 +83,16 @@ export function LyricsView({ onClose }: Props) {
   const [searched, setSearched] = useState(false)
 
   useEffect(() => {
+    const update = (event: Event) => {
+      const lyrics = (event as CustomEvent<StoredLyrics>).detail
+      if (lyrics.trackId !== current?.id) return
+      setStored(lyrics); setLines(parseStoredLines(lyrics)); setError(''); setWarning('')
+    }
+    window.addEventListener('bilimusic-lyrics-updated', update)
+    return () => window.removeEventListener('bilimusic-lyrics-updated', update)
+  }, [current?.id])
+
+  useEffect(() => {
     let cancelled = false
     const request = ++lyricRequest.current
     setStored(null); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
@@ -222,7 +232,7 @@ export function LyricsView({ onClose }: Props) {
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={current.coverUrl} active={mediaMode === 'video'} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
-        <div className="video-tools">
+        <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`}>
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>

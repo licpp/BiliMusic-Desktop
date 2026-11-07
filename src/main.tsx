@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './app/App'
 import { isAndroid, isIOS } from './services/platform'
 import { installMobileGestures } from './shared/mobileGestures'
+import { startAutomaticLyrics } from './features/lyrics/automaticLyrics'
 import './styles/global.css'
 import './styles/theme.css'
 import './styles/mobile.css'
@@ -25,6 +26,7 @@ const queryClient = new QueryClient({
 })
 
 startCloudSync(queryClient)
+startAutomaticLyrics()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
