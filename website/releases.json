@@ -1,6 +1,6 @@
 {
-  "version": "0.2.1",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.1",
+  "version": "0.2.2",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.2",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.2.1_macOS_AppleSilicon.dmg",
-      "size": 4977319,
-      "sha256": "4e564b940cbcf4233fd44f721f753d1e7cfcbf748b8b9346cdc4bb2ed70eee88",
+      "file": "BiliMusic_0.2.2_macOS_AppleSilicon.dmg",
+      "size": 4976492,
+      "sha256": "49ea886c4f14de5a51b96a135195aec018b3f5068d80c19dd7e91868599c6324",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.2.1_Windows_x64-setup.exe",
-      "size": 3710028,
-      "sha256": "9bf3603e5595bb91250c813c8dab218fe8147b59e56112d8db8aadc86fed7a41",
+      "file": "BiliMusic_0.2.2_Windows_x64-setup.exe",
+      "size": 3710308,
+      "sha256": "2370908193cf2f3e5692fde8b9801efeb45d96cc66a9e5cad20df470d3e895a8",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,23 +59,31 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.1/BiliMusic_0.2.1_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.2.1_Android_arm64.apk",
+      "file": "BiliMusic_0.2.2_Android_arm64.apk",
       "size": 13548133,
-      "sha256": "28910cd6da615dfda9f1bd629ab081a3beeaa5cf9854283122bfc4fc42fffa23",
+      "sha256": "d132f63ccf1a29bba2181b9400110011c908b74e8f412438ba83fb4fe9405e96",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
     }
   ],
   "history": [
+    {
+      "version": "0.2.2",
+      "publishedAt": "2026-11-07T04:04:58Z",
+      "changes": [
+        "修复搜索结果展开分 P 时意外切歌的问题，单分 P 也能展开查看。",
+        "收起后再次展开会保留已加载内容，加载失败后可以重新尝试。"
+      ]
+    },
     {
       "version": "0.2.1",
       "publishedAt": "2026-11-07T03:23:31Z",
