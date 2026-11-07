@@ -32,10 +32,37 @@ fn input(track: &Value) -> Result<TrackInput, String> {
     .map_err(|_| "歌曲信息无效".into())
 }
 
-async fn resolve(app: &tauri::AppHandle, mut track: Value) -> Result<Value, String> {
+fn current_profile(app: &tauri::AppHandle) -> String {
+    std::fs::read_to_string(app.state::<Database>().1.join("active-profile")).unwrap_or_default()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bilimusic_ios_profile() -> *mut c_char {
+    APP.get()
+        .and_then(|app| CString::new(current_profile(app)).ok())
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Releases a string allocated by bilimusic_ios_profile, exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bilimusic_ios_free(raw: *mut c_char) {
+    if !raw.is_null() {
+        drop(unsafe { CString::from_raw(raw) });
+    }
+}
+
+async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+    let profile = payload["profile"]
+        .as_str()
+        .ok_or("播放账号已变更，请重新播放")?;
+    let mut track = payload["track"].clone();
     // Account switches share this gate. Never record an old queue item in a new account.
     let sync = app.state::<crate::sync::SyncState>();
     let _gate = sync.gate.lock().await;
+    if profile != current_profile(app) {
+        return Err("播放账号已变更，请重新播放".into());
+    }
     let stored =
         library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?;
     let url = track_playback_url(

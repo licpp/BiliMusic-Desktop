@@ -37,12 +37,19 @@ struct PlayerSnapshot: Encodable {
     var track: QueueTrack?
     var revision: Int64 = 0
 }
+struct ResolveRequest: Encodable {
+    let profile: String; let track: QueueTrack
+}
 struct ResolvedTrack: Decodable {
     let url: String?; let track: QueueTrack?; let error: String?
 }
 
 @_silgen_name("bilimusic_ios_resolve")
 private func resolveTrack(_ request: Int64, _ json: UnsafePointer<CChar>)
+@_silgen_name("bilimusic_ios_profile")
+private func currentProfile() -> UnsafeMutablePointer<CChar>?
+@_silgen_name("bilimusic_ios_free")
+private func freeProfile(_ value: UnsafeMutablePointer<CChar>)
 private weak var activePlayer: PlayerPlugin?
 
 // Copy the Rust result before returning; the pointer is valid only during this call.
@@ -59,6 +66,7 @@ class PlayerPlugin: Plugin {
     private var repeatMode = "off"
     private var shuffled = false
     private var generation: Int64 = 0
+    private var profile = ""
     private var desiredPlaying = false
     private var startPosition: Double = 0
     private var resumeAfterInterruption = false
@@ -125,6 +133,8 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(ControlArgs.self)
         switch args.action {
         case "prepare":
+            guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
+            profile = String(cString: raw); freeProfile(raw)
             generation += 1; desiredPlaying = false; itemStatus = nil
             player.pause(); player.replaceCurrentItem(with: nil)
             endBackgroundTask()
@@ -264,7 +274,8 @@ class PlayerPlugin: Plugin {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in self?.fail("后台加载超时，请返回应用继续播放") }
         publish()
-        guard let data = try? JSONEncoder().encode(track), let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
+        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track)),
+              let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
     fileprivate func resolved(_ request: Int64, _ data: Data) {

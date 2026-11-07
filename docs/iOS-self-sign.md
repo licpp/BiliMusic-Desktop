@@ -40,3 +40,5 @@ GitHub Actions 的 `ios-self-sign-build` 工作流使用 macOS 构建真机 arch
 ## 验证范围
 
 构建会编译 Rust 和 Swift，并运行播放器状态 / 取消播放 / 队列回传 / 账号隔离测试。实际 Apple ID 签名、iPhone 安装、锁屏长时间播放、蓝牙和 Wi-Fi / 蜂窝切换仍需要真机体验验证。
+
+签名有效期和免费账号限制可参见 [AltStore 官方使用说明](https://faq.altstore.io/altstore-classic/your-altstore)。

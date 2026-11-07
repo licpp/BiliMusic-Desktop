@@ -26,6 +26,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: ios-device
+          cache-on-failure: true
       - run: xcodebuild -version
       - run: brew install xcodegen libimobiledevice
       - run: npm ci
