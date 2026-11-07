@@ -21,3 +21,10 @@ test('the displayed release identifier belongs to the native bundle version', as
   assert.equal(compareVersions(pkg.version,native.version),0)
   assert.ok(!pkg.version.includes('-'))
 })
+test('Android upgrade code matches the release version', async () => {
+  const {readFile}=await import('node:fs/promises')
+  const pkg=JSON.parse(await readFile('package.json','utf8'))
+  const android=JSON.parse(await readFile('src-tauri/tauri.android.conf.json','utf8'))
+  const [major, minor, patch] = pkg.version.split('.').map(Number)
+  assert.equal(android.bundle.android.versionCode, major * 1_000_000 + minor * 10_000 + patch * 100)
+})
