@@ -5,8 +5,8 @@ import { createRequire } from 'node:module'
 import { webcrypto } from 'node:crypto'
 import { build } from 'esbuild'
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks'
-const [manifest, defaults] = await Promise.all([
-  readFile('native/ios-player/build.rs','utf8'), readFile('native/ios-player/permissions/default.toml','utf8'),
+const [manifest, defaults, swift] = await Promise.all([
+  readFile('native/ios-player/build.rs','utf8'), readFile('native/ios-player/permissions/default.toml','utf8'), readFile('native/ios-player/ios/Sources/PlayerPlugin.swift','utf8'),
 ])
 const strings = text => [...text.matchAll(/"([^"]+)"/g)].map(m => m[1])
 const commands = new Set(strings(manifest.match(/Builder::new\(&\[([\s\S]*?)\]/)[1]))
@@ -19,6 +19,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     const command = full.split('|')[1]
     assert.ok(commands.has(command), `${command} missing from native command manifest`)
     assert.ok(permissions.has(`allow-${command.replaceAll('_','-')}`), `${command} not permitted`)
+    assert.ok(new RegExp(`@objc public func ${command}\\(`).test(swift), `${command} has no exported Swift selector`)
     calls.push(command)
     if (command === 'register_listener') handler = payload.handler
     if (command === 'snapshot') return {id:'test',status:'playing',position:5,revision:2}

@@ -27,6 +27,8 @@ struct QueueArgs: Decodable {
 struct SecretArgs: Decodable {
     let key: String; let value: String?; let remove: Bool?
 }
+struct ListenerArgs: Decodable { let event: String; let handler: Channel }
+struct RemoveListenerArgs: Decodable { let event: String; let channelId: UInt64 }
 struct PlayerSnapshot: Encodable {
     var id: String?
     var status = "paused"
@@ -63,6 +65,7 @@ class PlayerPlugin: Plugin {
     private let player = AVPlayer()
     private var state = PlayerSnapshot()
     private var tracks: [QueueTrack] = []
+    private var listeners: [UInt64: Channel] = [:]
     private var repeatMode = "off"
     private var shuffled = false
     private var generation: Int64 = 0
@@ -112,6 +115,7 @@ class PlayerPlugin: Plugin {
 
     @objc public func play(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PlayArgs.self)
+        onMain { [self] in
         guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
         generation += 1; state.revision = generation
         state.id = args.id; state.track = tracks.first { $0.id == args.id }
@@ -119,18 +123,22 @@ class PlayerPlugin: Plugin {
         player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
         do { try start(url, at: max(0, args.position ?? 0)); invoke.resolve() }
         catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
+        }
     }
     @objc public func queue(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(QueueArgs.self)
+        onMain { [self] in
         guard args.tracks.count <= 10000, ["off", "one", "all"].contains(args.repeatMode) else { invoke.reject("无效的播放队列"); return }
         var seen = Set<String>()
         tracks = args.tracks.filter { seen.insert($0.id).inserted }
         repeatMode = args.repeatMode; shuffled = args.shuffled
         if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; nowPlaying() }
         invoke.resolve()
+        }
     }
     @objc public func control(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ControlArgs.self)
+        onMain { [self] in
         switch args.action {
         case "prepare":
             guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
@@ -153,8 +161,22 @@ class PlayerPlugin: Plugin {
         default: invoke.reject("不支持的播放操作"); return
         }
         invoke.resolve()
+        }
     }
-    @objc public func snapshot(_ invoke: Invoke) { refresh(); invoke.resolve(state) }
+    @objc public func snapshot(_ invoke: Invoke) { onMain { [self] in refresh(); invoke.resolve(state) } }
+
+    @objc public func register_listener(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(ListenerArgs.self)
+        guard args.event == "state" else { invoke.reject("不支持的播放事件"); return }
+        onMain { [self] in listeners[args.handler.id] = args.handler; invoke.resolve() }
+    }
+    @objc public func remove_listener(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(RemoveListenerArgs.self)
+        onMain { [self] in listeners.removeValue(forKey: args.channelId); invoke.resolve() }
+    }
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
+    }
 
     // Rust-only; deliberately absent from the JavaScript command permissions.
     @objc public func secret(_ invoke: Invoke) throws {
@@ -248,7 +270,7 @@ class PlayerPlugin: Plugin {
         }
         publish()
     }
-    private func publish() { nowPlaying(); try? trigger("state", data: state) }
+    private func publish() { nowPlaying(); for channel in listeners.values { try? channel.send(state) } }
     private func nowPlaying() {
         guard let id = state.id else { return }
         var info: [String: Any] = [MPMediaItemPropertyTitle: state.track?.title ?? "BiliMusic", MPMediaItemPropertyArtist: state.track?.artist ?? "歌手未知", MPNowPlayingInfoPropertyExternalContentIdentifier: id,
