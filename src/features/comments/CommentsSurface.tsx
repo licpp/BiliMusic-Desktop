@@ -43,15 +43,23 @@ export function CommentsSurface({ children, onClose, forceExpanded = false }: { 
   }}>
     <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''}${isIOS ? ' ios-comments' : ''}`} role="dialog" aria-modal="true" aria-label="歌曲评论" onFocusCapture={event => { if (event.target instanceof HTMLTextAreaElement) setExpanded(true) }}>
       <button className="comments-sheet-handle" type="button" aria-label={expanded ? '收起评论面板' : '展开评论面板'} aria-expanded={expanded}
-        onPointerDown={event => { gesture.current = event.clientY; suppressClick.current = false; event.currentTarget.setPointerCapture(event.pointerId) }}
-        onPointerCancel={() => { gesture.current = null }}
+        onPointerDown={event => { gesture.current = event.clientY; suppressClick.current = false; panel.current?.setAttribute('data-dragging', ''); event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerMove={event => {
+          if (gesture.current === null || !isIOS) return
+          const delta = event.clientY - gesture.current
+          const distance = forceExpanded ? Math.max(0, delta) : expanded ? Math.max(0, delta) : Math.max(-window.innerHeight * .26, delta)
+          panel.current?.style.setProperty('--comment-drag-y', `${distance}px`)
+        }}
+        onPointerCancel={() => { gesture.current = null; panel.current?.removeAttribute('data-dragging'); panel.current?.style.removeProperty('--comment-drag-y') }}
         onPointerUp={event => {
           if (gesture.current === null) return
           const distance = event.clientY - gesture.current
           gesture.current = null
+          panel.current?.removeAttribute('data-dragging'); panel.current?.style.removeProperty('--comment-drag-y')
           if (Math.abs(distance) < 40) return
           suppressClick.current = true
           if (distance < 0) setExpanded(true)
+          else if (forceExpanded) onClose()
           else if (expanded) setExpanded(false)
           else onClose()
         }}

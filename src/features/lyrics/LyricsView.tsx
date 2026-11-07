@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
@@ -55,6 +55,7 @@ export function LyricsView({ onClose }: Props) {
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const closeComments = useCallback(() => setCommentsOpen(false), [])
   const [biasOpen, setBiasOpen] = useState(false)
   const [biasActivity, setBiasActivity] = useState(0)
   useEffect(() => {
@@ -273,7 +274,7 @@ export function LyricsView({ onClose }: Props) {
           ))}</div> : !error && <div className="chooser-status">{searched ? '没有搜索到可用歌词，可以更换关键词或粘贴歌词。' : '确认歌曲名和歌手后，点击“搜索歌词”。'}</div>}
         </div>
       </div>}
-      {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={() => setCommentsOpen(false)} />}
+      {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} />}
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>
   )

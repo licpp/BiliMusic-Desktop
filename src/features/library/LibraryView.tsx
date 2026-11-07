@@ -92,7 +92,7 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
         {track.coverUrl ? <img src={track.coverUrl} alt="" loading="lazy" /> : <span className={`tone-${index % 4}`} />}
         <i><Play fill="currentColor" /></i>
       </button>}
-      <div className="library-copy"><strong>{track.title}</strong><small>{track.artist || '歌手未知'}{track.album ? ` · ${track.album}` : ''}</small></div>
+      <div className="library-copy" role="button" tabIndex={0} onClick={() => { if (!selection.selecting) void play(tracks.data || [], track.id) }} onKeyDown={event => { if (!selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(tracks.data || [], track.id) } }}><strong>{track.title}</strong><small>{track.artist || '歌手未知'}{track.album ? ` · ${track.album}` : ''}</small></div>
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>

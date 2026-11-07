@@ -56,6 +56,7 @@ import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/l
 import { chooseTrackPlaylist, showTrackMenu } from '../features/library/trackActionStore'
 import { ActionMenu } from '../shared/ActionMenu'
 import { isIOS } from '../services/platform'
+import { PlayerProgress } from '../features/player/PlayerProgress'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -142,14 +143,11 @@ export function App() {
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
   const queue = usePlayerStore((state) => state.queue)
-  const progressSeconds = usePlayerStore((state) => state.progressSeconds)
-  const durationSeconds = usePlayerStore((state) => state.durationSeconds)
   const play = usePlayerStore((state) => state.play)
   const toggle = usePlayerStore((state) => state.toggle)
   const toggleQueue = usePlayerStore((state) => state.toggleQueue)
   const next = usePlayerStore((state) => state.next)
   const previous = usePlayerStore((state) => state.previous)
-  const seek = usePlayerStore((state) => state.seek)
   const volume = usePlayerStore((state) => state.volume)
   const setVolume = usePlayerStore((state) => state.setVolume)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
@@ -221,12 +219,12 @@ export function App() {
     dockSwipeTimers.current.forEach(window.clearTimeout); dockSwipeTimers.current = []
     dockGesture.current = { startX: event.clientX, lastX: event.clientX, startedAt: performance.now() }
     setDockSwipeX(0); setDockSwipePhase('dragging')
-    event.currentTarget.setPointerCapture(event.pointerId)
   }
   const moveDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!dockGesture.current) return
     dockGesture.current.lastX = event.clientX
     const distance = event.clientX - dockGesture.current.startX
+    if (Math.abs(distance) > 8 && !event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId)
     setDockSwipeX(Math.max(-96, Math.min(96, distance * .82)))
   }
   const finishDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -422,7 +420,7 @@ export function App() {
         <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} style={{ '--dock-swipe-x': `${dockSwipeX}px` } as CSSProperties} onPointerDown={startDockSwipe} onPointerMove={moveDockSwipe} onPointerUp={finishDockSwipe} onPointerCancel={() => { dockGesture.current = null; setDockSwipeX(0); setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => { if (suppressDockClick.current) { suppressDockClick.current = false; return }; setLyricsOpen(true) }} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         <div className="dock-center">
           <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
-          <div className="progress"><small>{formatDuration(progressSeconds)}</small><RangeControl aria-label="播放进度" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>
+          <PlayerProgress />
         </div>
         <div className="dock-tools"><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
       </footer>

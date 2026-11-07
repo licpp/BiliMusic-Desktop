@@ -73,7 +73,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--cyan); outline-offs
 :root[data-theme="light"] .inline-error,:root[data-theme="light"] .dialog-error { color: #bc4739; }
 .video-fullscreen .video-tools { --muted: #dae3ec; --ink: #fff; --line: #ffffff25; }
 @media(max-width:1000px) { .hero-cover-button { flex-basis: 120px; width: 120px; height: 120px; margin-right: 24px; } }
-.synced-video { opacity: 0; }.synced-video.ready { opacity: 1; transition: opacity 120ms ease; }.synced-video.inactive{visibility:hidden;pointer-events:none}
+.synced-video { opacity: 0; }.synced-video.ready { opacity: 1; transition: opacity 120ms ease; }.synced-video.inactive{display:none;pointer-events:none}
 .video-startup { position: absolute; inset: 0; display: grid; place-items: center; background: var(--panel); }
 .video-startup > .artwork { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .65; }
 .video-startup-status { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin: 16px; padding: 10px 14px; border-radius: 10px; background: #071019dd; color: #f3f6fa; font-size: 11px; }

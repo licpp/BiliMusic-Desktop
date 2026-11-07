@@ -821,7 +821,7 @@ impl BilibiliProvider {
         let stream = streams
             .iter()
             .filter(|item| item.codecs.starts_with("avc"))
-            .filter(|item| item.height <= 720)
+            .filter(|item| item.height <= if cfg!(target_os = "ios") { 480 } else { 720 })
             .max_by_key(|item| item.bandwidth)
             .or_else(|| {
                 streams
@@ -991,7 +991,9 @@ impl BilibiliProvider {
                 message: envelope.message,
             });
         }
-        envelope.data.ok_or_else(|| ProviderError::Api {
+        // Mutation endpoints may acknowledge success with data: null. Value
+        // accepts null; structured response types still reject missing data.
+        envelope.data.or_else(|| serde_json::from_value(serde_json::Value::Null).ok()).ok_or_else(|| ProviderError::Api {
             code: -1,
             message: "响应缺少 data".into(),
         })
@@ -1121,6 +1123,25 @@ mod tests {
     fn parses_variable_length_duration() {
         assert_eq!(parse_duration("04:12"), 252);
         assert_eq!(parse_duration("1:02:03"), 3723);
+    }
+
+    #[tokio::test]
+    async fn mutation_accepts_null_acknowledgement_but_rejects_api_failure() {
+        use super::{BilibiliProvider, Url};
+        use axum::{Router, Json, routing::post};
+        let app = Router::new()
+            .route("/ok", post(|| async { Json(serde_json::json!({"code":0,"data":null})) }))
+            .route("/fail", post(|| async { Json(serde_json::json!({"code":-101,"message":"not logged in","data":null})) }));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let provider = BilibiliProvider::new().unwrap();
+        provider.set_session_cookie(Some("SESSDATA=test".into())).await;
+        let ok: Url = format!("http://{address}/ok").parse().unwrap();
+        let fail: Url = format!("http://{address}/fail").parse().unwrap();
+        assert!(provider.post_data::<serde_json::Value>(ok, &[]).await.unwrap().is_null());
+        assert!(provider.post_data::<serde_json::Value>(fail, &[]).await.is_err());
+        server.abort();
     }
 
     #[tokio::test]

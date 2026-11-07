@@ -160,7 +160,10 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
 }
 const nativeReady = isMobile ? observeMobileAudio(onNativeState).then(async () => onNativeState(await snapshotMobileAudio())) : Promise.resolve()
 void nativeReady.catch(nativeError)
+let reconciliationPending = false
 async function reconcileMobilePlayback(rebind = false) {
+  if (reconciliationPending) return
+  reconciliationPending = true
   try {
     if (isIOS && rebind) await restartIOSAudioObservation()
     onNativeState(await snapshotMobileAudio())
@@ -169,7 +172,7 @@ async function reconcileMobilePlayback(rebind = false) {
       try { await restartIOSAudioObservation(); onNativeState(await snapshotMobileAudio()); return } catch { /* report the original failure */ }
     }
     nativeError(error)
-  }
+  } finally { reconciliationPending = false }
 }
 if (isMobile) {
   const resume = () => { if (!document.hidden) void reconcileMobilePlayback(isIOS && iosListenerAge() > 2_000) }
@@ -177,13 +180,19 @@ if (isMobile) {
   window.addEventListener('pageshow', resume)
   window.addEventListener('focus', resume)
 }
+let lastNativePollAt = 0
 if (isIOS) window.setInterval(() => {
   if (document.hidden) return
   const state = usePlayerStore.getState()
   if (state.status === 'playing') {
     const position = playbackClock()
     if (Number.isFinite(position) && Math.abs(position - state.progressSeconds) > .08) usePlayerStore.setState({ progressSeconds: position })
-    if (iosListenerAge() > 2_000) void reconcileMobilePlayback(true)
+  }
+  // Events may stop while the UI says paused/buffering too. Snapshot first;
+  // repeated listener teardown can itself starve the channel of events.
+  if (state.current && state.status !== 'resolving' && performance.now() - lastNativePollAt > 2_000) {
+    lastNativePollAt = performance.now()
+    void reconcileMobilePlayback()
   }
 }, 250)
 

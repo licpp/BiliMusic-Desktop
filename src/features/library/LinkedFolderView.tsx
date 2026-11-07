@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Link2, Plus, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Link2, Play, Plus, RefreshCw, X } from 'lucide-react'
 import {
   changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts, listPlaylists,
   type FavoriteVideo, type Playlist,
@@ -13,6 +13,7 @@ import { useRowContextMenu } from '../../shared/useRowContextMenu'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { linkedFolderKey, reloadLinkedFolder } from '../../services/linkedFolders'
 import { VideoPartsList } from './VideoPartsList'
+import { usePlayerStore } from '../player/playerStore'
 import { PlaylistMenu } from './PlaylistEntry'
 
 export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & { biliFolderId: number }; onUnlink: () => void }) {
@@ -108,10 +109,15 @@ function LinkedVideoRow({ video, expanded, busy, onOpen, onRemove }: {
   video: FavoriteVideo; expanded: boolean; busy: boolean; onOpen: () => void; onRemove: () => void
 }) {
   const { position, onContextMenu } = useRowContextMenu()
+  const playVideo = async () => {
+    const detail = await getVideoParts(video.bvid)
+    await usePlayerStore.getState().playAll(detail.parts.map(part => toTrack(detail, part)))
+  }
+  const [playError, setPlayError] = useState('')
   return <article className="result-card">
     <div className="search-result-heading" onContextMenu={onContextMenu}>
       <button type="button" className="result-main" aria-expanded={expanded} onClick={onOpen}>
-        <span className="result-cover"><Artwork src={video.cover}/></span>
+        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i></span>
         <span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.bvid}</small></span>
         {expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
       </button>
@@ -120,6 +126,7 @@ function LinkedVideoRow({ video, expanded, busy, onOpen, onRemove }: {
         <button role="menuitem" disabled={busy} onClick={() => { close(); onRemove() }}>从 B 站收藏夹移除</button>
       </>}</ActionMenu>
     </div>
+    {playError && <p role="alert" className="inline-error">{playError}</p>}
     {expanded && <LinkedVideoParts bvid={video.bvid}/>}
   </article>
 }

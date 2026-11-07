@@ -27,7 +27,7 @@ export function TrackActionsHost() {
     return () => window.removeEventListener('bilimusic-account-changing', clear)
   }, [])
   useEffect(() => {
-    const dismiss = (event: PointerEvent) => { if (!element.current?.contains(event.target as Node)) useTrackActions.setState({ menu: null }) }
+    const dismiss = (event: PointerEvent) => { if ((event.target as HTMLElement).closest('.track-menu-scrim')) return; if (!element.current?.contains(event.target as Node)) useTrackActions.setState({ menu: null }) }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && (menu || adding || editing)) { event.stopPropagation(); useTrackActions.setState({ menu: null, adding: null }); setEditing(null) } }
     document.addEventListener('pointerdown', dismiss); document.addEventListener('keydown', escape)
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape) }
@@ -40,6 +40,7 @@ export function TrackActionsHost() {
     catch (cause) { setError(commandErrorMessage(cause)) }
   }
   return createPortal(<>
+    {menu && <div className="track-menu-scrim" onClick={event => { event.stopPropagation(); useTrackActions.setState({ menu: null }) }} />}
     {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
       <button role="menuitem" onClick={() => { void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>

@@ -2,7 +2,7 @@ import { toTrack } from '../../services/collectionTrack'
 import type { Collection } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, CircleAlert, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
+import { CircleAlert, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import type { Track } from '../../domain/track'
 import { usePlayerStore } from '../player/playerStore'
@@ -90,12 +90,10 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
       const open = Boolean(state?.open)
       return <article className={open ? 'result-card expanded' : 'result-card'} key={item.bvid} onContextMenu={e=>{e.preventDefault();setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>
         <div className="search-result-heading"><button type="button" className="result-main" onClick={() => void selectResult(item)}>
-          <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i></span>
+          <span className="result-cover" onClick={event => { event.stopPropagation(); void resultAction(item, 'play') }}><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i></span>
           <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
-        </button><button type="button" className="icon-action result-expand" aria-label={`${open ? '收起' : '展开'}分 P：${item.title}`} aria-expanded={open} aria-controls={`search-parts-${item.bvid}`} disabled={state?.loading} onClick={() => void selectResult(item, true)}>
-          {state?.loading ? <LoaderCircle className="spin" size={19} /> : open ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
-        </button><CollectionBookmark item={item}/><CollectionMenu item={item} onOpen={onCollectionOpen ? () => onCollectionOpen({ ...item, folderId: '' }) : undefined} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
+        </button>{state?.loading && <LoaderCircle className="spin" size={19} />}<CollectionBookmark item={item}/><CollectionMenu item={item} onOpen={onCollectionOpen ? () => onCollectionOpen({ ...item, folderId: '' }) : undefined} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
           <button role="menuitem" onClick={() => { close(); setLinking(item.bvid) }}><Link2 size={16} />添加到关联收藏夹…</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>

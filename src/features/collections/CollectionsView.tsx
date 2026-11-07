@@ -16,6 +16,7 @@ import { useCompactLayout } from '../../shared/useCompactLayout'
 import type { MenuPosition } from '../../shared/useRowContextMenu'
 import { accountEpoch } from '../../services/accountScope'
 import { CollectionDragHandle } from './CollectionDragHandle'
+import { isIOS } from '../../services/platform'
 
 const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: listCollections })
 type CollectionInfo = Omit<Collection, 'folderId'>
@@ -116,7 +117,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
       const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
       return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || '打开查看分 P'} sidebar={sidebar}
         cover={<Artwork src={item.coverUrl}/>} onOpen={onOpen}
-        leading={canMove && <CollectionDragHandle title={title} folderId={item.folderId} onMove={target => move.mutate({ item, target })}/>}
+        leading={canMove && !isIOS && <CollectionDragHandle title={title} folderId={item.folderId} onMove={target => move.mutate({ item, target })}/>}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
     })}
     {children}

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal } from 'lucide-react'
+import { isIOS } from '../services/platform'
 
 export function ActionMenu({ label = '更多操作', panel = false, sheet = false, contextPosition, children }: { label?: string; panel?: boolean; sheet?: boolean; contextPosition?: {left:number;top:number;nonce:number}; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
-  const isSheet=sheet && compact
+  const isSheet=(sheet || isIOS) && compact
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
@@ -21,7 +22,11 @@ export function ActionMenu({ label = '更多操作', panel = false, sheet = fals
   },[isSheet,!!position])
   useEffect(() => {
     if (!position) return
-    const dismiss = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) close() }
+    const dismiss = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) {
+      // The scrim consumes the complete gesture, including its later click.
+      if ((event.target as HTMLElement).closest('.action-menu-no-scrim, .action-sheet-scrim')) return
+      close()
+    } }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close(); trigger.current?.focus() } }
     const back = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); close() }
     const scroll = (event: Event) => {

@@ -1,19 +1,20 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ChevronDown, Heart, LoaderCircle, MessageCircle, Send, X } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { memo, useRef, useState, type FormEvent } from 'react'
 import { CommentsSurface } from './CommentsSurface'
 import { isIOS } from '../../services/platform'
 import { commandErrorMessage, getCommentReplies, getComments, replyComment, setCommentLike, type BiliComment } from '../../services/desktopApi'
 
 type OptimisticLike = { liked: boolean; likeCount: number }
 
-export function CommentsPanel({ aid, onClose }: { aid: number; onClose: () => void }) {
+export const CommentsPanel = memo(function CommentsPanel({ aid, onClose }: { aid: number; onClose: () => void }) {
   const client = useQueryClient()
   const comments = useInfiniteQuery({ queryKey: ['comments', aid], initialPageParam: 1, queryFn: ({ pageParam }) => getComments(aid, pageParam), getNextPageParam: (last) => last.isEnd ? undefined : last.next })
   const [expanded, setExpanded] = useState<Record<number, BiliComment[]>>({})
   const [replyPages, setReplyPages] = useState<Record<number, number>>({})
   const [loadingReplies, setLoadingReplies] = useState<number | null>(null)
   const [likePending, setLikePending] = useState<Set<number>>(() => new Set())
+  const likeRequests = useRef(new Set<number>())
   const [optimisticLikes, setOptimisticLikes] = useState<Record<number, OptimisticLike>>({})
   const [thread, setThread] = useState<BiliComment | null>(null)
   const [replying, setReplying] = useState<BiliComment | null>(null)
@@ -34,19 +35,21 @@ export function CommentsPanel({ aid, onClose }: { aid: number; onClose: () => vo
     await loadReplies(comment, 1)
   }
   const like = async (comment: BiliComment) => {
-    if (likePending.has(comment.id)) return
+    if (likeRequests.current.has(comment.id)) return
+    likeRequests.current.add(comment.id)
     const current = shown(comment)
     const next = { liked: !current.liked, likeCount: Math.max(0, current.likeCount + (current.liked ? -1 : 1)) }
     setOptimisticLikes(value => ({ ...value, [comment.id]: next }))
     setLikePending(value => new Set(value).add(comment.id))
     try {
       await setCommentLike(aid, comment.id, next.liked)
-      await client.invalidateQueries({ queryKey: ['comments', aid] })
-      setOptimisticLikes(value => { const copy = { ...value }; delete copy[comment.id]; return copy })
+      // Keep the acknowledged value for this panel's lifetime: the read API can
+      // lag behind the write API, including for replies not in the query cache.
     } catch (cause) {
       setOptimisticLikes(value => ({ ...value, [comment.id]: { liked: current.liked, likeCount: current.likeCount } }))
       setError(`点赞失败，已恢复原状态：${commandErrorMessage(cause)}`)
     } finally {
+      likeRequests.current.delete(comment.id)
       setLikePending(value => { const copy = new Set(value); copy.delete(comment.id); return copy })
     }
   }
@@ -80,7 +83,7 @@ export function CommentsPanel({ aid, onClose }: { aid: number; onClose: () => vo
     </>}
     <form className="comment-compose" onSubmit={submit}>{replying && <div><span>回复 <b>@{replying.userName}</b></span><button type="button" onClick={() => { setReplying(null); setMessage('') }}>取消</button></div>}<textarea maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={replying ? `回复 @${replying.userName}` : '友善地说点什么…'} />{error && <small>{error}</small>}<button disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" /> : <Send />}发送</button></form>
   </CommentsSurface>
-}
+})
 
 function splitReply(message: string) {
   const match = message.match(/^(?:回复\s*)?@([^\s:：]+)\s*[:：]\s*([\s\S]*)$/)
