@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { isAndroid } from './platform'
+import { isAndroid, isIOS } from './platform'
 import { create } from 'zustand'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -10,6 +10,7 @@ function applyTheme(theme: Theme) {
   document.documentElement.dataset.theme = theme
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f4f6fa' : '#071019')
   if (isAndroid) void invoke('plugin:android-player|control', { action: 'theme', value: theme === 'light' ? 1 : 0 }).catch(() => undefined)
+  else if (isIOS) void invoke('plugin:ios-player|control', { action: 'theme', value: theme === 'light' ? 1 : 0 }).catch(() => undefined)
   else if (isTauri()) void getCurrentWindow().setTheme(theme).catch(() => undefined)
 }
 export const useThemeStore = create<{ theme: Theme; setTheme: (theme: Theme) => void }>((set) => ({

@@ -14,3 +14,11 @@ vite.config.d.ts
 !.env.example
 
 src-tauri/.android-icons/
+
+src-tauri/.ios-icons/
+*.ipa
+*.mobileprovision
+*.p12
+native/ios-player/.tauri/
+native/ios-player/ios/.build/
+native/ios-player/ios/.swiftpm/

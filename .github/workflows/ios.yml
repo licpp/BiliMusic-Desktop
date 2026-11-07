@@ -1,0 +1,43 @@
+name: ios-self-sign-build
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/ios-self-sign]
+    paths: ['src/**', 'src-tauri/**', 'native/ios-player/**', 'scripts/ios-*', 'package*', 'tests/**', '.github/workflows/ios.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ios-device
+      - run: xcodebuild -version
+      - run: brew install xcodegen libimobiledevice
+      - run: npm ci
+      - run: npm test
+      - run: npm run ios:init
+      - name: Build real-device archive without signing credentials
+        run: npm run ios:build
+      - run: node scripts/ios-verify-acl.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BiliMusic-iOS-arm64-unsigned
+          path: |
+            src-tauri/target/ios-unsigned/*
+            docs/iOS-self-sign.md
+          if-no-files-found: error

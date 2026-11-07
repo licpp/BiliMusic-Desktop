@@ -1,0 +1,13 @@
+{
+  "identifier": "ios-player",
+  "description": "Native playback for the iOS main window",
+  "platforms": [
+    "iOS"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "ios-player:default"
+  ]
+}

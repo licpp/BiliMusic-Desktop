@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { isAndroid } from '../../services/platform'
+import { isMobile } from '../../services/platform'
 
 const mobileQuery = '(max-width: 960px)'
 function subscribeToLayout(listener: () => void) {
@@ -8,7 +8,7 @@ function subscribeToLayout(listener: () => void) {
   media.addEventListener('change', listener)
   return () => media.removeEventListener('change', listener)
 }
-const isMobileLayout = () => isAndroid || window.matchMedia(mobileQuery).matches
+const isMobileLayout = () => isMobile || window.matchMedia(mobileQuery).matches
 
 export function CommentsSurface({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   const mobile = useSyncExternalStore(subscribeToLayout, isMobileLayout)

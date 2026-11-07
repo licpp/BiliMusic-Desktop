@@ -12,7 +12,7 @@ const output = await build({
       export const inDesktopShell = true;
       export const recordPlayedTrack = async t => t;
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
-    ` : path === 'platform' ? 'export const isAndroid = true' : `
+    ` : path === 'platform' ? 'export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;

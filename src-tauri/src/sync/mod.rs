@@ -129,7 +129,16 @@ fn secret(
     {
         tauri_plugin_android_player::secret(app, &key, value, remove)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
+    #[cfg(target_os = "ios")]
+    {
+        tauri_plugin_ios_player::secret(app, &key, value, remove)
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android",
+        target_os = "ios"
+    )))]
     {
         let _ = (app, key, value, remove);
         Err("此平台暂不支持安全保存同步凭据".into())

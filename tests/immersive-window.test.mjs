@@ -10,16 +10,16 @@ const capabilities = JSON.parse(await readFile('src-tauri/capabilities/immersive
 const output = await build({ entryPoints: ['src/services/immersiveWindow.ts'], bundle: true, write: false, format: 'cjs', platform: 'node',
   plugins: [{ name: 'platform', setup(b) {
     b.onResolve({ filter: /^\.\/platform$/ }, () => ({ path: 'platform', namespace: 'test' }))
-    b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isAndroid = globalThis.testAndroid' }))
+    b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isAndroid = globalThis.testAndroid; export const isIOS = globalThis.testIOS; export const isMobile = isAndroid || isIOS' }))
   } }],
 })
 function setup(os) {
-  globalThis.isTauri = true; globalThis.testAndroid = os === 'android'
+  globalThis.isTauri = true; globalThis.testAndroid = os === 'android'; globalThis.testIOS = os === 'ios'
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: os === 'windows' ? 'Windows NT' : os === 'macos' ? 'Macintosh' : 'Android' } })
   globalThis.window = { crypto: webcrypto }
   const calls = []
   mockIPC((command, args) => {
-    if (os !== 'android') assert.ok(capabilities.permissions.includes(`core:window:allow-${command.split('|')[1].replaceAll('_','-')}`), command)
+    if (os !== 'android' && os !== 'ios') assert.ok(capabilities.permissions.includes(`core:window:allow-${command.split('|')[1].replaceAll('_','-')}`), command)
     calls.push({ command, args })
   })
   window.__TAURI_INTERNALS__.metadata = { currentWindow: { label: 'main' } }
@@ -47,5 +47,13 @@ test('Android immersive mode uses the authorized native player control command',
   try {
     await Promise.all([set(true), set(false)])
     assert.deepEqual(calls.map(c => [c.command,c.args.action,c.args.value]), [['plugin:android-player|control','immersive',1],['plugin:android-player|control','immersive',0]])
+  } finally { clearMocks() }
+})
+
+test('iOS immersive mode uses native control without desktop window APIs', async () => {
+  const { set, calls } = setup('ios')
+  try {
+    await Promise.all([set(true), set(false)])
+    assert.deepEqual(calls.map(c => [c.command,c.args.action,c.args.value]), [['plugin:ios-player|control','immersive',1],['plugin:ios-player|control','immersive',0]])
   } finally { clearMocks() }
 })

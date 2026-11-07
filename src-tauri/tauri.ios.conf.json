@@ -1,0 +1,20 @@
+{
+  "identifier": "app.bilimusic.ios",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "BiliMusic",
+        "width": 400,
+        "height": 800,
+        "minWidth": 0,
+        "minHeight": 0
+      }
+    ]
+  },
+  "bundle": {
+    "iOS": {
+      "minimumSystemVersion": "15.0"
+    }
+  }
+}

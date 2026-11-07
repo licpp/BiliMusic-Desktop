@@ -1,6 +1,8 @@
 mod domain;
 mod infrastructure;
 mod interface;
+#[cfg(target_os = "ios")]
+mod ios_playback;
 mod sync;
 
 use infrastructure::database::Database;
@@ -29,6 +31,8 @@ pub fn run() {
     }));
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_android_player::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_ios_player::init());
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -55,6 +59,8 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
+            #[cfg(target_os = "ios")]
+            ios_playback::initialize(app.handle().clone());
             #[cfg(desktop)]
             {
                 let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;

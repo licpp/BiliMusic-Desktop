@@ -812,7 +812,7 @@ pub async fn download_track(
     if !directory.is_dir() {
         return Err(CommandError::validation("下载位置不是目录"));
     }
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         use tauri::Manager;
         let allowed = app
@@ -823,10 +823,10 @@ pub async fn download_track(
             .canonicalize()
             .map_err(CommandError::database)?;
         if directory != allowed {
-            return Err(CommandError::validation("Android 下载仅写入应用私有目录"));
+            return Err(CommandError::validation("移动端下载仅写入应用私有目录"));
         }
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let _ = app;
     let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
     let download_id = uuid::Uuid::new_v4().to_string();

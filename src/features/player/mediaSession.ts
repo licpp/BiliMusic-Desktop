@@ -1,8 +1,8 @@
-import { isAndroid } from '../../services/platform'
+import { isMobile } from '../../services/platform'
 import { usePlayerStore } from './playerStore'
 
 export function connectMediaSession() {
-  if (isAndroid) return () => undefined
+  if (isMobile) return () => undefined
   if (!('mediaSession' in navigator)) return () => undefined
   const session = navigator.mediaSession
   const actions: Partial<Record<MediaSessionAction, MediaSessionActionHandler>> = {

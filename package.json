@@ -11,7 +11,10 @@
     "tauri": "tauri",
     "android:init": "tauri icon public/app-icon.png --output src-tauri/.android-icons && tauri android init --ci --skip-targets-install && node scripts/android-prepare.mjs",
     "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk --target aarch64"
+    "android:build": "tauri android build --apk --target aarch64",
+    "ios:init": "tauri icon public/app-icon.png --output src-tauri/.ios-icons && tauri ios init --ci --skip-targets-install && node scripts/ios-prepare.mjs",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build --ci --target aarch64 --no-sign --archive-only && node scripts/ios-package.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.89.0",
