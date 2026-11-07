@@ -10,7 +10,7 @@ import { hydrateVisibleTracks } from '../services/sync'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
 import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -20,6 +20,7 @@ import {
   ArrowLeft,
   ArrowUp,
   ArrowDown,
+  ChevronDown,
   ChevronRight,
   Clock3,
   Download,
@@ -52,7 +53,9 @@ import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
 import { useThemeStore } from '../services/theme'
 import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/library/TrackActions'
-import { showTrackMenu } from '../features/library/trackActionStore'
+import { chooseTrackPlaylist, showTrackMenu } from '../features/library/trackActionStore'
+import { ActionMenu } from '../shared/ActionMenu'
+import { isIOS } from '../services/platform'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -85,6 +88,13 @@ export function App() {
   const [actionError, setActionError] = useState('')
   const [importOpen, setImportOpen] = useState(false)
   const [favoritePending, setFavoritePending] = useState(false)
+  const favoriteDesired = useRef<boolean | undefined>(undefined)
+  const favoriteRunning = useRef(false)
+  const dockGesture = useRef<{ startX: number; lastX: number; startedAt: number } | null>(null)
+  const dockSwipeTimers = useRef<number[]>([])
+  const suppressDockClick = useRef(false)
+  const [dockSwipeX, setDockSwipeX] = useState(0)
+  const [dockSwipePhase, setDockSwipePhase] = useState<'idle' | 'dragging' | 'commit-left' | 'commit-right' | 'enter-left' | 'enter-right'>('idle')
   const theme = useThemeStore((state) => state.theme)
   const setTheme = useThemeStore((state) => state.setTheme)
   const queryClient = useQueryClient()
@@ -160,17 +170,37 @@ export function App() {
     queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
   }
   const toggleCurrentFavorite = async () => {
-    if (!current || favoritePending) return
-    setFavoritePending(true)
-    try {
-    const liked = inDesktopShell ? await toggleStoredFavorite(current.id) : !current.liked
+    if (!current) return
     const latest = usePlayerStore.getState().queue.find((track) => track.id === current.id) || current
-    updatePlayerTrack({ ...latest, liked })
-    await queryClient.invalidateQueries({ queryKey: ['library'] })
-    await queryClient.invalidateQueries({ queryKey: ['home-recent'] })
-    await queryClient.invalidateQueries({ queryKey: ['playlists'] })
-    } catch (error) { setActionError(commandErrorMessage(error)) }
-    finally { setFavoritePending(false) }
+    if (!latest) return
+    const next = !latest.liked
+    updatePlayerTrack({ ...latest, liked: next })
+    favoriteDesired.current = next
+    if (favoriteRunning.current) return
+    favoriteRunning.current = true; setFavoritePending(true)
+    let confirmed = latest.liked
+    try {
+      while (favoriteDesired.current !== undefined && favoriteDesired.current !== confirmed) {
+        const requested: boolean = favoriteDesired.current
+        const liked = inDesktopShell ? await toggleStoredFavorite(latest.id) : requested
+        confirmed = liked
+        if (favoriteDesired.current === requested) favoriteDesired.current = undefined
+        if (favoriteDesired.current === undefined) {
+          const track = usePlayerStore.getState().queue.find(item => item.id === latest.id) || latest
+          updatePlayerTrack({ ...track, liked })
+        }
+      }
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['home-recent'] }),
+        queryClient.invalidateQueries({ queryKey: ['playlists'] }),
+      ])
+    } catch (error) {
+      favoriteDesired.current = undefined
+      const track = usePlayerStore.getState().queue.find(item => item.id === latest.id) || latest
+      updatePlayerTrack({ ...track, liked: confirmed })
+      setActionError(`收藏失败，已恢复原状态：${commandErrorMessage(error)}`)
+    } finally { favoriteRunning.current = false; setFavoritePending(false) }
   }
   useEffect(() => {
     if (!inDesktopShell) return
@@ -184,6 +214,45 @@ export function App() {
     void setImmersiveWindow(lyricsOpen).catch((error) => setActionError(commandErrorMessage(error)))
   }, [lyricsOpen])
   useEffect(() => { if (current) { void queryClient.invalidateQueries({ queryKey: ['home-recent'] }); void queryClient.invalidateQueries({ queryKey: ['library'] }) } }, [current?.id, queryClient])
+  useEffect(() => () => { dockSwipeTimers.current.forEach(window.clearTimeout) }, [])
+
+  const startDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isIOS || !current || (event.target as HTMLElement).closest('.dock-heart')) return
+    dockSwipeTimers.current.forEach(window.clearTimeout); dockSwipeTimers.current = []
+    dockGesture.current = { startX: event.clientX, lastX: event.clientX, startedAt: performance.now() }
+    setDockSwipeX(0); setDockSwipePhase('dragging')
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const moveDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dockGesture.current) return
+    dockGesture.current.lastX = event.clientX
+    const distance = event.clientX - dockGesture.current.startX
+    setDockSwipeX(Math.max(-96, Math.min(96, distance * .82)))
+  }
+  const finishDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = dockGesture.current
+    if (!gesture) return
+    dockGesture.current = null
+    const distance = event.clientX - gesture.startX
+    const velocity = distance / Math.max(1, performance.now() - gesture.startedAt)
+    const direction = Math.abs(distance) >= 54 || (Math.abs(distance) >= 24 && Math.abs(velocity) >= .48) ? Math.sign(distance) : 0
+    if (!direction) { setDockSwipeX(0); setDockSwipePhase('idle'); return }
+    suppressDockClick.current = true
+    setDockSwipePhase(direction < 0 ? 'commit-left' : 'commit-right')
+    const switchTimer = window.setTimeout(() => {
+      if (direction < 0) void next(); else void previous()
+      setDockSwipeX(0)
+      setDockSwipePhase(direction < 0 ? 'enter-left' : 'enter-right')
+      const settleTimer = window.setTimeout(() => {
+        setDockSwipePhase('idle')
+        // iOS normally emits a click after pointerup, but it may suppress it after a
+        // sufficiently long drag. Do not let that suppress the user's next real tap.
+        suppressDockClick.current = false
+      }, 230)
+      dockSwipeTimers.current.push(settleTimer)
+    }, 145)
+    dockSwipeTimers.current.push(switchTimer)
+  }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setLyricsOpen(false); setImportOpen(false); setSearchFocused(false); return }
@@ -210,8 +279,8 @@ export function App() {
         if (close) { event.preventDefault(); close.click(); return }
       }
       if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
-      if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
       if (queueOpen) { event.preventDefault(); toggleQueue(); return }
+      if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
       if(selectedCollection){event.preventDefault();closeCollection();return}
       if (libraryDetail) { event.preventDefault(); closeLibraryPage(); return }
       if (activeNav === '搜索' && submittedQuery) { event.preventDefault(); openSearch(''); return }
@@ -333,22 +402,24 @@ export function App() {
         </div>
       </main>
 
-      <aside className="queue-drawer" aria-hidden={!queueOpen}>
-        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3>接下来</h3></div><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">×</button></header>
+      {queueOpen && isIOS && <button className="queue-sheet-backdrop" aria-label="收起播放队列" onClick={toggleQueue} />}
+      <aside className={`queue-drawer${isIOS ? ' queue-sheet' : ''}`} aria-hidden={!queueOpen}>
+        {isIOS && <button className="queue-sheet-handle" aria-label="收起播放队列" onClick={toggleQueue}><span /></button>}
+        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3>接下来</h3></div><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">{isIOS ? <ChevronDown size={20}/> : '×'}</button></header>
         <div className="now-card">
           <Artwork src={current?.coverUrl} className="now-art" />
           <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
         <div className="queue-list">
           {queue.map((track, index) => (
-            <div className="queue-entry" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button><PlaylistButton track={track} /><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></div>
+            <div className="queue-entry" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button>{isIOS ? <ActionMenu sheet label={`队列操作：${track.title}`}>{close => <><button onClick={() => { void play(track); close() }}><Play size={16}/>播放</button><button onClick={() => { chooseTrackPlaylist([track]); close() }}><ListMusic size={16}/>加入歌单…</button><button disabled={index === 0} onClick={() => { moveInQueue(track.id, -1); close() }}><ArrowUp size={16}/>上移</button><button disabled={index === queue.length - 1} onClick={() => { moveInQueue(track.id, 1); close() }}><ArrowDown size={16}/>下移</button><button onClick={() => { removeFromQueue(track.id); close() }}><Trash2 size={16}/>移出队列</button></>}</ActionMenu> : <><PlaylistButton track={track} /><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></>}</div>
           ))}
           {!queue.length && <p className="queue-empty">队列为空，可以从音乐库或搜索结果添加歌曲。</p>}
         </div>
       </aside>
 
       <footer className="player-dock">
-        <div className="dock-track-group" onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => setLyricsOpen(true)} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current || favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
+        <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} style={{ '--dock-swipe-x': `${dockSwipeX}px` } as CSSProperties} onPointerDown={startDockSwipe} onPointerMove={moveDockSwipe} onPointerUp={finishDockSwipe} onPointerCancel={() => { dockGesture.current = null; setDockSwipeX(0); setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => { if (suppressDockClick.current) { suppressDockClick.current = false; return }; setLyricsOpen(true) }} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         <div className="dock-center">
           <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
           <div className="progress"><small>{formatDuration(progressSeconds)}</small><RangeControl aria-label="播放进度" min="0" max={Math.max(1, durationSeconds)} value={Math.min(progressSeconds, durationSeconds || 0)} onChange={(event) => seek(Number(event.target.value))} /><small>{formatDuration(durationSeconds)}</small></div>

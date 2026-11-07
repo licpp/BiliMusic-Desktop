@@ -21,14 +21,16 @@ const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: list
 type CollectionInfo = Omit<Collection, 'folderId'>
 
 export function CollectionBookmark({ item }: { item: CollectionInfo }) {
-  const query=useCollections(),client=useQueryClient(),[busy,setBusy]=useState(false),[error,setError]=useState('')
+  const query=useCollections(),client=useQueryClient(),[busy,setBusy]=useState(false),[error,setError]=useState(''),[optimistic,setOptimistic]=useState<boolean>()
   const saved=query.data?.items.find(i=>i.bvid===item.bvid)
+  const active=optimistic??Boolean(saved)
   const toggle=async()=>{
-    setBusy(true);setError('')
-    try{await changeCollection(saved?'remove':'save',item.bvid,'',{...item,folderId:''});await client.invalidateQueries({queryKey:['collections']})}
-    catch(e){setError(commandErrorMessage(e))}finally{setBusy(false)}
+    if(busy)return
+    const next=!active;setOptimistic(next);setBusy(true);setError('')
+    try{await changeCollection(saved?'remove':'save',item.bvid,'',{...item,folderId:''});await client.invalidateQueries({queryKey:['collections']});setOptimistic(undefined)}
+    catch(e){setOptimistic(active);setError(`收藏失败，已恢复原状态：${commandErrorMessage(e)}`)}finally{setBusy(false)}
   }
-  return <><button className={`icon-action collection-bookmark ${saved?'saved':''}`} disabled={busy||query.isLoading} aria-label={saved?'取消收藏合集':'收藏整个合集'} aria-pressed={!!saved} title={saved?'取消收藏合集':'收藏整个合集'} onClick={()=>void toggle()}><Bookmark size={18} fill={saved?'currentColor':'none'}/></button>{error&&<span role="alert" className="inline-error">{error}</span>}</>
+  return <><button className={`icon-action collection-bookmark ${active?'saved':''}`} aria-busy={busy} disabled={query.isLoading} aria-label={active?'取消收藏合集':'收藏整个合集'} aria-pressed={active} title={active?'取消收藏合集':'收藏整个合集'} onClick={()=>void toggle()}><Bookmark size={18} fill={active?'currentColor':'none'}/></button>{error&&<span role="alert" className="inline-error">{error}</span>}</>
 }
 
 export function CollectionMenu({item,contextPosition,onOpen,additionalActions}:{item:CollectionInfo;contextPosition?:{left:number;top:number;nonce:number};onOpen?:()=>void;additionalActions?:(close:()=>void)=>ReactNode}){

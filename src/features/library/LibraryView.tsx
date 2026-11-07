@@ -34,6 +34,9 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
   const selection = useTrackSelection(tracks.data || [])
   const [importResult, setImportResult] = useState<LocalImportResult>()
   const [importError, setImportError] = useState('')
+  const [favoriteError, setFavoriteError] = useState('')
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, boolean>>({})
+  const [favoritePending, setFavoritePending] = useState<Set<string>>(() => new Set())
   const importFiles = useMutation({ mutationFn: async () => {
     const epoch = accountEpoch()
     const paths = await open({ multiple: true, title: '导入本地歌曲', filters: [{ name: '音频', extensions: ['mp3', 'm4a', 'wav'] }] })
@@ -46,10 +49,22 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
   useEffect(() => { void hydrateVisibleTracks(tracks.data, client).catch(() => undefined) }, [tracks.data, client])
   const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
   const refresh = () => Promise.all([client.invalidateQueries({ queryKey: ['library'] }), client.invalidateQueries({ queryKey: ['playlists'] }), client.invalidateQueries({ queryKey: ['home-recent'] })])
-  const favorite = useMutation({
-    mutationFn: toggleStoredFavorite,
-    onSuccess: (liked, id) => { const track = tracks.data?.find((item) => item.id === id); if (track) updatePlayerTrack({ ...track, liked }); return refresh() },
-  })
+  const toggleFavorite = async (track: Track) => {
+    if (favoritePending.has(track.id)) return
+    const previous = favoriteOverrides[track.id] ?? track.liked
+    setFavoriteOverrides(value => ({ ...value, [track.id]: !previous }))
+    setFavoritePending(value => new Set(value).add(track.id)); setFavoriteError('')
+    try {
+      const liked = await toggleStoredFavorite(track.id)
+      setFavoriteOverrides(value => ({ ...value, [track.id]: liked }))
+      updatePlayerTrack({ ...track, liked })
+      await refresh()
+      setFavoriteOverrides(value => { const copy = { ...value }; delete copy[track.id]; return copy })
+    } catch (cause) {
+      setFavoriteOverrides(value => ({ ...value, [track.id]: previous }))
+      setFavoriteError(`收藏失败，已恢复原状态：${commandErrorMessage(cause)}`)
+    } finally { setFavoritePending(value => { const copy = new Set(value); copy.delete(track.id); return copy }) }
+  }
   return <section className="library-view">
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (local ? '本地音乐' : '音乐库')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : local ? '导入 MP3、M4A 或 WAV 文件，在本机播放。' : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
@@ -66,12 +81,12 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
       已导入 {importResult.added} 首，跳过 {importResult.alreadyImported} 首重复歌曲
       {importResult.failed.length > 0 && <details><summary>{importResult.failed.length} 个文件未导入</summary>{importResult.failed.map((error, index) => <p key={index}>{error}</p>)}</details>}
     </div>}
-    {favorite.isError && <p className="inline-error">{commandErrorMessage(favorite.error)}</p>}
+    {favoriteError && <p className="inline-error">{favoriteError}</p>}
     <div>
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={local ? '还没有导入歌曲' : isFavorites ? '还没有喜欢的歌曲' : playlist ? '歌单还是空的' : recent ? '还没有播放记录' : '还没有收藏的歌曲'} detail={local ? '选择本机音频文件开始导入。' : isFavorites ? '点击歌曲旁的红心，或通过“加入歌单”添加到我喜欢。' : playlist ? '通过歌曲菜单把歌曲加入这里。' : recent ? '播放过的歌曲会出现在这里。' : '点击红心，或把歌曲加入歌单后，它会出现在这里。'} />}
-    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((track, index) => <article className={selection.selecting ? 'library-track selecting' : 'library-track'} key={track.id} onContextMenu={(event) => { if (!selection.selecting) showTrackMenu(event, track, playlist?.id, tracks.data) }}>
+    {Boolean(tracks.data?.length) && <div className="library-grid">{tracks.data!.map((source, index) => { const track = favoriteOverrides[source.id] === undefined ? source : { ...source, liked: favoriteOverrides[source.id] }; return <article className={selection.selecting ? 'library-track selecting' : 'library-track'} key={track.id} onContextMenu={(event) => { if (!selection.selecting) showTrackMenu(event, track, playlist?.id, tracks.data) }}>
       {selection.selecting ? <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} /> :
       <button className="library-art" onClick={() => void play(tracks.data || [], track.id)} aria-label={`播放 ${track.title}`}>
         {track.coverUrl ? <img src={track.coverUrl} alt="" loading="lazy" /> : <span className={`tone-${index % 4}`} />}
@@ -80,10 +95,10 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
       <div className="library-copy"><strong>{track.title}</strong><small>{track.artist || '歌手未知'}{track.album ? ` · ${track.album}` : ''}</small></div>
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
-      <button className={track.liked ? 'icon-action liked' : 'icon-action'} onClick={() => favorite.mutate(track.id)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
+      <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
       <TrackMenuButton track={track} playlistId={playlist?.id} tracks={tracks.data} />
       </div>}
-    </article>)}</div>}
+    </article>})}</div>}
     </div>
 
   </section>

@@ -20,6 +20,7 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
   const [linking, setLinking] = useState<string>()
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({})
+  const [favoriteState, setFavoriteState] = useState<Record<string, boolean>>({})
   const [actionError, setActionError] = useState('')
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.playFromList)
@@ -28,14 +29,16 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
   const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
   const items = [...new Map(result.data?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const add = async (track: Track, favorite = false) => {
+    const previous = favoriteState[track.id] ?? track.liked
+    if (favorite) setFavoriteState(value => ({ ...value, [track.id]: !previous }))
     try {
       const stored = await saveLibraryTrack(track)
-      if (favorite) { const liked = await toggleStoredFavorite(stored.id); usePlayerStore.getState().updateTrack({ ...stored, liked }) }
+      if (favorite) { const liked = await toggleStoredFavorite(stored.id); setFavoriteState(value => ({ ...value, [track.id]: liked })); usePlayerStore.getState().updateTrack({ ...stored, liked }) }
       else enqueue([stored])
       await client.invalidateQueries({ queryKey: ['library'] })
       if (favorite) { await client.invalidateQueries({ queryKey: ['playlists'] }); await client.invalidateQueries({ queryKey: ['home-recent'] }) }
       setActionError(favorite ? '已更新喜欢状态' : '已加入播放队列')
-    } catch (error) { setActionError(commandErrorMessage(error)) }
+    } catch (error) { if (favorite) setFavoriteState(value => ({ ...value, [track.id]: previous })); setActionError(favorite ? `收藏失败，已恢复原状态：${commandErrorMessage(error)}` : commandErrorMessage(error)) }
   }
 
   const selectResult = async (item: BiliSearchItem, expandOnly = false) => {
@@ -102,7 +105,7 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
 
         {open && state?.detail && <div id={`search-parts-${item.bvid}`}><VideoPartsList tracks={state.detail.parts.map(part => toTrack(state.detail!, part))} renderActions={track => <>
           <button className="icon-action" aria-label="加入队列" title="加入队列" onClick={() => void add(track)}><ListPlus size={16} /></button>
-          <button className="icon-action" aria-label="切换喜欢" title="切换喜欢" onClick={() => void add(track, true)}><Heart size={16} /></button>
+          <button className={`icon-action${(favoriteState[track.id] ?? track.liked) ? ' liked' : ''}`} aria-label="切换喜欢" title="切换喜欢" onClick={() => void add(track, true)}><Heart size={16} fill={(favoriteState[track.id] ?? track.liked) ? 'currentColor' : 'none'} /></button>
         </>} />{!state.detail.parts.length && <p className="batch-message">暂无可播放的分 P</p>}</div>}
       </article>
     })}</div>

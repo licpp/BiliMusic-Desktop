@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { isMobile } from '../../services/platform'
+import { isIOS, isMobile } from '../../services/platform'
 
 const mobileQuery = '(max-width: 960px)'
 function subscribeToLayout(listener: () => void) {
@@ -10,7 +10,7 @@ function subscribeToLayout(listener: () => void) {
 }
 const isMobileLayout = () => isMobile || window.matchMedia(mobileQuery).matches
 
-export function CommentsSurface({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+export function CommentsSurface({ children, onClose, forceExpanded = false }: { children: ReactNode; onClose: () => void; forceExpanded?: boolean }) {
   const mobile = useSyncExternalStore(subscribeToLayout, isMobileLayout)
   const [expanded, setExpanded] = useState(false)
   const panel = useRef<HTMLElement>(null)
@@ -41,7 +41,7 @@ export function CommentsSurface({ children, onClose }: { children: ReactNode; on
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }}>
-    <section ref={panel} className={`comments-panel comments-sheet${expanded ? ' expanded' : ''}`} role="dialog" aria-modal="true" aria-label="歌曲评论" onFocusCapture={event => { if (event.target instanceof HTMLTextAreaElement) setExpanded(true) }}>
+    <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''}${isIOS ? ' ios-comments' : ''}`} role="dialog" aria-modal="true" aria-label="歌曲评论" onFocusCapture={event => { if (event.target instanceof HTMLTextAreaElement) setExpanded(true) }}>
       <button className="comments-sheet-handle" type="button" aria-label={expanded ? '收起评论面板' : '展开评论面板'} aria-expanded={expanded}
         onPointerDown={event => { gesture.current = event.clientY; suppressClick.current = false; event.currentTarget.setPointerCapture(event.pointerId) }}
         onPointerCancel={() => { gesture.current = null }}
@@ -55,7 +55,7 @@ export function CommentsSurface({ children, onClose }: { children: ReactNode; on
           else if (expanded) setExpanded(false)
           else onClose()
         }}
-        onClick={() => { if (suppressClick.current) { suppressClick.current = false; return }; setExpanded(value => !value) }}><span /></button>
+        onClick={() => { if (suppressClick.current) { suppressClick.current = false; return }; if (!forceExpanded) setExpanded(value => !value) }}><span /></button>
       {children}
     </section>
   </div>, document.body)

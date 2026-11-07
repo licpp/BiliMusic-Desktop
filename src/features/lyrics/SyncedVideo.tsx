@@ -4,8 +4,9 @@ import { synchronizeVideo } from './videoSync'
 import { Artwork } from '../../shared/Artwork'
 import { LoaderCircle } from 'lucide-react'
 
-export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: string; poster?: string }) {
+export const SyncedVideo = memo(function SyncedVideo({ src, poster, active }: { src: string; poster?: string; active: boolean }) {
   const ref = useRef<HTMLVideoElement>(null)
+  const activeRef = useRef(active)
   const [error, setError] = useState('')
   const [visible, setVisible] = useState(false)
   const [slow, setSlow] = useState(false)
@@ -28,7 +29,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: str
     }
     let previousTime = playbackClock()
     const sync = (force = false) => {
-      if (document.hidden) { video.pause(); return }
+      if (document.hidden || !activeRef.current) { video.pause(); return }
       const time = playbackClock()
       synchronizeVideo(video, time, usePlayerStore.getState().status === 'playing', previousTime, force)
       previousTime = time
@@ -43,9 +44,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: str
     video.addEventListener('loadeddata', ready)
     video.addEventListener('seeked', ready)
     video.addEventListener('error', failed)
-    const start = Math.max(0, playbackClock())
-    // Media fragments let the browser request the current position during startup.
-    video.src = start > .2 ? `${src}#t=${start.toFixed(3)}` : src
+    video.src = src
     observeFrame()
     const slowTimer = window.setTimeout(() => setSlow(true), 5000)
     const timer = window.setInterval(ready, 250)
@@ -58,5 +57,12 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster }: { src: str
       video.pause(); video.removeAttribute('src'); video.load()
     }
   }, [src, retry])
-  return <><video ref={ref} className={visible ? 'synced-video ready' : 'synced-video'} muted playsInline preload="auto" />{!visible && <div className="video-startup"><Artwork src={poster} /><div className="video-startup-status" role="status"><LoaderCircle size={16} className="spin" /><span>{slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}</span>{slow && <button onClick={() => setRetry((value) => value + 1)}>重试加载</button>}</div></div>}{error && <div className="video-error" role="alert"><span>{error}</span><button onClick={() => setRetry((value) => value + 1)}>重新加载</button></div>}</>
+  useEffect(() => {
+    activeRef.current = active
+    const video = ref.current
+    if (!video) return
+    if (!active) { video.pause(); return }
+    synchronizeVideo(video, playbackClock(), usePlayerStore.getState().status === 'playing', playbackClock(), true)
+  }, [active])
+  return <><video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />{active && !visible && <div className="video-startup"><Artwork src={poster} /><div className="video-startup-status" role="status"><LoaderCircle size={16} className="spin" /><span>{slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}</span>{slow && <button onClick={() => setRetry((value) => value + 1)}>重试加载</button>}</div></div>}{active && error && <div className="video-error" role="alert"><span>{error}</span><button onClick={() => setRetry((value) => value + 1)}>重新加载</button></div>}</>
 })

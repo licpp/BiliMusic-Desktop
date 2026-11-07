@@ -21,6 +21,16 @@
   .app-shell.lyrics-immersive.frame-windows .lyrics-view,.app-shell.lyrics-immersive.frame-macos .lyrics-view { top:32px; }
   .dialog-backdrop,.lyric-chooser-backdrop { padding-top:max(12px,var(--native-safe-top,env(safe-area-inset-top,0px)));padding-bottom:max(12px,var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
 }
+
+@media (max-width:960px) {
+  :root[data-platform="ios"] .app-shell.lyrics-immersive {
+    grid-template-rows:minmax(0,1fr) 88px calc(54px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px)));
+  }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive .lyrics-view {
+    bottom:calc(142px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px)));
+  }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive > .queue-drawer.queue-sheet { top:auto;bottom:0; }
+}
 .immersive-titlebar { z-index:200; }
 .app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
 @media (max-width:960px) {

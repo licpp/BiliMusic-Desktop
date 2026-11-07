@@ -14,6 +14,8 @@ const output = await build({
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
+      export const iosListenerAge = () => 0;
+      export const restartIOSAudioObservation = async () => {};
     ` : `
       export const observeMobileAudio = cb => { globalThis.iosTest.event = state => { globalThis.iosTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotMobileAudio = async () => globalThis.iosTest.state || ({});
@@ -25,7 +27,7 @@ const output = await build({
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {}, dispatchEvent() {} }
+  globalThis.window = { addEventListener() {}, dispatchEvent() {}, setInterval() { return 0 } }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('iOS must not create WebView audio') } }

@@ -80,12 +80,19 @@ class PlayerPlugin: Plugin {
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private weak var webview: WKWebView?
+    private let artworkCache = NSCache<NSString, UIImage>()
+    private var artworkTask: URLSessionDataTask?
+    private var artworkURL: String?
+    private var artwork: MPMediaItemArtwork?
 
     override func load(webview: WKWebView) {
         self.webview = webview
         activePlayer = self
         webview.scrollView.contentInsetAdjustmentBehavior = .never
         webview.scrollView.bounces = false
+        webview.scrollView.minimumZoomScale = 1
+        webview.scrollView.maximumZoomScale = 1
+        webview.scrollView.pinchGestureRecognizer?.isEnabled = false
         player.automaticallyWaitsToMinimizeStalling = true
         timeStatus = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.refresh() }
@@ -119,6 +126,7 @@ class PlayerPlugin: Plugin {
             guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
             generation += 1; state.revision = generation
             state.id = args.id; state.track = tracks.first { $0.id == args.id }
+            prepareArtwork(for: state.track)
             state.duration = state.track?.durationSeconds ?? 0
             player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
             do { try start(url, at: max(0, args.position ?? 0)); invoke.resolve() }
@@ -132,7 +140,7 @@ class PlayerPlugin: Plugin {
             var seen = Set<String>()
             tracks = args.tracks.filter { seen.insert($0.id).inserted }
             repeatMode = args.repeatMode; shuffled = args.shuffled
-            if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; nowPlaying() }
+            if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; prepareArtwork(for: track); nowPlaying() }
             invoke.resolve()
         }
     }
@@ -261,6 +269,7 @@ class PlayerPlugin: Plugin {
         generation += 1; desiredPlaying = false; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state = PlayerSnapshot(revision: generation); tracks = []; endBackgroundTask()
+        artworkTask?.cancel(); artworkTask = nil; artworkURL = nil; artwork = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         publish()
@@ -285,7 +294,31 @@ class PlayerPlugin: Plugin {
                                   MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? 1.0 : 0.0]
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }
         if let album = state.track?.album { info[MPMediaItemPropertyAlbumTitle] = album }
+        if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+    private func prepareArtwork(for track: QueueTrack?) {
+        let value = track?.coverUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty, let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            artworkTask?.cancel(); artworkTask = nil; artworkURL = nil; artwork = nil; nowPlaying(); return
+        }
+        guard artworkURL != value else { return }
+        artworkTask?.cancel(); artworkTask = nil; artworkURL = value; artwork = nil
+        if let cached = artworkCache.object(forKey: value as NSString) { installArtwork(cached, url: value); return }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 12)
+        request.setValue("https://www.bilibili.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 BiliMusic/iOS", forHTTPHeaderField: "User-Agent")
+        artworkTask = URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let self, self.artworkURL == value, let data, let image = UIImage(data: data) else { return }
+            self.artworkCache.setObject(image, forKey: value as NSString)
+            DispatchQueue.main.async { if self.artworkURL == value { self.installArtwork(image, url: value) } }
+        }
+        artworkTask?.resume()
+    }
+    private func installArtwork(_ image: UIImage, url: String) {
+        guard artworkURL == url else { return }
+        artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        nowPlaying()
     }
     private func advance(_ direction: Int, ended: Bool = false) {
         if direction < 0 && state.position > 4 { seek(0); return }
@@ -300,6 +333,7 @@ class PlayerPlugin: Plugin {
         generation += 1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
+        prepareArtwork(for: track)
         state.error = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in self?.fail("后台加载超时，请返回应用继续播放") }
@@ -313,7 +347,7 @@ class PlayerPlugin: Plugin {
         guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else { fail("无法解析播放地址"); return }
         if let error = result.error { fail(error); return }
         guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址"); return }
-        if let track = result.track { state.track = track }
+        if let track = result.track { state.track = track; prepareArtwork(for: track) }
         do { try start(url) } catch { fail(error.localizedDescription) }
     }
     private func endBackgroundTask() {

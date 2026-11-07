@@ -75,6 +75,8 @@ export function LyricsView({ onClose }: Props) {
   }, [chooserOpen, editing, commentsOpen, videoFullscreen, biasOpen])
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
+  const videoSourceRef = useRef('')
+  const videoSourcePromise = useRef<Promise<string> | null>(null)
   const [lyricQuery, setLyricQuery] = useState(current?.title || '')
   const [lyricArtist, setLyricArtist] = useState(current?.artist || '')
   const [searched, setSearched] = useState(false)
@@ -107,19 +109,29 @@ export function LyricsView({ onClose }: Props) {
 
   useEffect(() => {
     ++videoRequest.current
+    videoSourceRef.current = ''
+    videoSourcePromise.current = null
     setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
-    return () => { ++videoRequest.current }
+    if (!current || current.source.provider === 'local') return () => { ++videoRequest.current }
+    const request = videoRequest.current
+    const timer = window.setTimeout(() => {
+      const pending = getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl)
+      videoSourcePromise.current = pending
+      void pending.then(url => { if (request === videoRequest.current) videoSourceRef.current = url }).catch(() => { if (videoSourcePromise.current === pending) videoSourcePromise.current = null })
+    }, 700)
+    return () => { window.clearTimeout(timer); ++videoRequest.current }
   }, [current?.id])
 
   const showVideo = async () => {
     if (!current || current.source.provider === 'local') return
     const request = ++videoRequest.current
-    if (mediaMode === 'video') { setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); return }
+    if (mediaMode === 'video') { setMediaMode('cover'); setVideoFullscreen(false); return }
     setMediaMode('video'); setError('')
     try {
-      const source = await getVideoSource(current.source.bvid, current.source.cid)
+      const videoUrl = videoSourceRef.current || await (videoSourcePromise.current || getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl))
       if (request !== videoRequest.current) return
-      setVideoUrl(source.videoUrl)
+      videoSourceRef.current = videoUrl
+      setVideoUrl(videoUrl)
       void getDanmaku(current.source.cid).then((comments) => { if (request === videoRequest.current) setDanmaku(comments) }).catch((cause) => { if (request === videoRequest.current) setError(`弹幕加载失败：${commandErrorMessage(cause)}`) })
     } catch (cause) { if (request === videoRequest.current) { setMediaMode('cover'); setError(commandErrorMessage(cause)) } }
   }
@@ -208,7 +220,7 @@ export function LyricsView({ onClose }: Props) {
         </div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
-        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{mediaMode === 'video' ? <>{videoUrl ? <SyncedVideo src={videoUrl} poster={current.coverUrl} /> : <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
+        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={current.coverUrl} active={mediaMode === 'video'} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className="video-tools">
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>

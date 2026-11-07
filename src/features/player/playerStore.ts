@@ -1,7 +1,7 @@
 import { advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS } from '../../services/platform'
 import { observeMobileAudio, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
-import { syncIOSQueue, type IOSAudioState } from './iosAudio'
+import { iosListenerAge, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
@@ -96,11 +96,20 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     const { current, status } = get(); if (!current) return
     if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
     if (isMobile) {
-      const nativeState = await snapshotMobileAudio()
-      if (!nativeState.id || nativeState.stopped) loadedTrackId = null
       if (status === 'resolving') { ++playRequest; await controlMobileAudio('stop'); set({ status: 'paused' }); return }
       if (loadedTrackId === current.id && status !== 'error') {
-        await controlMobileAudio(status === 'playing' || status === 'buffering' ? 'pause' : 'resume')
+        const pausing = status === 'playing' || status === 'buffering'
+        if (isIOS) set({ status: pausing ? 'paused' : 'playing' })
+        try { await controlMobileAudio(pausing ? 'pause' : 'resume') }
+        catch (error) { set({ status, error: String(error) }) }
+        return
+      }
+      const nativeState = await snapshotMobileAudio()
+      if (!nativeState.id || nativeState.stopped) loadedTrackId = null
+      if (nativeState.id === current.id && !nativeState.stopped && status !== 'error') {
+        const pausing = nativeState.status === 'playing' || nativeState.status === 'buffering'
+        if (isIOS) set({ status: pausing ? 'paused' : 'playing' })
+        await controlMobileAudio(pausing ? 'pause' : 'resume')
       } else await get().play(current, get().progressSeconds)
       return
     }
@@ -151,9 +160,32 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
 }
 const nativeReady = isMobile ? observeMobileAudio(onNativeState).then(async () => onNativeState(await snapshotMobileAudio())) : Promise.resolve()
 void nativeReady.catch(nativeError)
-if (isMobile) document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) void snapshotMobileAudio().then(onNativeState).catch(nativeError)
-})
+async function reconcileMobilePlayback(rebind = false) {
+  try {
+    if (isIOS && rebind) await restartIOSAudioObservation()
+    onNativeState(await snapshotMobileAudio())
+  } catch (error) {
+    if (isIOS && !rebind) {
+      try { await restartIOSAudioObservation(); onNativeState(await snapshotMobileAudio()); return } catch { /* report the original failure */ }
+    }
+    nativeError(error)
+  }
+}
+if (isMobile) {
+  const resume = () => { if (!document.hidden) void reconcileMobilePlayback(isIOS && iosListenerAge() > 2_000) }
+  document.addEventListener('visibilitychange', resume)
+  window.addEventListener('pageshow', resume)
+  window.addEventListener('focus', resume)
+}
+if (isIOS) window.setInterval(() => {
+  if (document.hidden) return
+  const state = usePlayerStore.getState()
+  if (state.status === 'playing') {
+    const position = playbackClock()
+    if (Number.isFinite(position) && Math.abs(position - state.progressSeconds) > .08) usePlayerStore.setState({ progressSeconds: position })
+    if (iosListenerAge() > 2_000) void reconcileMobilePlayback(true)
+  }
+}, 250)
 
 if (isIOS) usePlayerStore.subscribe((state, previous) => {
   if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled) {
