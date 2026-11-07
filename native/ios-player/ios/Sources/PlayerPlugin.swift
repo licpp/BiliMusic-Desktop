@@ -116,51 +116,51 @@ class PlayerPlugin: Plugin {
     @objc public func play(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PlayArgs.self)
         onMain { [self] in
-        guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
-        generation += 1; state.revision = generation
-        state.id = args.id; state.track = tracks.first { $0.id == args.id }
-        state.duration = state.track?.durationSeconds ?? 0
-        player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
-        do { try start(url, at: max(0, args.position ?? 0)); invoke.resolve() }
-        catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
+            guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
+            generation += 1; state.revision = generation
+            state.id = args.id; state.track = tracks.first { $0.id == args.id }
+            state.duration = state.track?.durationSeconds ?? 0
+            player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
+            do { try start(url, at: max(0, args.position ?? 0)); invoke.resolve() }
+            catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
         }
     }
     @objc public func queue(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(QueueArgs.self)
         onMain { [self] in
-        guard args.tracks.count <= 10000, ["off", "one", "all"].contains(args.repeatMode) else { invoke.reject("无效的播放队列"); return }
-        var seen = Set<String>()
-        tracks = args.tracks.filter { seen.insert($0.id).inserted }
-        repeatMode = args.repeatMode; shuffled = args.shuffled
-        if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; nowPlaying() }
-        invoke.resolve()
+            guard args.tracks.count <= 10000, ["off", "one", "all"].contains(args.repeatMode) else { invoke.reject("无效的播放队列"); return }
+            var seen = Set<String>()
+            tracks = args.tracks.filter { seen.insert($0.id).inserted }
+            repeatMode = args.repeatMode; shuffled = args.shuffled
+            if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; nowPlaying() }
+            invoke.resolve()
         }
     }
     @objc public func control(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ControlArgs.self)
         onMain { [self] in
-        switch args.action {
-        case "prepare":
-            guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
-            profile = String(cString: raw); freeProfile(raw)
-            generation += 1; desiredPlaying = false; itemStatus = nil
-            player.pause(); player.replaceCurrentItem(with: nil)
-            endBackgroundTask()
-            state = PlayerSnapshot(id: args.id, status: "buffering", revision: generation); publish()
-        case "stop": stop()
-        case "pause": pause()
-        case "resume": resume()
-        case "seek": seek(args.value ?? 0)
-        case "volume": player.volume = Float(min(1, max(0, args.value ?? 0.7)))
-        case "theme":
-            let light = args.value == 1
-            webview?.window?.overrideUserInterfaceStyle = light ? .light : .dark
-            webview?.isOpaque = false
-            webview?.backgroundColor = light ? UIColor(white: 0.96, alpha: 1) : UIColor(red: 0.027, green: 0.063, blue: 0.098, alpha: 1)
-        case "immersive": break
-        default: invoke.reject("不支持的播放操作"); return
-        }
-        invoke.resolve()
+            switch args.action {
+            case "prepare":
+                guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
+                profile = String(cString: raw); freeProfile(raw)
+                generation += 1; desiredPlaying = false; itemStatus = nil
+                player.pause(); player.replaceCurrentItem(with: nil)
+                endBackgroundTask()
+                state = PlayerSnapshot(id: args.id, status: "buffering", revision: generation); publish()
+            case "stop": stop()
+            case "pause": pause()
+            case "resume": resume()
+            case "seek": seek(args.value ?? 0)
+            case "volume": player.volume = Float(min(1, max(0, args.value ?? 0.7)))
+            case "theme":
+                let light = args.value == 1
+                webview?.window?.overrideUserInterfaceStyle = light ? .light : .dark
+                webview?.isOpaque = false
+                webview?.backgroundColor = light ? UIColor(white: 0.96, alpha: 1) : UIColor(red: 0.027, green: 0.063, blue: 0.098, alpha: 1)
+            case "immersive": break
+            default: invoke.reject("不支持的播放操作"); return
+            }
+            invoke.resolve()
         }
     }
     @objc public func snapshot(_ invoke: Invoke) { onMain { [self] in refresh(); invoke.resolve(state) } }
@@ -234,6 +234,7 @@ class PlayerPlugin: Plugin {
         player.play(); publish()
     }
     private func pause() {
+        resumeAfterInterruption = false
         desiredPlaying = false
         if state.stopped { generation += 1; state.revision = generation }
         player.pause(); state.status = "paused"; endBackgroundTask(); publish()
@@ -242,7 +243,12 @@ class PlayerPlugin: Plugin {
         guard player.currentItem != nil else {
             if let track = state.track ?? tracks.first(where: { $0.id == state.id }) { resolve(track) }; return
         }
-        do { try activate(); desiredPlaying = true; player.play(); refresh() } catch { fail("无法恢复播放") }
+        do {
+            try activate()
+            let position = player.currentTime().seconds
+            if state.duration > 0 && position.isFinite && position >= state.duration - 0.25 { seek(0) }
+            desiredPlaying = true; player.play(); refresh()
+        } catch { fail("无法恢复播放") }
     }
     private func seek(_ seconds: Double) {
         guard seconds.isFinite else { return }
@@ -251,6 +257,7 @@ class PlayerPlugin: Plugin {
         state.position = target; publish()
     }
     private func stop() {
+        resumeAfterInterruption = false
         generation += 1; desiredPlaying = false; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state = PlayerSnapshot(revision: generation); tracks = []; endBackgroundTask()
@@ -259,6 +266,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
+        resumeAfterInterruption = false
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
     }
     private func refresh() {
