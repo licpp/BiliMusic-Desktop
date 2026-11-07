@@ -13,6 +13,9 @@ const commands = new Set(strings(manifest.match(/Builder::new\(&\[([\s\S]*?)\]/)
 const permissions = new Set(strings(defaults.match(/permissions\s*=\s*\[([\s\S]*?)\]/)[1]))
 const output = await build({ entryPoints:['src/features/player/iosAudio.ts'], bundle:true, write:false, format:'cjs', platform:'node' })
 test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale native revisions', async () => {
+  // The simulator registers via Plugin's inherited listener path. Sending only
+  // through the subclass's compatibility registry leaves real iOS listeners silent.
+  assert.match(swift, /trigger\("state", data: state\)/)
   globalThis.window = { crypto: webcrypto }
   let handler; const calls = []
   mockIPC((full, payload) => {

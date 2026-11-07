@@ -84,6 +84,11 @@ class PlayerPlugin: Plugin {
     private var artworkTask: URLSessionDataTask?
     private var artworkURL: String?
     private var artwork: MPMediaItemArtwork?
+    private var nowPlayingScheduled = false
+    private var lastNowPlayingAt: TimeInterval = 0
+    private var lastNowPlayingPosition: Double = 0
+    private var lastNowPlayingStatus = ""
+    private var lastNowPlayingID: String?
 
     override func load(webview: WKWebView) {
         self.webview = webview
@@ -287,9 +292,32 @@ class PlayerPlugin: Plugin {
         }
         publish()
     }
-    private func publish() { nowPlaying(); for channel in listeners.values { try? channel.send(state) } }
+    private func publish() {
+        // Deliver playback state before scheduling the system media presentation.
+        // Transport commands must not await lock-screen / Dynamic Island updates.
+        for channel in listeners.values { try? channel.send(state) }
+        // The SDK may register through its inherited camelCase fallback. Those
+        // channels belong to Plugin, not to this class's compatibility registry.
+        try? trigger("state", data: state)
+        if state.id != lastNowPlayingID || state.status != lastNowPlayingStatus || abs(state.position - lastNowPlayingPosition) > 5 || ProcessInfo.processInfo.systemUptime - lastNowPlayingAt > 5 {
+            nowPlaying()
+        }
+    }
     private func nowPlaying() {
+        guard !nowPlayingScheduled else { return }
+        nowPlayingScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.nowPlayingScheduled = false
+            self.writeNowPlaying()
+        }
+    }
+    private func writeNowPlaying() {
         guard let id = state.id else { return }
+        lastNowPlayingAt = ProcessInfo.processInfo.systemUptime
+        lastNowPlayingPosition = state.position
+        lastNowPlayingStatus = state.status
+        lastNowPlayingID = id
         var info: [String: Any] = [MPMediaItemPropertyTitle: state.track?.title ?? "BiliMusic", MPMediaItemPropertyArtist: state.track?.artist ?? "歌手未知", MPNowPlayingInfoPropertyExternalContentIdentifier: id,
                                   MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? 1.0 : 0.0]
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }

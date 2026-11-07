@@ -190,7 +190,7 @@ if (isIOS) window.setInterval(() => {
   }
   // Events may stop while the UI says paused/buffering too. Snapshot first;
   // repeated listener teardown can itself starve the channel of events.
-  if (state.current && state.status !== 'resolving' && performance.now() - lastNativePollAt > 2_000) {
+  if (state.current && (state.status !== 'resolving' || loadedTrackId === state.current.id) && performance.now() - lastNativePollAt > 2_000) {
     lastNativePollAt = performance.now()
     void reconcileMobilePlayback()
   }

@@ -820,7 +820,7 @@ impl BilibiliProvider {
     fn select_video(streams: &[DashStream]) -> Result<VideoSource, ProviderError> {
         let stream = streams
             .iter()
-            .filter(|item| item.codecs.starts_with("avc"))
+            .filter(|item| item.codecs.starts_with(if cfg!(target_os = "ios") { "hvc1" } else { "avc" }))
             .filter(|item| item.height <= if cfg!(target_os = "ios") { 480 } else { 720 })
             .max_by_key(|item| item.bandwidth)
             .or_else(|| {
