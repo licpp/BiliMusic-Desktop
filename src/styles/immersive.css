@@ -5,6 +5,7 @@
 .app-shell.lyrics-immersive .lyrics-view { background:transparent; }
 .app-shell.lyrics-immersive .lyrics-topbar,.app-shell.lyrics-immersive .lyrics-album-pane { border-color:transparent; }
 .lyrics-media { position:relative;display:flex;flex-direction:column;align-items:center;max-width:100%; }
+.lyrics-meta-actions { display:none; }
 .video-fullscreen > .lyrics-media { width:100%;height:100%; }
 .app-shell.lyrics-immersive > .player-dock { z-index:40;background:transparent;border:0;box-shadow:none; }
 .app-shell.lyrics-immersive > .rail { visibility:hidden;pointer-events:none; }
@@ -44,6 +45,15 @@
   .app-shell.lyrics-immersive .lyrics-track-meta h1 { margin:0 0 5px;font-size:19px;line-height:1.35; }
   .app-shell.lyrics-immersive .lyrics-track-meta p { margin:0 0 4px;font-size:14px; }
   .app-shell.lyrics-immersive .lyrics-track-meta small { font-size:12px; }
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-track-meta { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px; }
+  .app-shell.lyrics-immersive .lyrics-meta-copy { min-width:0; }
+  .app-shell.lyrics-immersive .lyrics-meta-actions { display:flex;gap:4px; }
+  .app-shell.lyrics-immersive .lyrics-meta-actions button { display:grid;place-items:center;width:36px;height:44px;padding:0;border:0;border-radius:12px;color:var(--ink);background:rgba(255,255,255,.06); }
+  .app-shell.lyrics-immersive .lyrics-topbar .lyrics-comments-trigger { display:none; }
+  .app-shell.lyrics-immersive .lyrics-meta-actions button.liked { color:var(--coral); }
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) .lyrics-media .video-mode-toggle { display:none; }
+  .app-shell.lyrics-immersive .dock-track-group { display:none; }
+  .app-shell.lyrics-immersive .progress { padding-right:0; }
   .app-shell.lyrics-immersive .lyrics-scroll { grid-area:3/1; }
   .app-shell.lyrics-immersive .video-fullscreen .lyrics-media .lyrics-cover { width:100%;height:100%;max-height:none;aspect-ratio:auto; }
   .lyrics-album-pane .video-tools.video-tools-overlay > button,

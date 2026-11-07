@@ -425,7 +425,7 @@ export function App() {
         <div className="dock-tools"><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
       </footer>
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
-      {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} />}
+      {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} />}
       {importOpen && <ImportFavorites onImported={(id, mode) => {
         setImportOpen(false)
         setHubSection(mode === 'link' ? 'collections' : 'playlists')

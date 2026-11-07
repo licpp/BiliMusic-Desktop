@@ -24,10 +24,11 @@ import { Artwork } from '../../shared/Artwork'
 import { CommentsPanel } from '../comments/CommentsPanel'
 import { DanmakuCanvas } from './DanmakuCanvas'
 import { SyncedVideo } from './SyncedVideo'
+import { Heart } from 'lucide-react'
 
-type Props = { onClose: () => void }
+type Props = { onClose: () => void; onFavorite: () => void; favoritePending: boolean }
 
-export function LyricsView({ onClose }: Props) {
+export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const queryClient = useQueryClient()
   const shuffled = usePlayerStore((state) => state.shuffled)
   const repeatMode = usePlayerStore((state) => state.repeatMode)
@@ -247,11 +248,18 @@ export function LyricsView({ onClose }: Props) {
         </div>
         </div>
         <div className="lyrics-track-meta">
+          <div className="lyrics-meta-copy">
           <span className="eyebrow coral">NOW PLAYING</span>
           <h1>{current.title}</h1>
           <p>{current.artist || '歌手未知'}</p>
           {current.album && <small>{current.album}</small>}
           {current.source.uploaderName && <small>UP 主 · {current.source.uploaderName}</small>}
+          </div>
+          <div className="lyrics-meta-actions">
+            <button className={current.liked ? 'liked' : ''} aria-label={current.liked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={Boolean(current.liked)} aria-busy={favoritePending} onClick={onFavorite}><Heart size={20} fill={current.liked ? 'currentColor' : 'none'} /></button>
+            {current.source.provider === 'bilibili' && <button aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={20}/> : <TvMinimalPlay size={20}/>}</button>}
+            <button aria-label="查看评论" disabled={!current.source.aid} onClick={() => setCommentsOpen(true)}><MessageCircle size={20}/></button>
+          </div>
         </div>
       </div>
       <div ref={scrollRef} className="lyrics-scroll" aria-live="polite">
@@ -259,15 +267,15 @@ export function LyricsView({ onClose }: Props) {
           <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}>{line.text}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
-      <aside className={`lyrics-bias ${biasOpen ? 'expanded' : 'collapsed'}`} aria-label="歌词时间调整" onPointerDown={() => setBiasActivity(Date.now())} onKeyDown={() => setBiasActivity(Date.now())}>
-        <button className="bias-trigger" aria-label="调整歌词时间" title="调整歌词时间" aria-expanded={biasOpen} onClick={() => setBiasOpen((value) => !value)}><SlidersHorizontal size={16} /></button>
+      {biasOpen && <aside className="lyrics-bias expanded" aria-label="歌词时间调整" onPointerDown={() => setBiasActivity(Date.now())} onKeyDown={() => setBiasActivity(Date.now())}>
+        <button className="bias-trigger" aria-label="关闭歌词时间调整" title="关闭" onClick={() => setBiasOpen(false)}><X size={16} /></button>
         {biasOpen && <>
           <button disabled={!syncedLyrics} onClick={() => adjustBias(500)} title="歌词延后 0.5 秒" aria-label="歌词延后 0.5 秒">＋</button>
           <span>{stored ? `${stored.biasMs > 0 ? '+' : ''}${(stored.biasMs / 1000).toFixed(1)}s` : '0.0s'}</span>
           <button disabled={!syncedLyrics} onClick={() => adjustBias(-500)} title="歌词提前 0.5 秒" aria-label="歌词提前 0.5 秒">−</button>
           <button className="bias-reset" onClick={() => stored && adjustBias(-stored.biasMs)} title="重置偏移" aria-label="重置歌词偏移"><Clock3 size={14} /></button>
         </>}
-      </aside>
+      </aside>}
       {error && lines.length > 0 && <div className="lyrics-toast">{error}</div>}
       {chooserOpen && <div className="lyric-chooser-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setChooserOpen(false)}>
         <div className="lyric-chooser">
