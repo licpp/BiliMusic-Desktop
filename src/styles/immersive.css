@@ -17,11 +17,19 @@
 @media (max-width:960px) {
   .app-shell.lyrics-immersive { padding-top:var(--native-safe-top,env(safe-area-inset-top,0px));padding-left:var(--native-safe-left,0px);padding-right:var(--native-safe-right,0px);grid-template-rows:minmax(0,1fr) calc(88px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   .app-shell.lyrics-immersive > .rail { display:none; }
-  .app-shell.lyrics-immersive > .player-dock { grid-template-rows:60px 20px;padding-bottom:calc(4px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+  .app-shell.lyrics-immersive > .player-dock { grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:24px 56px;width:100%;max-width:520px;justify-self:center;padding-inline:clamp(24px,8vw,40px);padding-bottom:calc(4px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   .app-shell.lyrics-immersive .dock-track { display:none; }
-  .app-shell.lyrics-immersive .dock-track-group { width:42px; }
-  .app-shell.lyrics-immersive .dock-controls { grid-row:1;gap:6px; }
-  .app-shell.lyrics-immersive .progress { grid-row:2; }
+  .app-shell.lyrics-immersive .dock-track-group { grid-area:1/5;width:36px;justify-self:end;z-index:1; }
+  .app-shell.lyrics-immersive .dock-track-group .dock-heart { width:36px;min-width:36px;height:36px; }
+  .app-shell.lyrics-immersive .dock-controls { display:contents; }
+  .app-shell.lyrics-immersive .dock-controls > button:first-child { display:grid!important;grid-area:2/1;width:44px;height:48px;place-items:center;justify-self:center; }
+  .app-shell.lyrics-immersive .dock-controls > button:nth-child(2),
+  .app-shell.lyrics-immersive .dock-controls > button:nth-child(4) { display:grid!important;width:44px;height:48px;place-items:center;justify-self:center; }
+  .app-shell.lyrics-immersive .dock-controls > button:nth-child(2) { grid-area:2/2; }
+  .app-shell.lyrics-immersive .dock-controls > button:nth-child(4) { grid-area:2/4; }
+  .app-shell.lyrics-immersive .dock-controls > .play-toggle { grid-area:2/3;justify-self:center; }
+  .app-shell.lyrics-immersive .dock-controls > .queue-control { display:grid!important;grid-area:2/5;justify-self:center; }
+  .app-shell.lyrics-immersive .progress { grid-area:1/1/2/6;padding-right:48px;box-sizing:border-box; }
   .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(88px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
   .lyrics-album-pane .video-tools.video-tools-overlay > button,
   .lyrics-album-pane .video-tools.video-tools-overlay > .action-menu-trigger { background:rgba(15,24,32,.3);color:#fff;border:1px solid #ffffff26;box-shadow:0 2px 8px #0002; }
@@ -37,17 +45,17 @@
   :root[data-platform="ios"] .app-shell.lyrics-immersive .lyrics-view {
     bottom:calc(88px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px)));
   }
-  :root[data-platform="ios"] .app-shell.lyrics-immersive > .player-dock { grid-template-columns:44px minmax(0,1fr) 44px; }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive > .player-dock { grid-template-columns:repeat(5,minmax(0,1fr)); }
   :root[data-platform="ios"] .app-shell.lyrics-immersive .dock-controls { display:contents; }
-  :root[data-platform="ios"] .app-shell.lyrics-immersive .dock-controls > .play-toggle { grid-area:1/2;justify-self:center; }
-  :root[data-platform="ios"] .app-shell.lyrics-immersive .dock-controls > .queue-control { grid-area:1/3; }
-  :root[data-platform="ios"] .app-shell.lyrics-immersive .progress { grid-area:2/1/3/4; }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive .dock-controls > .play-toggle { grid-area:2/3;justify-self:center; }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive .dock-controls > .queue-control { grid-area:2/5; }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive .progress { grid-area:1/1/2/6; }
   :root[data-platform="ios"] .app-shell.lyrics-immersive > .queue-drawer.queue-sheet { top:auto;bottom:0; }
 }
 @media (max-width:960px) and (max-height:700px) {
   :root[data-platform="ios"] .app-shell.lyrics-immersive { grid-template-rows:minmax(0,1fr) calc(78px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   :root[data-platform="ios"] .app-shell.lyrics-immersive .lyrics-view { bottom:calc(78px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
-  :root[data-platform="ios"] .app-shell.lyrics-immersive > .player-dock { grid-template-rows:50px 20px; }
+  :root[data-platform="ios"] .app-shell.lyrics-immersive > .player-dock { grid-template-rows:20px 50px; }
 }
 .immersive-titlebar { z-index:200; }
 .app-shell.lyrics-immersive.frame-windows > .queue-drawer,.app-shell.lyrics-immersive.frame-macos > .queue-drawer { top:32px; }
