@@ -4,6 +4,8 @@
 .app-shell.lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:var(--base); }
 .app-shell.lyrics-immersive .lyrics-view { background:transparent; }
 .app-shell.lyrics-immersive .lyrics-topbar,.app-shell.lyrics-immersive .lyrics-album-pane { border-color:transparent; }
+.lyrics-media { position:relative;display:flex;flex-direction:column;align-items:center;max-width:100%; }
+.video-fullscreen > .lyrics-media { width:100%;height:100%; }
 .app-shell.lyrics-immersive > .player-dock { z-index:40;background:transparent;border:0;box-shadow:none; }
 .app-shell.lyrics-immersive > .rail { visibility:hidden;pointer-events:none; }
 .app-shell.lyrics-immersive > .queue-drawer { z-index:45; }
@@ -31,6 +33,19 @@
   .app-shell.lyrics-immersive .dock-controls > .queue-control { display:grid!important;grid-area:2/5;justify-self:center; }
   .app-shell.lyrics-immersive .progress { grid-area:1/1/2/6;padding-right:48px;box-sizing:border-box; }
   .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(88px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
+  .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:56px auto minmax(90px,1fr) auto; }
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) { display:contents; }
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-media { grid-area:2/1;width:calc(100% - 48px);justify-self:center;margin:10px 0 12px; }
+  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover { width:min(60vw,28dvh,260px);height:auto;aspect-ratio:1;border-radius:16px; }
+  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover.video-active { width:100%;max-height:26dvh;aspect-ratio:16/9; }
+  .app-shell.lyrics-immersive .lyrics-media .video-tools { position:absolute;inset:6px 0 auto auto;width:auto;margin:0; }
+  .app-shell.lyrics-immersive .lyrics-media .video-tools-overlay { inset:auto 10px 10px auto; }
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-track-meta { display:block;grid-area:4/1;width:calc(100% - 64px);max-width:440px;justify-self:center;min-width:0;padding:8px 0 12px; }
+  .app-shell.lyrics-immersive .lyrics-track-meta h1 { margin:0 0 5px;font-size:19px;line-height:1.35; }
+  .app-shell.lyrics-immersive .lyrics-track-meta p { margin:0 0 4px;font-size:14px; }
+  .app-shell.lyrics-immersive .lyrics-track-meta small { font-size:12px; }
+  .app-shell.lyrics-immersive .lyrics-scroll { grid-area:3/1; }
+  .app-shell.lyrics-immersive .video-fullscreen .lyrics-media .lyrics-cover { width:100%;height:100%;max-height:none;aspect-ratio:auto; }
   .lyrics-album-pane .video-tools.video-tools-overlay > button,
   .lyrics-album-pane .video-tools.video-tools-overlay > .action-menu-trigger { background:rgba(15,24,32,.3);color:#fff;border:1px solid #ffffff26;box-shadow:0 2px 8px #0002; }
   .lyrics-album-pane.video-fullscreen .video-tools.video-tools-overlay { background:transparent;backdrop-filter:none;padding:0; }

@@ -231,6 +231,7 @@ export function LyricsView({ onClose }: Props) {
         </div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
+        <div className="lyrics-media">
         <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={current.coverUrl} active={mediaMode === 'video'} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`}>
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
@@ -243,6 +244,7 @@ export function LyricsView({ onClose }: Props) {
               <button onClick={close}>完成</button>
             </>}</ActionMenu>
           </>}
+        </div>
         </div>
         <div className="lyrics-track-meta">
           <span className="eyebrow coral">NOW PLAYING</span>
