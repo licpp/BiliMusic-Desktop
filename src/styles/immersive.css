@@ -47,8 +47,8 @@
   .app-shell.lyrics-immersive .lyrics-track-meta small { font-size:12px; }
   .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-track-meta { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px; }
   .app-shell.lyrics-immersive .lyrics-meta-copy { min-width:0; }
-  .app-shell.lyrics-immersive .lyrics-meta-actions { display:flex;gap:4px; }
-  .app-shell.lyrics-immersive .lyrics-meta-actions button { display:grid;place-items:center;width:36px;height:44px;padding:0;border:0;border-radius:12px;color:var(--ink);background:rgba(255,255,255,.06); }
+  .app-shell.lyrics-immersive .lyrics-meta-actions { display:flex;gap:12px; }
+  .app-shell.lyrics-immersive .lyrics-meta-actions button { display:grid;place-items:center;width:36px;height:44px;padding:0;border:0;border-radius:12px;color:var(--ink);background:transparent;box-shadow:none; }
   .app-shell.lyrics-immersive .lyrics-topbar .lyrics-comments-trigger { display:none; }
   .app-shell.lyrics-immersive .lyrics-meta-actions button.liked { color:var(--coral); }
   .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) .lyrics-media .video-mode-toggle { display:none; }
