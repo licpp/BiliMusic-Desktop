@@ -16,6 +16,7 @@ class PlayArgs {
     lateinit var id: String
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var coverUrl: String? = null
     var position: Double = 0.0
     var volume: Double = 0.7
 }
@@ -26,6 +27,7 @@ class ControlArgs {
     var id: String = ""
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var coverUrl: String? = null
 }
 
 @InvokeArg
@@ -118,6 +120,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         androidx.core.view.ViewCompat.requestApplyInsets(webView)
         webView.settings.mediaPlaybackRequiresUserGesture = false
+        webView.settings.setSupportZoom(false)
+        webView.settings.builtInZoomControls = false
+        webView.settings.displayZoomControls = false
         // CSP and the network security config limit HTTP media to loopback.
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         val owner = activity as? androidx.appcompat.app.AppCompatActivity
@@ -149,6 +154,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("title", args.title).putExtra("artist", args.artist)
+            .putExtra("coverUrl", args.coverUrl)
             .putExtra("position", args.position).putExtra("volume", args.volume)
         activity.startForegroundService(intent)
         invoke.resolve()
@@ -162,7 +168,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 // tracks still works after the activity goes into the background.
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
-                    .putExtra("title", args.title).putExtra("artist", args.artist))
+                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("coverUrl", args.coverUrl))
             } else if (args.action == "immersive") {
                 immersive = args.value > 0
                 updateSystemBars()

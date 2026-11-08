@@ -3,6 +3,8 @@ package app.bilimusic.player
 import android.app.*
 import android.content.*
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.*
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -32,6 +34,14 @@ class PlaybackService : Service() {
     private var lastPosition = 0.0
     private var lastDuration = 0.0
     private var volume = .7f
+    private var artwork: Bitmap? = null
+    private var artworkUrl: String? = null
+    private val artworkCache = android.util.LruCache<String, Bitmap>(8)
+    private val artworkExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var artworkTask: java.util.concurrent.Future<*>? = null
+    private var systemUpdateScheduled = false
+    private var lastSystemPosition = -10.0
+    private var lastSystemStatus = ""
     private val ticker = object : Runnable {
         override fun run() {
             publish(false)
@@ -82,6 +92,8 @@ class PlaybackService : Service() {
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
                 id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
                 artist = intent.getStringExtra("artist") ?: ""; lastPosition = 0.0; lastDuration = 0.0
+                prepareArtwork(intent.getStringExtra("coverUrl"))
+                updateMetadata()
                 status = "buffering"; error = null; startForeground(NOTIFICATION, notification())
             }
             "load" -> load(intent)
@@ -96,10 +108,10 @@ class PlaybackService : Service() {
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
         id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
         artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
+        prepareArtwork(intent.getStringExtra("coverUrl"))
         lastPosition = intent.getDoubleExtra("position", 0.0); lastDuration = 0.0
         status = "buffering"; error = null
-        session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, artist).build())
+        updateMetadata()
         startForeground(NOTIFICATION, notification())
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             fail("无法获得音频焦点，请稍后重试"); return
@@ -116,9 +128,8 @@ class PlaybackService : Service() {
                 val offset = (intent.getDoubleExtra("position", 0.0) * 1000).toLong()
                 if (offset > 0) it.seekTo(offset, MediaPlayer.SEEK_CLOSEST)
                 if (status != "paused") { it.start(); status = "playing" }
-                session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, it.duration.toLong()).build())
+                lastDuration = it.duration / 1000.0
+                updateMetadata()
                 publish(); handler.post(ticker)
             }
             media.setOnSeekCompleteListener { publish(false) }
@@ -165,17 +176,77 @@ class PlaybackService : Service() {
             .put("duration", lastDuration).put("stopped", player == null).put("error", error)
     }
     private fun publish(notify: Boolean = true) {
+        // The app receives state first; OS presentation is coalesced separately.
+        listener?.invoke(snapshot())
+        if (!notify && status == lastSystemStatus && kotlin.math.abs(lastPosition - lastSystemPosition) < 5) return
+        if (systemUpdateScheduled) return
+        systemUpdateScheduled = true
+        handler.post {
+            systemUpdateScheduled = false
+            if (instance !== this) return@post
+            updateSystemPlayback()
+        }
+    }
+    private fun updateSystemPlayback() {
+        lastSystemStatus = status; lastSystemPosition = lastPosition
         val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
         session.setPlaybackState(PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
             .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") 1f else 0f).build())
-        listener?.invoke(snapshot())
-        if (notify) getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification())
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification())
+    }
+    private fun updateMetadata() {
+        val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+        if (lastDuration > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, (lastDuration * 1000).toLong())
+        artwork?.let { metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it).putBitmap(MediaMetadata.METADATA_KEY_ART, it) }
+        session.setMetadata(metadata.build())
+    }
+    private fun prepareArtwork(value: String?) {
+        if (artworkUrl == value) return
+        artworkTask?.cancel(true); artworkUrl = value; artwork = null
+        if (value.isNullOrBlank()) return
+        artworkCache.get(value)?.let { artwork = it; return }
+        artworkTask = artworkExecutor.submit {
+            val image = runCatching {
+                val url = java.net.URL(value)
+                require(url.protocol == "https" || url.protocol == "http")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                try {
+                    connection.connectTimeout = 6000; connection.readTimeout = 6000
+                    connection.setRequestProperty("Referer", "https://www.bilibili.com/")
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 BiliMusic/Android")
+                    require(connection.responseCode in 200..299)
+                    val bytes = connection.inputStream.use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                            val count = input.read(buffer); if (count < 0) break
+                            require(output.size() + count <= 8 * 1024 * 1024)
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    }
+                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                    require(options.outWidth > 0 && options.outHeight > 0)
+                    options.inSampleSize = 1
+                    while (maxOf(options.outWidth, options.outHeight) / options.inSampleSize > 512) options.inSampleSize *= 2
+                    options.inJustDecodeBounds = false
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                } finally { connection.disconnect() }
+            }.getOrNull()
+            handler.post {
+                if (instance !== this || artworkUrl != value || image == null) return@post
+                artworkCache.put(value, image); artwork = image; updateMetadata(); publish()
+            }
+        }
     }
     private fun pending(action: String, code: Int): PendingIntent = PendingIntent.getService(this, code,
         Intent(this, PlaybackService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun notification(): Notification {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        return Notification.Builder(this, CHANNEL).setContentTitle(title).setContentText(artist)
+        return Notification.Builder(this, CHANNEL).setContentTitle(title).setContentText(artist).setLargeIcon(artwork)
             .setSmallIcon(app.bilimusic.player.R.drawable.ic_music_notification).setColor(Color.rgb(255,115,88))
             .setContentIntent(open).setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true)
             .setOngoing(status == "playing" || status == "buffering")
@@ -186,6 +257,7 @@ class PlaybackService : Service() {
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2)).build()
     }
     override fun onDestroy() {
+        artworkTask?.cancel(true); artworkExecutor.shutdownNow(); artworkCache.evictAll()
         handler.removeCallbacks(ticker); player?.release(); player = null
         audioManager.abandonAudioFocusRequest(focus); session.release(); unregisterReceiver(unplugged)
         instance = null; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()

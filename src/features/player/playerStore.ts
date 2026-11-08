@@ -99,7 +99,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (status === 'resolving') { ++playRequest; await controlMobileAudio('stop'); set({ status: 'paused' }); return }
       if (loadedTrackId === current.id && status !== 'error') {
         const pausing = status === 'playing' || status === 'buffering'
-        if (isIOS) set({ status: pausing ? 'paused' : 'playing' })
+        set({ status: pausing ? 'paused' : 'playing' })
         try { await controlMobileAudio(pausing ? 'pause' : 'resume') }
         catch (error) { set({ status, error: String(error) }) }
         return
@@ -108,7 +108,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (!nativeState.id || nativeState.stopped) loadedTrackId = null
       if (nativeState.id === current.id && !nativeState.stopped && status !== 'error') {
         const pausing = nativeState.status === 'playing' || nativeState.status === 'buffering'
-        if (isIOS) set({ status: pausing ? 'paused' : 'playing' })
+        set({ status: pausing ? 'paused' : 'playing' })
         await controlMobileAudio(pausing ? 'pause' : 'resume')
       } else await get().play(current, get().progressSeconds)
       return

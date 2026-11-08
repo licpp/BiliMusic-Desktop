@@ -55,7 +55,7 @@ import { useThemeStore } from '../services/theme'
 import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/library/TrackActions'
 import { chooseTrackPlaylist, showTrackMenu } from '../features/library/trackActionStore'
 import { ActionMenu } from '../shared/ActionMenu'
-import { isIOS } from '../services/platform'
+import { isMobile } from '../services/platform'
 import { PlayerProgress } from '../features/player/PlayerProgress'
 
 const navigation = [
@@ -215,7 +215,7 @@ export function App() {
   useEffect(() => () => { dockSwipeTimers.current.forEach(window.clearTimeout) }, [])
 
   const startDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isIOS || !current || (event.target as HTMLElement).closest('.dock-heart')) return
+    if (!isMobile || !current || (event.target as HTMLElement).closest('.dock-heart')) return
     dockSwipeTimers.current.forEach(window.clearTimeout); dockSwipeTimers.current = []
     dockGesture.current = { startX: event.clientX, lastX: event.clientX, startedAt: performance.now() }
     setDockSwipeX(0); setDockSwipePhase('dragging')
@@ -400,17 +400,17 @@ export function App() {
         </div>
       </main>
 
-      {queueOpen && isIOS && <button className="queue-sheet-backdrop" aria-label="收起播放队列" onClick={toggleQueue} />}
-      <aside className={`queue-drawer${isIOS ? ' queue-sheet' : ''}`} aria-hidden={!queueOpen}>
-        {isIOS && <button className="queue-sheet-handle" aria-label="收起播放队列" onClick={toggleQueue}><span /></button>}
-        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3>接下来</h3></div><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">{isIOS ? <ChevronDown size={20}/> : '×'}</button></header>
+      {queueOpen && isMobile && <button className="queue-sheet-backdrop" aria-label="收起播放队列" onClick={toggleQueue} />}
+      <aside className={`queue-drawer${isMobile ? ' queue-sheet' : ''}`} aria-hidden={!queueOpen}>
+        {isMobile && <button className="queue-sheet-handle" aria-label="收起播放队列" onClick={toggleQueue}><span /></button>}
+        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3>接下来</h3></div><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">{isMobile ? <ChevronDown size={20}/> : '×'}</button></header>
         <div className="now-card">
           <Artwork src={current?.coverUrl} className="now-art" />
           <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
         <div className="queue-list">
           {queue.map((track, index) => (
-            <div className="queue-entry" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button>{isIOS ? <ActionMenu sheet label={`队列操作：${track.title}`}>{close => <><button onClick={() => { void play(track); close() }}><Play size={16}/>播放</button><button onClick={() => { chooseTrackPlaylist([track]); close() }}><ListMusic size={16}/>加入歌单…</button><button disabled={index === 0} onClick={() => { moveInQueue(track.id, -1); close() }}><ArrowUp size={16}/>上移</button><button disabled={index === queue.length - 1} onClick={() => { moveInQueue(track.id, 1); close() }}><ArrowDown size={16}/>下移</button><button onClick={() => { removeFromQueue(track.id); close() }}><Trash2 size={16}/>移出队列</button></>}</ActionMenu> : <><PlaylistButton track={track} /><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></>}</div>
+            <div className="queue-entry" key={track.id} onContextMenu={(event) => showTrackMenu(event, track)}><button className={track.id === current?.id ? 'active' : ''} onClick={() => void play(track)}><span>{index + 1}</span><span><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small></span></button>{isMobile ? <ActionMenu sheet label={`队列操作：${track.title}`}>{close => <><button onClick={() => { void play(track); close() }}><Play size={16}/>播放</button><button onClick={() => { chooseTrackPlaylist([track]); close() }}><ListMusic size={16}/>加入歌单…</button><button disabled={index === 0} onClick={() => { moveInQueue(track.id, -1); close() }}><ArrowUp size={16}/>上移</button><button disabled={index === queue.length - 1} onClick={() => { moveInQueue(track.id, 1); close() }}><ArrowDown size={16}/>下移</button><button onClick={() => { removeFromQueue(track.id); close() }}><Trash2 size={16}/>移出队列</button></>}</ActionMenu> : <><PlaylistButton track={track} /><button aria-label="上移" disabled={index === 0} onClick={() => moveInQueue(track.id, -1)}><ArrowUp size={13} /></button><button aria-label="下移" disabled={index === queue.length - 1} onClick={() => moveInQueue(track.id, 1)}><ArrowDown size={13} /></button><button aria-label="移出队列" onClick={() => removeFromQueue(track.id)}><Trash2 size={13} /></button></>}</div>
           ))}
           {!queue.length && <p className="queue-empty">队列为空，可以从音乐库或搜索结果添加歌曲。</p>}
         </div>

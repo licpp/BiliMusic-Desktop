@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ChevronDown, Heart, LoaderCircle, MessageCircle, Send, X } from 'lucide-react'
 import { memo, useRef, useState, type FormEvent } from 'react'
 import { CommentsSurface } from './CommentsSurface'
-import { isIOS } from '../../services/platform'
+import { isMobile } from '../../services/platform'
 import { commandErrorMessage, getCommentReplies, getComments, replyComment, setCommentLike, type BiliComment } from '../../services/desktopApi'
 
 type OptimisticLike = { liked: boolean; likeCount: number }
@@ -30,7 +30,7 @@ export const CommentsPanel = memo(function CommentsPanel({ aid, onClose }: { aid
     finally { setLoadingReplies(null) }
   }
   const expand = async (comment: BiliComment) => {
-    if (isIOS) { setThread(comment); if (!expanded[comment.id]) await loadReplies(comment, 1); return }
+    if (isMobile) { setThread(comment); if (!expanded[comment.id]) await loadReplies(comment, 1); return }
     if (expanded[comment.id]) { setExpanded((value) => { const next = { ...value }; delete next[comment.id]; return next }); return }
     await loadReplies(comment, 1)
   }
@@ -75,10 +75,10 @@ export const CommentsPanel = memo(function CommentsPanel({ aid, onClose }: { aid
         {replyPages[thread.id] > 0 && threadReplies.length < thread.replyCount && <button className="load-more" onClick={() => void loadReplies(thread, replyPages[thread.id] + 1)}>加载更多回复</button>}
       </div>
     </> : <>
-      <header><div><span className="eyebrow">COMMENTS</span><h3>评论 {comments.data ? `(${comments.data.pages[0].total})` : ''}</h3></div><button onClick={onClose} aria-label="关闭评论">{isIOS ? <ChevronDown /> : <X />}</button></header>
+      <header><div><span className="eyebrow">COMMENTS</span><h3>评论 {comments.data ? `(${comments.data.pages[0].total})` : ''}</h3></div><button onClick={onClose} aria-label="关闭评论">{isMobile ? <ChevronDown /> : <X />}</button></header>
       <div className="comments-scroll">{comments.isLoading ? <div className="comments-status"><LoaderCircle className="spin" />加载评论</div> : <>{items.map((source) => {
         const comment = shown(source)
-        return <div key={comment.id}><CommentRow comment={comment} replies={isIOS ? undefined : expanded[comment.id]?.map(shown)} onExpand={() => void expand(comment)} onReply={beginReply} onLike={(target) => void like(target)} pending={likePending.has(comment.id)} />{loadingReplies === comment.id ? <small>正在加载回复…</small> : !isIOS && expanded[comment.id] && replyPages[comment.id] > 0 && expanded[comment.id].length < comment.replyCount && <button className="load-more" onClick={() => void loadReplies(comment, replyPages[comment.id] + 1)}>加载更多回复</button>}</div>
+        return <div key={comment.id}><CommentRow comment={comment} replies={isMobile ? undefined : expanded[comment.id]?.map(shown)} onExpand={() => void expand(comment)} onReply={beginReply} onLike={(target) => void like(target)} pending={likePending.has(comment.id)} />{loadingReplies === comment.id ? <small>正在加载回复…</small> : !isMobile && expanded[comment.id] && replyPages[comment.id] > 0 && expanded[comment.id].length < comment.replyCount && <button className="load-more" onClick={() => void loadReplies(comment, replyPages[comment.id] + 1)}>加载更多回复</button>}</div>
       })}{!items.length && !comments.isError && <div className="comments-status">还没有评论</div>}{comments.hasNextPage && <button className="load-more" disabled={comments.isFetchingNextPage} onClick={() => void comments.fetchNextPage()}>{comments.isFetchingNextPage ? '加载中…' : '加载更多评论'}</button>}{comments.isError && <button className="load-more" onClick={() => void comments.refetch()}>{commandErrorMessage(comments.error)} · 重试</button>}</>}</div>
     </>}
     <form className="comment-compose" onSubmit={submit}>{replying && <div><span>回复 <b>@{replying.userName}</b></span><button type="button" onClick={() => { setReplying(null); setMessage('') }}>取消</button></div>}<textarea maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={replying ? `回复 @${replying.userName}` : '友善地说点什么…'} />{error && <small>{error}</small>}<button disabled={sending || !message.trim()}>{sending ? <LoaderCircle className="spin" /> : <Send />}发送</button></form>

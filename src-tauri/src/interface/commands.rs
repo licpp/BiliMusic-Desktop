@@ -658,8 +658,12 @@ pub fn lyrics_save(
         return Err(CommandError::validation("歌曲尚未加入资料库"));
     }
     if !manual.unwrap_or(false) {
-        if let Some(existing) = LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)? {
-            if existing.selected_manually || !existing.raw_text.is_empty() { return Ok(existing); }
+        if let Some(existing) =
+            LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)?
+        {
+            if existing.selected_manually || !existing.raw_text.is_empty() {
+                return Ok(existing);
+            }
         }
     }
     LyricsRepository::save(&connection, &track_id, &lyrics, manual.unwrap_or(false))

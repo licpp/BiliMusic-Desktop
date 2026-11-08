@@ -15,10 +15,14 @@ export function observeAndroidAudio(callback: (state: State) => void) {
 }
 export async function playAndroidAudio(track: Track, url: string, position: number, volume: number) {
   await ready
-  await invoke('plugin:android-player|play', { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', position, volume })
+  await invoke('plugin:android-player|play', { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume })
 }
 export const controlAndroidAudio = (action: string, value = 0) => invoke('plugin:android-player|control', { action, value })
-export const snapshotAndroidAudio = () => invoke<State>('plugin:android-player|snapshot')
-export function androidPlaybackClock() { return Math.min(clock.duration || Infinity, clock.position + (clock.playing ? Math.max(0, performance.now() - clock.at) / 1000 : 0)) }
+export const snapshotAndroidAudio = async () => {
+  const state = await invoke<State>('plugin:android-player|snapshot')
+  if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', duration: state.duration || 0 }
+  return state
+}
+export function androidPlaybackClock() { return clock.position + (clock.playing ? Math.max(0, performance.now() - clock.at) / 1000 : 0) }
 
-export const prepareAndroidAudio = (track: Track) => invoke('plugin:android-player|control', { action: 'prepare', id: track.id, title: track.title, artist: track.artist || '歌手未知' })
+export const prepareAndroidAudio = (track: Track) => invoke('plugin:android-player|control', { action: 'prepare', id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl })

@@ -40,6 +40,7 @@ fn parse_manifest(bytes: &[u8], os: &str, arch: &str) -> Result<UpdateRelease, S
     // Only these architectures currently have published installers.
     let platform = match (os, arch) {
         ("android", "aarch64") => Some("android"),
+        ("ios", "aarch64") => Some("ios"),
         ("macos", "aarch64") => Some("mac"),
         ("windows", "x86_64") => Some("windows"),
         _ => None,

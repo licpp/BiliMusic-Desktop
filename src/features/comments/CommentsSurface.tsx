@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { isIOS, isMobile } from '../../services/platform'
+import { isMobile } from '../../services/platform'
 
 const mobileQuery = '(max-width: 960px)'
 function subscribeToLayout(listener: () => void) {
@@ -41,11 +41,11 @@ export function CommentsSurface({ children, onClose, forceExpanded = false }: { 
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }}>
-    <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''}${isIOS ? ' ios-comments' : ''}`} role="dialog" aria-modal="true" aria-label="歌曲评论" onFocusCapture={event => { if (event.target instanceof HTMLTextAreaElement) setExpanded(true) }}>
+    <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''} mobile-comments`} role="dialog" aria-modal="true" aria-label="歌曲评论" onFocusCapture={event => { if (event.target instanceof HTMLTextAreaElement) setExpanded(true) }}>
       <button className="comments-sheet-handle" type="button" aria-label={expanded ? '收起评论面板' : '展开评论面板'} aria-expanded={expanded}
         onPointerDown={event => { gesture.current = event.clientY; suppressClick.current = false; panel.current?.setAttribute('data-dragging', ''); event.currentTarget.setPointerCapture(event.pointerId) }}
         onPointerMove={event => {
-          if (gesture.current === null || !isIOS) return
+          if (gesture.current === null) return
           const delta = event.clientY - gesture.current
           const distance = forceExpanded ? Math.max(0, delta) : expanded ? Math.max(0, delta) : Math.max(-window.innerHeight * .26, delta)
           panel.current?.style.setProperty('--comment-drag-y', `${distance}px`)

@@ -18,7 +18,7 @@ export async function getDownloadStats(db, currentVersion) {
   const counts = await db.query(`SELECT version, platform, sum(downloads)::text AS downloads
     FROM download_counts GROUP BY version, platform ORDER BY max(updated_at) DESC, version DESC`);
   const meta = await db.query('SELECT started_at FROM download_stats_meta WHERE id=1');
-  const platforms = { mac:0, windows:0, android:0 };
+  const platforms = { mac:0, windows:0, android:0, ios:0 };
   const byVersion = new Map();
   for (const row of counts.rows) {
     const count = Number(row.downloads);

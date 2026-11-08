@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal } from 'lucide-react'
-import { isIOS } from '../services/platform'
+import { isMobile } from '../services/platform'
 
 export function ActionMenu({ label = '更多操作', panel = false, sheet = false, contextPosition, children }: { label?: string; panel?: boolean; sheet?: boolean; contextPosition?: {left:number;top:number;nonce:number}; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
-  const isSheet=(sheet || isIOS) && compact
+  const isSheet=(sheet || isMobile) && compact
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)

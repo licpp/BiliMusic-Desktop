@@ -66,9 +66,9 @@ async function loadDownloads() {
     renderReleaseHistory(releaseManifest);
     $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
     for (const item of releaseManifest.platforms) {
-      const article = element('article', null, item.id === 'android' ? 'android-card' : '');
-      article.append(element('div', item.id === 'mac' ? '⌘' : item.id === 'windows' ? '⊞' : '↗', 'os-symbol'));
-      const heading = element('div'); heading.append(element('h3',`BiliMusic for ${item.name}`));
+      const article = element('article');
+      article.append(element('div', item.id === 'mac' ? '⌘' : item.id === 'windows' ? '⊞' : item.id === 'ios' ? '◉' : '↗', 'os-symbol'));
+      const heading = element('div'); heading.append(element('h3',`BiliMusic for ${item.name}${item.id === 'ios' ? ' · 自签版' : ''}`));
       heading.append(element('p',item.status === 'available' ? item.architecture : '移动端正在规划中，敬请期待。')); article.append(heading);
       if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
       else {
@@ -84,6 +84,9 @@ async function loadDownloads() {
           channels.append(button);
         }
         article.append(channels);
+        if (item.id === 'ios') {
+          const guide=element('a','查看自签安装说明 ↗','download-note'); guide.href='/ios.html'; article.append(guide);
+        }
         const checksum = element('details',null,'checksum'); checksum.append(element('summary','查看 SHA-256 校验值'),element('code',item.sha256)); article.append(checksum);
       }
       target.append(article);
@@ -114,7 +117,7 @@ async function openPolicy(downloadPlatform) {
   $('#confirm-download').disabled = true;
   $('#confirm-download').dataset.loaded = 'false';
   $('#confirm-download').textContent = '同意并下载';
-  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
+  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'ios' ? 'iOS 下载的是未签名 IPA，必须使用自己的 Apple ID 自行签名后安装，不是 App Store 版本。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
   dialog.showModal(); dialog.scrollTop = 0; content.scrollTop = 0;

@@ -1,6 +1,6 @@
 # BiliMusic
 
-收藏喜欢的B站音乐，把有声书和长音频也整理进自己的音乐库。支持 macOS、Windows 与 Android，可选坚果云或 BiliMusic 云同步。
+收藏喜欢的B站音乐，把有声书和长音频也整理进自己的音乐库。支持 macOS、Windows、Android 与 iOS 自签版，可选坚果云或 BiliMusic 云同步。
 
 [官网下载](https://bilimusic.cn/#download) · [GitHub Releases](https://github.com/licpp/BiliMusic-Desktop/releases) · [Gitee 国内镜像](https://gitee.com/yoaker/BiliMusic-Desktop/releases) · [反馈](https://bilimusic.cn/#feedback)
 
@@ -13,7 +13,7 @@
 - **跨设备同步**：同步歌单、收藏、修改后的歌曲信息和歌词设置，可选最近播放；默认关闭。
 - **专注聆听**：队列、循环播放、按需视频与弹幕，让电脑和手机都成为你的音乐空间。
 
-最新版本为 **0.2.2**，修复了搜索结果展开分 P 时意外切歌的问题，单分 P 视频也能展开查看。macOS 使用完整 ad-hoc 签名，尚未 Apple 公证；Windows 尚未发布者签名。Android 直接下载 APK 安装，固定签名支持覆盖上一版。
+最新版本为 **0.2.3**，重新整理了手机上的播放栏、歌词、评论和播放队列，支持滑动切歌与长按菜单。新增 iOS 自签版，修复评论点赞和歌词进度问题。macOS 使用完整 ad-hoc 签名，尚未 Apple 公证；Windows 尚未发布者签名。Android 直接下载 APK 安装，固定签名支持覆盖上一版。
 
 > 独立开源客户端，非哔哩哔哩官方产品，未获得其官方授权。音视频、歌词与封面等第三方内容的权利归相应权利人所有。MIT 代码许可不包含第三方内容授权。请在适用法律、平台规则和内容授权允许的范围内使用，详见 [使用声明与隐私说明](DISCLAIMER.md)。
 
@@ -37,7 +37,7 @@
 
 ## iOS 自签版
 
-iOS / iPadOS 15+ 的真机 ARM64 适配在 `codex/ios-self-sign` 分支，提供供用户自行签名的 IPA 构建流程，详见 [安装与构建说明](docs/iOS-self-sign.md)。需要用自己的 Apple ID 通过侧载工具签名；尚未上架 App Store。
+iOS / iPadOS 15+ 提供 ARM64 真机 IPA，可在官网下载后自行签名安装，详见 [安装与构建说明](docs/iOS-self-sign.md)。需要用自己的 Apple ID 通过侧载工具签名；尚未上架 App Store。
 
 ## 开发与验证
 
@@ -97,7 +97,7 @@ macOS 使用完整应用包的 ad-hoc 临时签名，并从最终 DMG 验证签�
 
 ## 网站与反馈
 
-官网提供 macOS、Windows、Android 下载、更新历史和站内反馈。国内优先推荐 [Gitee 发行版](https://gitee.com/yoaker/BiliMusic-Desktop/releases/latest)，同时提供 [GitHub Releases](https://github.com/licpp/BiliMusic-Desktop/releases/latest)。
+官网提供 macOS、Windows、Android 与 iOS 自签版下载、更新历史和站内反馈。国内优先推荐 [Gitee 发行版](https://gitee.com/yoaker/BiliMusic-Desktop/releases/latest)，同时提供 [GitHub Releases](https://github.com/licpp/BiliMusic-Desktop/releases/latest)。
 
 macOS 安装包支持 macOS 12+ 与 Apple Silicon，Windows 安装包为 x64，Android 安装包为 ARM64。macOS 使用临时签名，尚未 Apple 公证；Windows 尚未发布者签名。下载时请核对来源与发行版附件中的 SHA-256 校验清单。GitHub 与 Gitee 提供相同的安装包。
 

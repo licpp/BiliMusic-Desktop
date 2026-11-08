@@ -1,9 +1,9 @@
-import { isIOS } from '../services/platform'
+import { isMobile } from '../services/platform'
 
 // Delegate long presses so every existing row context menu has the same touch
 // semantics. Scrolling cancels the press; the release never becomes a play tap.
 export function installMobileGestures() {
-  if (!isIOS) return
+  if (!isMobile) return
   let press: { x: number; y: number; target: HTMLElement; edge: boolean } | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   let suppressUntil = 0

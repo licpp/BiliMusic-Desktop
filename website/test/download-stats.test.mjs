@@ -56,7 +56,7 @@ test('download counts survive concurrent requests/restarts and isolate versions'
     await recordDownload(db,'old-version','mac','github');
     const stats=await get('/api/v1/download-stats');
     assert.equal(stats.total,35);
-    assert.deepEqual(stats.platforms,{mac:33,windows:1,android:1});
+    assert.deepEqual(stats.platforms,{mac:33,windows:1,android:1,ios:0});
     assert.equal(stats.versions.find(x=>x.version===manifest.version).downloads,32);
     assert.equal(stats.versions.find(x=>x.version==='old-version').downloads,3);
     const future=await getDownloadStats(db,'future-version');
