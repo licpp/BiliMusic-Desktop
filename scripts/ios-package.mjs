@@ -30,6 +30,9 @@ try {
   const app = join(temp, 'Payload', 'BiliMusic.app')
   await mkdir(join(temp, 'Payload'))
   await cp(join(appsRoot, apps[0]), app, { recursive: true })
+  // A regenerated local Xcode project can copy the Rust static archive as a
+  // resource. It is already linked into the executable and has no runtime use.
+  await rm(join(app, 'libapp.a'), { force: true })
   const plist = JSON.parse(run('plutil', ['-convert', 'json', '-o', '-', join(app, 'Info.plist')]))
   if (plist.CFBundleShortVersionString !== version || plist.CFBundleIdentifier !== 'app.bilimusic.ios') throw new Error('iOS bundle identity/version mismatch')
   if (!plist.CFBundleSupportedPlatforms?.includes('iPhoneOS')) throw new Error('A real-device build is required, not a simulator')
