@@ -1,5 +1,9 @@
+import { isIOS, isMobile } from '../../services/platform'
+import { controlIOSAudio } from '../player/iosAudio'
+import { formatDuration } from '../../shared/time'
+import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
+import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -35,6 +39,8 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const queryClient = useQueryClient()
   const shuffled = usePlayerStore((state) => state.shuffled)
   const repeatMode = usePlayerStore((state) => state.repeatMode)
+  const status = usePlayerStore(state => state.status)
+  const duration = usePlayerStore(state => state.durationSeconds)
   const cyclePlaybackMode = usePlayerStore((state) => state.cyclePlaybackMode)
 
   const [editing, setEditing] = useState<Track | null>(null)
@@ -57,6 +63,17 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const [videoSource, setVideoSource] = useState<{ trackId: string; url: string } | null>(null)
   const videoUrl = videoSource?.trackId === current?.id ? videoSource?.url || '' : ''
   const [videoFullscreen, setVideoFullscreen] = useState(false)
+  useEffect(() => {
+    if (!isMobile) return
+    if (videoFullscreen) document.documentElement.dataset.videoFullscreen = 'true'
+    else delete document.documentElement.dataset.videoFullscreen
+    if (isIOS) void controlIOSAudio('videoFullscreen', videoFullscreen ? 1 : 0).catch(() => undefined)
+  }, [videoFullscreen])
+  useEffect(() => () => {
+    if (!isMobile) return
+    delete document.documentElement.dataset.videoFullscreen
+    if (isIOS) void controlIOSAudio('videoFullscreen', 0).catch(() => undefined)
+  }, [])
   const [danmaku, setDanmaku] = useState<DanmakuItem[]>([])
   const [danmakuVisible, setDanmakuVisible] = useState(() => localStorage.getItem('danmakuVisible') !== 'false')
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
@@ -239,6 +256,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     finally { if (request === lyricRequest.current) setLoading(false) }
   }
 
+  useEffect(() => {
+    if (chooserOpen && isMobile && lyricQuery.trim()) void refreshCandidates()
+  }, [chooserOpen])
+
   async function importManualLyrics() {
     if (!current || !manualText.trim()) return
     const request = ++lyricRequest.current
@@ -308,6 +329,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
             </>}</ActionMenu>
           </>}
         </div>
+        {videoFullscreen && isMobile && <div className="video-fullscreen-transport">
+          <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? 'Ⅱ' : '▶'}</button>
+          <span>{formatDuration(progressSeconds)}</span><input aria-label="视频播放进度" type="range" min={0} max={Math.max(1, duration)} step={0.1} value={Math.min(progressSeconds, Math.max(1, duration))} onChange={event => usePlayerStore.getState().seek(Number(event.target.value))}/><span>{formatDuration(duration)}</span>
+        </div>}
         </div>
         <div className="lyrics-track-meta">
           <div className="lyrics-meta-copy">
@@ -333,23 +358,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
         onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
       {error && lines.length > 0 && <div className="lyrics-toast">{error}</div>}
-      {chooserOpen && <div className="lyric-chooser-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setChooserOpen(false)}>
-        <div className="lyric-chooser">
-          <header><div><span className="eyebrow">LYRICS</span><h3>选择歌词版本</h3></div><button onClick={() => setChooserOpen(false)}><X /></button></header>
-          <form className="lyric-search-form manual-search-fields" onSubmit={(event) => { event.preventDefault(); if (lyricQuery.trim()) void refreshCandidates() }}><label>歌曲名<input aria-label="歌词搜索歌曲名" value={lyricQuery} onChange={(event) => setLyricQuery(event.target.value)} placeholder="填写正确的歌曲名" /></label><label>歌手<input aria-label="歌词搜索歌手" value={lyricArtist} onChange={(event) => setLyricArtist(event.target.value)} placeholder="可选" /></label><button disabled={loading || !lyricQuery.trim()}>搜索歌词</button></form>
-          <div className="lyrics-manual-tools"><button onClick={() => setManualOpen((value) => !value)}>{manualOpen ? '收起导入' : '粘贴 LRC / 文本歌词'}</button></div>
-          {manualOpen && <form className="lyrics-manual-form" onSubmit={(event) => { event.preventDefault(); void importManualLyrics() }}><textarea aria-label="粘贴歌词内容" maxLength={400000} value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder="粘贴带时间标签的 LRC，或普通文本歌词" /><button disabled={!manualText.trim()}>保存到这首歌</button></form>}
-          {error && <p className="inline-error">{error}</p>}
-          {warning && <p className="lyrics-warning">{warning}</p>}
-          {loading ? <div className="chooser-status"><LoaderCircle className="spin" />搜索中</div> : candidates.length ? <div className="candidate-list">{candidates.map((candidate) => (
-            <button key={`${candidate.provider}:${candidate.id}`} onClick={() => void selectCandidate(candidate, true)}>
-              <span><strong>{candidate.trackName}</strong><small>{candidate.artistName || '歌手未知'} · {candidate.albumName || '专辑未知'}</small></span>
-              <span>{candidate.provider === 'netease' ? '网易云 · ' : ''}{candidate.syncedLyrics ? '逐行' : '文本'}</span>
-              {stored?.provider === candidate.provider && stored?.providerLyricId === String(candidate.id) ? <Check size={17} /> : <ChevronLeft className="candidate-arrow" size={17} />}
-            </button>
-          ))}</div> : !error && <div className="chooser-status">{searched ? '没有搜索到可用歌词，可以更换关键词或粘贴歌词。' : '确认歌曲名和歌手后，点击“搜索歌词”。'}</div>}
-        </div>
-      </div>}
+      {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
+        loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
+        onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
+        manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} />}
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>

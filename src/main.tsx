@@ -38,3 +38,5 @@ createRoot(document.getElementById('root')!).render(
 
 import './styles/collections.css'
 import './styles/downloads.css'
+
+import './styles/mobile-pages.css'

@@ -62,6 +62,7 @@ func didResolve(_ request: Int64, _ json: UnsafePointer<CChar>) {
 }
 
 class PlayerPlugin: Plugin {
+    private var fullscreenState: (orientation: UIInterfaceOrientation, mask: UIInterfaceOrientationMask, statusHidden: Bool, homeHidden: Bool)?
     private let player = AVPlayer()
     private var state = PlayerSnapshot()
     private var tracks: [QueueTrack] = []
@@ -171,9 +172,46 @@ class PlayerPlugin: Plugin {
                 webview?.isOpaque = false
                 webview?.backgroundColor = light ? UIColor(white: 0.96, alpha: 1) : UIColor(red: 0.027, green: 0.063, blue: 0.098, alpha: 1)
             case "immersive": break
+            case "videoFullscreen": setVideoFullscreen(args.value == 1)
             default: invoke.reject("不支持的播放操作"); return
             }
             invoke.resolve()
+        }
+    }
+    private func setVideoFullscreen(_ enabled: Bool) {
+        guard let window = webview?.window, let scene = window.windowScene, let controller = window.rootViewController else { return }
+        if enabled && fullscreenState != nil { return }
+        if !enabled && fullscreenState == nil { return }
+        if enabled {
+            fullscreenState = (scene.interfaceOrientation, controller.supportedInterfaceOrientations, controller.prefersStatusBarHidden, controller.prefersHomeIndicatorAutoHidden)
+        }
+        guard let previous = fullscreenState else { return }
+        let orientation = enabled ? (scene.interfaceOrientation.isLandscape ? scene.interfaceOrientation : .landscapeRight) : previous.orientation
+        let supported = enabled ? UIInterfaceOrientationMask.landscape : previous.mask
+        // These setters belong to the vendored Tao view controller. Check them
+        // before using KVC; no UIDevice private orientation API is involved.
+        for (selector, key, value) in [
+            ("setSupportedInterfaceOrientations:", "supportedInterfaceOrientations", NSNumber(value: supported.rawValue)),
+            ("setPrefersStatusBarHidden:", "prefersStatusBarHidden", NSNumber(value: enabled || previous.statusHidden)),
+            ("setPrefersHomeIndicatorAutoHidden:", "prefersHomeIndicatorAutoHidden", NSNumber(value: enabled || previous.homeHidden))
+        ] {
+            if controller.responds(to: NSSelectorFromString(selector)) { controller.setValue(value, forKey: key) }
+        }
+        if !enabled { fullscreenState = nil }
+        if #available(iOS 16.0, *) {
+            controller.setNeedsUpdateOfSupportedInterfaceOrientations()
+            let target: UIInterfaceOrientationMask
+            switch orientation {
+            case .landscapeLeft: target = .landscapeLeft
+            case .landscapeRight: target = .landscapeRight
+            case .portraitUpsideDown: target = .portraitUpsideDown
+            default: target = .portrait
+            }
+            // CSS provides landscape presentation while rotation is pending or
+            // unavailable (including iOS 15 and orientation-locked scenes).
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: target), errorHandler: { _ in })
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
         }
     }
     @objc public func snapshot(_ invoke: Invoke) { onMain { [self] in refresh(); invoke.resolve(state) } }

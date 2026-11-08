@@ -1,3 +1,5 @@
+import { isMobile } from '../../services/platform'
+import { MobilePartsPage } from '../library/MobilePartsPage'
 import { toTrack } from '../../services/collectionTrack'
 import type { Collection } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
@@ -17,6 +19,7 @@ import { chooseTrackPlaylist } from '../library/trackActionStore'
 type ExpandedState = { open?: boolean; loading?: boolean; detail?: BiliVideoParts; error?: string }
 
 export function SearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
+  const [partsPage, setPartsPage] = useState<BiliVideoParts | null>(null)
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
   const [linking, setLinking] = useState<string>()
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({})
@@ -48,6 +51,8 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
       if (!expandOnly && existing.detail.parts.length === 1) {
         const tracks = existing.detail.parts.map(part => toTrack(existing.detail!, part))
         void play(tracks, tracks[0].id)
+      } else if (isMobile) {
+        setPartsPage(existing.detail)
       } else {
         setExpanded(state => ({ ...state, [item.bvid]: { ...state[item.bvid], open: !state[item.bvid]?.open } }))
       }
@@ -57,7 +62,8 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
     try {
       const detail = await getVideoParts(item.bvid)
       const playSingle = !expandOnly && detail.parts.length === 1
-      setExpanded((state) => ({ ...state, [item.bvid]: { detail, open: !playSingle } }))
+      setExpanded((state) => ({ ...state, [item.bvid]: { detail, open: !playSingle && !isMobile } }))
+      if (!playSingle && isMobile) setPartsPage(detail)
       if (playSingle) {
         const tracks = detail.parts.map(part => toTrack(detail, part))
         void play(tracks, tracks[0].id)
@@ -107,6 +113,7 @@ export function SearchView({ query, active = true, onCollectionOpen }: { query: 
         </>} />{!state.detail.parts.length && <p className="batch-message">暂无可播放的分 P</p>}</div>}
       </article>
     })}</div>
+    {active && partsPage && <MobilePartsPage key={partsPage.bvid} detail={partsPage} onBack={() => setPartsPage(null)}/>}
     {active && linking && <LinkedFolderPicker bvid={linking} onClose={() => setLinking(undefined)} />}
     {result.hasNextPage && <button className="load-more" disabled={result.isFetchingNextPage} onClick={() => void result.fetchNextPage()}>{result.isFetchingNextPage ? '加载中…' : '加载更多结果'}</button>}
     {result.isFetchNextPageError && <p className="inline-error">{commandErrorMessage(result.error)}</p>}
