@@ -321,7 +321,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           {mediaMode === 'video' && <>
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
-            <ActionMenu label="视频与弹幕设置" panel>{(close) => <>
+            <ActionMenu label="视频与弹幕设置" panel floating={isMobile && videoFullscreen}>{(close) => <>
               <button onClick={toggleDanmaku} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
               <label>弹幕字号 <span>{danmakuSize.toFixed(1)}×</span><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label>
               <label>弹幕透明度 <span>{Math.round(danmakuOpacity * 100)}%</span><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label>

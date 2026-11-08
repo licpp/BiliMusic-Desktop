@@ -82,3 +82,22 @@
   .video-fullscreen-transport { left:20px;right:20px;bottom:16px; }
 }
 :root[data-mobile-page-open="true"] :is(.dialog-backdrop,.lyric-chooser-backdrop) { z-index:250; }
+.mobile-inline-match-toolbar { gap:10px; }
+.mobile-inline-match-toolbar select { flex:1;min-width:0;max-width:none; }
+.mobile-inline-match-toolbar button { flex:0 0 auto;gap:7px; }
+.mobile-inline-catalog .mobile-catalog-results { margin-top:0; }
+.mobile-inline-match-status { display:flex;align-items:center;justify-content:center;gap:8px;min-height:72px;color:var(--muted);font-size:14px; }
+.mobile-catalog-results>button>span:last-of-type { flex:1; }
+.mobile-catalog-results>button.selected { color:var(--cyan); }
+.mobile-catalog-results>button.selected>svg { flex:0 0 18px; }
+.action-menu-floating-scrim { z-index:229;background:#0003; }
+.action-menu-panel.action-menu-floating-panel { z-index:230;inset:max(12px,var(--native-safe-top,env(safe-area-inset-top,0px))) max(12px,var(--native-safe-right,env(safe-area-inset-right,0px))) auto auto;width:296px;max-width:calc(100vw - max(24px,var(--native-safe-left,0px) + var(--native-safe-right,0px)));max-height:calc(100dvh - max(24px,var(--native-safe-top,0px) + var(--native-safe-bottom,0px)));overflow-y:auto;overscroll-behavior:contain;padding:10px;border-radius:16px; }
+.action-menu-floating-heading { position:sticky;top:-10px;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 -2px 4px;padding:4px 4px 8px;background:var(--panel);color:var(--muted);font-size:12px; }
+.action-menu-floating-heading button { display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--ink); }
+.action-menu-floating-panel>label { padding:10px;gap:6px; }
+.action-menu-floating-panel>button { min-height:40px; }
+@media(orientation:portrait) {
+  :root[data-video-fullscreen="true"] .action-menu-panel.action-menu-floating-panel { inset:calc(100dvh - 12px) auto auto calc(100vw - 12px);width:min(296px,calc(100dvh - 24px));max-width:none;max-height:calc(100vw - 24px);transform-origin:top left;transform:rotate(90deg) translateX(-100%); }
+}
+.action-menu-floating-panel>button { font-size:14px; }
+.action-menu-floating-panel>label { font-size:13px; }

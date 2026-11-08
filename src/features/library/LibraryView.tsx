@@ -149,6 +149,7 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
   const [catalog, setCatalog] = useState<CatalogCandidate[]>([])
   const [catalogError, setCatalogError] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [searchTitle, setSearchTitle] = useState(title)
   const [searchArtist, setSearchArtist] = useState(artist)
@@ -159,7 +160,7 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
     const request = ++catalogRequest.current
     setCatalogOpen(true)
     if (!lookupTitle.trim()) { setCatalogLoading(false); setCatalogError('请填写用于搜索的歌曲名'); return }
-    setCatalogLoading(true); setCatalogError(''); setCatalog([])
+    setCatalogLoading(true); setCatalogError(''); setCatalog([]); setSelectedCatalogId(null)
     try { const results = await searchMetadataCatalog(lookupTitle.trim(), lookupArtist.trim(), source); if (request !== catalogRequest.current) return; setCatalog(results); if (!results.length) setCatalogError('没有匹配结果，可以调整搜索信息或切换来源') }
     catch (cause) { if (request === catalogRequest.current) setCatalogError(commandErrorMessage(cause)) }
     finally { if (request === catalogRequest.current) setCatalogLoading(false) }
@@ -169,29 +170,26 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
     setTitle(item.trackName); setArtist(item.artistName)
     if (item.collectionName) setAlbum(item.collectionName)
     if (item.artworkUrl) setCoverUrl(item.artworkUrl)
-    setCatalog([]); setCatalogOpen(false)
+    setSelectedCatalogId(item.trackId)
+    if (!isMobile) { setCatalog([]); setCatalogOpen(false) }
   }
-  const closeCatalog = () => { ++catalogRequest.current; setCatalogLoading(false); setCatalogOpen(false) }
-  if (isMobile) return <>
-    <MobilePage title="歌曲信息" onBack={onClose} className="mobile-metadata-page" actions={<button className="mobile-page-primary" type="submit" form="mobile-metadata-form" disabled={mutation.isPending || !title.trim()}>{mutation.isPending ? '保存中' : '保存'}</button>}>
-      <form id="mobile-metadata-form" className="mobile-editor" onSubmit={submit}>
-        <div className="mobile-track-preview"><Artwork src={coverUrl}/><div><strong>{title || '歌曲名'}</strong><small>{artist || '歌手未知'}</small></div></div>
-        <div className="mobile-field-group"><label>歌曲名<input aria-label="歌曲名" value={title} onChange={event => setTitle(event.target.value)} required/></label><label>歌手<input aria-label="歌手" value={artist} onChange={event => setArtist(event.target.value)} placeholder="歌手未知"/></label><label>专辑<input aria-label="专辑" value={album} onChange={event => setAlbum(event.target.value)} placeholder="可选"/></label></div>
-        <button className="mobile-row-action" type="button" disabled={catalogLoading} onClick={() => { setSearchTitle(title); setSearchArtist(artist); void enrich(title, artist) }}><Sparkles size={19}/><span>匹配歌曲信息</span><span aria-hidden="true">›</span></button>
-        <details className="mobile-cover-address"><summary>封面地址</summary><input aria-label="封面地址" type="url" value={coverUrl} onChange={event => setCoverUrl(event.target.value)} placeholder="https://"/></details>
-        {mutation.isError && <p role="alert" className="inline-error">{commandErrorMessage(mutation.error)}</p>}
-      </form>
-    </MobilePage>
-    {catalogOpen && <MobilePage title="匹配歌曲信息" onBack={closeCatalog} className="mobile-catalog-page">
-      <form className="mobile-editor mobile-lookup-fields" onSubmit={event => { event.preventDefault(); void enrich() }}>
-        <div className="mobile-field-group"><label>歌曲名<input aria-label="匹配搜索歌曲名" value={searchTitle} onChange={event => setSearchTitle(event.target.value)}/></label><label>歌手<input aria-label="匹配搜索歌手" value={searchArtist} onChange={event => setSearchArtist(event.target.value)} placeholder="可选"/></label></div>
-        <div className="mobile-lookup-toolbar"><select aria-label="歌曲信息来源" value={catalogSource} onChange={event => { const source = event.target.value as CatalogSource; setCatalogSource(source); void enrich(searchTitle, searchArtist, source) }}><option value="auto">全部来源</option><option value="itunes">iTunes</option><option value="musicbrainz">MusicBrainz</option></select><button className="mobile-page-primary" disabled={catalogLoading || !searchTitle.trim()}>{catalogLoading ? '搜索中' : '搜索'}</button></div>
-      </form>
-      {catalogLoading && <div className="mobile-page-empty"><LoaderCircle size={20} className="spin"/>正在匹配</div>}
-      {catalogError && <p role="alert" className="inline-error">{catalogError}</p>}
-      <div className="mobile-catalog-results">{catalog.map(item => <button type="button" key={item.trackId} onClick={() => pickCatalog(item)}><Artwork src={item.artworkUrl}/><span><strong>{item.trackName}</strong><small>{item.artistName} · {item.collectionName || '专辑未知'}</small><small>{item.source}</small></span></button>)}</div>
-    </MobilePage>}
-  </>
+  if (isMobile) return <MobilePage title="歌曲信息" onBack={onClose} className="mobile-metadata-page" actions={<button className="mobile-page-primary" type="submit" form="mobile-metadata-form" disabled={mutation.isPending || !title.trim()}>{mutation.isPending ? '保存中' : '保存'}</button>}>
+    <form id="mobile-metadata-form" className="mobile-editor" onSubmit={submit}>
+      <div className="mobile-track-preview"><Artwork src={coverUrl}/><div><strong>{title || '歌曲名'}</strong><small>{artist || '歌手未知'}</small></div></div>
+      <div className="mobile-field-group"><label>歌曲名<input aria-label="歌曲名" value={title} onChange={event => setTitle(event.target.value)} required/></label><label>歌手<input aria-label="歌手" value={artist} onChange={event => setArtist(event.target.value)} placeholder="歌手未知"/></label><label>专辑<input aria-label="专辑" value={album} onChange={event => setAlbum(event.target.value)} placeholder="可选"/></label></div>
+      <details className="mobile-cover-address"><summary>封面地址</summary><input aria-label="封面地址" type="url" value={coverUrl} onChange={event => setCoverUrl(event.target.value)} placeholder="https://"/></details>
+      <div className="mobile-lookup-toolbar mobile-inline-match-toolbar">
+        <select aria-label="歌曲信息来源" value={catalogSource} onChange={event => { const source = event.target.value as CatalogSource; setCatalogSource(source); if (catalogOpen) void enrich(title, artist, source) }}><option value="auto">全部来源</option><option value="itunes">iTunes</option><option value="musicbrainz">MusicBrainz</option></select>
+        <button className="mobile-page-primary" type="button" disabled={catalogLoading || !title.trim()} onClick={() => { (document.activeElement as HTMLElement | null)?.blur(); void enrich(title, artist) }}>{catalogLoading ? <LoaderCircle size={17} className="spin"/> : <Sparkles size={17}/>}匹配歌曲信息</button>
+      </div>
+      {catalogOpen && <section className="mobile-inline-catalog" aria-label="歌曲信息匹配结果" aria-busy={catalogLoading}>
+        {catalogLoading && <div className="mobile-inline-match-status"><LoaderCircle size={18} className="spin"/>正在匹配</div>}
+        {catalogError && <p role="alert" className="inline-error">{catalogError}</p>}
+        <div className="mobile-catalog-results">{catalog.map(item => <button type="button" key={item.trackId} className={selectedCatalogId === item.trackId ? 'selected' : undefined} aria-pressed={selectedCatalogId === item.trackId} onClick={() => pickCatalog(item)}><Artwork src={item.artworkUrl}/><span><strong>{item.trackName}</strong><small>{item.artistName} · {item.collectionName || '专辑未知'}</small><small>{item.source}</small></span>{selectedCatalogId === item.trackId && <Check size={18}/>}</button>)}</div>
+      </section>}
+      {mutation.isError && <p role="alert" className="inline-error">{commandErrorMessage(mutation.error)}</p>}
+    </form>
+  </MobilePage>
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <form className="metadata-dialog" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="metadata-title">
       <header><div><span className="eyebrow">TRACK DETAILS</span><h3 id="metadata-title">编辑歌曲信息</h3></div><button type="button" onClick={onClose} aria-label="关闭"><X /></button></header>
