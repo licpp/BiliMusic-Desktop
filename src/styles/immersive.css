@@ -4,6 +4,7 @@
 .app-shell.lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:var(--base); }
 .app-shell.lyrics-immersive .lyrics-view { background:transparent; }
 .app-shell.lyrics-immersive .lyrics-topbar,.app-shell.lyrics-immersive .lyrics-album-pane { border-color:transparent; }
+.app-shell.lyrics-immersive .lyrics-topbar .action-menu-trigger { border:0;background:transparent;box-shadow:none; }
 .lyrics-media { position:relative;display:flex;flex-direction:column;align-items:center;max-width:100%; }
 .lyrics-meta-actions { display:none; }
 .video-fullscreen > .lyrics-media { width:100%;height:100%; }
