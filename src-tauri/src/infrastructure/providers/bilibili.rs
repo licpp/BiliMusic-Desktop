@@ -855,7 +855,7 @@ impl BilibiliProvider {
             .append_pair("qn", "120")
             .append_pair("fnver", "0")
             .append_pair("fnval", "4048")
-            .append_pair("fourk", "0");
+            .append_pair("fourk", "1");
         let play: PlayData = self.get_data(url).await?;
         let streams = play.dash.map(|dash| dash.video).unwrap_or_default();
         let source = Self::select_video_quality(&streams, video_height)?;

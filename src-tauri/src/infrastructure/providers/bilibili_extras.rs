@@ -314,7 +314,15 @@ impl BilibiliProvider {
             })
             .map(|s| QualityOption {
                 id: s.height,
-                label: format!("{}p", s.height),
+                label: match s.id {
+                    120 => "4K".into(),
+                    112 => "1080P+".into(),
+                    80 => "1080P".into(),
+                    64 => "720P".into(),
+                    32 => "480P".into(),
+                    16 => "360P".into(),
+                    _ => format!("{}p", s.height),
+                },
             })
             .collect();
         video.sort_by_key(|s| s.id);
