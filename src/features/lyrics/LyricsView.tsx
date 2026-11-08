@@ -263,13 +263,15 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     if (!current || !lyrics || lyrics.trackId !== current.id) return
     const next = { ...lyrics, biasMs: clampBias(lyrics.biasMs + delta) }
     storedRef.current = next
-    setStored(next); setBiasSaveError(false); setBiasActivity(Date.now())
+    setStored(next); setBiasSaveError(false); setError(''); setBiasActivity(Date.now())
     biasWriter.set(current.id, next.biasMs)
   }
 
   function alignLine(timeMs: number) {
     if (!biasOpen || !storedRef.current) return
-    adjustBias(clampBias(progressSeconds * 1000 - timeMs) - storedRef.current.biasMs)
+    const target = progressSeconds * 1000 - timeMs
+    if (Math.abs(target) > 30_000) { setError('这句距离当前播放超过 30 秒，请选择附近的歌词对齐'); return }
+    adjustBias(clampBias(target) - storedRef.current.biasMs)
   }
 
   if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
