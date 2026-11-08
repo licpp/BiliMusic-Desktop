@@ -36,9 +36,10 @@
   .app-shell.lyrics-immersive .lyrics-view { inset:var(--native-safe-top,env(safe-area-inset-top,0px)) var(--native-safe-right,0px) calc(88px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))) var(--native-safe-left,0px); }
   .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:56px auto minmax(90px,1fr) auto; }
   .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) { display:contents; }
-  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-media { grid-area:2/1;width:calc(100% - 48px);justify-self:center;margin:10px 0 12px; }
-  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover { width:min(60vw,28dvh,260px);height:auto;aspect-ratio:1;border-radius:16px; }
-  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover.video-active { width:100%;max-height:26dvh;aspect-ratio:16/9; }
+  /* Reserve the same video-sized row for both modes so lyrics never shift. */
+  .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-media { grid-area:2/1;width:calc(100% - 48px);height:min(calc((100vw - 48px - var(--native-safe-left,0px) - var(--native-safe-right,0px)) * 9 / 16),26dvh);justify-self:center;margin:10px 0 12px; }
+  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover { width:auto;height:100%;flex-shrink:0;aspect-ratio:1;border-radius:16px; }
+  .app-shell.lyrics-immersive .lyrics-media .lyrics-cover.video-active { width:100%;max-height:none;aspect-ratio:auto; }
   .app-shell.lyrics-immersive .lyrics-media .video-tools { position:absolute;inset:6px 0 auto auto;width:auto;margin:0; }
   .app-shell.lyrics-immersive .lyrics-media .video-tools-overlay { inset:auto 10px 10px auto; }
   .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-track-meta { display:block;grid-area:4/1;width:calc(100% - 64px);max-width:440px;justify-self:center;min-width:0;padding:8px 0 12px; }

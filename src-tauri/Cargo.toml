@@ -53,3 +53,7 @@ strip = true
 lto = "thin"
 codegen-units = 1
 opt-level = "s"
+
+[patch.crates-io]
+# Keep the UIScene configuration alive until UIKit retains the delegate result.
+tao = { path = "vendor/tao" }
