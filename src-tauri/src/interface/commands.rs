@@ -320,6 +320,7 @@ pub async fn bili_video_parts(
 
 #[tauri::command]
 pub async fn bili_playback_source(
+    database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     media_proxy: State<'_, MediaProxy>,
     bvid: String,
@@ -328,8 +329,15 @@ pub async fn bili_playback_source(
     if !valid_bvid(&bvid) || cid <= 0 {
         return Err(CommandError::validation("无效的播放源标识"));
     }
+    let quality = {
+        let c = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        crate::interface::media::preferences(&c).map_err(CommandError::database)?
+    };
     let mut source = provider
-        .playback_source(&bvid, cid)
+        .playback_source_with_quality(&bvid, cid, quality.audio_id, quality.video_height)
         .await
         .map_err(CommandError::provider)?;
     source.audio_url = media_proxy
@@ -345,6 +353,7 @@ pub async fn bili_playback_source(
 
 #[tauri::command]
 pub async fn bili_video_source(
+    database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     media_proxy: State<'_, MediaProxy>,
     bvid: String,
@@ -353,8 +362,15 @@ pub async fn bili_video_source(
     if !valid_bvid(&bvid) || cid <= 0 {
         return Err(CommandError::validation("无效的视频源标识"));
     }
+    let quality = {
+        let c = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        crate::interface::media::preferences(&c).map_err(CommandError::database)?
+    };
     let mut source = provider
-        .video_source(&bvid, cid)
+        .video_source_with_quality(&bvid, cid, quality.video_height)
         .await
         .map_err(CommandError::provider)?;
     source.video_url = media_proxy
@@ -765,8 +781,20 @@ pub async fn track_playback_url(
             return Ok(media_proxy.register_local(path).await);
         }
     }
+    let quality = {
+        let c = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        crate::interface::media::preferences(&c).map_err(CommandError::database)?
+    };
     let source = provider
-        .playback_source(&track.bvid, track.cid)
+        .playback_source_with_quality(
+            &track.bvid,
+            track.cid,
+            quality.audio_id,
+            quality.video_height,
+        )
         .await
         .map_err(CommandError::provider)?;
     Ok(media_proxy

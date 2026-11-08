@@ -8,7 +8,8 @@ import { TrackMenuButton } from './TrackActions'
 import { showTrackMenu } from './trackActionStore'
 import { BatchTrackActions, useTrackSelection } from './useTrackSelection'
 
-export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions }: {
+export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, videoCollection = false }: {
+  videoCollection?: boolean
   tracks: Track[]
   visibleTracks?: Track[]
   renderActions?: (track: Track) => ReactNode
@@ -19,10 +20,10 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions }
   return <div className="parts-list video-parts-list">
     {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} /> :
       <div className="video-parts-toolbar">
-        <span>{visibleTracks.length} 个分 P</span>
-        <button type="button" className="collection-flat-button" onClick={selection.enter}><ListChecks size={16}/>多选分 P</button>
+        <span>{visibleTracks.length} {videoCollection ? '个视频' : '个分 P'}</span>
+        <button type="button" className="collection-flat-button" onClick={selection.enter}><ListChecks size={16}/>多选</button>
       </div>}
-    {visibleTracks.map(track => <div key={track.id} className={`part-entry video-part-row${track.id === currentId ? ' current-part' : ''}`}
+    {visibleTracks.map((track, index) => <div key={track.id} className={`part-entry video-part-row${track.id === currentId ? ' current-part' : ''}`}
       onContextMenu={event => {
         event.stopPropagation()
         if (!selection.selecting) showTrackMenu(event, track, undefined, tracks)
@@ -30,11 +31,11 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions }
       {selection.selecting ?
         <label className="video-part-select">
           <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} />
-          <span>P{track.source.page}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
+          <span>{videoCollection ? index + 1 : `P${track.source.page}`} </span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
         </label> :
         <>
           <button type="button" className="video-part-play" aria-label={`播放 ${track.title}`} onClick={() => void usePlayerStore.getState().playFromList(tracks, track.id)}>
-            <span>P{track.source.page}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small><Play size={14}/>
+            <span>{videoCollection ? index + 1 : `P${track.source.page}`} </span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small><Play size={14}/>
           </button>
           {!isMobile && renderActions?.(track)}
           <TrackMenuButton track={track} tracks={tracks} />

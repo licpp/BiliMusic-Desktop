@@ -150,9 +150,9 @@ impl Snapshot {
                 }
                 "collection" => {
                     key == &format!("collection:{}", text(r, "bvid"))
-                        && text(r, "bvid").starts_with("BV")
-                        && text(r, "bvid").len() <= 32
-                        && text(r, "bvid").bytes().all(|b| b.is_ascii_alphanumeric())
+                        && crate::infrastructure::repositories::collections::valid_reference(text(
+                            r, "bvid",
+                        ))
                         && (text(r, "folderId").is_empty()
                             || self
                                 .records

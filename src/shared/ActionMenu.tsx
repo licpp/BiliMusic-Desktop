@@ -52,7 +52,7 @@ export function ActionMenu({ label = '更多操作', panel = false, sheet = fals
     const rect = trigger.current!.getBoundingClientRect()
     setPosition({ left: Math.max(8, Math.min(window.innerWidth - 248, rect.right - 240)), top: Math.max(8, Math.min(window.innerHeight - 300, rect.bottom + 6)) })
   }}><MoreHorizontal size={20} /></button>{position && createPortal(<><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} style={isSheet || floating ? undefined : position} onKeyDown={(event) => {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input')) return
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input,select,textarea')) return
     event.preventDefault()
     const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement)

@@ -16,7 +16,7 @@ struct QueueTrack: Codable {
     var durationSeconds: Double; var liked: Bool?
 }
 struct PlayArgs: Decodable {
-    let url: String; let id: String; let position: Double?; let volume: Double?
+    let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?
 }
 struct ControlArgs: Decodable {
     let action: String; let value: Double?; let id: String?
@@ -52,6 +52,8 @@ private func resolveTrack(_ request: Int64, _ json: UnsafePointer<CChar>)
 private func currentProfile() -> UnsafeMutablePointer<CChar>?
 @_silgen_name("bilimusic_ios_free")
 private func freeProfile(_ value: UnsafeMutablePointer<CChar>)
+@_silgen_name("bilimusic_ios_listen")
+private func recordNativeListening(_ json: UnsafePointer<CChar>)
 private weak var activePlayer: PlayerPlugin?
 
 // Copy the Rust result before returning; the pointer is valid only during this call.
@@ -63,6 +65,11 @@ func didResolve(_ request: Int64, _ json: UnsafePointer<CChar>) {
 
 class PlayerPlugin: Plugin {
     private var fullscreenState: (orientation: UIInterfaceOrientation, mask: UIInterfaceOrientationMask, statusHidden: Bool, homeHidden: Bool)?
+    private var listeningAt = ProcessInfo.processInfo.systemUptime
+    private var listeningActive = false
+    private var listeningID: String?
+    private var listeningProfile = ""
+    private var listeningSeconds: Double = 0
     private let player = AVPlayer()
     private var state = PlayerSnapshot()
     private var tracks: [QueueTrack] = []
@@ -118,6 +125,7 @@ class PlayerPlugin: Plugin {
             if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause() }
         })
         notifications.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() })
+        notifications.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.accountListening(flush: true) })
         bindRemoteCommands()
     }
     deinit {
@@ -130,12 +138,14 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(PlayArgs.self)
         onMain { [self] in
             guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
+            accountListening(flush: true)
+            guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
             generation += 1; state.revision = generation
             state.id = args.id; state.track = tracks.first { $0.id == args.id }
             prepareArtwork(for: state.track)
             state.duration = state.track?.durationSeconds ?? 0
             player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
-            do { try start(url, at: max(0, args.position ?? 0)); invoke.resolve() }
+            do { try start(url, at: max(0, args.position ?? 0), autoplay: args.playing ?? true); invoke.resolve() }
             catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
         }
     }
@@ -155,6 +165,7 @@ class PlayerPlugin: Plugin {
         onMain { [self] in
             switch args.action {
             case "prepare":
+                accountListening(flush: true)
                 guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
                 profile = String(cString: raw); freeProfile(raw)
                 generation += 1; desiredPlaying = false; itemStatus = nil
@@ -264,9 +275,10 @@ class PlayerPlugin: Plugin {
         try session.setCategory(.playback, mode: .default, options: [])
         try session.setActive(true)
     }
-    private func start(_ url: URL, at position: Double = 0) throws {
-        try activate(); desiredPlaying = true
-        state.error = nil; state.stopped = false; state.status = "buffering"; state.position = position; startPosition = position
+    private func start(_ url: URL, at position: Double = 0, autoplay: Bool = true) throws {
+        accountListening(flush: true)
+        try activate(); desiredPlaying = autoplay
+        state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position
         let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 8
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
@@ -276,15 +288,26 @@ class PlayerPlugin: Plugin {
                 if item.status == .failed { self.fail(item.error?.localizedDescription ?? "音频流加载失败，请重新播放"); return }
                 if item.status == .readyToPlay {
                     let position = self.startPosition; self.startPosition = 0
-                    if position > 0 { self.seek(position) }
-                    if self.desiredPlaying { self.player.play() }
-                    self.endBackgroundTask(); self.refresh()
+                    if position > 0 {
+                        self.state.position = position
+                        self.player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
+                            self?.onMain { [weak self] in
+                                guard let self, self.generation == request, item === self.player.currentItem else { return }
+                                if completed && self.desiredPlaying { self.player.play() }
+                                self.endBackgroundTask(); self.refresh()
+                            }
+                        }
+                    } else {
+                        if self.desiredPlaying { self.player.play() }
+                        self.endBackgroundTask(); self.refresh()
+                    }
                 }
             }
         }
-        player.play(); publish()
+        if autoplay && position == 0 { player.play() } else { player.pause() }; accountListening(); publish()
     }
     private func pause() {
+        accountListening(flush: true)
         resumeAfterInterruption = false
         desiredPlaying = false
         if state.stopped { generation += 1; state.revision = generation }
@@ -302,12 +325,14 @@ class PlayerPlugin: Plugin {
         } catch { fail("无法恢复播放") }
     }
     private func seek(_ seconds: Double) {
+        accountListening(flush: true)
         guard seconds.isFinite else { return }
         let target = max(0, min(seconds, state.duration > 0 ? state.duration : seconds))
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         state.position = target; publish()
     }
     private func stop() {
+        accountListening(flush: true)
         resumeAfterInterruption = false
         generation += 1; desiredPlaying = false; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
@@ -318,8 +343,20 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
+        accountListening(flush: true)
         resumeAfterInterruption = false
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
+    }
+    private func accountListening(flush: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if listeningActive { listeningSeconds += max(0, min(300, now - listeningAt)) }
+        listeningAt = now
+        if flush || listeningID != state.id || listeningProfile != profile || listeningSeconds >= 15 {
+            if let id = listeningID, listeningSeconds > 0, let data = try? JSONSerialization.data(withJSONObject: ["profile": listeningProfile, "id": id, "seconds": min(300, listeningSeconds)]), let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
+            listeningSeconds = 0
+        }
+        listeningID = state.id; listeningProfile = profile
+        listeningActive = player.timeControlStatus == .playing
     }
     private func refresh() {
         if let item = player.currentItem {
@@ -331,6 +368,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func publish() {
+        accountListening()
         // Deliver playback state before scheduling the system media presentation.
         // Transport commands must not await lock-screen / Dynamic Island updates.
         for channel in listeners.values { try? channel.send(state) }
@@ -396,6 +434,7 @@ class PlayerPlugin: Plugin {
         resolve(tracks[target])
     }
     private func resolve(_ track: QueueTrack) {
+        accountListening(flush: true)
         generation += 1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds

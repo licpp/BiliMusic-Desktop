@@ -1,3 +1,6 @@
+#[path = "bilibili_extras.rs"]
+mod extras;
+pub use extras::*;
 use reqwest::{
     Client, Url,
     cookie::{CookieStore, Jar},
@@ -65,6 +68,7 @@ pub struct VideoParts {
     pub uploader_name: String,
     pub uploader_id: i64,
     pub parts: Vec<VideoPart>,
+    pub season: Option<SeasonSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -319,6 +323,8 @@ struct DetailData {
     owner: Owner,
     #[serde(default)]
     pages: Vec<PageData>,
+    #[serde(default)]
+    ugc_season: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -350,8 +356,10 @@ struct DashData {
     video: Vec<DashStream>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct DashStream {
+    #[serde(default)]
+    id: u32,
     #[serde(default)]
     height: u32,
     #[serde(default)]
@@ -377,7 +385,7 @@ pub struct BilibiliProvider {
     cookies: Arc<Jar>,
     search_session: Mutex<bool>,
     session_cookie: RwLock<Option<String>>,
-    video_sources: RwLock<HashMap<(String, i64), (Instant, VideoSource)>>,
+    video_sources: RwLock<HashMap<(String, i64, u32), (Instant, VideoSource)>>,
 }
 
 impl BilibiliProvider {
@@ -716,6 +724,18 @@ impl BilibiliProvider {
         url.query_pairs_mut().append_pair("bvid", bvid);
         let detail: DetailData = self.get_data(url).await?;
         let fallback_cover = normalize_url(&detail.pic);
+        let season = detail.ugc_season.as_ref().and_then(|s| {
+            Some(SeasonSummary {
+                id: s["id"].as_i64()?,
+                uploader_id: s["mid"]
+                    .as_i64()
+                    .filter(|n| *n > 0)
+                    .unwrap_or(detail.owner.mid),
+                title: s["title"].as_str().unwrap_or_default().into(),
+                cover_url: normalize_url(s["cover"].as_str().unwrap_or_default()),
+                uploader_name: detail.owner.name.clone(),
+            })
+        });
         let title = detail.title;
         let parts = detail
             .pages
@@ -744,6 +764,7 @@ impl BilibiliProvider {
             uploader_name: detail.owner.name,
             uploader_id: detail.owner.mid,
             parts,
+            season,
         })
     }
 
@@ -752,24 +773,41 @@ impl BilibiliProvider {
         bvid: &str,
         cid: i64,
     ) -> Result<PlaybackSource, ProviderError> {
+        self.playback_source_with_quality(bvid, cid, 0, 0).await
+    }
+    pub async fn playback_source_with_quality(
+        &self,
+        bvid: &str,
+        cid: i64,
+        audio_id: u32,
+        video_height: u32,
+    ) -> Result<PlaybackSource, ProviderError> {
         let mut url = self.api_url("/x/player/playurl");
         url.query_pairs_mut()
             .append_pair("bvid", bvid)
             .append_pair("cid", &cid.to_string())
-            .append_pair("qn", "80")
+            .append_pair("qn", "120")
             .append_pair("fnver", "0")
-            .append_pair("fnval", "16")
+            .append_pair("fnval", "4048")
             .append_pair("fourk", "1");
         let play: PlayData = self.get_data(url).await?;
         let dash = play.dash.ok_or(ProviderError::NoAudio)?;
         // Playurl already contains video metadata. Cache URLs only; no video bytes are loaded here.
-        if let Ok(source) = Self::select_video(&dash.video) {
-            self.remember_video(bvid, cid, &source).await;
+        if let Ok(source) = Self::select_video_quality(&dash.video, video_height) {
+            self.remember_video(bvid, cid, video_height, &source).await;
         }
         let stream = dash
             .audio
-            .into_iter()
-            .max_by_key(|stream| stream.bandwidth)
+            .iter()
+            .filter(|s| s.codecs.starts_with("mp4a"))
+            .find(|s| s.id == audio_id)
+            .or_else(|| {
+                dash.audio
+                    .iter()
+                    .filter(|s| s.codecs.starts_with("mp4a"))
+                    .max_by_key(|s| s.bandwidth)
+            })
+            .cloned()
             .ok_or(ProviderError::NoAudio)?;
         let audio_url = if stream.base_url_camel.is_empty() {
             stream.base_url
@@ -796,7 +834,15 @@ impl BilibiliProvider {
     }
 
     pub async fn video_source(&self, bvid: &str, cid: i64) -> Result<VideoSource, ProviderError> {
-        let key = (bvid.to_owned(), cid);
+        self.video_source_with_quality(bvid, cid, 0).await
+    }
+    pub async fn video_source_with_quality(
+        &self,
+        bvid: &str,
+        cid: i64,
+        video_height: u32,
+    ) -> Result<VideoSource, ProviderError> {
+        let key = (bvid.to_owned(), cid, video_height);
         if let Some((expires, source)) = self.video_sources.read().await.get(&key) {
             if *expires > Instant::now() {
                 return Ok(source.clone());
@@ -806,35 +852,47 @@ impl BilibiliProvider {
         url.query_pairs_mut()
             .append_pair("bvid", bvid)
             .append_pair("cid", &cid.to_string())
-            .append_pair("qn", "80")
+            .append_pair("qn", "120")
             .append_pair("fnver", "0")
-            .append_pair("fnval", "16")
+            .append_pair("fnval", "4048")
             .append_pair("fourk", "0");
         let play: PlayData = self.get_data(url).await?;
         let streams = play.dash.map(|dash| dash.video).unwrap_or_default();
-        let source = Self::select_video(&streams)?;
-        self.remember_video(bvid, cid, &source).await;
+        let source = Self::select_video_quality(&streams, video_height)?;
+        self.remember_video(bvid, cid, video_height, &source).await;
         Ok(source)
     }
 
-    fn select_video(streams: &[DashStream]) -> Result<VideoSource, ProviderError> {
-        let stream = streams
-            .iter()
-            .filter(|item| {
-                item.codecs.starts_with(if cfg!(target_os = "ios") {
-                    "hvc1"
-                } else {
-                    "avc"
+    fn select_video_quality(
+        streams: &[DashStream],
+        height: u32,
+    ) -> Result<VideoSource, ProviderError> {
+        let maximum = if height > 0 {
+            height
+        } else if cfg!(target_os = "ios") {
+            480
+        } else {
+            720
+        };
+        let preferred = if cfg!(target_os = "ios") {
+            "hvc1"
+        } else {
+            "avc"
+        };
+        let choose = |prefix: &str| {
+            streams
+                .iter()
+                .filter(|s| s.codecs.starts_with(prefix) && s.height <= maximum)
+                .max_by_key(|s| s.bandwidth)
+                .or_else(|| {
+                    streams
+                        .iter()
+                        .filter(|s| s.codecs.starts_with(prefix))
+                        .min_by_key(|s| s.bandwidth)
                 })
-            })
-            .filter(|item| item.height <= if cfg!(target_os = "ios") { 480 } else { 720 })
-            .max_by_key(|item| item.bandwidth)
-            .or_else(|| {
-                streams
-                    .iter()
-                    .filter(|item| item.codecs.starts_with("avc"))
-                    .min_by_key(|item| item.bandwidth)
-            })
+        };
+        let stream = choose(preferred)
+            .or_else(|| choose("avc"))
             .ok_or(ProviderError::NoVideo)?;
         let source = VideoSource {
             backup_urls: if stream.backup_url_camel.is_empty() {
@@ -858,8 +916,8 @@ impl BilibiliProvider {
         Ok(source)
     }
 
-    async fn remember_video(&self, bvid: &str, cid: i64, source: &VideoSource) {
-        let key = (bvid.to_owned(), cid);
+    async fn remember_video(&self, bvid: &str, cid: i64, video_height: u32, source: &VideoSource) {
+        let key = (bvid.to_owned(), cid, video_height);
         let mut cache = self.video_sources.write().await;
         cache.retain(|_, (expires, _)| *expires > Instant::now());
         if cache.len() >= 32 {

@@ -6,14 +6,14 @@ import { parseLrc } from '../features/lyrics/lrc'
 export type BiliSearchItem = { bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
 export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string }
-export type BiliVideoParts = { bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
+export type BiliVideoParts = { season?: import('./mediaSources').SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
 export type PlaybackSource = { audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
 export type VideoSource = { videoUrl: string; mimeType: string; codecs: string; bandwidth: number }
 export type DanmakuItem = { timeSeconds: number; mode: number; fontSize: number; color: number; text: string }
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
-export type LyricLine = { timeMs: number; text: string }
+export type LyricLine = { endTimeMs?: number; timeMs: number; text: string }
 export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
 export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
@@ -97,7 +97,7 @@ export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | n
   if (!inDesktopShell) return null
   const epoch = accountEpoch()
   const stored = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
-  if (stored && !stored.rawText && stored.provider !== 'local') {
+  if (stored && !stored.rawText && stored.provider !== 'local' && stored.provider !== 'bilibili') {
     try {
       const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
       if (epoch !== accountEpoch()) return null

@@ -1,3 +1,4 @@
+import { startListeningStatistics } from './services/listeningStatistics'
 import { startCloudSync } from './services/sync'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -27,6 +28,7 @@ const queryClient = new QueryClient({
 
 startCloudSync(queryClient)
 startAutomaticLyrics()
+startListeningStatistics()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -40,3 +42,5 @@ import './styles/collections.css'
 import './styles/downloads.css'
 
 import './styles/mobile-pages.css'
+
+import './styles/media-features.css'

@@ -1,3 +1,6 @@
+import { SeasonBrowser } from '../collections/SeasonBrowser'
+import { PlaybackSettings } from './PlaybackSettings'
+import { saveSubtitle } from '../../services/mediaSources'
 import { isIOS, isMobile } from '../../services/platform'
 import { controlIOSAudio } from '../player/iosAudio'
 import { formatDuration } from '../../shared/time'
@@ -43,6 +46,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const duration = usePlayerStore(state => state.durationSeconds)
   const cyclePlaybackMode = usePlayerStore((state) => state.cyclePlaybackMode)
 
+  const [seasonOpen,setSeasonOpen] = useState(false)
   const [editing, setEditing] = useState<Track | null>(null)
   const current = usePlayerStore((state) => state.current)
   const progressSeconds = usePlayerStore((state) => state.progressSeconds)
@@ -171,7 +175,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   }, [current?.id])
 
   useEffect(() => {
-    setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false)
+    setSeasonOpen(false); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false)
     setVideoFailed(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
   }, [current?.id])
 
@@ -220,7 +224,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     const currentMs = progressSeconds * 1_000 - (stored?.biasMs || 0)
     let result = -1
     for (let index = 0; index < lines.length; index += 1) {
-      if (lines[index].timeMs <= currentMs) result = index
+      if (lines[index].timeMs <= currentMs) result = lines[index].endTimeMs !== undefined && currentMs > lines[index].endTimeMs! ? -1 : index
       else break
     }
     return result
@@ -260,6 +264,12 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     if (chooserOpen && isMobile && lyricQuery.trim()) void refreshCandidates()
   }, [chooserOpen])
 
+  async function selectSubtitle(language:string) {
+    if(!current)return
+    const id=current.id,request=++lyricRequest.current
+    setLoading(true);setError('')
+    try {const saved=await saveSubtitle(id,language);if(request!==lyricRequest.current)return;setStored(saved);setLines(parseStoredLines(saved));setChooserOpen(false)}catch(error){if(request===lyricRequest.current)setError(commandErrorMessage(error))}finally{if(request===lyricRequest.current)setLoading(false)}
+  }
   async function importManualLyrics() {
     if (!current || !manualText.trim()) return
     const request = ++lyricRequest.current
@@ -307,8 +317,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           <ActionMenu label="歌词页面更多操作">{(close) => <>
             <button role="menuitem" onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
+            {current.source.provider==='bilibili'&&<button role="menuitem" onClick={()=>{close();setSeasonOpen(true)}}><FolderPlus size={16}/>查看所属合集</button>}
             <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
             <button role="menuitem" onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
+            <PlaybackSettings track={current} onVideoChange={()=>{setVideoSource(null);setVideoRetry(value=>value+1)}}/>
             <button role="menuitem" onClick={() => { cyclePlaybackMode(); close() }}><Repeat2 size={16} />播放模式：{shuffled ? '随机播放' : repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
           </>}</ActionMenu>
         </div>
@@ -321,7 +333,8 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           {mediaMode === 'video' && <>
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
-            <ActionMenu label="视频与弹幕设置" panel floating={isMobile && videoFullscreen}>{(close) => <>
+            <ActionMenu label="播放设置" panel floating={isMobile && videoFullscreen}>{(close) => <>
+              <PlaybackSettings track={current} onVideoChange={()=>{setVideoFailed(false);setVideoSource(null);setVideoRetry(value=>value+1)}}/>
               <button onClick={toggleDanmaku} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
               <label>弹幕字号 <span>{danmakuSize.toFixed(1)}×</span><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label>
               <label>弹幕透明度 <span>{Math.round(danmakuOpacity * 100)}%</span><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label>
@@ -361,7 +374,8 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
       {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
         onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
-        manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
+        source={current.source} onSubtitle={selectSubtitle} manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
+      {seasonOpen&&<SeasonBrowser bvid={current.source.bvid} onClose={()=>setSeasonOpen(false)}/>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} />}
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>

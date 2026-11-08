@@ -105,7 +105,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
         let lyric=c.query_row("SELECT provider,provider_lyric_id,bias_ms,selected_manually FROM lyrics WHERE track_id=?1",[&id],|r|Ok(json!({"id":id,"provider":r.get::<_,String>(0)?,"providerLyricId":r.get::<_,Option<String>>(1)?,"biasMs":r.get::<_,i64>(2)?,"manual":r.get::<_,bool>(3)?}))).optional().map_err(|e|e.to_string())?;
-        if let Some(lyric) = lyric {
+        if let Some(lyric) = lyric.filter(|v| v["provider"] != "bilibili") {
             s.records.insert(
                 format!("lyric:{id}"),
                 Record {

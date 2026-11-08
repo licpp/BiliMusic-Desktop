@@ -1,3 +1,7 @@
+import { getSeason, parseSeasonReference, seasonTracks } from '../../services/mediaSources'
+import { createPlaylist, saveLibraryTrack, addTracksToPlaylist } from '../../services/desktopApi'
+import { accountEpoch } from '../../services/accountScope'
+import { SeasonBrowser } from './SeasonBrowser'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -14,7 +18,6 @@ import { PlaylistEntry } from '../library/PlaylistEntry'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import type { MenuPosition } from '../../shared/useRowContextMenu'
-import { accountEpoch } from '../../services/accountScope'
 import { isMobile } from '../../services/platform'
 
 const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: listCollections })
@@ -95,7 +98,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
     {folders.filter(item => matches(item.name)).map(folder => {
       const contents = items.filter(item => item.folderId === folder.id)
       const onOpen = () => onOpenFolder(folder.id)
-      return <LibraryEntry key={folder.id} title={folder.name} subtitle={`${contents.length} 个视频`} sidebar={sidebar}
+      return <LibraryEntry key={folder.id} title={folder.name} subtitle={`${contents.length} 个收藏`} sidebar={sidebar}
         cover={<Artwork src={contents[0]?.coverUrl} fallback={<Folder aria-hidden="true"/>}/>}
         dropFolderId={folder.id} onOpen={onOpen}
         menu={position => <FolderMenu folder={folder} contextPosition={position} onOpen={onOpen}
@@ -114,7 +117,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
       const title = item.title || `合集 ${item.bvid}`
       const onOpen = () => onSelect(item)
       const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
-      return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || '打开查看分 P'} sidebar={sidebar}
+      return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || (parseSeasonReference(item.bvid) ? '打开查看视频' : '打开查看分 P')} sidebar={sidebar}
         cover={<Artwork src={item.coverUrl}/>} onOpen={onOpen}
         drag={canMove && !isMobile ? { folderId: item.folderId, onMove: target => move.mutate({ item, target }) } : undefined}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
@@ -172,18 +175,34 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-export function CollectionDetail({item,onBack,fromSearch=false}:{item:Collection;onBack:()=>void;fromSearch?:boolean}){
-  const q=useQuery({queryKey:['collection-parts',item.bvid],queryFn:()=>getVideoParts(item.bvid)}),[filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
+export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{item:Collection;onBack:()=>void;fromSearch?:boolean;embedded?:boolean}){
+  const reference=parseSeasonReference(item.bvid)
+  const q=useQuery({queryKey:['collection-parts',item.bvid],queryFn:async()=>{
+    if(reference){const season=await getSeason(reference.mid,reference.seasonId);return {title:season.summary.title,coverUrl:season.summary.coverUrl,uploaderName:season.summary.uploaderName,tracks:seasonTracks(season),season:undefined,unavailable:season.unavailable}}
+    const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),unavailable:0}
+  }})
+  const [filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[seasonOpen,setSeasonOpen]=useState(false),[copying,setCopying]=useState(false),[message,setMessage]=useState(''),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
   const client=useQueryClient()
-  useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:d.bvid,folderId:'',title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client])
-  const detail=q.data,player=usePlayerStore.getState(),tracks=detail?.parts.map(p=>toTrack(detail,p))||[]
-  const visibleTracks = tracks.filter(track => track.title.toLowerCase().includes(filter.toLowerCase()))
-  const run=(id=tracks[0]?.id)=>{if(id)void player.playFromList(tracks,id)}
-  return <section className="collection-detail"><button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{fromSearch?'返回搜索结果':'返回收藏合集'}</button><header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||`合集 ${item.bvid}`}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} 个分 P`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
-    <div className="collection-detail-toolbar"><button className="collection-primary" disabled={!tracks.length} onClick={()=>run()}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button><div><button className="collection-icon" aria-label="搜索分P" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button><ActionMenu sheet label="合集播放选项">{close=><><button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button><button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新分 P</button></>}</ActionMenu></div></div>
-    {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input autoFocus aria-label="搜索分P" placeholder="搜索分 P" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭分P搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
-    {q.isLoading&&<p>正在加载分 P…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
-    {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放的分 P</p>}
-    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} />
+  useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
+  const detail=q.data,player=usePlayerStore.getState(),tracks=detail?.tracks||[]
+  const unit=reference?'个视频':'个分 P'
+  const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes(filter.toLowerCase()))
+  const copy=async()=>{
+    const epoch=accountEpoch();setCopying(true);setMessage('')
+    try{const list=await createPlaylist(detail?.title||item.title||'B 站合集');const ids:string[]=[];for(const track of tracks){if(epoch!==accountEpoch())return;ids.push((await saveLibraryTrack(track)).id)}if(epoch!==accountEpoch())return;await addTracksToPlaylist(list.id,ids,true);await client.invalidateQueries({queryKey:['playlists']});setMessage('已复制到我的歌单')}
+    catch(error){setMessage(commandErrorMessage(error))}finally{setCopying(false)}
+  }
+  return <section className="collection-detail">
+    {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{fromSearch?'返回搜索结果':'返回收藏合集'}</button>}
+    <header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||'B 站合集'}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} ${unit}`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
+    {detail?.season&&<button className="mobile-row-action" onClick={()=>setSeasonOpen(true)}><span>所属合集 · {detail.season.title}</span><span>›</span></button>}
+    <div className="collection-detail-toolbar"><button className="collection-primary" disabled={!tracks.length} onClick={()=>void player.playFromList(tracks,tracks[0].id)}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button><div><button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button><ActionMenu sheet label="合集播放选项">{close=><><button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button><button role="menuitem" disabled={!tracks.length||copying} onClick={()=>{close();void copy()}}><Plus size={16}/>{copying?'正在复制…':'复制为本地歌单'}</button><button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button></>}</ActionMenu></div></div>
+    {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索列表" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
+    {message&&<p className="batch-message" role="status">{message}</p>}
+    {q.isLoading&&<p>正在读取列表…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
+    {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放内容</p>}
+    {Boolean(detail?.unavailable)&&<p className="batch-message">有 {detail?.unavailable} 个视频暂不可用，已保留其余内容。</p>}
+    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)}/>
+    {seasonOpen&&detail?.season&&<SeasonBrowser summary={detail.season} onClose={()=>setSeasonOpen(false)}/>}
   </section>
 }

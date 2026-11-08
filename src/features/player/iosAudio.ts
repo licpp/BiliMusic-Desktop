@@ -36,9 +36,9 @@ export async function restartIOSAudioObservation() {
 }
 export const iosListenerAge = () => performance.now() - lastEventAt
 export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled })
-export async function playIOSAudio(track: Track, url: string, position: number, volume: number) {
+export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true) {
   await ready
-  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume })
+  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing })
 }
 export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {

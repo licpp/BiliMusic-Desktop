@@ -112,3 +112,26 @@ pub unsafe extern "C" fn bilimusic_ios_resolve(request: i64, raw: *const c_char)
         }
     });
 }
+
+/// Native playback reports elapsed listening time without waiting for SQLite.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
+    if raw.is_null() {
+        return;
+    }
+    let bytes = unsafe { CStr::from_ptr(raw) }.to_bytes().to_vec();
+    let Some(app) = APP.get().cloned() else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            if let (Some(scope), Some(id), Some(seconds)) = (
+                value["profile"].as_str(),
+                value["id"].as_str(),
+                value["seconds"].as_f64(),
+            ) {
+                let _ = crate::interface::media::record(&app, scope, id, seconds).await;
+            }
+        }
+    });
+}

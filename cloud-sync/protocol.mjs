@@ -7,6 +7,12 @@ const fields = {
   favorite:['trackId'], history:['trackId','playedAt'], lyric:['id','provider','providerLyricId','biasMs','manual'],
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validCollectionReference(value) {
+  if (typeof value !== 'string') return false;
+  if (/^BV[a-zA-Z0-9]+$/.test(value)) return value.length <= 32;
+  const match = /^season:([1-9][0-9]{0,18}):([1-9][0-9]{0,18})$/.exec(value);
+  return !!match && BigInt(match[1]) <= 9223372036854775807n && BigInt(match[2]) <= 9223372036854775807n;
+}
 export function validateSnapshot(value, uid) {
   const fail=()=>{throw new ApiError(400,'同步记录格式无效或包含不允许上传的字段');};
   if (!value || value.schema!==1 || value.uid!==uid || !/^\d+$/.test(uid) || !value.records || Array.isArray(value.records) || Object.keys(value).sort().join(',')!=='records,schema,uid') fail();
@@ -23,7 +29,7 @@ export function validateSnapshot(value, uid) {
     const f=r.fields;
     if (r.kind==='track') {if(!/^BV[a-zA-Z0-9]+$/.test(f.bvid)||!Number.isSafeInteger(f.cid)||f.cid<=0||f.id!==`bilibili:${f.bvid}:${f.cid}`||key!==`track:${f.id}`) fail();tracks.add(f.id);}
     else if(r.kind==='collectionFolder'){if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||[...f.name].length>80||key!==`collectionFolder:${f.id}`)fail();}
-    else if(r.kind==='collection'){if(typeof f.bvid!=='string'||!/^BV[a-zA-Z0-9]+$/.test(f.bvid)||f.bvid.length>32||key!==`collection:${f.bvid}`||typeof f.folderId!=='string'||(f.folderId!==''&&value.records[`collectionFolder:${f.folderId}`]?.kind!=='collectionFolder'))fail();}
+    else if(r.kind==='collection'){if(!validCollectionReference(f.bvid)||key!==`collection:${f.bvid}`||typeof f.folderId!=='string'||(f.folderId!==''&&value.records[`collectionFolder:${f.folderId}`]?.kind!=='collectionFolder'))fail();}
     else if(r.kind==='playlist') {if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
     else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}
     else {

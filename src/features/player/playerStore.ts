@@ -1,7 +1,7 @@
 import { advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS } from '../../services/platform'
 import { observeMobileAudio, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
-import { iosListenerAge, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
+import { iosListenerAge, playIOSAudio, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
@@ -201,3 +201,16 @@ if (isIOS) usePlayerStore.subscribe((state, previous) => {
     void nativeReady.then(() => syncIOSQueue(state.queue, state.repeatMode, state.shuffled)).catch(nativeError)
   }
 })
+
+// Resolve first; leave the current audio playing if a new quality is unavailable.
+export async function reloadCurrentAudioSource() {
+  const track=usePlayerStore.getState().current
+  if (!track || loadedTrackId!==track.id) return
+  const request=playRequest
+  const url=await getTrackPlaybackUrl(track)
+  if(request!==playRequest || usePlayerStore.getState().current?.id!==track.id)return
+  const state=usePlayerStore.getState(),position=playbackClock(),playing=state.status==='playing'||state.status==='buffering'
+  if(isIOS) await playIOSAudio(track,url,position,state.volume,playing)
+  else if(isMobile){await playMobileAudio(track,url,position,state.volume);if(!playing)await controlMobileAudio('pause')}
+  else {const element=playerAudio();element.src=url;element.currentTime=position;if(playing)await element.play();else element.pause()}
+}

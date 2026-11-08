@@ -1,0 +1,237 @@
+use super::error::CommandError;
+use crate::infrastructure::{
+    database::Database,
+    providers::bilibili::*,
+    repositories::lyrics::{LyricsRepository, SaveLyricsInput, StoredLyrics},
+};
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tauri::{Manager, State};
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QualityPreferences {
+    pub audio_id: u32,
+    pub video_height: u32,
+}
+pub fn preferences(c: &Connection) -> rusqlite::Result<QualityPreferences> {
+    Ok(c.query_row(
+        "SELECT audio_id,video_height FROM playback_preferences WHERE id=1",
+        [],
+        |r| {
+            Ok(QualityPreferences {
+                audio_id: r.get(0)?,
+                video_height: r.get(1)?,
+            })
+        },
+    )
+    .optional()?
+    .unwrap_or_default())
+}
+#[tauri::command]
+pub fn media_preferences(
+    database: State<'_, Database>,
+) -> Result<QualityPreferences, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    preferences(&connection).map_err(CommandError::database)
+}
+#[tauri::command]
+pub fn media_set_preferences(
+    database: State<'_, Database>,
+    audio_id: Option<u32>,
+    video_height: Option<u32>,
+) -> Result<QualityPreferences, CommandError> {
+    if audio_id.is_some_and(|v| v > 40000) || video_height.is_some_and(|v| v > 4320) {
+        return Err(CommandError::validation("无效的播放质量"));
+    }
+    let c = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    let old = preferences(&c).map_err(CommandError::database)?;
+    c.execute("INSERT INTO playback_preferences(id,audio_id,video_height) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET audio_id=excluded.audio_id,video_height=excluded.video_height",params![audio_id.unwrap_or(old.audio_id),video_height.unwrap_or(old.video_height)]).map_err(CommandError::database)?;
+    preferences(&c).map_err(CommandError::database)
+}
+#[tauri::command]
+pub async fn bili_media_options(
+    provider: State<'_, BilibiliProvider>,
+    bvid: String,
+    cid: i64,
+) -> Result<MediaOptions, CommandError> {
+    provider
+        .media_options(&bvid, cid)
+        .await
+        .map_err(CommandError::provider)
+}
+#[tauri::command]
+pub async fn bili_season(
+    provider: State<'_, BilibiliProvider>,
+    mid: i64,
+    season_id: i64,
+) -> Result<Season, CommandError> {
+    if mid <= 0 || season_id <= 0 {
+        return Err(CommandError::validation("合集标识无效"));
+    }
+    provider
+        .season(mid, season_id)
+        .await
+        .map_err(CommandError::provider)
+}
+#[tauri::command]
+pub async fn bili_subtitles(
+    provider: State<'_, BilibiliProvider>,
+    bvid: String,
+    cid: i64,
+) -> Result<Vec<SubtitleChoice>, CommandError> {
+    provider
+        .subtitles(&bvid, cid)
+        .await
+        .map_err(CommandError::provider)
+}
+#[tauri::command]
+pub async fn bili_subtitle_save(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    track_id: String,
+    language: String,
+) -> Result<StoredLyrics, CommandError> {
+    let expected_profile = profile(&database);
+    let (bvid, cid) = {
+        let c = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        c.query_row(
+            "SELECT bvid,cid FROM source_items WHERE id=?1",
+            [&track_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .map_err(CommandError::database)?
+    };
+    let lines = provider
+        .subtitle_lines(&bvid, cid, &language)
+        .await
+        .map_err(CommandError::provider)?;
+    if lines.is_empty() {
+        return Err(CommandError::validation("这份字幕没有可显示的内容"));
+    }
+    let raw = lines
+        .iter()
+        .map(|l| {
+            format!(
+                "[{:02}:{:02}.{:03}]{}",
+                l.time_ms / 60000,
+                (l.time_ms / 1000) % 60,
+                l.time_ms % 1000,
+                l.text.replace('\n', " ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let c = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if profile(&database) != expected_profile {
+        return Err(CommandError::validation("账号已切换，请重新选择字幕"));
+    }
+    LyricsRepository::save(
+        &c,
+        &track_id,
+        &SaveLyricsInput {
+            provider: "bilibili".into(),
+            provider_lyric_id: language,
+            raw_text: raw,
+            parsed_json: serde_json::to_string(&lines).map_err(CommandError::database)?,
+        },
+        true,
+    )
+    .map_err(CommandError::database)
+}
+pub fn profile(database: &Database) -> String {
+    std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default()
+}
+#[tauri::command]
+pub fn listening_scope(database: State<'_, Database>) -> String {
+    profile(&database)
+}
+pub async fn record(
+    app: &tauri::AppHandle,
+    expected: &str,
+    id: &str,
+    seconds: f64,
+) -> Result<(), String> {
+    if !seconds.is_finite() || seconds <= 0.0 || seconds > 300.0 {
+        return Err("收听时长无效".into());
+    }
+    let state = app.state::<crate::sync::SyncState>();
+    let _gate = state.gate.lock().await;
+    let db = app.state::<Database>();
+    if profile(&db) != expected {
+        return Ok(());
+    }
+    let mut c = db.0.lock().map_err(|_| "数据库正忙")?;
+    if !c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tracks WHERE id=?1)",
+            [id],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(());
+    }
+    let tx = c.transaction().map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO listening_daily(day,track_id,seconds) VALUES(date('now','localtime'),?1,?2) ON CONFLICT(day,track_id) DO UPDATE SET seconds=seconds+excluded.seconds",params![id,seconds]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT INTO listening_totals(track_id,seconds) VALUES(?1,?2) ON CONFLICT(track_id) DO UPDATE SET seconds=seconds+excluded.seconds",params![id,seconds]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT INTO listening_days(day,seconds) VALUES(date('now','localtime'),?1) ON CONFLICT(day) DO UPDATE SET seconds=seconds+excluded.seconds",[seconds]).map_err(|e|e.to_string())?;
+    tx.execute(
+        "DELETE FROM listening_daily WHERE day<date('now','localtime','-90 days')",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn listening_record(
+    app: tauri::AppHandle,
+    scope: String,
+    track_id: String,
+    seconds: f64,
+) -> Result<(), CommandError> {
+    record(&app, &scope, &track_id, seconds)
+        .await
+        .map_err(CommandError::database)
+}
+#[tauri::command]
+pub fn listening_statistics(database: State<'_, Database>) -> Result<Value, CommandError> {
+    let c = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    let run = || -> rusqlite::Result<Value> {
+        let week=c.query_row("SELECT COALESCE(SUM(seconds),0),COUNT(DISTINCT track_id),COUNT(DISTINCT day) FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days')",[],|r|Ok(json!({"seconds":r.get::<_,f64>(0)?,"tracks":r.get::<_,i64>(1)?,"days":r.get::<_,i64>(2)?})))?;
+        let total=c.query_row("SELECT COALESCE(SUM(seconds),0),COUNT(*) FROM listening_totals",[],|r|Ok(json!({"seconds":r.get::<_,f64>(0)?,"tracks":r.get::<_,i64>(1)?,"days":c.query_row("SELECT COUNT(*) FROM listening_days",[],|r|r.get::<_,i64>(0))?})))?;
+        let mut q=c.prepare("SELECT day,SUM(seconds) FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days') GROUP BY day ORDER BY day")?;
+        let daily = q
+            .query_map([], |r| {
+                Ok(json!({"day":r.get::<_,String>(0)?,"seconds":r.get::<_,f64>(1)?}))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut tops = Vec::new();
+        for weekly in [true, false] {
+            let table = if weekly {
+                "(SELECT track_id,SUM(seconds) seconds FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days') GROUP BY track_id)"
+            } else {
+                "listening_totals"
+            };
+            let mut q=c.prepare(&format!("SELECT s.track_id,s.seconds,COALESCE(m.title,t.title,'已移除的歌曲'),COALESCE(m.artist,t.artist,''),COALESCE(m.cover_url,t.cover_url,'') FROM {table} s LEFT JOIN tracks t ON t.id=s.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id ORDER BY s.seconds DESC,s.track_id LIMIT 20"))?;
+            tops.push(q.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"seconds":r.get::<_,f64>(1)?,"title":r.get::<_,String>(2)?,"artist":r.get::<_,String>(3)?,"coverUrl":r.get::<_,String>(4)?})))?.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(json!({"week":week,"total":total,"daily":daily,"weekTop":tops[0],"totalTop":tops[1]}))
+    };
+    run().map_err(CommandError::database)
+}

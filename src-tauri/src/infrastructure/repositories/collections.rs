@@ -19,6 +19,18 @@ pub struct Collections {
     pub folders: Vec<Folder>,
     pub items: Vec<Collection>,
 }
+pub fn valid_reference(value: &str) -> bool {
+    if let Some(rest) = value.strip_prefix("season:") {
+        let parts: Vec<_> = rest.split(':').collect();
+        return parts.len() == 2
+            && parts.iter().all(|s| {
+                !s.is_empty()
+                    && s.bytes().all(|b| b.is_ascii_digit())
+                    && s.parse::<i64>().is_ok_and(|n| n > 0)
+            });
+    }
+    value.starts_with("BV") && value.len() <= 32 && value.bytes().all(|b| b.is_ascii_alphanumeric())
+}
 pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
     let mut q = c.prepare("SELECT id,name FROM collection_folders ORDER BY rowid DESC")?;
     let folders = q
@@ -107,11 +119,8 @@ pub fn change(
             }
             "save" => {
                 let i = item.ok_or("缺少合集信息")?;
-                if !i.bvid.starts_with("BV")
-                    || i.bvid.len() > 32
-                    || !i.bvid.bytes().all(|b| b.is_ascii_alphanumeric())
-                {
-                    return Err("无效的BV号".into());
+                if !valid_reference(&i.bvid) {
+                    return Err("收藏标识无效".into());
                 }
                 if !folder_exists(&i.folder_id)? {
                     return Err("收藏夹不存在".into());

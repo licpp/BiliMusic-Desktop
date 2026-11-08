@@ -1,9 +1,15 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { getSubtitles } from '../../services/mediaSources'
+import { commandErrorMessage } from '../../services/desktopApi'
+import type { TrackSource } from '../../domain/track'
 import { Check, ChevronLeft, LoaderCircle, X } from 'lucide-react'
 import { isMobile } from '../../services/platform'
 import type { LyricCandidate, StoredLyrics } from '../../services/desktopApi'
 import { MobilePage } from '../../shared/MobilePage'
 
 type Props = {
+  source:TrackSource; onSubtitle:(language:string)=>Promise<void>
   title: string; artist: string; onTitle: (value: string) => void; onArtist: (value: string) => void
   loading: boolean; searched: boolean; error: string; warning: string
   candidates: LyricCandidate[]; stored: StoredLyrics | null
@@ -11,6 +17,11 @@ type Props = {
   manualOpen: boolean; onManualOpen: (value: boolean) => void; manualText: string; onManualText: (value: string) => void; onImport: () => Promise<void>
 }
 export function LyricsChooser(p: Props) {
+  const [tab,setTab]=useState<'lyrics'|'subtitles'>('lyrics')
+  const subtitles=useQuery({queryKey:['bili-subtitles',p.source.bvid,p.source.cid],queryFn:()=>getSubtitles(p.source.bvid,p.source.cid),enabled:tab==='subtitles'&&p.source.provider==='bilibili',staleTime:60000})
+  const tabs=p.source.provider==='bilibili'&&<div className="lyrics-source-tabs" role="tablist" aria-label="文字来源"><button role="tab" aria-selected={tab==='lyrics'} onClick={()=>setTab('lyrics')}>歌词</button><button role="tab" aria-selected={tab==='subtitles'} onClick={()=>setTab('subtitles')}>B 站字幕</button></div>
+  const subtitleContent=<div className="subtitle-choices">{subtitles.isLoading?<div className="chooser-status"><LoaderCircle className="spin"/>读取字幕</div>:<>{(subtitles.error||p.error)&&<p className="inline-error">{p.error||commandErrorMessage(subtitles.error)}</p>}{subtitles.data?.map(s=><button disabled={p.loading} key={s.language} onClick={()=>void p.onSubtitle(s.language)}><span><strong>{s.label}</strong><small>{s.ai?'AI 字幕':'B 站字幕'}</small></span>{p.stored?.provider==='bilibili'&&p.stored.providerLyricId===s.language?<Check size={18}/>:<ChevronLeft className="candidate-arrow" size={18}/>}</button>)}{!subtitles.data?.length&&!subtitles.isLoading&&<p>没有可用字幕，可登录 B 站后刷新。</p>}<button disabled={subtitles.isFetching} onClick={()=>void subtitles.refetch()}>刷新字幕列表</button></>}</div>
+
   const search = <form className={isMobile ? 'mobile-editor mobile-lookup-fields' : 'lyric-search-form manual-search-fields'} onSubmit={event => { event.preventDefault(); if (p.title.trim()) void p.onSearch() }}>
     <div className={isMobile ? 'mobile-field-group' : 'lyric-search-fields'}><label>歌曲名<input aria-label="歌词搜索歌曲名" value={p.title} onChange={event => p.onTitle(event.target.value)} placeholder="填写正确的歌曲名"/></label><label>歌手<input aria-label="歌词搜索歌手" value={p.artist} onChange={event => p.onArtist(event.target.value)} placeholder="可选"/></label></div>
     <button className={isMobile ? 'mobile-page-primary' : undefined} disabled={p.loading || !p.title.trim()}>{p.loading ? '搜索中' : '搜索歌词'}</button>
@@ -30,14 +41,14 @@ export function LyricsChooser(p: Props) {
   </form>
   if (isMobile) return <>
     <MobilePage title="匹配歌词" onBack={p.onClose} className="mobile-lyrics-chooser">
-      {search}
+      {tabs}{tab==='subtitles'?subtitleContent:<>{search}
       <button type="button" className="mobile-row-action" onClick={() => p.onManualOpen(true)}><span>导入 LRC / 文本歌词</span><span aria-hidden="true">›</span></button>
-      {results}
+      {results}</>}
     </MobilePage>
     {p.manualOpen && <MobilePage title="导入歌词" onBack={() => p.onManualOpen(false)} className="mobile-manual-page" actions={<button className="mobile-page-primary" form="manual-lyrics-form" type="submit" disabled={!p.manualText.trim()}>保存</button>}>{manual}{p.error && <p className="inline-error" role="alert">{p.error}</p>}</MobilePage>}
   </>
   return <div className="lyric-chooser-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) p.onClose() }}><div className="lyric-chooser">
     <header><div><span className="eyebrow">LYRICS</span><h3>选择歌词版本</h3></div><button onClick={p.onClose} aria-label="关闭"><X/></button></header>
-    {search}<div className="lyrics-manual-tools"><button onClick={() => p.onManualOpen(!p.manualOpen)}>{p.manualOpen ? '收起导入' : '粘贴 LRC / 文本歌词'}</button></div>{p.manualOpen && manual}{results}
+    {tabs}{tab==='subtitles'?subtitleContent:<>{search}<div className="lyrics-manual-tools"><button onClick={() => p.onManualOpen(!p.manualOpen)}>{p.manualOpen ? '收起导入' : '粘贴 LRC / 文本歌词'}</button></div>{p.manualOpen && manual}{results}</>}
   </div></div>
 }
