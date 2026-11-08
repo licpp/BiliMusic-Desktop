@@ -133,6 +133,7 @@ pub fn run() {
             interface::commands::playlist_create,
             interface::commands::playlist_tracks,
             interface::commands::playlist_add_track,
+            interface::commands::playlist_add_tracks,
             interface::commands::playlist_remove_track,
             interface::commands::playlist_remove_tracks,
             interface::commands::playlist_delete,

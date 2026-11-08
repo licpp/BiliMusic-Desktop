@@ -20,7 +20,7 @@ pub struct Collections {
     pub items: Vec<Collection>,
 }
 pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
-    let mut q = c.prepare("SELECT id,name FROM collection_folders ORDER BY name,id")?;
+    let mut q = c.prepare("SELECT id,name FROM collection_folders ORDER BY rowid DESC")?;
     let folders = q
         .query_map([], |r| {
             Ok(Folder {
@@ -29,7 +29,7 @@ pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut q=c.prepare("SELECT bvid,folder_id,title,cover_url,uploader_name FROM collections ORDER BY created_at DESC,bvid")?;
+    let mut q=c.prepare("SELECT bvid,folder_id,title,cover_url,uploader_name FROM collections ORDER BY created_at DESC,rowid DESC")?;
     let items = q
         .query_map([], |r| {
             Ok(Collection {

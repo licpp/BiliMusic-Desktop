@@ -238,6 +238,29 @@ pub fn playlist_add_track(
 }
 
 #[tauri::command]
+pub fn playlist_add_tracks(
+    database: State<'_, Database>,
+    playlist_id: String,
+    track_ids: Vec<String>,
+    append: Option<bool>,
+) -> Result<(), CommandError> {
+    if track_ids.len() > 10_000 {
+        return Err(CommandError::database("一次最多添加 10000 首歌曲"));
+    }
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    PlaylistRepository::add_tracks(
+        &connection,
+        &playlist_id,
+        &track_ids,
+        append.unwrap_or(false),
+    )
+    .map_err(CommandError::database)
+}
+
+#[tauri::command]
 pub fn playlist_remove_track(
     database: State<'_, Database>,
     playlist_id: String,

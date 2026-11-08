@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, X, Shuffle, Repeat2, FolderPlus } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -25,6 +25,9 @@ import { CommentsPanel } from '../comments/CommentsPanel'
 import { DanmakuCanvas } from './DanmakuCanvas'
 import { SyncedVideo } from './SyncedVideo'
 import { Heart } from 'lucide-react'
+import { accountEpoch } from '../../services/accountScope'
+import { createBiasWriter, clampBias } from './biasWriter'
+import { LyricsBiasControl } from './LyricsBiasControl'
 
 type Props = { onClose: () => void; onFavorite: () => void; favoritePending: boolean }
 
@@ -48,20 +51,52 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const [manualText, setManualText] = useState('')
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([])
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [mediaMode, setMediaMode] = useState<'cover' | 'video'>('cover')
-  const [videoUrl, setVideoUrl] = useState('')
+  const [mediaPreference, setMediaPreference] = useState<'cover' | 'video'>(() => localStorage.getItem('lyrics-media-mode') === 'video' ? 'video' : 'cover')
+  const [videoFailed, setVideoFailed] = useState(false)
+  const mediaMode = current?.source.provider === 'bilibili' && !videoFailed ? mediaPreference : 'cover'
+  const [videoSource, setVideoSource] = useState<{ trackId: string; url: string } | null>(null)
+  const videoUrl = videoSource?.trackId === current?.id ? videoSource?.url || '' : ''
   const [videoFullscreen, setVideoFullscreen] = useState(false)
   const [danmaku, setDanmaku] = useState<DanmakuItem[]>([])
-  const [danmakuVisible, setDanmakuVisible] = useState(true)
+  const [danmakuVisible, setDanmakuVisible] = useState(() => localStorage.getItem('danmakuVisible') !== 'false')
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
   const [commentsOpen, setCommentsOpen] = useState(false)
   const closeComments = useCallback(() => setCommentsOpen(false), [])
   const [biasOpen, setBiasOpen] = useState(false)
   const [biasActivity, setBiasActivity] = useState(0)
+  const storedRef = useRef(stored)
+  storedRef.current = stored
+  const mounted = useRef(false)
+  const [biasSaveError, setBiasSaveError] = useState(false)
+  const biasScope = useRef(accountEpoch())
+  const [biasWriter] = useState(() => {
+    return createBiasWriter(async (id, value) => {
+      if (accountEpoch() !== biasScope.current) return
+      await setStoredLyricsBias(id, value)
+    }, (id, value, error) => {
+      if (mounted.current && storedRef.current?.trackId === id && storedRef.current.biasMs === value) setBiasSaveError(Boolean(error))
+    })
+  })
+  useEffect(() => {
+    mounted.current = true
+    const flush = () => { void biasWriter.flush() }
+    const hidden = () => { if (document.hidden) flush() }
+    const cancel = () => { biasWriter.cancel(); biasScope.current = accountEpoch() }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', hidden)
+    window.addEventListener('bilimusic-account-changing', cancel)
+    return () => {
+      mounted.current = false; flush()
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', hidden)
+      window.removeEventListener('bilimusic-account-changing', cancel)
+    }
+  }, [biasWriter])
+  useEffect(() => () => { void biasWriter.flush() }, [current?.id, biasWriter])
   useEffect(() => {
     if (!biasOpen) return
-    const timer = window.setTimeout(() => setBiasOpen(false), 8000)
+    const timer = window.setTimeout(() => setBiasOpen(false), 20000)
     return () => window.clearTimeout(timer)
   }, [biasOpen, biasActivity])
   useEffect(() => {
@@ -77,8 +112,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   }, [chooserOpen, editing, commentsOpen, videoFullscreen, biasOpen])
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
-  const videoSourceRef = useRef('')
-  const videoSourcePromise = useRef<Promise<string> | null>(null)
+  const [videoRetry, setVideoRetry] = useState(0)
   const [lyricQuery, setLyricQuery] = useState(current?.title || '')
   const [lyricArtist, setLyricArtist] = useState(current?.artist || '')
   const [searched, setSearched] = useState(false)
@@ -96,7 +130,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   useEffect(() => {
     let cancelled = false
     const request = ++lyricRequest.current
-    setStored(null); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
+    setStored(null); setBiasSaveError(false); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
     if (!current) return () => { cancelled = true }
     const load = async () => {
       setLoading(true)
@@ -120,33 +154,48 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   }, [current?.id])
 
   useEffect(() => {
-    ++videoRequest.current
-    videoSourceRef.current = ''
-    videoSourcePromise.current = null
-    setMediaMode('cover'); setVideoUrl(''); setDanmaku([]); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
-    if (!current || current.source.provider === 'local') return () => { ++videoRequest.current }
-    const request = videoRequest.current
-    const timer = window.setTimeout(() => {
-      const pending = getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl)
-      videoSourcePromise.current = pending
-      void pending.then(url => { if (request === videoRequest.current) videoSourceRef.current = url }).catch(() => { if (videoSourcePromise.current === pending) videoSourcePromise.current = null })
-    }, 700)
-    return () => { window.clearTimeout(timer); ++videoRequest.current }
+    setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false)
+    setVideoFailed(false); setLyricQuery(current?.title || ''); setLyricArtist(current?.artist || '')
   }, [current?.id])
 
-  const showVideo = async () => {
-    if (!current || current.source.provider === 'local') return
+  useEffect(() => {
     const request = ++videoRequest.current
-    if (mediaMode === 'video') { setMediaMode('cover'); setVideoFullscreen(false); return }
-    setMediaMode('video'); setError('')
-    try {
-      const videoUrl = videoSourceRef.current || await (videoSourcePromise.current || getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl))
+    if (!current || current.source.provider !== 'bilibili' || mediaPreference !== 'video') return
+    if (videoSource?.trackId === current.id) return
+    const pending = getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl)
+    void pending.then(url => {
       if (request !== videoRequest.current) return
-      videoSourceRef.current = videoUrl
-      setVideoUrl(videoUrl)
-      void getDanmaku(current.source.cid).then((comments) => { if (request === videoRequest.current) setDanmaku(comments) }).catch((cause) => { if (request === videoRequest.current) setError(`弹幕加载失败：${commandErrorMessage(cause)}`) })
-    } catch (cause) { if (request === videoRequest.current) { setMediaMode('cover'); setError(commandErrorMessage(cause)) } }
+      setVideoSource({ trackId: current.id, url })
+    }).catch(cause => {
+      if (request !== videoRequest.current) return
+      setVideoFailed(true); setError(`视频加载失败，已显示封面：${commandErrorMessage(cause)}`)
+    })
+    return () => { ++videoRequest.current }
+  }, [current?.id, mediaPreference, videoRetry])
+
+  useEffect(() => {
+    setDanmaku([])
+    if (!current || current.source.provider !== 'bilibili' || mediaMode !== 'video' || !videoUrl || !danmakuVisible) return
+    let cancelled = false
+    void getDanmaku(current.source.cid).then(items => { if (!cancelled) setDanmaku(items) })
+      .catch(cause => { if (!cancelled) setError(`弹幕加载失败：${commandErrorMessage(cause)}`) })
+    return () => { cancelled = true }
+  }, [current?.id, videoUrl, mediaMode, danmakuVisible])
+
+  const showVideo = () => {
+    if (!current || current.source.provider !== 'bilibili') return
+    const next = mediaMode === 'video' ? 'cover' : 'video'
+    setVideoFailed(false); setError(''); setVideoFullscreen(false)
+    // Retry without changing the remembered preference.
+    if (next === 'video' && mediaPreference === 'video') {
+      setVideoRetry(value => value + 1)
+    } else setMediaPreference(next)
+    localStorage.setItem('lyrics-media-mode', next)
   }
+  const toggleDanmaku = () => setDanmakuVisible(value => {
+    localStorage.setItem('danmakuVisible', String(!value))
+    return !value
+  })
 
   const syncedLyrics = useMemo(() => Boolean(stored && parseLrc(stored.rawText).length), [stored?.rawText])
   const activeIndex = useMemo(() => {
@@ -167,7 +216,9 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
       // Size spacers to the actual lyric viewport, not the complete window.
       // Oversized vh padding can scroll the outer page and hide its toolbar.
       const padding = `${Math.max(0, Math.floor(scroll.clientHeight / 2) - 1)}px`
-      scroll.style.paddingTop = padding; scroll.style.paddingBottom = padding
+      // Content spacers must not become the viewport's minimum box height when
+      // resizing between desktop and phone layouts.
+      scroll.style.setProperty('--lyric-spacer', padding)
       const active = scroll.querySelector<HTMLParagraphElement>('p.active')
       if (active) centerLyric(scroll, active, 'auto')
     })
@@ -176,8 +227,8 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   }, [current?.id])
   useEffect(() => {
     const line = lineRefs.current[activeIndex]
-    if (scrollRef.current && line) centerLyric(scrollRef.current, line, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
-  }, [activeIndex])
+    if (scrollRef.current && line) centerLyric(scrollRef.current, line, biasOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
+  }, [activeIndex, biasOpen, stored?.biasMs])
 
   async function refreshCandidates() {
     if (!current) return
@@ -207,10 +258,18 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     } catch (cause) { if (request === lyricRequest.current) setError(commandErrorMessage(cause)) }
   }
 
-  async function adjustBias(delta: number) {
-    if (!current || !stored) return
-    try { setStored(await setStoredLyricsBias(current.id, stored.biasMs + delta)) }
-    catch (cause) { setError(commandErrorMessage(cause)) }
+  function adjustBias(delta: number) {
+    const lyrics = storedRef.current
+    if (!current || !lyrics || lyrics.trackId !== current.id) return
+    const next = { ...lyrics, biasMs: clampBias(lyrics.biasMs + delta) }
+    storedRef.current = next
+    setStored(next); setBiasSaveError(false); setBiasActivity(Date.now())
+    biasWriter.set(current.id, next.biasMs)
+  }
+
+  function alignLine(timeMs: number) {
+    if (!biasOpen || !storedRef.current) return
+    adjustBias(clampBias(progressSeconds * 1000 - timeMs) - storedRef.current.biasMs)
   }
 
   if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
@@ -237,9 +296,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
         <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`}>
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>
+            <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
             <ActionMenu label="视频与弹幕设置" panel>{(close) => <>
-              <button onClick={() => setDanmakuVisible((value) => !value)} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
+              <button onClick={toggleDanmaku} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
               <label>弹幕字号 <span>{danmakuSize.toFixed(1)}×</span><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label>
               <label>弹幕透明度 <span>{Math.round(danmakuOpacity * 100)}%</span><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label>
               <button onClick={close}>完成</button>
@@ -262,20 +322,14 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           </div>
         </div>
       </div>
-      <div ref={scrollRef} className="lyrics-scroll" aria-live="polite">
+      <div ref={scrollRef} className={`lyrics-scroll${biasOpen && syncedLyrics ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
         {loading && !lines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : lines.length ? lines.map((line, index) => (
-          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}>{line.text}</p>
+          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''} role={biasOpen && syncedLyrics ? 'button' : undefined} tabIndex={biasOpen && syncedLyrics ? 0 : undefined} title={biasOpen && syncedLyrics ? '将这一句对齐到现在' : undefined} onClick={() => alignLine(line.timeMs)} onKeyDown={event => { if (biasOpen && syncedLyrics && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); alignLine(line.timeMs) } }}>{line.text}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
-      {biasOpen && <aside className="lyrics-bias expanded" aria-label="歌词时间调整" onPointerDown={() => setBiasActivity(Date.now())} onKeyDown={() => setBiasActivity(Date.now())}>
-        <button className="bias-trigger" aria-label="关闭歌词时间调整" title="关闭" onClick={() => setBiasOpen(false)}><X size={16} /></button>
-        {biasOpen && <>
-          <button disabled={!syncedLyrics} onClick={() => adjustBias(500)} title="歌词延后 0.5 秒" aria-label="歌词延后 0.5 秒">＋</button>
-          <span>{stored ? `${stored.biasMs > 0 ? '+' : ''}${(stored.biasMs / 1000).toFixed(1)}s` : '0.0s'}</span>
-          <button disabled={!syncedLyrics} onClick={() => adjustBias(-500)} title="歌词提前 0.5 秒" aria-label="歌词提前 0.5 秒">−</button>
-          <button className="bias-reset" onClick={() => stored && adjustBias(-stored.biasMs)} title="重置偏移" aria-label="重置歌词偏移"><Clock3 size={14} /></button>
-        </>}
-      </aside>}
+      {biasOpen && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
+        onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
+
       {error && lines.length > 0 && <div className="lyrics-toast">{error}</div>}
       {chooserOpen && <div className="lyric-chooser-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setChooserOpen(false)}>
         <div className="lyric-chooser">

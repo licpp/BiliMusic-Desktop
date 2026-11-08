@@ -4,7 +4,7 @@ import { reloadLinkedFolder } from '../../services/linkedFolders'
 import { accountEpoch } from '../../services/accountScope'
 import { toTrack } from '../../services/collectionTrack'
 import { useEffect, useRef, useState } from 'react'
-import { addTrackToPlaylist, commandErrorMessage, createPlaylist, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, saveLibraryTrack, type FavoriteFolder } from '../../services/desktopApi'
+import { addTracksToPlaylist, commandErrorMessage, createPlaylist, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, saveLibraryTrack, type FavoriteFolder } from '../../services/desktopApi'
 
 export function ImportFavorites({ onClose, onImported }: { onClose: () => void; onImported: (id: string, mode: 'copy' | 'link') => void }) {
   const client = useQueryClient()
@@ -43,12 +43,16 @@ export function ImportFavorites({ onClose, onImported }: { onClose: () => void; 
           setStatus(`正在解析「${video.title}」，已导入 ${count} 首`)
           try {
             const detail = await getVideoParts(video.bvid)
+            const ids: string[] = []
             for (const part of detail.parts) {
               if (stopped()) break
               const track = await saveLibraryTrack(toTrack(detail, part))
               if (stopped()) break
-              await addTrackToPlaylist(playlist.id, track.id)
-              count++
+              ids.push(track.id)
+            }
+            if (!stopped()) {
+              await addTracksToPlaylist(playlist.id, ids, true)
+              count += ids.length
             }
           } catch (cause) { failed++; setErrors((existing) => [...existing, `${video.title}：${commandErrorMessage(cause)}`]) }
         }

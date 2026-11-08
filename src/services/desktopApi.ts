@@ -132,6 +132,7 @@ export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
   if (!inDesktopShell) return []
   return (await invoke<StoredTrack[]>('playlist_tracks', { playlistId })).map(fromStoredTrack)
 }
+export const addTracksToPlaylist = (playlistId: string, trackIds: string[], append = false) => write<void>('playlist_add_tracks', { playlistId, trackIds, append })
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_add_track', { playlistId, trackId })
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_remove_track', { playlistId, trackId })
 export const removeTracksFromPlaylist = (playlistId: string, trackIds: string[]) => write<void>('playlist_remove_tracks', { playlistId, trackIds })

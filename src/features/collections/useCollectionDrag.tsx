@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { GripVertical } from 'lucide-react'
 
-export function CollectionDragHandle({ title, folderId, onMove }: {
-  title: string
-  folderId: string
-  onMove: (targetFolder: string) => void
-}) {
+export function useCollectionDrag(title: string, options?: { folderId: string; onMove: (targetFolder: string) => void }) {
   const gesture = useRef<{ id: number; x: number; y: number } | undefined>(undefined)
+  const suppressClick = useRef(false)
   const target = useRef<HTMLElement | null>(null)
   const frame = useRef<number | undefined>(undefined)
   const [drag, setDrag] = useState<{ x: number; y: number }>()
@@ -15,7 +11,7 @@ export function CollectionDragHandle({ title, folderId, onMove }: {
 
   const findTarget = (x: number, y: number) => {
     const folder = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-collection-folder]')
-    return folder && folder.dataset.collectionFolder !== folderId ? folder : null
+    return folder && folder.dataset.collectionFolder !== options?.folderId ? folder : null
   }
   const highlight = (folder: HTMLElement | null) => {
     if (target.current === folder) return
@@ -49,34 +45,33 @@ export function CollectionDragHandle({ title, folderId, onMove }: {
     }
     frame.current = requestAnimationFrame(scrollWhileDragging)
   }
-  const onPointerDown = (event: PointerEvent<HTMLSpanElement>) => {
-    if (!event.isPrimary || event.button !== 0 || gesture.current) return
+  const onPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!options || event.pointerType === 'touch' || !event.isPrimary || event.button !== 0 || gesture.current) return
+    suppressClick.current = false
     gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
-  const onPointerMove = (event: PointerEvent<HTMLSpanElement>) => {
+  const onPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     const press = gesture.current
     if (press?.id !== event.pointerId) return
     const point = { x: event.clientX, y: event.clientY }
     if (!pointer.current && Math.hypot(point.x - press.x, point.y - press.y) < 6) return
+    suppressClick.current = true
     pointer.current = point
     highlight(findTarget(point.x, point.y))
     setDrag(point)
     if (frame.current === undefined) frame.current = requestAnimationFrame(scrollWhileDragging)
   }
-  const onPointerUp = (event: PointerEvent<HTMLSpanElement>) => {
+  const onPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (gesture.current?.id !== event.pointerId) return
     const folder = pointer.current ? findTarget(event.clientX, event.clientY)?.dataset.collectionFolder : undefined
     stop()
-    if (folder) onMove(folder)
+    if (folder) options?.onMove(folder)
   }
-  return <>
-    <span className="collection-drag-handle" data-dragging={drag ? '' : undefined} title="拖到自建收藏夹" aria-hidden="true"
-      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-      onPointerCancel={stop} onLostPointerCapture={stop} onClick={event => event.stopPropagation()}>
-      <GripVertical size={15}/>
-    </span>
-    {drag && createPortal(<span className="collection-drag-preview" aria-hidden="true"
-      style={{ left: Math.min(drag.x + 12, window.innerWidth - 176), top: Math.min(drag.y + 12, window.innerHeight - 38) }}>{title}</span>, document.body)}
-  </>
+  return {
+    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: stop, onLostPointerCapture: stop },
+    consumeClick: () => { const value = suppressClick.current; suppressClick.current = false; return value },
+    preview: drag && createPortal(<span className="collection-drag-preview" aria-hidden="true"
+      style={{ left: Math.min(drag.x + 12, window.innerWidth - 176), top: Math.min(drag.y + 12, window.innerHeight - 38) }}>{title}</span>, document.body),
+  }
 }

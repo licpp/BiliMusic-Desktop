@@ -12,7 +12,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { CatalogSource } from '../../services/desktopApi'
 import { Artwork } from '../../shared/Artwork'
 import type { Track } from '../../domain/track'
-import { addTrackToPlaylist, commandErrorMessage, importLocalAudio, listLocalAudio, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type LocalImportResult, type Playlist } from '../../services/desktopApi'
+import { addTracksToPlaylist, commandErrorMessage, importLocalAudio, listLocalAudio, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylists, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, saveLibraryTrack, searchMetadataCatalog, toggleStoredFavorite, updateStoredMetadata, type CatalogCandidate, type LocalImportResult, type Playlist } from '../../services/desktopApi'
 import { showTrackMenu } from './trackActionStore'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
@@ -114,7 +114,16 @@ export function PlaylistPicker({ tracks, onClose }: { tracks: Track[]; onClose: 
     if (pending) return
     setPending(true)
     try {
-    for (const track of tracks) { const stored = await saveLibraryTrack(track); await addTrackToPlaylist(playlistId, stored.id); if (playlistId === FAVORITES_PLAYLIST_ID) usePlayerStore.getState().updateTrack({ ...stored, liked: true }) }
+    const epoch = accountEpoch()
+    const saved: Track[] = []
+    for (const track of tracks) {
+      if (epoch !== accountEpoch()) return
+      saved.push(await saveLibraryTrack(track))
+    }
+    if (epoch !== accountEpoch()) return
+    await addTracksToPlaylist(playlistId, saved.map(track => track.id))
+    if (epoch !== accountEpoch()) return
+    if (playlistId === FAVORITES_PLAYLIST_ID) for (const track of saved) usePlayerStore.getState().updateTrack({ ...track, liked: true })
     setAdded(playlistId)
     await client.invalidateQueries({ queryKey: ['playlists'] })
     await client.invalidateQueries({ queryKey: ['library'] })

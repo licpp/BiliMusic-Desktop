@@ -128,10 +128,30 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         .map_err(|e| e.to_string())?;
     let tx = c;
     let result = (|| -> rusqlite::Result<()> {
-        tx.execute("DELETE FROM collection_folders", [])?;
+        // Updating surviving rows keeps their local creation order stable.
+        for (table, kind) in [
+            ("collection_folders", "collectionFolder"),
+            ("playlists", "playlist"),
+        ] {
+            let keep: std::collections::BTreeSet<_> = s
+                .records
+                .values()
+                .filter(|r| r.kind == kind)
+                .map(|r| text(r, "id"))
+                .collect();
+            let mut query = tx.prepare(&format!("SELECT id FROM {table}"))?;
+            let existing = query
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for id in existing {
+                if !keep.contains(id.as_str()) {
+                    tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), [&id])?;
+                }
+            }
+        }
         for r in s.records.values().filter(|r| r.kind == "collectionFolder") {
             tx.execute(
-                "INSERT INTO collection_folders(id,name) VALUES(?1,?2)",
+                "INSERT INTO collection_folders(id,name) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
                 params![text(r, "id"), text(r, "name")],
             )?;
         }
@@ -172,12 +192,12 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         }
         tx.execute_batch(
             "CREATE TEMP TABLE sync_local_items AS SELECT playlist_id,track_id,position,created_at FROM playlist_items WHERE track_id IN (SELECT track_id FROM local_audio);
-             DELETE FROM playlist_items; DELETE FROM playlists;
+             DELETE FROM playlist_items;
              DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio);",
         )?;
         for r in s.records.values().filter(|r| r.kind == "playlist") {
             tx.execute(
-                "INSERT INTO playlists(id,name,description,cover_url) VALUES(?1,?2,?3,?4)",
+                "INSERT INTO playlists(id,name,description,cover_url,created_at) VALUES(?1,?2,?3,?4,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,cover_url=excluded.cover_url",
                 params![
                     text(r, "id"),
                     text(r, "name"),
@@ -241,6 +261,31 @@ pub fn prune(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sync_preserves_local_playlist_and_folder_creation_order() {
+        use crate::infrastructure::repositories::{collections, playlists::PlaylistRepository};
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        let a = "ffffffff-2861-4be1-8b08-a6a0fb0b0579";
+        let b = "00000000-2861-4be1-8b08-a6a0fb0b0579";
+        for id in [a, b] {
+            c.execute(
+                "INSERT INTO playlists(id,name,created_at) VALUES(?1,?1,'2026-11-08 00:00:00')",
+                [id],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO collection_folders(id,name) VALUES(?1,?1)",
+                [id],
+            )
+            .unwrap();
+        }
+        let snapshot = export(&c, "42", false).unwrap();
+        apply(&c, &snapshot, false).unwrap();
+        assert_eq!(PlaylistRepository::list(&c).unwrap()[1].id, b);
+        assert_eq!(collections::list(&c).unwrap().folders[0].id, b);
+    }
     #[test]
     fn collections_round_trip_without_uploading_source_cache() {
         let mut c = Connection::open_in_memory().unwrap();

@@ -77,6 +77,60 @@ mod tests {
     }
 
     #[test]
+    fn new_batches_prepend_without_reversing_or_moving_duplicates() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        for (i, id) in ["a", "b", "c", "d", "e", "f"].iter().enumerate() {
+            c.execute("INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BVFIXTURE',?2)", params![id,i as i64+1]).unwrap();
+            c.execute(
+                "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,?1)",
+                [id],
+            )
+            .unwrap();
+        }
+        PlaylistRepository::create(&c, "list", "歌单").unwrap();
+        let add = |ids: &[&str], append| {
+            PlaylistRepository::add_tracks(
+                &c,
+                "list",
+                &ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                append,
+            )
+            .unwrap()
+        };
+        let ids = || {
+            PlaylistRepository::tracks(&c, "list")
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>()
+        };
+        add(&["a", "b"], false);
+        PlaylistRepository::add_track(&c, "list", "c").unwrap();
+        add(&["d", "e", "c", "d"], false);
+        assert_eq!(ids(), vec!["d", "e", "c", "a", "b"]);
+        add(&["f"], true);
+        assert_eq!(ids(), vec!["d", "e", "c", "a", "b", "f"]);
+        assert!(PlaylistRepository::add_tracks(&c, "list", &["missing".into()], false).is_err());
+        assert_eq!(ids(), vec!["d", "e", "c", "a", "b", "f"]);
+        PlaylistRepository::add_tracks(&c, FAVORITES_PLAYLIST_ID, &["b".into(), "a".into()], false)
+            .unwrap();
+        PlaylistRepository::add_track(&c, FAVORITES_PLAYLIST_ID, "c").unwrap();
+        assert_eq!(
+            PlaylistRepository::tracks(&c, FAVORITES_PLAYLIST_ID)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            vec!["c", "b", "a"]
+        );
+        PlaylistRepository::create(&c, "new", "新歌单").unwrap();
+        c.execute("UPDATE playlists SET created_at='2020-01-01 00:00:00',updated_at='2099-01-01 00:00:00' WHERE id='list'",[]).unwrap();
+        assert_eq!(PlaylistRepository::list(&c).unwrap()[1].id, "new");
+    }
+
+    #[test]
     fn playlist_add_is_idempotent_and_remove_is_scoped() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection
@@ -132,14 +186,14 @@ impl PlaylistRepository {
     ) -> rusqlite::Result<PlaylistRecord> {
         Self::ensure_custom(id)?;
         connection.execute(
-            "INSERT INTO playlists(id,name) VALUES (?1,?2)",
+            "INSERT INTO playlists(id,name,created_at) VALUES (?1,?2,strftime('%Y-%m-%d %H:%M:%f','now'))",
             params![id, name.trim()],
         )?;
         Self::get(connection, id)
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<PlaylistRecord>> {
-        let mut statement = connection.prepare("SELECT p.id,p.name,p.description,p.cover_url,COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.updated_at DESC,p.created_at DESC")?;
+        let mut statement = connection.prepare("SELECT p.id,p.name,p.description,p.cover_url,COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC")?;
         let mut playlists = vec![Self::get(connection, FAVORITES_PLAYLIST_ID)?];
         playlists.extend(
             statement
@@ -168,14 +222,14 @@ impl PlaylistRepository {
     pub fn tracks(connection: &Connection, id: &str) -> rusqlite::Result<Vec<TrackRecord>> {
         if id == FAVORITES_PLAYLIST_ID {
             let mut statement = connection.prepare(&format!(
-                "{} WHERE f.track_id IS NOT NULL ORDER BY f.created_at DESC,t.id",
+                "{} WHERE f.track_id IS NOT NULL ORDER BY f.created_at DESC,f.rowid DESC",
                 LibraryRepository::select_sql()
             ))?;
             return statement
                 .query_map([], LibraryRepository::map_row)?
                 .collect();
         }
-        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position", LibraryRepository::select_sql()))?;
+        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,pi.track_id", LibraryRepository::select_sql()))?;
         statement
             .query_map(params![id], LibraryRepository::map_row)?
             .collect()
@@ -186,15 +240,66 @@ impl PlaylistRepository {
         playlist_id: &str,
         track_id: &str,
     ) -> rusqlite::Result<()> {
-        if playlist_id == FAVORITES_PLAYLIST_ID {
-            return LibraryRepository::set_favorite(connection, track_id, true);
+        Self::add_tracks(connection, playlist_id, &[track_id.to_owned()], false)
+    }
+
+    pub fn add_tracks(
+        connection: &Connection,
+        playlist_id: &str,
+        track_ids: &[String],
+        append: bool,
+    ) -> rusqlite::Result<()> {
+        let tx = connection.unchecked_transaction()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut new_ids = Vec::new();
+        for id in track_ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let exists: bool = if playlist_id == FAVORITES_PLAYLIST_ID {
+                tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM favorites WHERE track_id=?1)",
+                    [id],
+                    |r| r.get(0),
+                )?
+            } else {
+                tx.query_row("SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id=?1 AND track_id=?2)", params![playlist_id,id], |r| r.get(0))?
+            };
+            if !exists {
+                new_ids.push(id);
+            }
         }
-        connection.execute("INSERT INTO playlist_items(playlist_id,track_id,position) VALUES (?1,?2,COALESCE((SELECT MAX(position)+1 FROM playlist_items WHERE playlist_id=?1),0)) ON CONFLICT(playlist_id,track_id) DO NOTHING", params![playlist_id, track_id])?;
-        connection.execute(
-            "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
-            params![playlist_id],
-        )?;
-        Ok(())
+        if playlist_id == FAVORITES_PLAYLIST_ID {
+            // Reverse insertion keeps the displayed order of one selected batch.
+            for id in new_ids.iter().rev() {
+                LibraryRepository::set_favorite(&tx, id, true)?;
+            }
+        } else if !new_ids.is_empty() {
+            let start: i64 = if append {
+                tx.query_row(
+                    "SELECT COALESCE(MAX(position)+1,0) FROM playlist_items WHERE playlist_id=?1",
+                    [playlist_id],
+                    |r| r.get(0),
+                )?
+            } else {
+                tx.execute(
+                    "UPDATE playlist_items SET position=position+?2 WHERE playlist_id=?1",
+                    params![playlist_id, new_ids.len() as i64],
+                )?;
+                0
+            };
+            for (index, id) in new_ids.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3)",
+                    params![playlist_id, id, start + index as i64],
+                )?;
+            }
+            tx.execute(
+                "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                [playlist_id],
+            )?;
+        }
+        tx.commit()
     }
 
     pub fn remove_track(
