@@ -1,0 +1,32 @@
+/* Each platform has the same reading order; optional links live in the footer. */
+.download-grid .download-card { display:flex;flex-direction:column;min-width:0;padding:26px;gap:0;border-radius:16px; }
+.download-card-header { display:flex;align-items:center;gap:16px;min-height:48px; }
+.download-icon { display:grid;place-items:center;flex:0 0 48px;width:48px;height:48px;border-radius:13px;background:#b7d6c70d;color:var(--mint); }
+.download-icon svg { width:27px;height:27px; }
+.download-heading { min-width:0; }
+.download-title { display:flex;align-items:center;flex-wrap:wrap;gap:10px; }
+.download-card h3 { margin:0;font-size:21px;letter-spacing:-.02em; }
+.download-badge { padding:2px 8px;border-radius:5px;background:#b7d6c716;color:var(--mint);font-size:11px;white-space:nowrap; }
+.download-card .download-architecture { margin:5px 0 0;font-size:12px;line-height:1.5; }
+.download-body { flex:1;margin-top:22px; }
+.download-build { display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;font-size:12px;color:#a6b7aa;line-height:1.6; }
+.download-build strong { font-weight:500;color:#dce7df; }
+.download-card .platform-download-count { margin-left:auto;font-size:11px;color:#8fa497; }
+.download-card .download-requirements { margin:8px 0 0;min-height:36px;font-size:12px;line-height:1.6;color:#a6b7aa; }
+.download-card .channel-buttons { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:18px; }
+.download-card .channel-buttons .button { min-height:44px;height:44px;padding:0 12px;font-size:12px;border-radius:8px;white-space:nowrap; }
+.download-utilities { display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px 18px;min-height:20px;margin-top:16px; }
+.download-card .checksum { min-width:0;max-width:100%;margin:0;font-size:11px;line-height:20px;color:#8fa497; }
+.download-card .checksum code { max-width:100%;font-size:10px;line-height:1.6; }
+.download-guide { flex:none;font-size:11px;line-height:20px;color:var(--mint);white-space:nowrap; }
+.download-guide:hover { text-decoration:underline;text-underline-offset:4px; }
+@media(max-width:600px) {
+  .download-grid .download-card { padding:22px; }
+  .download-card .platform-download-count { margin-left:0;flex-basis:100%; }
+  .download-card .download-requirements { min-height:0; }
+  .download-card .channel-buttons { margin-top:20px; }
+}
+@media(max-width:360px) {
+  .download-grid .download-card { padding:18px; }
+  .download-card .channel-buttons { grid-template-columns:minmax(0,1fr); }
+}

@@ -12,12 +12,26 @@ let latestDownloadStats;
 const element = (tag, text, className) => {
   const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node;
 };
+function platformIcon(platform) {
+  const icon = element('div', null, 'download-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round','stroke-linejoin':'round'})) svg.setAttribute(key,value);
+  const paths = {
+    mac: 'M4 3h16a1 1 0 0 1 1 1v12H3V4a1 1 0 0 1 1-1ZM8 21h8M12 16v5',
+    windows: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
+    android: 'M6 9a6 6 0 0 1 12 0ZM8 3 6 1M16 3l2-2M6 12h12v7H6ZM8 19v3M16 19v3M3 12v6M21 12v6',
+    ios: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM10 5h4M11 19h2',
+  };
+  const path = document.createElementNS(svg.namespaceURI,'path'); path.setAttribute('d', paths[platform] || paths.ios); svg.append(path); icon.append(svg);
+  return icon;
+}
 function renderDownloadStats(stats) {
   latestDownloadStats = stats;
   const target = $('#download-stats');
   const format = value => new Intl.NumberFormat('zh-CN').format(value);
   for (const count of document.querySelectorAll('[data-download-count]')) {
-    count.textContent = ` · 累计下载 ${format(stats.platforms[count.dataset.downloadCount] || 0)} 次`;
+    count.textContent = `累计下载 ${format(stats.platforms[count.dataset.downloadCount] || 0)} 次`;
   }
   target.replaceChildren(element('span', `累计下载 ${format(stats.total)} 次`));
   const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
@@ -66,15 +80,21 @@ async function loadDownloads() {
     renderReleaseHistory(releaseManifest);
     $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
     for (const item of releaseManifest.platforms) {
-      const article = element('article');
-      article.append(element('div', item.id === 'mac' ? '⌘' : item.id === 'windows' ? '⊞' : item.id === 'ios' ? '◉' : '↗', 'os-symbol'));
-      const heading = element('div'); heading.append(element('h3',`BiliMusic for ${item.name}${item.id === 'ios' ? ' · 自签版' : ''}`));
-      heading.append(element('p',item.status === 'available' ? item.architecture : '移动端正在规划中，敬请期待。')); article.append(heading);
+      const article = element('article', null, 'download-card');
+      const header = element('header', null, 'download-card-header');
+      const heading = element('div', null, 'download-heading');
+      const title = element('div', null, 'download-title'); title.append(element('h3',item.name));
+      if (item.id === 'ios') title.append(element('span','自签版','download-badge'));
+      heading.append(title,element('p',item.architecture,'download-architecture'));
+      header.append(platformIcon(item.id),heading); article.append(header);
       if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
       else {
-        const version = element('p',`v${releaseManifest.version} · ${(item.size / 1048576).toFixed(1)} MB · ${item.requirements}`,'download-version');
-        const count = element('span',' · 累计下载 —','platform-download-count');
-        count.dataset.downloadCount = item.id; version.append(count); article.append(version);
+        const body = element('div',null,'download-body');
+        const version = element('div',null,'download-build');
+        const count = element('span','累计下载 —','platform-download-count');
+        count.dataset.downloadCount = item.id;
+        version.append(element('strong',`v${releaseManifest.version}`),element('span',`${(item.size / 1048576).toFixed(1)} MB`),count);
+        body.append(version,element('p',item.requirements,'download-requirements')); article.append(body);
         const channels = element('div', null, 'channel-buttons');
         for (const channel of item.channels) {
           const button = element('button',channel.name + (channel.recommended ? ' · 国内推荐' : ''),'button' + (channel.recommended ? ' recommended' : ''));
@@ -84,10 +104,13 @@ async function loadDownloads() {
           channels.append(button);
         }
         article.append(channels);
+        const utilities = element('div',null,'download-utilities');
+        const checksum = element('details',null,'checksum'); checksum.append(element('summary','查看 SHA-256 校验值'),element('code',item.sha256));
+        utilities.append(checksum);
         if (item.id === 'ios') {
-          const guide=element('a','查看自签安装说明 ↗','download-note'); guide.href='/ios.html'; article.append(guide);
+          const guide=element('a','自签安装说明 ↗','download-guide'); guide.href='/ios.html'; utilities.append(guide);
         }
-        const checksum = element('details',null,'checksum'); checksum.append(element('summary','查看 SHA-256 校验值'),element('code',item.sha256)); article.append(checksum);
+        article.append(utilities);
       }
       target.append(article);
     }
