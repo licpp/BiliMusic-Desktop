@@ -361,7 +361,7 @@ class PlayerPlugin: Plugin {
     private func refresh() {
         if let item = player.currentItem {
             let position = player.currentTime().seconds, duration = item.duration.seconds
-            if position.isFinite { state.position = max(0, position) }
+            if position.isFinite && startPosition == 0 { state.position = max(0, position) }
             if duration.isFinite && duration > 0 { state.duration = duration }
             if state.error == nil { state.status = desiredPlaying ? (player.timeControlStatus == .playing ? "playing" : "buffering") : "paused" }
         }
