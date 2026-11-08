@@ -1,6 +1,6 @@
 # BiliMusic 网站
 
-功能介绍、互动功能示意、macOS / Windows / Android 双源下载、声明确认及站内反馈。国内优先推荐 Gitee，同时提供 GitHub；Android 直接提供原签名 APK。页面没有第三方字体、追踪脚本或媒体资源。后端 `/api/v1/releases` 从 `releases.json` 提供版本、架构、体积、SHA-256 与双源地址。
+功能介绍、互动功能示意、macOS / Windows / Android / iOS 自签版双源下载、声明确认及站内反馈。国内优先推荐 Gitee，同时提供 GitHub；Android 直接提供原签名 APK。页面没有第三方字体、追踪脚本或媒体资源。后端 `/api/v1/releases` 从 `releases.json` 提供版本、架构、体积、SHA-256 与双源地址。
 
 ## 本地开发
 
@@ -73,7 +73,7 @@ docker exec bilimusic-site node scripts/feedback.mjs status <反馈UUID> resolve
 
 ### 发布安装包
 
-当前 0.1.10 安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon、Windows x64 和 Android ARM64。Gitee 单附件上限100MB，Android 使用精简的 Release APK，两个来源均可直接下载安装。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
+当前 0.2.3 安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon、Windows x64、Android ARM64 和需自行签名的 iOS ARM64 IPA。Gitee 单附件上限100MB，Android 使用精简的 Release APK，两个来源均可直接下载安装。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
 
 更新版本时先在两处上传相同安装包、许可与校验清单，验证下载后更新 `releases.json` 并重启网站；镜像未完成时地址设为 null，界面显示准备中并禁用该来源。`releases.json` 是唯一下载配置，按钮及确认 API 共用，避免平台和地址错配。当前 macOS 使用临时签名但未 Apple 公证，Windows 未发布者签名，页面已说明架构、限制及 macOS 按应用单独允许打开的方法。直接文件 URL 仍可被转发，不能把网页勾选当作版权授权或访问控制。
 
@@ -89,4 +89,4 @@ macOS 发布时不仅要校验 DMG 校验和，还必须挂载最终 DMG，对�
 
 ### 下载统计
 
-下载卡片的小字分别显示 Android、macOS、Windows 各平台累计下载量，下方显示三端总量；各平台计数跨安装包版本累积。`GET /api/v1/download-stats` 返回 PostgreSQL 聚合计数；通过当前声明验证的 `POST /api/v1/download` 在返回下载链接前执行原子累加。版本由服务端发行清单确定，切换版本不会丢失旧版本记录。仅统计官网发起次数，不代表文件下载完成或独立用户数，也不包含直接从 GitHub/Gitee 发起的下载；上线前数据不补计。只保存每个版本/平台/渠道一行计数和统计起始时间，不保存访问者记录。数据库不可用时统计显示不可用，下载链接照常返回。
+下载卡片的小字分别显示 Android、iOS、macOS、Windows 各平台累计下载量，下方显示全部平台总量；各平台计数跨安装包版本累积。`GET /api/v1/download-stats` 返回 PostgreSQL 聚合计数；通过当前声明验证的 `POST /api/v1/download` 在返回下载链接前执行原子累加。版本由服务端发行清单确定，切换版本不会丢失旧版本记录。仅统计官网发起次数，不代表文件下载完成或独立用户数，也不包含直接从 GitHub/Gitee 发起的下载；上线前数据不补计。只保存每个版本/平台/渠道一行计数和统计起始时间，不保存访问者记录。数据库不可用时统计显示不可用，下载链接照常返回。

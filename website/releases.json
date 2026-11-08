@@ -1,6 +1,6 @@
 {
-  "version": "0.2.2",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.2",
+  "version": "0.2.3",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.3",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.2.2_macOS_AppleSilicon.dmg",
-      "size": 4976492,
-      "sha256": "49ea886c4f14de5a51b96a135195aec018b3f5068d80c19dd7e91868599c6324",
+      "file": "BiliMusic_0.2.3_macOS_AppleSilicon.dmg",
+      "size": 5062474,
+      "sha256": "a004a91aed0712bed47384109d062d2046e2e5ef2982b5278e925d449ec4a62f",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.2.2_Windows_x64-setup.exe",
-      "size": 3710308,
-      "sha256": "2370908193cf2f3e5692fde8b9801efeb45d96cc66a9e5cad20df470d3e895a8",
+      "file": "BiliMusic_0.2.3_Windows_x64-setup.exe",
+      "size": 3718742,
+      "sha256": "7cc967644664296a59f23de65233e13238f9c2bd5a528ccd924273c785bef589",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,23 +59,58 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.2/BiliMusic_0.2.2_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.2.2_Android_arm64.apk",
-      "size": 13548133,
-      "sha256": "d132f63ccf1a29bba2181b9400110011c908b74e8f412438ba83fb4fe9405e96",
+      "file": "BiliMusic_0.2.3_Android_arm64.apk",
+      "size": 13552229,
+      "sha256": "957a5c80f4033120005b149d0422be63da66f2b25307db97e83c84b72b10e181",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
+    },
+    {
+      "id": "ios",
+      "name": "iOS",
+      "status": "available",
+      "architecture": "ARM64 · iPhone / iPad",
+      "requirements": "iOS / iPadOS 15+ · IPA 需自行签名安装",
+      "packageFormat": "ipa",
+      "signature": "unsigned",
+      "channels": [
+        {
+          "id": "gitee",
+          "name": "Gitee",
+          "recommended": true,
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_iOS_arm64-unsigned.ipa"
+        },
+        {
+          "id": "github",
+          "name": "GitHub",
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.3/BiliMusic_0.2.3_iOS_arm64-unsigned.ipa"
+        }
+      ],
+      "file": "BiliMusic_0.2.3_iOS_arm64-unsigned.ipa",
+      "size": 4793823,
+      "sha256": "630201b1c1e10bc1a8a4cbf57995f2b993b663d24dca46ddfffaba458e9e0fd2"
     }
   ],
   "history": [
+    {
+      "version": "0.2.3",
+      "publishedAt": "2026-11-08T10:48:53.882247Z",
+      "changes": [
+        "手机播放页更清爽，封面与视频切换时歌词位置保持不变。",
+        "安卓支持滑动切歌、长按菜单，重新整理播放队列和评论回复。",
+        "播放时自动匹配歌词，改善播放响应并修复评论点赞等问题。",
+        "新增 iOS 自签版下载，安卓通知栏可以显示专辑封面。"
+      ]
+    },
     {
       "version": "0.2.2",
       "publishedAt": "2026-11-07T04:04:58Z",

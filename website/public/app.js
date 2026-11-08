@@ -19,7 +19,7 @@ function renderDownloadStats(stats) {
   for (const count of document.querySelectorAll('[data-download-count]')) {
     count.textContent = ` · 累计下载 ${format(stats.platforms[count.dataset.downloadCount] || 0)} 次`;
   }
-  target.replaceChildren(element('span', `三端累计下载 ${format(stats.total)} 次`));
+  target.replaceChildren(element('span', `累计下载 ${format(stats.total)} 次`));
   const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
   target.append(element('small',`自 ${date} 起统计官网发起下载次数`));
 }

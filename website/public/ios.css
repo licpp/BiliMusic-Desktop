@@ -1,0 +1,7 @@
+.installation-guide { max-width:760px;padding-block:56px; }
+.installation-guide h1 { margin-block:28px; }
+.installation-guide h2 { margin-block:28px 12px; }
+.installation-guide ol { line-height:2;margin-block:24px;padding-left:24px; }
+.installation-guide li + li { margin-top:12px; }
+.installation-guide a { color:var(--mint);text-decoration:underline;text-underline-offset:4px; }
+.installation-guide .guide-feedback { margin-top:28px; }
