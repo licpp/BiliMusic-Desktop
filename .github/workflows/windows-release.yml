@@ -1,0 +1,84 @@
+name: windows-release-build
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Existing release tag or commit to build
+        required: true
+        default: v0.2.3
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm test
+      - name: Prepare verified NSIS toolchain through GitHub API
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # These versions and hashes match the locked Tauri CLI 2.11.4.
+          $cli = node -p "require('@tauri-apps/cli/package.json').version"
+          if ($cli -ne '2.11.4') { throw 'Update NSIS toolchain pins for the new Tauri CLI.' }
+          $stage = Join-Path $env:RUNNER_TEMP 'bilimusic-nsis'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          foreach ($asset in @(
+            @{ Repo='tauri-apps/binary-releases'; Tag='nsis-3.11'; Name='nsis-3.11.zip'; Hash='EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D' },
+            @{ Repo='tauri-apps/nsis-tauri-utils'; Tag='nsis_tauri_utils-v0.5.3'; Name='nsis_tauri_utils.dll'; Hash='75197FEE3C6A814FE035788D1C34EAD39349B860' }
+          )) {
+            for ($attempt=1; $attempt -le 4; $attempt++) {
+              gh release download $asset.Tag -R $asset.Repo -p $asset.Name -D $stage --clobber
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 4) { throw "Failed to download $($asset.Name)" }
+              Start-Sleep -Seconds 3
+            }
+            if ((Get-FileHash (Join-Path $stage $asset.Name) -Algorithm SHA1).Hash -ne $asset.Hash) { throw 'NSIS toolchain checksum mismatch' }
+          }
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          Expand-Archive (Join-Path $stage 'nsis-3.11.zip') -DestinationPath $stage -Force
+          $nsis = Join-Path $tools 'NSIS'
+          if (Test-Path $nsis) { Remove-Item $nsis -Recurse -Force }
+          Move-Item (Join-Path $stage 'nsis-3.11') $nsis
+          $plugins = Join-Path $nsis 'Plugins/x86-unicode/additional'
+          New-Item -ItemType Directory -Force $plugins | Out-Null
+          Copy-Item (Join-Path $stage 'nsis_tauri_utils.dll') $plugins
+      - name: Build installer with bounded network retry
+        shell: pwsh
+        run: |
+          for ($attempt=1; $attempt -le 3; $attempt++) {
+            npm run tauri build -- --bundles nsis
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -eq 3) { exit 1 }
+            Start-Sleep -Seconds 5
+          }
+      - name: Verify GUI subsystem
+        shell: pwsh
+        run: |
+          $binary = [System.IO.File]::ReadAllBytes((Resolve-Path 'src-tauri/target/release/bilimusic-desktop.exe'))
+          $pe = [BitConverter]::ToInt32($binary, 0x3c)
+          if ([BitConverter]::ToUInt16($binary, $pe + 92) -ne 2) { throw 'Expected GUI subsystem' }
+      - run: node scripts/release-notices.mjs x86_64-pc-windows-msvc release-notices-Windows.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bilimusic-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            release-notices-Windows.json
+          if-no-files-found: error
