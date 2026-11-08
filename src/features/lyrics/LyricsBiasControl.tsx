@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { RotateCcw, X } from 'lucide-react'
+import { Clock3, X } from 'lucide-react'
 
 function Step({ delta, onAdjust, disabled }: { delta: number; onAdjust: (delta: number) => void; disabled: boolean }) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -8,7 +8,7 @@ function Step({ delta, onAdjust, disabled }: { delta: number; onAdjust: (delta: 
   adjust.current = onAdjust
   const stop = () => { clearTimeout(timer.current); clearInterval(interval.current) }
   useEffect(() => stop, [])
-  return <button type="button" disabled={disabled} onPointerDown={event => {
+  return <button type="button" className="bias-step" disabled={disabled} title={`歌词${delta < 0 ? '提前' : '延后'} 0.5 秒`} aria-label={`歌词${delta < 0 ? '提前' : '延后'} 0.5 秒`} onPointerDown={event => {
     if (!event.isPrimary || event.button !== 0) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -17,7 +17,7 @@ function Step({ delta, onAdjust, disabled }: { delta: number; onAdjust: (delta: 
     timer.current = setTimeout(() => { interval.current = setInterval(() => adjust.current(delta), 140) }, 400)
   }} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={stop} onBlur={stop}
   onClick={event => { if (event.detail === 0) adjust.current(delta) }}>
-    <span aria-hidden="true">{delta < 0 ? '−' : '＋'}</span>歌词{delta < 0 ? '提前' : '延后'}<small>0.5 秒</small>
+    {delta < 0 ? '−' : '＋'}
   </button>
 }
 
@@ -26,10 +26,10 @@ export function LyricsBiasControl({ value, enabled, error, onAdjust, onClose, on
   onAdjust: (delta: number) => void; onClose: () => void; onActivity: () => void
 }) {
   return <aside className="lyrics-bias expanded" aria-label="歌词时间调整" onPointerDown={onActivity} onKeyDown={onActivity}>
-    <header><strong>调整歌词时间</strong><button className="bias-trigger" aria-label="关闭歌词时间调整" onClick={onClose}><X size={18}/></button></header>
-    <output aria-live="polite">{value === 0 ? '与原歌词时间一致' : `歌词${value < 0 ? '提前' : '延后'} ${(Math.abs(value) / 1000).toFixed(1)} 秒`}</output>
-    <div className="bias-steps"><Step delta={-500} onAdjust={onAdjust} disabled={!enabled}/><Step delta={500} onAdjust={onAdjust} disabled={!enabled}/></div>
-    <p>{enabled ? '歌词慢了选提前，快了选延后。也可点选歌词，将那一句对齐到现在。' : '这份歌词没有时间标记，无法调整。'}</p>
-    <footer><span>{error ? '保存失败，请重试' : '实时预览 · 自动保存'}</span><button disabled={!enabled} onClick={() => onAdjust(error ? 0 : -value)}><RotateCcw size={14}/>{error ? '重试保存' : '重置'}</button></footer>
+    <button type="button" className="bias-trigger" aria-label="关闭歌词时间调整" title="关闭" onClick={onClose}><X size={16}/></button>
+    <Step delta={500} onAdjust={onAdjust} disabled={!enabled}/>
+    <output aria-live="polite" className={error ? 'bias-save-error' : undefined} title={error ? '偏移保存失败，请重试' : '点选歌词可对齐到当前播放'}>{value > 0 ? '+' : ''}{(value / 1000).toFixed(1)}s</output>
+    <Step delta={-500} onAdjust={onAdjust} disabled={!enabled}/>
+    <button type="button" className="bias-reset" disabled={!enabled} aria-label={error ? '重试保存歌词偏移' : '重置歌词偏移'} title={error ? '保存失败，点击重试' : '重置偏移'} onClick={() => onAdjust(error ? 0 : -value)}><Clock3 size={14}/></button>
   </aside>
 }

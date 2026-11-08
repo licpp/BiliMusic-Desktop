@@ -107,24 +107,12 @@
 .video-danmaku-toggle span { font-size:13px;font-weight:600; }
 .video-danmaku-toggle[aria-pressed="true"] { color:var(--cyan); }
 .video-danmaku-toggle i { position:absolute;width:19px;height:1px;background:currentColor;transform:rotate(-45deg); }
-.lyrics-bias.expanded { top:auto;right:24px;bottom:18px;transform:none;z-index:10;width:min(360px,calc(100% - 32px));padding:16px;gap:12px;justify-items:stretch;background:var(--panel);border-color:var(--line);box-shadow:0 12px 36px #0003;backdrop-filter:none; }
-.lyrics-bias header,.lyrics-bias footer { display:flex;align-items:center;justify-content:space-between;gap:12px; }
-.lyrics-bias header strong { font-size:14px;color:var(--ink); }
-.lyrics-bias .bias-trigger { width:32px;height:32px;padding:0; }
-.lyrics-bias output { text-align:center;font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums; }
-.lyrics-bias .bias-steps { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
-.lyrics-bias .bias-steps button { width:100%;height:52px;display:flex;justify-content:center;gap:6px;background:var(--panel-raised);font:inherit;font-size:14px;touch-action:none;user-select:none; }
-.lyrics-bias .bias-steps button span { font-size:18px; }
-.lyrics-bias .bias-steps button small { font-size:11px;color:var(--muted); }
-.lyrics-bias p { font-size:12px;line-height:1.6;margin:0;color:var(--muted); }
-.lyrics-bias footer span { font-size:11px; }
-.lyrics-bias footer button { width:auto;height:32px;display:flex;gap:5px;padding:0 8px;background:transparent;font-size:12px; }
+.lyrics-bias output { font-size:9px;font-variant-numeric:tabular-nums; }
+.lyrics-bias .bias-step { padding:0;touch-action:none;user-select:none; }
+.lyrics-bias .bias-save-error { color:var(--coral); }
 .lyrics-bias button:disabled { opacity:.4;cursor:default; }
 .lyrics-timing-preview p[role="button"] { cursor:pointer; }
 .lyrics-timing-preview p[role="button"]:hover,.lyrics-timing-preview p[role="button"]:focus-visible { color:var(--ink);text-decoration:underline;text-underline-offset:6px; }
-@media (max-width:960px) {
-  .lyrics-bias.expanded { right:16px;bottom:12px;border-radius:18px; }
-}
 @media (min-width:961px) {
   /* Android tablets use the wide layout but still need system-bar/cutout space. */
   .app-shell.lyrics-immersive.frame-browser { grid-template-rows:minmax(0,1fr) calc(80px + var(--native-safe-bottom,0px)); }
