@@ -1,8 +1,5 @@
 use super::error::CommandError;
-use crate::infrastructure::{
-    database::Database,
-    providers::bilibili::*,
-};
+use crate::infrastructure::{database::Database, providers::bilibili::*};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -109,6 +106,35 @@ pub async fn bili_subtitle_lines(
 pub fn profile(database: &Database) -> String {
     std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default()
 }
+#[cfg(target_os = "android")]
+pub fn observe_android_listening(app: tauri::AppHandle) {
+    let profile_path = app.state::<Database>().1.join("active-profile");
+    let handle = app.clone();
+    let channel = tauri::ipc::Channel::new(move |body| {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Sample {
+            scope: String,
+            track_id: String,
+            seconds: f64,
+        }
+        if let Ok(sample) = body.deserialize::<Sample>() {
+            let handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = record(&handle, &sample.scope, &sample.track_id, sample.seconds).await;
+            });
+        }
+        Ok(())
+    });
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            tauri_plugin_android_player::observe_listening(&app, &profile_path, channel).await
+        {
+            eprintln!("Android listening observation failed: {error}");
+        }
+    });
+}
+
 #[tauri::command]
 pub fn listening_scope(database: State<'_, Database>) -> String {
     profile(&database)

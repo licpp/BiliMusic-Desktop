@@ -61,6 +61,8 @@ pub fn run() {
             app.manage(MusicCatalogProvider::new()?);
             #[cfg(target_os = "ios")]
             ios_playback::initialize(app.handle().clone());
+            #[cfg(target_os = "android")]
+            interface::media::observe_android_listening(app.handle().clone());
             #[cfg(desktop)]
             {
                 let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;

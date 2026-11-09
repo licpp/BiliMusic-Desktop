@@ -3,8 +3,8 @@ import { seasonCollection } from '../../services/mediaSources'
 import type { Collection } from '../../services/collections'
 import { PlaybackSettings } from './PlaybackSettings'
 import { useBiliSubtitles } from './useBiliSubtitles'
-import { isIOS, isMobile } from '../../services/platform'
-import { controlIOSAudio } from '../player/iosAudio'
+import { isMobile } from '../../services/platform'
+import { controlMobileAudio } from '../player/mobileAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -85,12 +85,12 @@ export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollect
     if (!isMobile) return
     if (videoFullscreen) document.documentElement.dataset.videoFullscreen = 'true'
     else delete document.documentElement.dataset.videoFullscreen
-    if (isIOS) void controlIOSAudio('videoFullscreen', videoFullscreen ? 1 : 0).catch(() => undefined)
+    void controlMobileAudio('videoFullscreen', videoFullscreen ? 1 : 0).catch(() => undefined)
   }, [videoFullscreen])
   useEffect(() => () => {
     if (!isMobile) return
     delete document.documentElement.dataset.videoFullscreen
-    if (isIOS) void controlIOSAudio('videoFullscreen', 0).catch(() => undefined)
+    void controlMobileAudio('videoFullscreen', 0).catch(() => undefined)
   }, [])
   const [danmakuVisible, setDanmakuVisible] = useState(() => localStorage.getItem('danmakuVisible') !== 'false')
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))

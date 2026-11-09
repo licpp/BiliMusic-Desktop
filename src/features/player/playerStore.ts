@@ -217,6 +217,6 @@ export async function reloadCurrentAudioSource() {
   if(request!==playRequest || usePlayerStore.getState().current?.id!==track.id)return
   const state=usePlayerStore.getState(),position=playbackClock(),playing=state.status==='playing'||state.status==='buffering'
   if(isIOS) await playIOSAudio(track,url,position,state.volume,playing)
-  else if(isMobile){await playMobileAudio(track,url,position,state.volume);if(!playing)await controlMobileAudio('pause')}
+  else if(isMobile) await playMobileAudio(track,url,position,state.volume,playing)
   else {const element=playerAudio();element.src=url;element.currentTime=position;if(playing)await element.play();else element.pause()}
 }

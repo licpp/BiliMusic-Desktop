@@ -13,9 +13,9 @@ export function observeAndroidAudio(callback: (state: State) => void) {
   }).catch((error) => { ready = undefined; throw error })
   return ready
 }
-export async function playAndroidAudio(track: Track, url: string, position: number, volume: number) {
+export async function playAndroidAudio(track: Track, url: string, position: number, volume: number, playing = true) {
   await ready
-  await invoke('plugin:android-player|play', { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume })
+  await invoke('plugin:android-player|play', { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing })
 }
 export const controlAndroidAudio = (action: string, value = 0) => invoke('plugin:android-player|control', { action, value })
 export const snapshotAndroidAudio = async () => {

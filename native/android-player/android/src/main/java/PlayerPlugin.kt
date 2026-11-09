@@ -2,10 +2,15 @@ package app.bilimusic.player
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.webkit.WebView
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Channel
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
@@ -19,6 +24,7 @@ class PlayArgs {
     var coverUrl: String? = null
     var position: Double = 0.0
     var volume: Double = 0.7
+    var playing: Boolean = true
 }
 @InvokeArg
 class ControlArgs {
@@ -35,6 +41,12 @@ class SecretArgs {
     lateinit var key: String
     var value: String? = null
     var remove: Boolean = false
+}
+
+@InvokeArg
+class ListeningArgs {
+    lateinit var channel: Channel
+    lateinit var profilePath: String
 }
 
 @TauriPlugin
@@ -75,7 +87,32 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(result)
         } catch (_: Exception) { invoke.reject("无法访问同步安全存储，请重新连接") }
     }
+    // Registered from Rust directly; this command has no WebView ACL grant.
+    @Command
+    fun observe_listening(invoke: Invoke) {
+        val args = invoke.parseArgs(ListeningArgs::class.java)
+        PlaybackService.profilePath = args.profilePath
+        PlaybackService.listeningListener = { event -> args.channel.send(event) }
+        invoke.resolve()
+    }
+
+    private var previousOrientation: Int? = null
     private var immersive = false
+
+    private fun setVideoFullscreen(enabled: Boolean) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (enabled && previousOrientation == null) {
+            previousOrientation = activity.requestedOrientation
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else if (!enabled) {
+            val original = previousOrientation ?: return
+            previousOrientation = null
+            activity.requestedOrientation = original
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
     private var managedWebView: WebView? = null
 
     @Suppress("DEPRECATION")
@@ -155,7 +192,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("title", args.title).putExtra("artist", args.artist)
             .putExtra("coverUrl", args.coverUrl)
-            .putExtra("position", args.position).putExtra("volume", args.volume)
+            .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing)
         activity.startForegroundService(intent)
         invoke.resolve()
     }
@@ -169,6 +206,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
                     .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("coverUrl", args.coverUrl))
+            } else if (args.action == "videoFullscreen") {
+                setVideoFullscreen(args.value > 0)
             } else if (args.action == "immersive") {
                 immersive = args.value > 0
                 updateSystemBars()

@@ -1,12 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
-import { isIOS } from './platform'
+import { isMobile } from './platform'
 import { inDesktopShell } from './desktopApi'
 import { playbackClock, usePlayerStore } from '../features/player/playerStore'
 export type ListeningStatistics = {week:{seconds:number;tracks:number;days:number};total:{seconds:number;tracks:number;days:number};daily:{day:string;seconds:number}[];weekTop:ListeningRank[];totalTop:ListeningRank[]}
 type ListeningRank = {id:string;title:string;artist:string;coverUrl:string;seconds:number}
 export const getListeningStatistics = () => invoke<ListeningStatistics>('listening_statistics')
 export function startListeningStatistics() {
-  if (!inDesktopShell || isIOS) return // iOS counts inside AVPlayer, including background playback.
+  if (!inDesktopShell || isMobile) return // Mobile players count inside their native playback services.
   let scope:string|undefined, generation=0, last=performance.now(), current=usePlayerStore.getState(), seconds=0, position=playbackClock()
   const loadScope=async()=>{const gen=++generation;const value=await invoke<string>('listening_scope');if(gen===generation)scope=value}
   void loadScope().catch(()=>undefined)

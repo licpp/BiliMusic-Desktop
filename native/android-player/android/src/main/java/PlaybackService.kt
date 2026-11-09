@@ -16,6 +16,8 @@ class PlaybackService : Service() {
     companion object {
         var instance: PlaybackService? = null
         var listener: ((JSObject) -> Unit)? = null
+        @Volatile var listeningListener: ((JSObject) -> Unit)? = null
+        @Volatile var profilePath: String? = null
         private const val CHANNEL = "bilimusic-playback"
         private const val NOTIFICATION = 1001
     }
@@ -31,6 +33,30 @@ class PlaybackService : Service() {
     private var error: String? = null
     private var resumeOnFocus = false
     private var prepared = false
+    private var seeking = false
+    private var listeningProfile: String? = null
+    private var listeningPosition: Double? = null
+    private var listeningAt = 0L
+    private var listeningSeconds = 0.0
+
+    private fun accountListening(flush: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        val media = player
+        val position = if (prepared && !seeking && status == "playing" && media != null)
+            runCatching { media.currentPosition / 1000.0 }.getOrNull() else null
+        val previous = listeningPosition
+        if (position != null && previous != null) {
+            listeningSeconds += (position - previous).coerceIn(0.0, (now - listeningAt) / 1000.0)
+        }
+        listeningPosition = position
+        listeningAt = now
+        val profile = listeningProfile
+        if ((flush || listeningSeconds >= 15.0) && profile != null && id.isNotEmpty() && listeningSeconds > 0.0) {
+            val seconds = listeningSeconds
+            listeningSeconds = 0.0
+            listeningListener?.invoke(JSObject().put("scope", profile).put("trackId", id).put("seconds", seconds))
+        }
+    }
     private var lastPosition = 0.0
     private var lastDuration = 0.0
     private var volume = .7f
@@ -89,6 +115,8 @@ class PlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "prepare" -> {
+                accountListening(true)
+                seeking = false
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
                 id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
                 artist = intent.getStringExtra("artist") ?: ""; lastPosition = 0.0; lastDuration = 0.0
@@ -105,15 +133,21 @@ class PlaybackService : Service() {
         return START_NOT_STICKY
     }
     private fun load(intent: Intent) {
+        accountListening(true)
+        seeking = false
+        listeningPosition = null
+        listeningSeconds = 0.0
+        listeningProfile = profilePath?.let { runCatching { java.io.File(it).readText() }.getOrDefault("") }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
         id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
         artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
         prepareArtwork(intent.getStringExtra("coverUrl"))
         lastPosition = intent.getDoubleExtra("position", 0.0); lastDuration = 0.0
-        status = "buffering"; error = null
+        status = if (intent.getBooleanExtra("playing", true)) "buffering" else "paused"
+        error = null
         updateMetadata()
         startForeground(NOTIFICATION, notification())
-        if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        if (status != "paused" && audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             fail("无法获得音频焦点，请稍后重试"); return
         }
         try {
@@ -126,18 +160,35 @@ class PlaybackService : Service() {
                 if (player !== it) return@setOnPreparedListener
                 prepared = true
                 val offset = (intent.getDoubleExtra("position", 0.0) * 1000).toLong()
-                if (offset > 0) it.seekTo(offset, MediaPlayer.SEEK_CLOSEST)
-                if (status != "paused") { it.start(); status = "playing" }
                 lastDuration = it.duration / 1000.0
                 updateMetadata()
+                if (offset > 0) {
+                    seeking = true
+                    it.seekTo(offset, MediaPlayer.SEEK_CLOSEST)
+                } else if (status != "paused") {
+                    it.start()
+                    status = "playing"
+                }
+                if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH)
                 publish(); handler.post(ticker)
             }
-            media.setOnSeekCompleteListener { publish(false) }
-            media.setOnCompletionListener { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")); handler.postDelayed({ if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000) }
-            media.setOnErrorListener { _, _, _ -> fail("音频播放失败，请重新播放"); true }
-            media.setOnInfoListener { _, what, _ ->
-                if (status != "paused") {
-                    if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) { status = "buffering"; publish() }
+            media.setOnSeekCompleteListener {
+                if (player !== it) return@setOnSeekCompleteListener
+                seeking = false
+                listeningPosition = null
+                if (status == "buffering" && !it.isPlaying) { it.start(); status = "playing" }
+                publish(false)
+            }
+            media.setOnCompletionListener {
+                if (player !== it) return@setOnCompletionListener
+                accountListening(true)
+                status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended"))
+                handler.postDelayed({ if (player === it && status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000)
+            }
+            media.setOnErrorListener { candidate, _, _ -> if (player === candidate) fail("音频播放失败，请重新播放"); true }
+            media.setOnInfoListener { candidate, what, _ ->
+                if (player === candidate && status != "paused" && !seeking) {
+                    if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) { accountListening(); status = "buffering"; publish() }
                     if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) { status = "playing"; publish() }
                 }; false
             }
@@ -145,12 +196,14 @@ class PlaybackService : Service() {
         } catch (cause: Exception) { fail("音频加载失败，请重新播放") }
     }
     private fun fail(message: String) {
+        accountListening(true)
         status = "error"; error = message; prepared = false
         player?.release(); player = null; handler.removeCallbacks(ticker)
         audioManager.abandonAudioFocusRequest(focus); publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
     private fun pause() {
-        if (prepared) player?.pause()
+        accountListening(true)
+        if (prepared && player?.isPlaying == true) player?.pause()
         status = "paused"; handler.removeCallbacks(ticker); publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
     fun control(action: String, value: Double = 0.0) {
@@ -159,12 +212,19 @@ class PlaybackService : Service() {
             "resume" -> if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                    player?.start(); status = "playing"; handler.removeCallbacks(ticker); handler.post(ticker); publish()
+                    if (!seeking) player?.start()
+                    status = if (seeking) "buffering" else "playing"
+                    handler.removeCallbacks(ticker); handler.post(ticker); publish()
                 } else { pause() }
             }
-            "seek" -> if (prepared) { player?.seekTo((value.coerceAtLeast(0.0) * 1000).toLong(), MediaPlayer.SEEK_CLOSEST); publish() }
+            "seek" -> if (prepared) {
+                accountListening(true)
+                seeking = true
+                player?.seekTo((value.coerceAtLeast(0.0) * 1000).toLong(), MediaPlayer.SEEK_CLOSEST)
+                publish()
+            }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
-            "stop" -> { snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
     fun snapshot(): JSObject {
@@ -176,6 +236,7 @@ class PlaybackService : Service() {
             .put("duration", lastDuration).put("stopped", player == null).put("error", error)
     }
     private fun publish(notify: Boolean = true) {
+        accountListening()
         // The app receives state first; OS presentation is coalesced separately.
         listener?.invoke(snapshot())
         if (!notify && status == lastSystemStatus && kotlin.math.abs(lastPosition - lastSystemPosition) < 5) return
@@ -257,6 +318,7 @@ class PlaybackService : Service() {
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2)).build()
     }
     override fun onDestroy() {
+        accountListening(true)
         artworkTask?.cancel(true); artworkExecutor.shutdownNow(); artworkCache.evictAll()
         handler.removeCallbacks(ticker); player?.release(); player = null
         audioManager.abandonAudioFocusRequest(focus); session.release(); unregisterReceiver(unplugged)
