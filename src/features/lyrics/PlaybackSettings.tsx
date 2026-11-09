@@ -2,23 +2,61 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage } from '../../services/desktopApi'
-import { getMediaOptions,getMediaPreferences,setMediaPreferences } from '../../services/mediaSources'
-import { reloadCurrentAudioSource } from '../player/playerStore'
-export function PlaybackSettings({track,onVideoChange}:{track:Track;onVideoChange:()=>void}) {
-  const client=useQueryClient()
-  const options=useQuery({queryKey:['media-options',track.id],queryFn:()=>getMediaOptions(track.source.bvid,track.source.cid),staleTime:60000,enabled:track.source.provider==='bilibili'})
-  const preferences=useQuery({queryKey:['media-preferences'],queryFn:getMediaPreferences})
-  const [busy,setBusy]=useState(false),[error,setError]=useState('')
-  const change=async(kind:'audioId'|'videoHeight',value:number)=>{
-    setBusy(true);setError('')
-    try {const updated=await setMediaPreferences({[kind]:value});client.setQueryData(['media-preferences'],updated);if(kind==='audioId')await reloadCurrentAudioSource();else onVideoChange()}
-    catch(error){setError(commandErrorMessage(error))}finally{setBusy(false)}
+import { getMediaOptions, getMediaPreferences, setMediaPreferences } from '../../services/mediaSources'
+
+export function PlaybackSettings({ track, kind, onChanged }: {
+  track: Track
+  kind: 'audio' | 'video'
+  onChanged: () => void | Promise<void>
+}) {
+  const client = useQueryClient()
+  const supported = track.source.provider === 'bilibili'
+  const options = useQuery({
+    queryKey: ['media-options', track.id],
+    queryFn: () => getMediaOptions(track.source.bvid, track.source.cid),
+    staleTime: 60_000,
+    enabled: supported,
+  })
+  const preferences = useQuery({
+    queryKey: ['media-preferences'],
+    queryFn: getMediaPreferences,
+    enabled: supported,
+  })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const audio = kind === 'audio'
+  const field = audio ? 'audioId' : 'videoHeight'
+  const choices = options.data?.[kind]
+  const selected = preferences.data?.[field] ?? 0
+  const missing = selected !== 0 && choices && !choices.some(choice => choice.id === selected)
+  const queryError = options.error || preferences.error
+
+  async function change(value: number) {
+    setBusy(true)
+    setError('')
+    try {
+      const updated = await setMediaPreferences({ [field]: value })
+      client.setQueryData(['media-preferences'], updated)
+      await onChanged()
+    } catch (cause) {
+      setError(commandErrorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
   }
-  if(track.source.provider!=='bilibili')return null
-  return <div className="playback-quality-settings">
-    <label>音质<select aria-label="音频质量" disabled={busy||!preferences.data||!options.data} value={preferences.data?.audioId||0} onChange={e=>void change('audioId',Number(e.target.value))}><option value={0}>自动 · 最佳音质</option>{options.data?.audio.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}{preferences.data?.audioId&&!options.data?.audio.some(o=>o.id===preferences.data!.audioId)?<option value={preferences.data.audioId}>已记住偏好 · 本曲使用可用音质</option>:null}</select></label>
-    <label>清晰度<select aria-label="视频清晰度" disabled={busy||!preferences.data||!options.data} value={preferences.data?.videoHeight||0} onChange={e=>void change('videoHeight',Number(e.target.value))}><option value={0}>自动 · 优先流畅</option>{options.data?.video.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}{preferences.data?.videoHeight&&!options.data?.video.some(o=>o.id===preferences.data!.videoHeight)?<option value={preferences.data.videoHeight}>已记住偏好 · 本片自动适配</option>:null}</select></label>
-    {(error||options.error||preferences.error)&&<p role="alert">{error||commandErrorMessage(options.error||preferences.error)}</p>}
+
+  if (!supported) return null
+  return <div className="playback-quality-settings" data-kind={kind}>
+    <label>
+      {audio ? '音质' : '清晰度'}
+      <select aria-label={audio ? '音频质量' : '视频清晰度'} disabled={busy || !preferences.data || !choices}
+        value={selected} onChange={event => void change(Number(event.target.value))}>
+        <option value={0}>{audio ? '自动 · 最佳音质' : '自动 · 优先流畅'}</option>
+        {choices?.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+        {missing && <option value={selected}>{audio ? '已记住偏好 · 本曲使用可用音质' : '已记住偏好 · 本片自动适配'}</option>}
+      </select>
+    </label>
+    {(error || queryError) && <p role="alert">{error || commandErrorMessage(queryError)}</p>}
     {busy && <small role="status">正在切换…</small>}
   </div>
 }

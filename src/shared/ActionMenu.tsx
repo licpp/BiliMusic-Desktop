@@ -4,7 +4,7 @@ import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal, X } from 'lucide-react'
 import { isMobile } from '../services/platform'
 
-export function ActionMenu({ label = '更多操作', panel = false, sheet = false, floating = false, contextPosition, children }: { label?: string; panel?: boolean; sheet?: boolean; floating?: boolean; contextPosition?: {left:number;top:number;nonce:number}; children: (close: () => void) => ReactNode }) {
+export function ActionMenu({ label = '更多操作', panel = false, sheet = false, floating = false, icon, contextPosition, children }: { label?: string; panel?: boolean; sheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
   const isSheet=!floating && (sheet || isMobile) && compact
   const [position, setPosition] = useState<{ left: number; top: number; anchorTop?: number } | null>(null)
@@ -69,7 +69,7 @@ export function ActionMenu({ label = '更多操作', panel = false, sheet = fals
     if (position) { close(); return }
     const rect = trigger.current!.getBoundingClientRect()
     setPosition({ left: rect.right, top: rect.bottom + 6, anchorTop: rect.top })
-  }}><MoreHorizontal size={20} /></button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} onKeyDown={(event) => {
+  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} onKeyDown={(event) => {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input,select,textarea')) return
     event.preventDefault()
     const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]

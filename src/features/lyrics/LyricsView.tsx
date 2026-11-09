@@ -8,13 +8,13 @@ import { controlIOSAudio } from '../player/iosAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus, ChevronRight, ListVideo, Sparkles } from 'lucide-react'
+import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
-import { usePlayerStore } from '../player/playerStore'
+import { reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
   getDanmaku,
@@ -336,14 +336,11 @@ export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollect
   if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
 
   const subtitleLabel = subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'
-  const playbackSettings = <>
-    <PlaybackSettings track={current} onVideoChange={changeVideoQuality}/>
-    {mediaMode === 'video' && <div className="danmaku-settings">
+  const videoSettings = <>
+    <PlaybackSettings track={current} kind="video" onChanged={changeVideoQuality}/>
+    <div className="danmaku-settings">
       {danmaku.error && danmakuVisible && <p className="inline-error">弹幕加载失败 <button type="button" onClick={() => void danmaku.refetch()}>重试</button></p>}
-      <div className="danmaku-settings-heading">
-        <strong>弹幕</strong>
-        <button type="button" role="switch" aria-label="显示弹幕" aria-checked={danmakuVisible} onClick={toggleDanmaku}>{danmakuVisible ? '已开启' : '已关闭'}</button>
-      </div>
+      <strong className="danmaku-settings-heading">弹幕</strong>
       <label>密度 <output>{danmakuDensityLabels[danmakuDensity]}</output>
         <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity} onChange={event => {
           const value = Number(event.target.value)
@@ -354,7 +351,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollect
       </label>
       <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
       <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
-    </div>}
+    </div>
   </>
 
   return (
@@ -384,7 +381,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollect
             <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
             <button role="menuitem" disabled={Boolean(subtitles.lines)} onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
             <button role="menuitem" onClick={() => { cyclePlaybackMode(); close() }}><Repeat2 size={16} />播放模式：{shuffled ? '随机播放' : repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
-            {playbackSettings}
+            <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
           </>}</ActionMenu>}
         </div>
       </header>
@@ -396,7 +393,9 @@ export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollect
           {mediaMode === 'video' && <>
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
-            {isMobile && videoFullscreen && <ActionMenu label="播放设置" panel floating>{() => playbackSettings}</ActionMenu>}
+            <ActionMenu label="视频设置" icon={<Settings2 size={18}/>} panel floating={isMobile && videoFullscreen}>
+              {() => videoSettings}
+            </ActionMenu>
           </>}
         </div>
         {videoFullscreen && isMobile && <div className="video-fullscreen-transport">
