@@ -154,9 +154,9 @@
   :root:is([data-platform="ios"],[data-platform="android"]) { -webkit-tap-highlight-color:transparent; }
   :root:is([data-platform="ios"],[data-platform="android"]) button { touch-action:manipulation;-webkit-touch-callout:none; }
   :root:is([data-platform="ios"],[data-platform="android"]) button:active { opacity:.65; }
-  /* Keep decoded video out of opacity animations and paint containment on WKWebView. */
-  :root:is([data-platform="ios"],[data-platform="android"]) .synced-video { opacity:1;visibility:hidden;transition:none; }
-  :root:is([data-platform="ios"],[data-platform="android"]) .synced-video.ready { visibility:visible; }
+  /* The cover overlays the video while it loads. Keep the video eligible to
+     decode and paint in WKWebView even before the cover is removed. */
+  :root:is([data-platform="ios"],[data-platform="android"]) .synced-video { opacity:1;transition:none; }
   :root:is([data-platform="ios"],[data-platform="android"]) .synced-video.inactive { display:none; }
   :root:is([data-platform="ios"],[data-platform="android"]) .lyrics-view:has(.video-active) { contain:layout; }
   :root:is([data-platform="ios"],[data-platform="android"]) .library-copy[role="button"] { cursor:pointer;align-self:stretch;align-content:center; }
