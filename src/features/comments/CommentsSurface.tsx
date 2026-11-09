@@ -10,12 +10,29 @@ function subscribeToLayout(listener: () => void) {
 }
 const isMobileLayout = () => isMobile || window.matchMedia(mobileQuery).matches
 
-export function CommentsSurface({ children, onClose, forceExpanded = false }: { children: ReactNode; onClose: () => void; forceExpanded?: boolean }) {
+export function CommentsSurface({ children, onClose, onBackFromThread }: { children: ReactNode; onClose: () => void; onBackFromThread?: () => void }) {
   const mobile = useSyncExternalStore(subscribeToLayout, isMobileLayout)
   const [expanded, setExpanded] = useState(false)
   const panel = useRef<HTMLElement>(null)
   const gesture = useRef<number | null>(null)
   const suppressClick = useRef(false)
+  const forceExpanded = Boolean(onBackFromThread)
+  const back = () => {
+    if (onBackFromThread) onBackFromThread()
+    else if (expanded) setExpanded(false)
+    else onClose()
+  }
+  useEffect(() => {
+    if (!mobile) return
+    const onBack = (event: Event) => {
+      if (event.defaultPrevented) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      back()
+    }
+    window.addEventListener('bilimusic-back', onBack, true)
+    return () => window.removeEventListener('bilimusic-back', onBack, true)
+  }, [mobile, expanded, onBackFromThread, onClose])
 
   useEffect(() => {
     if (!mobile) return
@@ -33,7 +50,7 @@ export function CommentsSurface({ children, onClose, forceExpanded = false }: { 
   if (!mobile) return <aside className="comments-panel" aria-label="歌曲评论">{children}</aside>
 
   return createPortal(<div className="comments-sheet-overlay" onPointerDown={event => { if (event.target === event.currentTarget) onClose() }} onKeyDown={event => {
-    if (event.key === 'Escape') { event.stopPropagation(); onClose() }
+    if (event.key === 'Escape') { event.stopPropagation(); back() }
     if (event.key !== 'Tab') return
     const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, a[href], [tabindex="0"]')
     if (!controls?.length) return
@@ -59,9 +76,7 @@ export function CommentsSurface({ children, onClose, forceExpanded = false }: { 
           if (Math.abs(distance) < 40) return
           suppressClick.current = true
           if (distance < 0) setExpanded(true)
-          else if (forceExpanded) onClose()
-          else if (expanded) setExpanded(false)
-          else onClose()
+          else back()
         }}
         onClick={() => { if (suppressClick.current) { suppressClick.current = false; return }; if (!forceExpanded) setExpanded(value => !value) }}><span /></button>
       {children}

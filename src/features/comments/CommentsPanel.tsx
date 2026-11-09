@@ -64,7 +64,7 @@ export const CommentsPanel = memo(function CommentsPanel({ aid, onClose }: { aid
   const items = [...new Map(comments.data?.pages.flatMap((page) => page.items).map((comment) => [comment.id, comment]) || []).values()]
   const threadReplies = thread ? expanded[thread.id] || [] : []
 
-  return <CommentsSurface onClose={onClose} forceExpanded={Boolean(thread)}>
+  return <CommentsSurface onClose={onClose} onBackFromThread={thread ? () => setThread(null) : undefined}>
     {thread ? <>
       <header className="comments-thread-header"><button onClick={() => setThread(null)} aria-label="返回评论列表"><ArrowLeft /></button><div><strong>评论回复</strong><small>{thread.replyCount} 条回复</small></div></header>
       <div className="comments-scroll comments-thread-scroll">

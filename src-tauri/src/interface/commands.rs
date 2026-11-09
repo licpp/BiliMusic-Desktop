@@ -337,7 +337,7 @@ pub async fn bili_playback_source(
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
     let mut source = provider
-        .playback_source_with_quality(&bvid, cid, quality.audio_id, quality.video_height)
+        .playback_source_with_quality(&bvid, cid, quality.audio_id)
         .await
         .map_err(CommandError::provider)?;
     source.audio_url = media_proxy
@@ -789,12 +789,7 @@ pub async fn track_playback_url(
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
     let source = provider
-        .playback_source_with_quality(
-            &track.bvid,
-            track.cid,
-            quality.audio_id,
-            quality.video_height,
-        )
+        .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
         .await
         .map_err(CommandError::provider)?;
     Ok(media_proxy

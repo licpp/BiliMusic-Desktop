@@ -200,18 +200,28 @@ export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{
   }
   return <section className="collection-detail">
     {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{fromSearch?'返回搜索结果':'返回收藏合集'}</button>}
-    <header onContextMenu={e=>{e.preventDefault();setContext({left:e.clientX,top:e.clientY,nonce:Date.now()})}}><Artwork src={detail?.coverUrl||item.coverUrl}/><div><h2>{detail?.title||item.title||'B 站合集'}</h2><p>{detail?.uploaderName||item.uploaderName} {detail&&`· ${tracks.length} ${unit}`}</p></div><CollectionBookmark item={item}/><CollectionMenu item={item} contextPosition={context}/></header>
+    <header onContextMenu={event => {
+      event.preventDefault()
+      setContext({ left: event.clientX, top: event.clientY, nonce: Date.now() })
+    }}>
+      <Artwork src={detail?.coverUrl || item.coverUrl}/>
+      <div>
+        <h2>{detail?.title || item.title || 'B 站合集'}</h2>
+        <p>{detail?.uploaderName || item.uploaderName}{detail && <span> · {tracks.length} {unit}</span>}</p>
+      </div>
+      <CollectionBookmark item={item}/>
+    </header>
     {detail?.season&&<button className="mobile-row-action" onClick={()=>setSeasonOpen(true)}><span>所属合集 · {detail.season.title}</span><span>›</span></button>}
     <div className="collection-detail-toolbar">
       <button className="collection-primary" disabled={!tracks.length} onClick={()=>void player.playFromList(tracks,tracks[0].id)}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button>
       <div>
         <button className="collection-icon collection-order" aria-label="倒序排列" aria-pressed={reversed} title={reversed ? '恢复原顺序' : '倒序排列'} disabled={tracks.length < 2} onClick={() => setReversedCollection(reversed ? undefined : item.bvid)}><ArrowDownUp size={16}/><span>{reversed ? '倒序' : '原序'}</span></button>
         <button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button>
-        <ActionMenu sheet label="合集播放选项">{close=><>
+        <CollectionMenu item={item} contextPosition={context} additionalActions={close => <>
           <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button>
           <button role="menuitem" disabled={!tracks.length||copying} onClick={()=>{close();void copy()}}><Plus size={16}/>{copying?'正在复制…':'复制为本地歌单'}</button>
           <button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button>
-        </>}</ActionMenu>
+        </>}/>
       </div>
     </div>
     {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索列表" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}

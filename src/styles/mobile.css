@@ -197,8 +197,8 @@
   :root:is([data-platform="ios"],[data-platform="android"]) .dock-controls > .play-toggle,
   :root:is([data-platform="ios"],[data-platform="android"]) .dock-controls > .queue-control { display:grid!important;width:44px!important;height:48px!important;place-items:center; }
   :root:is([data-platform="ios"],[data-platform="android"]) .dock-controls > .play-toggle { width:42px!important;height:42px!important; }
-  :root:is([data-platform="ios"],[data-platform="android"]) .progress { grid-area:2/1/3/3;display:block;width:100%; }
-  :root:is([data-platform="ios"],[data-platform="android"]) .progress small { display:none; }
+  :root:is([data-platform="ios"],[data-platform="android"]) .progress { grid-area:2/1/3/3;display:grid;width:100%;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;font-variant-numeric:tabular-nums; }
+  :root:is([data-platform="ios"],[data-platform="android"]) .progress small { display:block;white-space:nowrap;font-size:10px;line-height:1; }
   :root:is([data-platform="ios"],[data-platform="android"]) .progress input { display:block;width:100%;height:16px; }
   :root:is([data-platform="ios"],[data-platform="android"]) .dock-tools { display:none; }
   :root:is([data-platform="ios"],[data-platform="android"]) .lyrics-view { bottom:calc(142px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }

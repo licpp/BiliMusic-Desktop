@@ -276,15 +276,7 @@ impl BilibiliProvider {
         Ok(lines)
     }
     pub async fn media_options(&self, bvid: &str, cid: i64) -> Result<MediaOptions, ProviderError> {
-        let mut url = self.api_url("/x/player/playurl");
-        url.query_pairs_mut()
-            .append_pair("bvid", bvid)
-            .append_pair("cid", &cid.to_string())
-            .append_pair("qn", "120")
-            .append_pair("fnval", "4048")
-            .append_pair("fourk", "1");
-        let play: PlayData = self.get_data(url).await?;
-        let dash = play.dash.ok_or(ProviderError::NoAudio)?;
+        let dash = self.play_dash(bvid, cid, true).await?;
         let mut audio: Vec<_> = dash
             .audio
             .iter()
@@ -309,24 +301,23 @@ impl BilibiliProvider {
             .video
             .iter()
             .filter(|s| {
-                s.codecs.starts_with("avc")
-                    || (cfg!(target_os = "ios") && s.codecs.starts_with("hvc1"))
+                s.height > 0
+                    && (s.codecs.starts_with("avc")
+                        || (cfg!(target_os = "ios") && s.codecs.starts_with("hvc1")))
             })
             .map(|s| QualityOption {
                 id: s.height,
-                label: match s.id {
-                    120 => "4K".into(),
-                    112 => "1080P+".into(),
-                    80 => "1080P".into(),
-                    64 => "720P".into(),
-                    32 => "480P".into(),
-                    16 => "360P".into(),
-                    _ => format!("{}p", s.height),
+                label: if s.height == 2160 {
+                    "4K".into()
+                } else {
+                    format!("{}p", s.height)
                 },
             })
             .collect();
         video.sort_by_key(|s| s.id);
         video.dedup_by_key(|s| s.id);
+        self.remember_video_streams(bvid, cid, true, dash.video)
+            .await;
         Ok(MediaOptions { audio, video })
     }
 }

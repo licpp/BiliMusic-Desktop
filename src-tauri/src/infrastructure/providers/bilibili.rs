@@ -385,7 +385,7 @@ pub struct BilibiliProvider {
     cookies: Arc<Jar>,
     search_session: Mutex<bool>,
     session_cookie: RwLock<Option<String>>,
-    video_sources: RwLock<HashMap<(String, i64, u32), (Instant, VideoSource)>>,
+    video_streams: RwLock<HashMap<(String, i64, bool), (Instant, Vec<DashStream>)>>,
 }
 
 impl BilibiliProvider {
@@ -414,13 +414,13 @@ impl BilibiliProvider {
             cookies,
             search_session: Mutex::new(false),
             session_cookie: RwLock::new(None),
-            video_sources: RwLock::new(HashMap::new()),
+            video_streams: RwLock::new(HashMap::new()),
         })
     }
 
     pub async fn set_session_cookie(&self, cookie: Option<String>) {
         *self.session_cookie.write().await = cookie;
-        self.video_sources.write().await.clear();
+        self.video_streams.write().await.clear();
     }
 
     pub async fn qr_login_generate(&self) -> Result<QrLogin, ProviderError> {
@@ -773,29 +773,19 @@ impl BilibiliProvider {
         bvid: &str,
         cid: i64,
     ) -> Result<PlaybackSource, ProviderError> {
-        self.playback_source_with_quality(bvid, cid, 0, 0).await
+        self.playback_source_with_quality(bvid, cid, 0).await
     }
     pub async fn playback_source_with_quality(
         &self,
         bvid: &str,
         cid: i64,
         audio_id: u32,
-        video_height: u32,
     ) -> Result<PlaybackSource, ProviderError> {
-        let mut url = self.api_url("/x/player/playurl");
-        url.query_pairs_mut()
-            .append_pair("bvid", bvid)
-            .append_pair("cid", &cid.to_string())
-            .append_pair("qn", "120")
-            .append_pair("fnver", "0")
-            .append_pair("fnval", "4048")
-            .append_pair("fourk", "1");
-        let play: PlayData = self.get_data(url).await?;
-        let dash = play.dash.ok_or(ProviderError::NoAudio)?;
-        // Playurl already contains video metadata. Cache URLs only; no video bytes are loaded here.
-        if let Ok(source) = Self::select_video_quality(&dash.video, video_height) {
-            self.remember_video(bvid, cid, video_height, &source).await;
-        }
+        // Audio playback uses the standard DASH request. It also warms the
+        // video URL cache without requesting any video bytes.
+        let dash = self.play_dash(bvid, cid, false).await?;
+        self.remember_video_streams(bvid, cid, false, dash.video)
+            .await;
         let stream = dash
             .audio
             .iter()
@@ -842,25 +832,54 @@ impl BilibiliProvider {
         cid: i64,
         video_height: u32,
     ) -> Result<VideoSource, ProviderError> {
-        let key = (bvid.to_owned(), cid, video_height);
-        if let Some((expires, source)) = self.video_sources.read().await.get(&key) {
-            if *expires > Instant::now() {
-                return Ok(source.clone());
+        let expanded = video_height > 1080;
+        {
+            let cache = self.video_streams.read().await;
+            // A manual selection can reuse the expanded response from the
+            // quality menu. Automatic playback stays on the standard path.
+            let profiles: &[bool] = if expanded {
+                &[true]
+            } else if video_height == 0 {
+                &[false]
+            } else {
+                &[true, false]
+            };
+            for &profile in profiles {
+                if let Some((expires, streams)) = cache.get(&(bvid.to_owned(), cid, profile)) {
+                    if *expires > Instant::now() {
+                        if let Ok(source) = Self::select_video_quality(streams, video_height) {
+                            return Ok(source);
+                        }
+                    }
+                }
             }
         }
+        let dash = self.play_dash(bvid, cid, expanded).await?;
+        let source = Self::select_video_quality(&dash.video, video_height)?;
+        self.remember_video_streams(bvid, cid, expanded, dash.video)
+            .await;
+        Ok(source)
+    }
+
+    async fn play_dash(
+        &self,
+        bvid: &str,
+        cid: i64,
+        expanded: bool,
+    ) -> Result<DashData, ProviderError> {
         let mut url = self.api_url("/x/player/playurl");
         url.query_pairs_mut()
             .append_pair("bvid", bvid)
             .append_pair("cid", &cid.to_string())
-            .append_pair("qn", "120")
+            .append_pair("qn", if expanded { "120" } else { "80" })
             .append_pair("fnver", "0")
-            .append_pair("fnval", "4048")
-            .append_pair("fourk", "1");
+            .append_pair("fnval", if expanded { "4048" } else { "16" })
+            .append_pair("fourk", if expanded { "1" } else { "0" });
         let play: PlayData = self.get_data(url).await?;
-        let streams = play.dash.map(|dash| dash.video).unwrap_or_default();
-        let source = Self::select_video_quality(&streams, video_height)?;
-        self.remember_video(bvid, cid, video_height, &source).await;
-        Ok(source)
+        Ok(play.dash.unwrap_or(DashData {
+            audio: vec![],
+            video: vec![],
+        }))
     }
 
     fn select_video_quality(
@@ -879,21 +898,36 @@ impl BilibiliProvider {
         } else {
             "avc"
         };
-        let choose = |prefix: &str| {
+        let within_limit = |prefix: &str| {
             streams
                 .iter()
-                .filter(|s| s.codecs.starts_with(prefix) && s.height <= maximum)
-                .max_by_key(|s| s.bandwidth)
-                .or_else(|| {
-                    streams
-                        .iter()
-                        .filter(|s| s.codecs.starts_with(prefix))
-                        .min_by_key(|s| s.bandwidth)
-                })
+                .filter(|s| s.codecs.starts_with(prefix) && s.height > 0 && s.height <= maximum)
+                .max_by_key(|s| (s.height, s.bandwidth))
         };
-        let stream = choose(preferred)
-            .or_else(|| choose("avc"))
-            .ok_or(ProviderError::NoVideo)?;
+        let preferred_stream = within_limit(preferred);
+        let avc_stream = within_limit("avc");
+        let stream = if height == 0 {
+            // Preserve the lightweight AVC fallback if iOS has no HEVC at
+            // or below the automatic cap.
+            preferred_stream.or_else(|| {
+                streams
+                    .iter()
+                    .filter(|s| s.codecs.starts_with("avc"))
+                    .min_by_key(|s| s.bandwidth)
+            })
+        } else {
+            match (preferred_stream, avc_stream) {
+                (Some(hevc), Some(avc)) if avc.height > hevc.height => Some(avc),
+                (preferred, avc) => preferred.or(avc),
+            }
+        }
+        .or_else(|| {
+            streams
+                .iter()
+                .filter(|s| s.codecs.starts_with(preferred) || s.codecs.starts_with("avc"))
+                .min_by_key(|s| s.bandwidth)
+        })
+        .ok_or(ProviderError::NoVideo)?;
         let source = VideoSource {
             backup_urls: if stream.backup_url_camel.is_empty() {
                 stream.backup_url.clone()
@@ -916,16 +950,30 @@ impl BilibiliProvider {
         Ok(source)
     }
 
-    async fn remember_video(&self, bvid: &str, cid: i64, video_height: u32, source: &VideoSource) {
-        let key = (bvid.to_owned(), cid, video_height);
-        let mut cache = self.video_sources.write().await;
+    async fn remember_video_streams(
+        &self,
+        bvid: &str,
+        cid: i64,
+        expanded: bool,
+        streams: Vec<DashStream>,
+    ) {
+        if streams.is_empty() {
+            return;
+        }
+        let mut cache = self.video_streams.write().await;
         cache.retain(|_, (expires, _)| *expires > Instant::now());
         if cache.len() >= 32 {
-            cache.clear();
+            if let Some(key) = cache
+                .iter()
+                .min_by_key(|(_, (expires, _))| *expires)
+                .map(|(key, _)| key.clone())
+            {
+                cache.remove(&key);
+            }
         }
         cache.insert(
-            key,
-            (Instant::now() + Duration::from_secs(300), source.clone()),
+            (bvid.to_owned(), cid, expanded),
+            (Instant::now() + Duration::from_secs(300), streams),
         );
     }
 

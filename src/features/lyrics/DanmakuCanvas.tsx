@@ -2,13 +2,17 @@ import { memo, useEffect, useRef } from 'react'
 import type { DanmakuItem } from '../../services/desktopApi'
 import { playbackClock, usePlayerStore } from '../player/playerStore'
 
-export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity }: { items: DanmakuItem[]; scale: number; opacity: number }) {
+export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity, density }: { items: DanmakuItem[]; scale: number; opacity: number; density: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = ref.current
     const context = canvas?.getContext('2d')
     if (!canvas || !context) return
-    const sorted = items.filter((item) => [1, 2, 3, 4, 5, 6].includes(item.mode)).slice().sort((a, b) => a.timeSeconds - b.timeSeconds)
+    const stride = Math.round(1 / density)
+    const sorted = items
+      .filter(item => item.mode >= 1 && item.mode <= 6)
+      .sort((a, b) => a.timeSeconds - b.timeSeconds)
+      .filter((_, index) => index % stride === 0)
     const sprites = new Map<number, { canvas: HTMLCanvasElement; width: number; height: number }>()
     let width = 0, height = 0, ratio = 1, frame = 0
     const draw = () => {
@@ -35,7 +39,7 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
           sprite = { canvas: image, width: textWidth, height: textHeight }; sprites.set(index, sprite)
           if (sprites.size > 80) sprites.delete(sprites.keys().next().value!)
         }
-        const lanes = Math.max(1, Math.floor(height * .8 / sprite.height))
+        const lanes = Math.max(1, Math.floor(height * .8 * density / sprite.height))
         const y = item.mode === 4 ? height - sprite.height * (1 + index % Math.min(3, lanes)) : 8 + (index % lanes) * sprite.height
         const x = fixed ? (width - sprite.width) / 2 : item.mode === 6 ? -sprite.width + (width + sprite.width) * age / 8 : width - (width + sprite.width) * age / 8
         context.drawImage(sprite.canvas, x, y, sprite.width, sprite.height); visible++
@@ -52,6 +56,6 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
     document.addEventListener('visibilitychange', schedule)
     schedule()
     return () => { cancelAnimationFrame(frame); observer.disconnect(); unsubscribe(); document.removeEventListener('visibilitychange', schedule); sprites.clear() }
-  }, [items, scale, opacity])
+  }, [items, scale, opacity, density])
   return <canvas ref={ref} className="danmaku-canvas" aria-label="弹幕" />
 })

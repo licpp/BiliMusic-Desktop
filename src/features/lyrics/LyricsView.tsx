@@ -6,7 +6,7 @@ import { controlIOSAudio } from '../player/iosAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus, ChevronRight, ListVideo } from 'lucide-react'
+import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus, ChevronRight, ListVideo, Sparkles } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -25,7 +25,6 @@ import {
   type LyricCandidate,
   type LyricLine,
   type StoredLyrics,
-  type DanmakuItem,
 } from '../../services/desktopApi'
 import { candidateLines, parseLrc } from './lrc'
 import { Artwork } from '../../shared/Artwork'
@@ -36,6 +35,8 @@ import { Heart } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { createBiasWriter, clampBias } from './biasWriter'
 import { LyricsBiasControl } from './LyricsBiasControl'
+
+const danmakuDensityLabels = ['1/8', '1/4', '1/2', '全屏']
 
 type Props = { onClose: () => void; onFavorite: () => void; favoritePending: boolean }
 
@@ -74,8 +75,9 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const [mediaPreference, setMediaPreference] = useState<'cover' | 'video'>(() => localStorage.getItem('lyrics-media-mode') === 'video' ? 'video' : 'cover')
   const [videoFailed, setVideoFailed] = useState(false)
   const mediaMode = current?.source.provider === 'bilibili' && !videoFailed ? mediaPreference : 'cover'
-  const [videoSource, setVideoSource] = useState<{ trackId: string; url: string } | null>(null)
+  const [videoSource, setVideoSource] = useState<{ trackId: string; url: string; revision: number } | null>(null)
   const videoUrl = videoSource?.trackId === current?.id ? videoSource?.url || '' : ''
+  const [readyVideoUrl, setReadyVideoUrl] = useState('')
   const [videoFullscreen, setVideoFullscreen] = useState(false)
   useEffect(() => {
     if (!isMobile) return
@@ -88,10 +90,13 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     delete document.documentElement.dataset.videoFullscreen
     if (isIOS) void controlIOSAudio('videoFullscreen', 0).catch(() => undefined)
   }, [])
-  const [danmaku, setDanmaku] = useState<DanmakuItem[]>([])
   const [danmakuVisible, setDanmakuVisible] = useState(() => localStorage.getItem('danmakuVisible') !== 'false')
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
+  const [danmakuDensity, setDanmakuDensity] = useState(() => {
+    const value = Number(localStorage.getItem('danmakuDensity') ?? 3)
+    return Number.isInteger(value) && value >= 0 && value <= 3 ? value : 3
+  })
   const [commentsOpen, setCommentsOpen] = useState(false)
   const closeComments = useCallback(() => setCommentsOpen(false), [])
   const [biasOpen, setBiasOpen] = useState(false)
@@ -132,7 +137,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   }, [biasOpen, biasActivity])
   useEffect(() => {
     const back = (event: Event) => {
-      if (document.querySelector('[data-overflow-panel]')) return
+      if (event.defaultPrevented || document.querySelector('[data-overflow-panel], .mobile-comments')) return
       if (biasOpen) { event.preventDefault(); setBiasOpen(false); return }
       if (chooserOpen || editing) return // The shared dialog handler closes these first.
       if (commentsOpen) { event.preventDefault(); setCommentsOpen(false) }
@@ -192,26 +197,30 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   useEffect(() => {
     const request = ++videoRequest.current
     if (!current || current.source.provider !== 'bilibili' || mediaPreference !== 'video') return
-    if (videoSource?.trackId === current.id) return
+    const existing = videoSource?.trackId === current.id ? videoSource : undefined
+    if (existing?.revision === videoRetry) return
     const pending = getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl)
     void pending.then(url => {
       if (request !== videoRequest.current) return
-      setVideoSource({ trackId: current.id, url })
+      setVideoSource({ trackId: current.id, url, revision: videoRetry })
     }).catch(cause => {
       if (request !== videoRequest.current) return
-      setVideoFailed(true); setError(`视频加载失败，已显示封面：${commandErrorMessage(cause)}`)
+      if (!existing) setVideoFailed(true)
+      setError(`视频加载失败：${commandErrorMessage(cause)}`)
     })
     return () => { ++videoRequest.current }
   }, [current?.id, mediaPreference, videoRetry])
 
-  useEffect(() => {
-    setDanmaku([])
-    if (!current || current.source.provider !== 'bilibili' || mediaMode !== 'video' || !videoUrl || !danmakuVisible) return
-    let cancelled = false
-    void getDanmaku(current.source.cid).then(items => { if (!cancelled) setDanmaku(items) })
-      .catch(cause => { if (!cancelled) setError(`弹幕加载失败：${commandErrorMessage(cause)}`) })
-    return () => { cancelled = true }
-  }, [current?.id, videoUrl, mediaMode, danmakuVisible])
+  const videoReady = Boolean(videoUrl && readyVideoUrl === videoUrl)
+  const cid = current?.source.cid || 0
+  const danmaku = useQuery({
+    queryKey: ['video-danmaku', cid],
+    queryFn: () => getDanmaku(cid),
+    enabled: Boolean(bvid && cid && mediaMode === 'video' && videoReady && danmakuVisible),
+    staleTime: 5 * 60_000,
+    gcTime: 60_000,
+    retry: false,
+  })
 
   const showVideo = () => {
     if (!current || current.source.provider !== 'bilibili') return
@@ -222,6 +231,15 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
       setVideoRetry(value => value + 1)
     } else setMediaPreference(next)
     localStorage.setItem('lyrics-media-mode', next)
+  }
+  const changeVideoQuality = () => {
+    setVideoFailed(false)
+    setError('')
+    setVideoRetry(value => value + 1)
+  }
+  const toggleSubtitles = () => {
+    subtitles.toggle()
+    setBiasOpen(false)
   }
   const toggleDanmaku = () => setDanmakuVisible(value => {
     localStorage.setItem('danmakuVisible', String(!value))
@@ -315,6 +333,28 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
 
   if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
 
+  const subtitleLabel = subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'
+  const playbackSettings = <>
+    <PlaybackSettings track={current} onVideoChange={changeVideoQuality}/>
+    {mediaMode === 'video' && <div className="danmaku-settings">
+      {danmaku.error && danmakuVisible && <p className="inline-error">弹幕加载失败 <button type="button" onClick={() => void danmaku.refetch()}>重试</button></p>}
+      <div className="danmaku-settings-heading">
+        <strong>弹幕</strong>
+        <button type="button" role="switch" aria-label="显示弹幕" aria-checked={danmakuVisible} onClick={toggleDanmaku}>{danmakuVisible ? '已开启' : '已关闭'}</button>
+      </div>
+      <label>密度 <output>{danmakuDensityLabels[danmakuDensity]}</output>
+        <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity} onChange={event => {
+          const value = Number(event.target.value)
+          setDanmakuDensity(value)
+          localStorage.setItem('danmakuDensity', String(value))
+        }}/>
+        <span className="danmaku-density-ticks" aria-hidden="true">{danmakuDensityLabels.map(label => <span key={label}>{label}</span>)}</span>
+      </label>
+      <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
+      <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
+    </div>}
+  </>
+
   return (
     <section className="lyrics-view">
       <header className="lyrics-topbar">
@@ -322,12 +362,15 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
         <span>正在播放</span>
         <div className="lyrics-actions">
           <button className="lyrics-comments-trigger" aria-label="查看评论" title="评论" onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={18} /></button>
-          {bvid && <button className="lyrics-subtitle-toggle" aria-pressed={subtitles.active} aria-busy={subtitles.busy}
-            onClick={() => { subtitles.toggle(); setBiasOpen(false) }}>
+          {bvid && !isMobile && <button className="lyrics-subtitle-toggle" aria-pressed={subtitles.active} aria-busy={subtitles.busy}
+            onClick={toggleSubtitles}>
             {subtitles.busy && <LoaderCircle size={13} className="spin" />}
-            {subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'}
+            {subtitleLabel}
           </button>}
-          <ActionMenu label="歌词页面更多操作">{(close) => <>
+          {!(isMobile && videoFullscreen) && <ActionMenu label="歌词页面更多操作" panel>{(close) => <>
+            {isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={() => { toggleSubtitles(); close() }}>
+              <Sparkles size={16}/>{subtitleLabel}<small>{subtitles.active ? '已开启' : '已关闭'}</small>
+            </button>}
             <button role="menuitem" onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
             {subtitles.active && subtitles.choices.length > 1 && <label className="lyrics-subtitle-language">
@@ -338,26 +381,20 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
             </label>}
             <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
             <button role="menuitem" disabled={Boolean(subtitles.lines)} onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
-            <PlaybackSettings track={current} onVideoChange={()=>{setVideoSource(null);setVideoRetry(value=>value+1)}}/>
             <button role="menuitem" onClick={() => { cyclePlaybackMode(); close() }}><Repeat2 size={16} />播放模式：{shuffled ? '随机播放' : repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
-          </>}</ActionMenu>
+            {playbackSettings}
+          </>}</ActionMenu>}
         </div>
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className="lyrics-media">
-        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={current.coverUrl} active={mediaMode === 'video'} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoUrl && <DanmakuCanvas items={danmaku} scale={danmakuSize} opacity={danmakuOpacity} />}</> : <Artwork src={current.coverUrl} />}</div>
+        <div className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={current.coverUrl} active={mediaMode === 'video'} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={current.coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={current.coverUrl} />}</div>
         <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`}>
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
-            <ActionMenu label="播放设置" panel floating={isMobile && videoFullscreen}>{(close) => <>
-              <PlaybackSettings track={current} onVideoChange={()=>{setVideoFailed(false);setVideoSource(null);setVideoRetry(value=>value+1)}}/>
-              <button onClick={toggleDanmaku} aria-pressed={danmakuVisible}>{danmakuVisible ? '关闭弹幕' : '显示弹幕'}</button>
-              <label>弹幕字号 <span>{danmakuSize.toFixed(1)}×</span><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={(event) => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }} /></label>
-              <label>弹幕透明度 <span>{Math.round(danmakuOpacity * 100)}%</span><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={(event) => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }} /></label>
-              <button onClick={close}>完成</button>
-            </>}</ActionMenu>
+            {isMobile && videoFullscreen && <ActionMenu label="播放设置" panel floating>{() => playbackSettings}</ActionMenu>}
           </>}
         </div>
         {videoFullscreen && isMobile && <div className="video-fullscreen-transport">

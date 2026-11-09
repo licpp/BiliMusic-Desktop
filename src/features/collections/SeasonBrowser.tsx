@@ -15,5 +15,5 @@ export function SeasonBrowser({ summary, onClose }: { summary: SeasonSummary; on
   const content = <CollectionDetail embedded item={item} onBack={onClose}/>
   return isMobile
     ? <MobilePage title="B 站合集" onBack={onClose}>{content}</MobilePage>
-    : <CollectionDialog title="B 站合集" onClose={onClose}>{content}</CollectionDialog>
+    : <CollectionDialog wide title="B 站合集" onClose={onClose}>{content}</CollectionDialog>
 }

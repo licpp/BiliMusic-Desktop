@@ -4,7 +4,7 @@ import { synchronizeVideo } from './videoSync'
 import { Artwork } from '../../shared/Artwork'
 import { LoaderCircle } from 'lucide-react'
 
-export const SyncedVideo = memo(function SyncedVideo({ src, poster, active }: { src: string; poster?: string; active: boolean }) {
+export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onReady }: { src: string; poster?: string; active: boolean; onReady: (src: string) => void }) {
   const ref = useRef<HTMLVideoElement>(null)
   const activeRef = useRef(active)
   const [error, setError] = useState('')
@@ -18,13 +18,20 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active }: { 
     let disposed = false
     let frameCallback: number | undefined
     const supportsFrames = typeof video.requestVideoFrameCallback === 'function'
-    const markVisible = () => { if (!disposed && !video.seeking && video.readyState >= 2 && Math.abs(video.currentTime - playbackClock()) < 1.5) setVisible(true) }
+    let firstFrameShown = false
+    const markVisible = (mediaTime = video.currentTime) => {
+      if (firstFrameShown) return true
+      if (disposed || video.seeking || video.readyState < 2 || Math.abs(mediaTime - playbackClock()) >= 1.5) return false
+      firstFrameShown = true
+      setVisible(true)
+      onReady(src)
+      return true
+    }
     const observeFrame = () => {
       if (!supportsFrames || disposed) return
       frameCallback = video.requestVideoFrameCallback((_now, frame) => {
         frameCallback = undefined
-        if (Math.abs(frame.mediaTime - playbackClock()) < 1.5 && !video.seeking) markVisible()
-        else observeFrame()
+        if (!markVisible(frame.mediaTime)) observeFrame()
       })
     }
     let previousTime = playbackClock()
@@ -56,7 +63,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active }: { 
       video.removeEventListener('loadedmetadata', metadata); video.removeEventListener('canplay', ready); video.removeEventListener('loadeddata', ready); video.removeEventListener('seeked', ready); video.removeEventListener('error', failed)
       video.pause(); video.removeAttribute('src'); video.load()
     }
-  }, [src, retry])
+  }, [src, retry, onReady])
   useEffect(() => {
     activeRef.current = active
     const video = ref.current
