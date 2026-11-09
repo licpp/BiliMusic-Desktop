@@ -3,15 +3,27 @@
 .playback-quality-settings select { min-width:0;width:100%;min-height:40px;padding:6px 8px;font:inherit;font-size:13px;border:0;border-radius:9px;background:var(--panel-raised);color:var(--ink); }
 .playback-quality-settings small,.playback-quality-settings p { margin:0;font-size:11px;color:var(--muted);line-height:1.5; }
 .playback-quality-settings p { color:var(--coral); }
-.lyrics-source-tabs { display:flex;gap:22px;padding:12px 20px 0;border-bottom:1px solid var(--line); }
-.lyrics-source-tabs button { padding:10px 0;color:var(--muted);background:none;border:0;border-bottom:2px solid transparent;font:inherit;font-size:14px;cursor:pointer; }
-.lyrics-source-tabs button[aria-selected="true"] { color:var(--cyan);border-bottom-color:var(--cyan); }
-.mobile-page .lyrics-source-tabs { padding:0;margin-bottom:16px; }
-.subtitle-choices { display:grid;gap:4px;padding:14px 20px; }
-.subtitle-choices button { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:56px;padding:10px 0;border:0;border-bottom:1px solid var(--line);background:none;color:var(--ink);text-align:left;cursor:pointer; }
-.subtitle-choices button>span { display:grid;gap:5px; }
-.subtitle-choices strong { font-size:15px; }.subtitle-choices small,.subtitle-choices p { font-size:12px;color:var(--muted);line-height:1.6; }
-.mobile-page .subtitle-choices { padding:0; }
+.lyrics-actions > .lyrics-subtitle-toggle {
+  min-height:36px;padding:0 10px;border:0;border-radius:10px;white-space:nowrap;
+  background:color-mix(in srgb,var(--ink) 8%,transparent);color:var(--ink);font-size:12px;font-weight:650;
+}
+.lyrics-actions > .lyrics-subtitle-toggle[aria-pressed="true"] {
+  color:var(--cyan);background:color-mix(in srgb,var(--cyan) 16%,transparent);
+}
+.lyrics-subtitle-language { display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:10px;padding:8px 10px;font-size:13px; }
+.lyrics-subtitle-language select { width:100%;min-width:0;min-height:40px;padding:6px 8px;border:0;border-radius:9px;background:var(--panel-raised);color:var(--ink);font:inherit; }
+.lyrics-meta-copy .lyrics-season-link {
+  display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:30px;margin-top:4px;
+  padding:0;border:0;background:none;color:var(--cyan);font:inherit;font-size:12px;text-align:left;cursor:pointer;
+}
+.lyrics-season-link svg { flex:none; }
+.lyrics-season-link span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.collection-icon.collection-order { width:auto;padding:0 8px;gap:5px;white-space:nowrap; }
+.collection-order[aria-pressed="true"] { color:var(--cyan);background:var(--panel-raised); }
+.collection-order:disabled { opacity:.4;cursor:default; }
+@media (max-width:960px) {
+  .lyrics-actions > .lyrics-subtitle-toggle,.lyrics-meta-copy .lyrics-season-link { min-height:40px; }
+}
 .statistics-entry { margin:14px 0 20px; }
 .listening-statistics { min-width:0; }
 .listening-period { display:flex;gap:24px;border-bottom:1px solid var(--line); }

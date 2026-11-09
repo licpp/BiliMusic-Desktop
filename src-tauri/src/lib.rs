@@ -139,7 +139,7 @@ pub fn run() {
             interface::commands::playlist_delete,
             interface::media::bili_season,
             interface::media::bili_subtitles,
-            interface::media::bili_subtitle_save,
+            interface::media::bili_subtitle_lines,
             interface::media::bili_media_options,
             interface::media::media_preferences,
             interface::media::media_set_preferences,

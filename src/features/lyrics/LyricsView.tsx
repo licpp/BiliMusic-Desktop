@@ -1,13 +1,13 @@
 import { SeasonBrowser } from '../collections/SeasonBrowser'
 import { PlaybackSettings } from './PlaybackSettings'
-import { saveSubtitle } from '../../services/mediaSources'
+import { useBiliSubtitles } from './useBiliSubtitles'
 import { isIOS, isMobile } from '../../services/platform'
 import { controlIOSAudio } from '../player/iosAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, Repeat2, FolderPlus, ChevronRight, ListVideo } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
 import { ActionMenu } from '../../shared/ActionMenu'
@@ -18,6 +18,7 @@ import {
   getDanmaku,
   getVideoSource,
   getStoredLyrics,
+  getVideoParts,
   saveStoredLyrics,
   searchLyrics,
   setStoredLyricsBias,
@@ -49,6 +50,15 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   const [seasonOpen,setSeasonOpen] = useState(false)
   const [editing, setEditing] = useState<Track | null>(null)
   const current = usePlayerStore((state) => state.current)
+  const bvid = current?.source.provider === 'bilibili' ? current.source.bvid : ''
+  const season = useQuery({
+    queryKey: ['video-season', accountEpoch(), bvid],
+    queryFn: async () => (await getVideoParts(bvid)).season ?? null,
+    enabled: Boolean(bvid),
+    staleTime: 5 * 60_000,
+    retry: false,
+  }).data
+  const subtitles = useBiliSubtitles(current?.source)
   const progressSeconds = usePlayerStore((state) => state.progressSeconds)
   const [stored, setStored] = useState<StoredLyrics | null>(null)
   const [lines, setLines] = useState<LyricLine[]>([])
@@ -219,16 +229,20 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   })
 
   const syncedLyrics = useMemo(() => Boolean(stored && parseLrc(stored.rawText).length), [stored?.rawText])
+  const displayLines = subtitles.lines ?? lines
+  const timingPreview = !subtitles.lines && biasOpen && syncedLyrics
+  const biasMs = subtitles.lines ? 0 : stored?.biasMs || 0
   const activeIndex = useMemo(() => {
-    if (!syncedLyrics) return -1
-    const currentMs = progressSeconds * 1_000 - (stored?.biasMs || 0)
+    if (!subtitles.lines && !syncedLyrics) return -1
+    const currentMs = progressSeconds * 1_000 - biasMs
     let result = -1
-    for (let index = 0; index < lines.length; index += 1) {
-      if (lines[index].timeMs <= currentMs) result = lines[index].endTimeMs !== undefined && currentMs > lines[index].endTimeMs! ? -1 : index
-      else break
+    for (let index = 0; index < displayLines.length; index += 1) {
+      const { timeMs, endTimeMs } = displayLines[index]
+      if (timeMs > currentMs) break
+      result = endTimeMs !== undefined && currentMs >= endTimeMs ? -1 : index
     }
     return result
-  }, [lines, progressSeconds, stored?.biasMs, syncedLyrics])
+  }, [displayLines, progressSeconds, biasMs, syncedLyrics, subtitles.lines])
 
   useEffect(() => {
     const scroll = scrollRef.current
@@ -249,7 +263,7 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
   useEffect(() => {
     const line = lineRefs.current[activeIndex]
     if (scrollRef.current && line) centerLyric(scrollRef.current, line, biasOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
-  }, [activeIndex, biasOpen, stored?.biasMs])
+  }, [activeIndex, timingPreview, biasMs, displayLines])
 
   async function refreshCandidates() {
     if (!current) return
@@ -264,12 +278,6 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
     if (chooserOpen && isMobile && lyricQuery.trim()) void refreshCandidates()
   }, [chooserOpen])
 
-  async function selectSubtitle(language:string) {
-    if(!current)return
-    const id=current.id,request=++lyricRequest.current
-    setLoading(true);setError('')
-    try {const saved=await saveSubtitle(id,language);if(request!==lyricRequest.current)return;setStored(saved);setLines(parseStoredLines(saved));setChooserOpen(false)}catch(error){if(request===lyricRequest.current)setError(commandErrorMessage(error))}finally{if(request===lyricRequest.current)setLoading(false)}
-  }
   async function importManualLyrics() {
     if (!current || !manualText.trim()) return
     const request = ++lyricRequest.current
@@ -314,12 +322,22 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
         <span>正在播放</span>
         <div className="lyrics-actions">
           <button className="lyrics-comments-trigger" aria-label="查看评论" title="评论" onClick={() => setCommentsOpen(true)} disabled={!current.source.aid}><MessageCircle size={18} /></button>
+          {bvid && <button className="lyrics-subtitle-toggle" aria-pressed={subtitles.active} aria-busy={subtitles.busy}
+            onClick={() => { subtitles.toggle(); setBiasOpen(false) }}>
+            {subtitles.busy && <LoaderCircle size={13} className="spin" />}
+            {subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'}
+          </button>}
           <ActionMenu label="歌词页面更多操作">{(close) => <>
             <button role="menuitem" onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
-            {current.source.provider==='bilibili'&&<button role="menuitem" onClick={()=>{close();setSeasonOpen(true)}}><FolderPlus size={16}/>查看所属合集</button>}
+            {subtitles.active && subtitles.choices.length > 1 && <label className="lyrics-subtitle-language">
+              字幕版本
+              <select aria-label="字幕版本" value={subtitles.choice?.language} onChange={event => { subtitles.select(event.target.value); close() }}>
+                {subtitles.choices.map(choice => <option key={choice.language} value={choice.language}>{choice.label || choice.language} · {choice.ai ? 'AI' : 'B 站'}</option>)}
+              </select>
+            </label>}
             <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
-            <button role="menuitem" onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
+            <button role="menuitem" disabled={Boolean(subtitles.lines)} onClick={() => { close(); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
             <PlaybackSettings track={current} onVideoChange={()=>{setVideoSource(null);setVideoRetry(value=>value+1)}}/>
             <button role="menuitem" onClick={() => { cyclePlaybackMode(); close() }}><Repeat2 size={16} />播放模式：{shuffled ? '随机播放' : repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '顺序播放'} · 切换</button>
           </>}</ActionMenu>
@@ -354,6 +372,9 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           <p>{current.artist || '歌手未知'}</p>
           {current.album && <small>{current.album}</small>}
           {current.source.uploaderName && <small>UP 主 · {current.source.uploaderName}</small>}
+          {season && <button className="lyrics-season-link" title={season.title} onClick={() => setSeasonOpen(true)}>
+            <ListVideo size={14}/><span>合集 · {season.title || '查看合集'}</span><ChevronRight size={13}/>
+          </button>}
           </div>
           <div className="lyrics-meta-actions">
             <button className={current.liked ? 'liked' : ''} aria-label={current.liked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={Boolean(current.liked)} aria-busy={favoritePending} onClick={onFavorite}><Heart size={20} fill={current.liked ? 'currentColor' : 'none'} /></button>
@@ -362,20 +383,20 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           </div>
         </div>
       </div>
-      <div ref={scrollRef} className={`lyrics-scroll${biasOpen && syncedLyrics ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
-        {loading && !lines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : lines.length ? lines.map((line, index) => (
-          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''} role={biasOpen && syncedLyrics ? 'button' : undefined} tabIndex={biasOpen && syncedLyrics ? 0 : undefined} title={biasOpen && syncedLyrics ? '将这一句对齐到现在' : undefined} onClick={() => alignLine(line.timeMs)} onKeyDown={event => { if (biasOpen && syncedLyrics && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); alignLine(line.timeMs) } }}>{line.text}</p>
+      <div ref={scrollRef} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
+        {loading && !displayLines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : displayLines.length ? displayLines.map((line, index) => (
+          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}>{line.text}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
-      {biasOpen && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
+      {biasOpen && !subtitles.lines && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
         onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
-      {error && lines.length > 0 && <div className="lyrics-toast">{error}</div>}
+      {(subtitles.message || (error && displayLines.length > 0)) && <div className="lyrics-toast" role="status">{subtitles.message || error}</div>}
       {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
         onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
-        source={current.source} onSubtitle={selectSubtitle} manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
-      {seasonOpen&&<SeasonBrowser bvid={current.source.bvid} onClose={()=>setSeasonOpen(false)}/>}
+        manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
+      {seasonOpen && season && <SeasonBrowser summary={season} onClose={() => setSeasonOpen(false)}/>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} />}
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>

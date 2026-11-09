@@ -2,7 +2,6 @@ use super::error::CommandError;
 use crate::infrastructure::{
     database::Database,
     providers::bilibili::*,
-    repositories::lyrics::{LyricsRepository, SaveLyricsInput, StoredLyrics},
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -92,25 +91,12 @@ pub async fn bili_subtitles(
         .map_err(CommandError::provider)
 }
 #[tauri::command]
-pub async fn bili_subtitle_save(
-    database: State<'_, Database>,
+pub async fn bili_subtitle_lines(
     provider: State<'_, BilibiliProvider>,
-    track_id: String,
+    bvid: String,
+    cid: i64,
     language: String,
-) -> Result<StoredLyrics, CommandError> {
-    let expected_profile = profile(&database);
-    let (bvid, cid) = {
-        let c = database
-            .0
-            .lock()
-            .map_err(|_| CommandError::database("数据库正忙"))?;
-        c.query_row(
-            "SELECT bvid,cid FROM source_items WHERE id=?1",
-            [&track_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
-        )
-        .map_err(CommandError::database)?
-    };
+) -> Result<Vec<SubtitleLine>, CommandError> {
     let lines = provider
         .subtitle_lines(&bvid, cid, &language)
         .await
@@ -118,38 +104,7 @@ pub async fn bili_subtitle_save(
     if lines.is_empty() {
         return Err(CommandError::validation("这份字幕没有可显示的内容"));
     }
-    let raw = lines
-        .iter()
-        .map(|l| {
-            format!(
-                "[{:02}:{:02}.{:03}]{}",
-                l.time_ms / 60000,
-                (l.time_ms / 1000) % 60,
-                l.time_ms % 1000,
-                l.text.replace('\n', " ")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let c = database
-        .0
-        .lock()
-        .map_err(|_| CommandError::database("数据库正忙"))?;
-    if profile(&database) != expected_profile {
-        return Err(CommandError::validation("账号已切换，请重新选择字幕"));
-    }
-    LyricsRepository::save(
-        &c,
-        &track_id,
-        &SaveLyricsInput {
-            provider: "bilibili".into(),
-            provider_lyric_id: language,
-            raw_text: raw,
-            parsed_json: serde_json::to_string(&lines).map_err(CommandError::database)?,
-        },
-        true,
-    )
-    .map_err(CommandError::database)
+    Ok(lines)
 }
 pub fn profile(database: &Database) -> String {
     std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default()

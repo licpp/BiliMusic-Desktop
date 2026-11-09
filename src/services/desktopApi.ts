@@ -97,7 +97,10 @@ export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | n
   if (!inDesktopShell) return null
   const epoch = accountEpoch()
   const stored = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
-  if (stored && !stored.rawText && stored.provider !== 'local' && stored.provider !== 'bilibili') {
+  // Early builds stored Bilibili captions in the lyric slot. Treat that slot as
+  // empty so captions cannot appear when the subtitle switch is off.
+  if (stored?.provider === 'bilibili') return null
+  if (stored && !stored.rawText && stored.provider !== 'local') {
     try {
       const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
       if (epoch !== accountEpoch()) return null
