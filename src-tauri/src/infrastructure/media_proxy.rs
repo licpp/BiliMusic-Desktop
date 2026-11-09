@@ -75,6 +75,12 @@ impl MediaProxy {
         content_type: String,
     ) -> String {
         let media_id = Uuid::new_v4().simple().to_string();
+        let mut upstream_urls = vec![upstream_url];
+        for backup in backup_urls {
+            if !upstream_urls.contains(&backup) {
+                upstream_urls.push(backup);
+            }
+        }
         let mut entries = self.state.entries.write().await;
         entries.retain(|_, entry| entry.expires_at > Instant::now());
         if entries.len() >= MAX_ENTRIES {
@@ -89,7 +95,7 @@ impl MediaProxy {
         entries.insert(
             media_id.clone(),
             MediaEntry {
-                upstream_urls: std::iter::once(upstream_url).chain(backup_urls).collect(),
+                upstream_urls,
                 content_type,
                 expires_at: Instant::now() + ENTRY_LIFETIME,
                 local_path: None,
@@ -146,26 +152,11 @@ async fn proxy_media(
         return serve_local(&path, &request_headers).await;
     }
 
-    let result = if entry.content_type.starts_with("video/") {
-        fetch_fastest_video(
-            &state.client,
-            &entry.upstream_urls,
-            request_headers.get(header::RANGE),
-        )
-        .await
-        .map(|(response, index, prefix)| (response, index, Some(prefix)))
-    } else {
-        fetch_upstream(
-            &state.client,
-            &entry.upstream_urls,
-            request_headers.get(header::RANGE),
-        )
-        .await
-        .map(|(response, index)| (response, index, None))
-    };
-    let (upstream, selected, prefix) = match result {
-        Ok(response) => response,
-        Err(_) => return status_response(StatusCode::BAD_GATEWAY),
+    let range = request_headers.get(header::RANGE);
+    let Some((upstream, selected, prefix)) =
+        fetch_playback_range(&state.client, &entry.upstream_urls, range).await
+    else {
+        return status_response(StatusCode::BAD_GATEWAY);
     };
     if selected > 0 {
         if let Some(stored) = state.entries.write().await.get_mut(&media_id) {
@@ -197,19 +188,17 @@ async fn proxy_media(
             HeaderValue::from_static("*"),
         )
         .body(Body::from_stream(
-            futures_util::stream::once(async move {
-                Ok::<_, reqwest::Error>(prefix.unwrap_or_default())
-            })
-            .chain(upstream.bytes_stream()),
+            futures_util::stream::once(async move { Ok::<_, reqwest::Error>(prefix) })
+                .chain(upstream.bytes_stream()),
         ))
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
-async fn fetch_fastest_video(
+async fn fetch_playback_range(
     client: &Client,
     urls: &[String],
     range: Option<&HeaderValue>,
-) -> Result<(reqwest::Response, usize, axum::body::Bytes), String> {
+) -> Option<(reqwest::Response, usize, axum::body::Bytes)> {
     let mut attempts = tokio::task::JoinSet::new();
     for (index, url) in urls.iter().take(3).enumerate() {
         let client = client.clone();
@@ -217,17 +206,23 @@ async fn fetch_fastest_video(
         let range = range.cloned();
         attempts.spawn(async move {
             // Give the preferred CDN a short head start, then hedge slow connections.
-            tokio::time::sleep(Duration::from_millis(index as u64 * 180)).await;
+            tokio::time::sleep(Duration::from_millis(index as u64 * 140)).await;
             let mut request = client
                 .get(url)
                 .header(header::USER_AGENT, MEDIA_USER_AGENT)
                 .header(header::REFERER, "https://www.bilibili.com/")
                 .header(header::ACCEPT_ENCODING, "identity");
-            if let Some(range) = range {
+            if let Some(range) = &range {
                 request = request.header(header::RANGE, range);
             }
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(Duration::from_secs(8), async {
                 let mut response = request.send().await.ok()?.error_for_status().ok()?;
+                if range.is_some()
+                    && (response.status() != StatusCode::PARTIAL_CONTENT
+                        || !response.headers().contains_key(header::CONTENT_RANGE))
+                {
+                    return None;
+                }
                 let prefix = response.chunk().await.ok()??;
                 Some((response, index, prefix))
             })
@@ -238,10 +233,10 @@ async fn fetch_fastest_video(
     while let Some(result) = attempts.join_next().await {
         if let Ok(Some(response)) = result {
             attempts.abort_all();
-            return Ok(response);
+            return Some(response);
         }
     }
-    Err("视频线路暂时不可用".into())
+    None
 }
 
 pub async fn fetch_upstream(
@@ -459,24 +454,26 @@ mod tests {
             assert_eq!(response.text().await.unwrap(), "ab");
         }
         assert_eq!(rejected.load(Ordering::SeqCst), 1);
-        let video = proxy
-            .register_stream(
-                format!("http://{address}/slow"),
-                vec![format!("http://{address}/backup")],
-                "video/mp4".into(),
-            )
-            .await;
-        let started = std::time::Instant::now();
-        let response = reqwest::Client::new()
-            .get(video)
-            .header("Range", "bytes=0-1")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.headers()["content-type"], "video/mp4");
-        // The first chunk consumed during the race must still reach the browser.
-        assert_eq!(response.text().await.unwrap(), "ab");
-        assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+        for content_type in ["audio/mp4", "video/mp4"] {
+            let url = proxy
+                .register_stream(
+                    format!("http://{address}/slow"),
+                    vec![format!("http://{address}/backup")],
+                    content_type.into(),
+                )
+                .await;
+            let started = std::time::Instant::now();
+            let response = reqwest::Client::new()
+                .get(url)
+                .header("Range", "bytes=0-1")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.headers()["content-type"], content_type);
+            // The first chunk consumed during the race must still reach the player.
+            assert_eq!(response.text().await.unwrap(), "ab");
+            assert!(started.elapsed() < std::time::Duration::from_millis(1500));
+        }
         server.abort();
     }
 

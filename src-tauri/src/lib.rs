@@ -149,6 +149,7 @@ pub fn run() {
             interface::commands::bili_video_parts,
             interface::commands::bili_playback_source,
             interface::commands::bili_video_source,
+            interface::commands::bili_warm_playback,
             interface::commands::bili_danmaku,
             interface::commands::bili_qr_login_generate,
             interface::commands::bili_qr_login_poll,

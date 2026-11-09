@@ -14,6 +14,7 @@ const output = await build({
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
+      export const playIOSAudio = async (...args) => globalThis.iosTest.plays.push(args);
       export const iosListenerAge = () => 0;
       export const restartIOSAudioObservation = async () => {};
     ` : `

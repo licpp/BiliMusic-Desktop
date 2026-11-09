@@ -1,3 +1,4 @@
+import { startPreloadingNextTrack } from './features/player/preloadNextTrack'
 import { startListeningStatistics } from './services/listeningStatistics'
 import { startCloudSync } from './services/sync'
 import { StrictMode } from 'react'
@@ -29,6 +30,7 @@ const queryClient = new QueryClient({
 startCloudSync(queryClient)
 startAutomaticLyrics()
 startListeningStatistics()
+startPreloadingNextTrack()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

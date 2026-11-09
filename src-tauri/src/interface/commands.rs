@@ -352,6 +352,21 @@ pub async fn bili_playback_source(
 }
 
 #[tauri::command]
+pub async fn bili_warm_playback(
+    provider: State<'_, BilibiliProvider>,
+    bvid: String,
+    cid: i64,
+) -> Result<(), CommandError> {
+    if !valid_bvid(&bvid) || cid <= 0 {
+        return Err(CommandError::validation("无效的播放源标识"));
+    }
+    provider
+        .warm_playback(&bvid, cid)
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
 pub async fn bili_video_source(
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,

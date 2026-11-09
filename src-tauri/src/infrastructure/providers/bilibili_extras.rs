@@ -316,8 +316,6 @@ impl BilibiliProvider {
             .collect();
         video.sort_by_key(|s| s.id);
         video.dedup_by_key(|s| s.id);
-        self.remember_video_streams(bvid, cid, true, dash.video)
-            .await;
         Ok(MediaOptions { audio, video })
     }
 }

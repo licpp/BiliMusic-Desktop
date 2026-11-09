@@ -57,17 +57,23 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
     try {
-      if (isMobile) { await prepareMobileAudio(track); if (request !== playRequest) return }
-      const storedTrack = await recordPlayedTrack(track)
+      const [storedTrack] = await Promise.all([
+        recordPlayedTrack(track),
+        isMobile ? prepareMobileAudio(track) : Promise.resolve(),
+      ])
       if (request !== playRequest) return
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
       set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds })
-      const url = await getTrackPlaybackUrl(storedTrack)
+      const [url] = await Promise.all([
+        getTrackPlaybackUrl(storedTrack),
+        isMobile ? nativeReady.then(async () => {
+          if (!isIOS || request !== playRequest) return
+          const state = get()
+          await syncIOSQueue(state.queue, state.repeatMode, state.shuffled)
+        }) : Promise.resolve(),
+      ])
       if (request !== playRequest) return
       if (isMobile) {
-        await nativeReady
-        if (request !== playRequest) return
-        if (isIOS) { const state = get(); await syncIOSQueue(state.queue, state.repeatMode, state.shuffled); if (request !== playRequest) return }
         loadedTrackId = storedTrack.id
         await playMobileAudio(storedTrack, url, Math.max(0, startAt), get().volume)
         return

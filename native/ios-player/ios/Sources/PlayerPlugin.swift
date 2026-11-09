@@ -279,7 +279,7 @@ class PlayerPlugin: Plugin {
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
         state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position
-        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 8
+        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 4
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
         itemStatus = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -293,18 +293,18 @@ class PlayerPlugin: Plugin {
                         self.player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
                             self?.onMain { [weak self] in
                                 guard let self, self.generation == request, item === self.player.currentItem else { return }
-                                if completed && self.desiredPlaying { self.player.play() }
+                                if completed && self.desiredPlaying { self.player.playImmediately(atRate: 1) }
                                 self.endBackgroundTask(); self.refresh()
                             }
                         }
                     } else {
-                        if self.desiredPlaying { self.player.play() }
+                        if self.desiredPlaying && self.player.timeControlStatus != .playing { self.player.playImmediately(atRate: 1) }
                         self.endBackgroundTask(); self.refresh()
                     }
                 }
             }
         }
-        if autoplay && position == 0 { player.play() } else { player.pause() }; accountListening(); publish()
+        if autoplay && position == 0 { player.playImmediately(atRate: 1) } else { player.pause() }; accountListening(); publish()
     }
     private func pause() {
         accountListening(flush: true)
