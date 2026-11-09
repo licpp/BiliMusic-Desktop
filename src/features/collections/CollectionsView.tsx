@@ -1,4 +1,4 @@
-import { getSeason, parseSeasonReference, seasonTracks } from '../../services/mediaSources'
+import { getSeason, parseSeasonReference, seasonCollection, seasonTracks } from '../../services/mediaSources'
 import { createPlaylist, saveLibraryTrack, addTracksToPlaylist } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
 import { SeasonBrowser } from './SeasonBrowser'
@@ -175,7 +175,13 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{item:Collection;onBack:()=>void;fromSearch?:boolean;embedded?:boolean}){
+export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false }: {
+  item: Collection
+  onBack: () => void
+  onOpenCollection?: (item: Collection) => void
+  backLabel?: string
+  embedded?: boolean
+}) {
   const reference=parseSeasonReference(item.bvid)
   const q=useQuery({queryKey:['collection-detail',item.bvid],queryFn:async()=>{
     if(reference){const season=await getSeason(reference.mid,reference.seasonId);return {title:season.summary.title,coverUrl:season.summary.coverUrl,uploaderName:season.summary.uploaderName,tracks:seasonTracks(season),season:undefined,unavailable:season.unavailable}}
@@ -186,6 +192,7 @@ export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{
   const client=useQueryClient()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
   const detail=q.data,player=usePlayerStore.getState()
+  const season = detail?.season
   const reversed = reversedCollection === item.bvid
   const tracks = useMemo(() => {
     if (!detail) return []
@@ -199,7 +206,7 @@ export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{
     catch(error){setMessage(commandErrorMessage(error))}finally{setCopying(false)}
   }
   return <section className="collection-detail">
-    {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{fromSearch?'返回搜索结果':'返回收藏合集'}</button>}
+    {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{backLabel}</button>}
     <header onContextMenu={event => {
       event.preventDefault()
       setContext({ left: event.clientX, top: event.clientY, nonce: Date.now() })
@@ -211,7 +218,10 @@ export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{
       </div>
       <CollectionBookmark item={item}/>
     </header>
-    {detail?.season&&<button className="mobile-row-action" onClick={()=>setSeasonOpen(true)}><span>所属合集 · {detail.season.title}</span><span>›</span></button>}
+    {season && <button className="mobile-row-action" onClick={() => {
+      if (onOpenCollection) onOpenCollection(seasonCollection(season))
+      else setSeasonOpen(true)
+    }}><span>所属合集 · {season.title}</span><span>›</span></button>}
     <div className="collection-detail-toolbar">
       <button className="collection-primary" disabled={!tracks.length} onClick={()=>void player.playFromList(tracks,tracks[0].id)}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button>
       <div>
@@ -231,6 +241,6 @@ export function CollectionDetail({item,onBack,fromSearch=false,embedded=false}:{
     {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放内容</p>}
     {Boolean(detail?.unavailable)&&<p className="batch-message">有 {detail?.unavailable} 个视频暂不可用，已保留其余内容。</p>}
     <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)}/>
-    {seasonOpen&&detail?.season&&<SeasonBrowser summary={detail.season} onClose={()=>setSeasonOpen(false)}/>}
+    {seasonOpen&&season&&<SeasonBrowser summary={season} onClose={()=>setSeasonOpen(false)}/>}
   </section>
 }

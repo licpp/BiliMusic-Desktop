@@ -132,8 +132,7 @@
   box-shadow: inset 0 0 0 1px var(--coral);
 }
 
-/* A standalone collection list spans its dialog; only inline search results are indented. */
-.collection-dialog.collection-dialog-wide { width:min(760px,100%);padding:clamp(18px,3vw,28px); }
+/* A standalone collection list spans its page; only inline search results are indented. */
 .collection-detail > .video-parts-list { min-width:0;padding:0; }
 .collection-detail > header .collection-bookmark { align-self:center; }
 .collection-detail > header p > span { white-space:nowrap; }
@@ -152,9 +151,6 @@
 .action-menu-portal > .action-menu-panel:not(.action-menu-sheet):not(.action-menu-floating-panel) {
   max-height:min(440px,calc(100dvh - 16px));overscroll-behavior:contain;
 }
-body:has(.collection-dialog-wide) > .track-menu-scrim { z-index:271; }
-body:has(.collection-dialog-wide) > .track-context-menu { z-index:272; }
-body:has(.collection-dialog-wide) > .dialog-backdrop:not(.collection-dialog-layer) { z-index:273; }
 @media (max-width:960px) {
   .collection-detail-toolbar > div { gap:2px; }
   .collection-detail-toolbar :is(.collection-icon,.action-menu-trigger) { min-width:40px;min-height:44px; }

@@ -1,11 +1,20 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { Track } from '../domain/track'
 import type { LyricLine } from './desktopApi'
+import type { Collection } from './collections'
 export type SeasonSummary = { id:number; uploaderId:number; title:string; coverUrl:string; uploaderName:string }
 export type Season = { unavailable:number; summary:SeasonSummary; tracks:{bvid:string; aid:number; cid:number; title:string; coverUrl:string; durationSeconds:number}[] }
 export type QualityPreferences = { audioId:number; videoHeight:number }
 export type MediaOptions = { audio:{id:number;label:string}[]; video:{id:number;label:string}[] }
-export const seasonReference = (season:SeasonSummary) => `season:${season.uploaderId}:${season.id}`
+export function seasonCollection(season: SeasonSummary): Collection {
+  return {
+    bvid: `season:${season.uploaderId}:${season.id}`,
+    folderId: '',
+    title: season.title,
+    coverUrl: season.coverUrl,
+    uploaderName: season.uploaderName,
+  }
+}
 export function parseSeasonReference(reference:string) { const match=/^season:(\d+):(\d+)$/.exec(reference);return match ? {mid:Number(match[1]),seasonId:Number(match[2])} : null }
 export const getSeason = (mid:number,seasonId:number) => invoke<Season>('bili_season',{mid,seasonId})
 export function seasonTracks(season:Season):Track[] { return season.tracks.map(t=>({id:`bilibili:${t.bvid}:${t.cid}`,source:{provider:'bilibili',bvid:t.bvid,aid:t.aid,cid:t.cid,page:1,uploaderId:season.summary.uploaderId,uploaderName:season.summary.uploaderName},title:t.title,coverUrl:t.coverUrl,durationSeconds:t.durationSeconds,liked:false})) }

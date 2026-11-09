@@ -71,11 +71,37 @@ export function App() {
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
   const [hubSection,setHubSection]=useState<'playlists'|'collections'>('playlists')
   const contentScroll=useRef<HTMLDivElement>(null)
-  const returnScroll=useRef(0)
+  const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean }[]>([])
   const libraryReturn = useRef<{ nav: string; scroll: number } | null>(null)
-  const openCollection=(item:Collection)=>{returnScroll.current=contentScroll.current?.scrollTop||0;setSelectedCollection(item);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=0})}
-  const closeCollection=()=>{setSelectedCollection(null);requestAnimationFrame(()=>{if(contentScroll.current)contentScroll.current.scrollTop=returnScroll.current})}
-  useEffect(()=>{const clear=()=>{ setSelectedCollection(null); setActiveNav('此刻'); setImportOpen(false); libraryReturn.current = null };window.addEventListener('bilimusic-account-changing',clear);return()=>window.removeEventListener('bilimusic-account-changing',clear)},[])
+  const scrollCollection = (top: number) => {
+    requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = top })
+  }
+  const resetCollection = () => {
+    collectionHistory.current = []
+    setSelectedCollection(null)
+  }
+  const openCollection = (item: Collection, origin?: 'lyrics' | 'collection') => {
+    const scroll = contentScroll.current?.scrollTop || 0
+    if (origin) {
+      collectionHistory.current.push({ item: selectedCollection, scroll, lyrics: origin === 'lyrics' })
+    } else {
+      collectionHistory.current = [{ item: null, scroll: collectionHistory.current[0]?.scroll ?? scroll, lyrics: false }]
+    }
+    if (origin === 'lyrics') setLyricsOpen(false)
+    setSelectedCollection(item)
+    scrollCollection(0)
+  }
+  const closeCollection = () => {
+    const origin = collectionHistory.current.pop()
+    setSelectedCollection(origin?.item ?? null)
+    if (origin?.lyrics && usePlayerStore.getState().current) setLyricsOpen(true)
+    scrollCollection(origin?.scroll ?? 0)
+  }
+  useEffect(() => {
+    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); libraryReturn.current = null }
+    window.addEventListener('bilimusic-account-changing', clear)
+    return () => window.removeEventListener('bilimusic-account-changing', clear)
+  }, [])
   const [activeNav, setActiveNav] = useState('此刻')
   const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads' | 'local'>('saved')
   const [query, setQuery] = useState('')
@@ -111,12 +137,16 @@ export function App() {
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined
+  const collectionOrigin = collectionHistory.current.at(-1)
+  const collectionBackLabel = collectionOrigin?.lyrics ? '返回播放页'
+    : collectionOrigin?.item ? '返回上一页'
+    : activeNav === '搜索' ? '返回搜索结果' : '返回收藏合集'
   const searchActive = activeNav === '搜索' && !selectedCollection
   const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '歌单'))
-  useEffect(() => setSelectedCollection(null), [activeNav])
+  useEffect(resetCollection, [activeNav])
 
   const openLibraryPage = (nav: string) => {
-    setSelectedCollection(null)
+    resetCollection()
     setLyricsOpen(false)
     if (nav === activeNav) return
     if (!libraryDetail) {
@@ -157,7 +187,7 @@ export function App() {
   const playbackError = usePlayerStore((state) => state.error)
 
   const openSearch = (value?: string) => {
-    setActiveNav('搜索'); setLyricsOpen(false)
+    resetCollection(); setActiveNav('搜索'); setLyricsOpen(false)
     if (value !== undefined) { setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(false) }
   }
   const submitSearch = (event: FormEvent) => {
@@ -300,7 +330,7 @@ export function App() {
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { setActiveNav(label); setSelectedCollection(null); setLyricsOpen(false); libraryReturn.current = null }}
+              onClick={() => { setActiveNav(label); resetCollection(); setLyricsOpen(false); libraryReturn.current = null }}
               title={label}
               aria-label={label}
               aria-current={navIsActive(label) ? 'page' : undefined}
@@ -340,7 +370,7 @@ export function App() {
             onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
           <label className="search-field">
             <Search size={18} />
-            <input value={query} onFocus={() => { setSearchFocused(true); setSelectedCollection(null); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => { const value = event.target.value; setQuery(value); if (!value.trim()) setSubmittedQuery('') }} placeholder="搜索歌曲、歌手或专辑" />
+            <input value={query} onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => { const value = event.target.value; setQuery(value); if (!value.trim()) setSubmittedQuery('') }} placeholder="搜索歌曲、歌手或专辑" />
             {(query || submittedQuery) && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页" onClick={() => openSearch('')}><X size={16} /></button>}
             {searchFocused && !query && Boolean(searchHistory.data?.length) && <div className="search-history-popover"><header><span>最近搜索</span><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => clearHistory.mutate()}>清除</button></header>{searchHistory.data!.map((item) => <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { openSearch(item) }}><Clock3 size={14} />{item}</button>)}</div>}
           </label>
@@ -350,7 +380,8 @@ export function App() {
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
         <div className="stage-scroll" ref={contentScroll} hidden={searchActive}>
-          {selectedCollection && <CollectionDetail key={selectedCollection.bvid} item={selectedCollection} onBack={closeCollection} fromSearch={activeNav === '搜索'}/>}
+          {selectedCollection && <CollectionDetail key={selectedCollection.bvid} item={selectedCollection} onBack={closeCollection}
+            backLabel={collectionBackLabel} onOpenCollection={isMobile ? undefined : item => openCollection(item, 'collection')}/>}
           <div hidden={Boolean(selectedCollection)}>
           {activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
@@ -425,7 +456,7 @@ export function App() {
         <div className="dock-tools"><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
       </footer>
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
-      {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} />}
+      {lyricsOpen && <LyricsView onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />}
       {importOpen && <ImportFavorites onImported={(id, mode) => {
         setImportOpen(false)
         setHubSection(mode === 'link' ? 'collections' : 'playlists')

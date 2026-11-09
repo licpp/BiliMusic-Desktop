@@ -1,4 +1,6 @@
 import { SeasonBrowser } from '../collections/SeasonBrowser'
+import { seasonCollection } from '../../services/mediaSources'
+import type { Collection } from '../../services/collections'
 import { PlaybackSettings } from './PlaybackSettings'
 import { useBiliSubtitles } from './useBiliSubtitles'
 import { isIOS, isMobile } from '../../services/platform'
@@ -38,9 +40,9 @@ import { LyricsBiasControl } from './LyricsBiasControl'
 
 const danmakuDensityLabels = ['1/8', '1/4', '1/2', '全屏']
 
-type Props = { onClose: () => void; onFavorite: () => void; favoritePending: boolean }
+type Props = { onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
 
-export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
+export function LyricsView({ onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
   const queryClient = useQueryClient()
   const shuffled = usePlayerStore((state) => state.shuffled)
   const repeatMode = usePlayerStore((state) => state.repeatMode)
@@ -409,7 +411,10 @@ export function LyricsView({ onClose, onFavorite, favoritePending }: Props) {
           <p>{current.artist || '歌手未知'}</p>
           {current.album && <small>{current.album}</small>}
           {current.source.uploaderName && <small>UP 主 · {current.source.uploaderName}</small>}
-          {season && <button className="lyrics-season-link" title={season.title} onClick={() => setSeasonOpen(true)}>
+          {season && <button className="lyrics-season-link" title={season.title} onClick={() => {
+            if (isMobile) setSeasonOpen(true)
+            else onOpenCollection(seasonCollection(season))
+          }}>
             <ListVideo size={14}/><span>合集 · {season.title || '查看合集'}</span><ChevronRight size={13}/>
           </button>}
           </div>
