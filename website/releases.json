@@ -9,8 +9,8 @@
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
       "file": "BiliMusic_0.2.6_macOS_AppleSilicon.dmg",
-      "size": 5137263,
-      "sha256": "3bfec7b89c387391968df197665b05fd7e776aa484234de5a0fa2b523ca2851e",
+      "size": 5140389,
+      "sha256": "b87ccd7898893b50f43628e55cd21722a8e4c8e8e4cae2d4142ad9068c29e3de",
       "channels": [
         {
           "id": "gitee",
@@ -34,8 +34,8 @@
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
       "file": "BiliMusic_0.2.6_Windows_x64-setup.exe",
-      "size": 3838753,
-      "sha256": "75f71a6e11835de38f6892c2ea339d8288310f752f509ce04b5515d46e0a38b7",
+      "size": 3846093,
+      "sha256": "397d1aad06c4c433c0111e4375f5c3f84b5980a7aa208e3f1c804b2840155684",
       "channels": [
         {
           "id": "gitee",
@@ -68,8 +68,8 @@
         }
       ],
       "file": "BiliMusic_0.2.6_Android_arm64.apk",
-      "size": 13965925,
-      "sha256": "93638bc59a1dc9c4c004489a8991dce46161f98d9b84923779c645caa36f79fe",
+      "size": 13970021,
+      "sha256": "fd840a40357d3afb7fe52389dcd56dd98b36e4e9797cf69060143352854d6d72",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
@@ -96,19 +96,20 @@
         }
       ],
       "file": "BiliMusic_0.2.6_iOS_arm64-unsigned.ipa",
-      "size": 4988238,
-      "sha256": "5ab18f9b42a5d5f5552ab1f0c2232e43b76a162a9e40a7ba21dae9160bb55804"
+      "size": 4988869,
+      "sha256": "f8b66fcfd25a9e265a4683a066fe376427fa84fe62480988a153fc87c00af551"
     }
   ],
   "history": [
     {
       "version": "0.2.6",
-      "publishedAt": "2026-11-10T13:26:57.553716+00:00",
+      "publishedAt": "2026-11-10T16:22:24.242111+00:00",
       "changes": [
         "四端支持播放倍速。手机上可拖动刻度选择速度，视频、歌词和字幕会跟随播放进度。",
         "自动断点续播默认开启，可在设置里关闭。也可在曲目菜单手动续播。",
         "开启同步播放记录后，最近 200 首在线曲目的断点可以在设备间接续。",
-        "手机播放设置改为底部面板，音质和字幕版本可滑动选择。"
+        "手机播放设置改为底部面板，音质和字幕版本可滑动选择。",
+        "修复手机视频按钮点击问题，支持删除下载，并简化合集返回操作。"
       ]
     },
     {
