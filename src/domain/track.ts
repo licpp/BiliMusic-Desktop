@@ -17,6 +17,7 @@ export type Track = {
   coverUrl?: string
   durationSeconds: number
   liked: boolean
+  resolveParts?: boolean
 }
 
 export const sourceIdentity = (source: TrackSource) =>

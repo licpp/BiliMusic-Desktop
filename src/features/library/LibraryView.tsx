@@ -1,3 +1,4 @@
+import { useSwipeTabs } from '../../shared/useSwipeTabs'
 import { MobilePage } from '../../shared/MobilePage'
 import { PlaylistMenu } from './PlaylistEntry'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -22,7 +23,8 @@ export type LibraryTab = 'saved' | 'recent' | 'downloads' | 'local'
 export function MusicLibraryView({ tab, onTabChange }: { tab: LibraryTab; onTabChange: (tab: LibraryTab) => void }) {
   const tabs: [LibraryTab,string][] = [['saved','已收藏'],['recent','最近播放'],['downloads','下载']]
   if (!isMobile) tabs.splice(2, 0, ['local','本地音乐'])
-  return <div className="music-library"><div className="library-tabs" role="tablist" aria-label="音乐库视图" onKeyDown={e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const i=tabs.findIndex(t=>t[0]===tab);const next=tabs[(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length][0];onTabChange(next);e.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()}}>{tabs.map(([id,label])=><button id={`library-tab-${id}`} key={id} role="tab" data-tab={id} aria-selected={tab===id} tabIndex={tab===id?0:-1} aria-controls="music-library-panel" onClick={()=>onTabChange(id)}>{label}</button>)}</div><div id="music-library-panel" role="tabpanel" aria-labelledby={`library-tab-${tab}`}>{tab==='downloads' ? <DownloadsView /> : <LibraryView key={tab} recent={tab==='recent'} local={tab==='local'} />}</div></div>
+  const swipe = useSwipeTabs(tabs.map(([id]) => id), tab, onTabChange)
+  return <div className="music-library"><div className="library-tabs" role="tablist" aria-label="音乐库视图" onKeyDown={e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const i=tabs.findIndex(t=>t[0]===tab);const next=tabs[(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length][0];onTabChange(next);e.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus()}}>{tabs.map(([id,label])=><button id={`library-tab-${id}`} key={id} role="tab" data-tab={id} aria-selected={tab===id} tabIndex={tab===id?0:-1} aria-controls="music-library-panel" onClick={()=>onTabChange(id)}>{label}</button>)}</div><div id="music-library-panel" ref={swipe} data-swipe-tabs role="tabpanel" aria-labelledby={`library-tab-${tab}`}>{tab==='downloads' ? <DownloadsView /> : <LibraryView key={tab} recent={tab==='recent'} local={tab==='local'} />}</div></div>
 }
 
 export function LibraryView({ recent = false, local = false, playlist, onPlaylistDeleted }: { recent?: boolean; local?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void }) {

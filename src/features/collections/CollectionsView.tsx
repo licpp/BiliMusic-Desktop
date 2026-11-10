@@ -4,7 +4,7 @@ import { accountEpoch } from '../../services/accountScope'
 import { SeasonBrowser } from './SeasonBrowser'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ArrowDownUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderInput, ListPlus, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { changeCollection, listCollections, type Collection } from '../../services/collections'
@@ -12,7 +12,7 @@ import { commandErrorMessage, getVideoParts, type Playlist } from '../../service
 import { Artwork } from '../../shared/Artwork'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { toTrack } from '../../services/collectionTrack'
-import { usePlayerStore } from '../player/playerStore'
+import { seasonPlaybackQueue, usePlayerStore } from '../player/playerStore'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { PlaylistEntry } from '../library/PlaylistEntry'
 import { LibraryEntry } from '../library/LibraryEntry'
@@ -175,12 +175,14 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false }: {
+export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = false, hideBack = false }: {
   item: Collection
   onBack: () => void
   onOpenCollection?: (item: Collection) => void
   backLabel?: string
   embedded?: boolean
+  locateCurrent?: boolean
+  hideBack?: boolean
 }) {
   const reference=parseSeasonReference(item.bvid)
   const q=useQuery({queryKey:['collection-detail',item.bvid],queryFn:async()=>{
@@ -188,6 +190,12 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),unavailable:0}
   }})
   const [filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[seasonOpen,setSeasonOpen]=useState(false),[copying,setCopying]=useState(false),[message,setMessage]=useState(''),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
+  const [expandedBvid, setExpandedBvid] = useState<string>()
+  const nested = useQuery({
+    queryKey: ['collection-video-parts', accountEpoch(), expandedBvid],
+    queryFn: () => getVideoParts(expandedBvid!),
+    enabled: Boolean(expandedBvid),
+  })
   const [reversedCollection, setReversedCollection] = useState<string>()
   const client=useQueryClient()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
@@ -198,6 +206,13 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     if (!detail) return []
     return reversed ? [...detail.tracks].reverse() : detail.tracks
   }, [detail, reversed])
+  const initialPartLocated = useRef(false)
+  useEffect(() => {
+    if (!locateCurrent || !reference || !tracks.length || initialPartLocated.current) return
+    initialPartLocated.current = true
+    const source = usePlayerStore.getState().current?.source
+    if (source && source.page > 1 && tracks.some(track => track.source.bvid === source.bvid)) setExpandedBvid(source.bvid)
+  }, [locateCurrent, item.bvid, tracks])
   const unit=reference?'个视频':'个分 P'
   const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes(filter.toLowerCase()))
   const copy=async()=>{
@@ -206,7 +221,7 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     catch(error){setMessage(commandErrorMessage(error))}finally{setCopying(false)}
   }
   return <section className="collection-detail">
-    {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{backLabel}</button>}
+    {!embedded && !hideBack && <button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{backLabel}</button>}
     <header onContextMenu={event => {
       event.preventDefault()
       setContext({ left: event.clientX, top: event.clientY, nonce: Date.now() })
@@ -230,7 +245,7 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
         <CollectionMenu item={item} contextPosition={context} additionalActions={close => <>
           <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button>
           <button role="menuitem" disabled={!tracks.length||copying} onClick={()=>{close();void copy()}}><Plus size={16}/>{copying?'正在复制…':'复制为本地歌单'}</button>
-          <button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button>
+          <button role="menuitem" disabled={q.isFetching} onClick={()=>{if (!reference) void getVideoParts(item.bvid, true); void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button>
         </>}/>
       </div>
     </div>
@@ -240,7 +255,16 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     {q.isLoading&&<p>正在读取列表…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
     {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放内容</p>}
     {Boolean(detail?.unavailable)&&<p className="batch-message">有 {detail?.unavailable} 个视频暂不可用，已保留其余内容。</p>}
-    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)}/>
+    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)} locateCurrent={locateCurrent}
+      expandedBvid={expandedBvid} onToggleParts={reference ? track => setExpandedBvid(value => value === track.source.bvid ? undefined : track.source.bvid) : undefined}
+      renderParts={() => {
+        if (nested.isError) return <button className="load-more" onClick={() => void nested.refetch()}>{commandErrorMessage(nested.error)} · 重试</button>
+        if (!nested.data) return <p className="batch-message">正在读取分 P…</p>
+        const video = nested.data
+        if (video.parts.length <= 1) return <p className="batch-message">这个视频只有一个分 P</p>
+        const parts = video.parts.map(part => toTrack(video, part))
+        return <div className="collection-nested-parts"><VideoPartsList locateCurrent={locateCurrent} tracks={parts} playbackTracks={seasonPlaybackQueue(tracks, parts[0], parts)}/></div>
+      }}/>
     {seasonOpen&&season&&<SeasonBrowser summary={season} onClose={()=>setSeasonOpen(false)}/>}
   </section>
 }

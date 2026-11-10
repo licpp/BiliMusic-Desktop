@@ -11,6 +11,7 @@ const output = await build({
     b.onLoad({ filter: /.*/, namespace: 'mock' }, ({ path }) => ({ contents: path === 'api' ? `
       export const inDesktopShell = true;
       export const recordPlayedTrack = async t => t;
+      export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
@@ -77,4 +78,16 @@ test('iOS account reset cannot revive a background track from the previous accou
   assert.equal(s.getState().current, null)
   assert.deepEqual(s.getState().queue, [])
   assert.equal(s.getState().status, 'paused')
+})
+
+test('iOS restores the parts of a video expanded during background queue playback', async () => {
+  const { usePlayerStore: store } = setup()
+  const episode = { ...track('2'), resolveParts: true }
+  await store.getState().playFromList([track('1'), episode], '1')
+  iosTest.event({ id: '2', track: track('2'), status: 'playing', position: 8, stopped: false,
+    expandedEntries: { '2': [track('2'), track('3')] } })
+  assert.deepEqual(store.getState().queue.map(t => t.id), ['1', '2', '3'])
+  assert.equal(store.getState().current.id, '2')
+  assert.equal(store.getState().progressSeconds, 8)
+  assert.equal(iosTest.plays.length, 1)
 })

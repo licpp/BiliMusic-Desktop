@@ -229,7 +229,7 @@ impl PlaylistRepository {
                 .query_map([], LibraryRepository::map_row)?
                 .collect();
         }
-        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,pi.track_id", LibraryRepository::select_sql()))?;
+        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,pi.created_at DESC,pi.rowid DESC", LibraryRepository::select_sql()))?;
         statement
             .query_map(params![id], LibraryRepository::map_row)?
             .collect()

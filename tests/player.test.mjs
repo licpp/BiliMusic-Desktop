@@ -11,6 +11,7 @@ const output = await build({
     builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: `
       export const inDesktopShell = true;
       export const recordPlayedTrack = track => globalThis.testApi.record(track);
+      export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = track => globalThis.testApi.resolve(track);
     ` }))
   } }],
@@ -143,3 +144,18 @@ test('invalid list selection leaves the existing queue intact and duplicates are
  assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);
  await store.getState().playFromList([track('3')],'missing');assert.equal(store.getState().current.id,'2');assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);listeners.pagehide();
 });
+
+test('selecting the current song in another list changes the queue without reloading audio', async () => {
+  const { store, audio } = setup()
+  await store.getState().playFromList([track('1'), track('2')], '2')
+  audio[0].currentTime = 43
+  audio[0].callbacks.timeupdate()
+  await store.getState().playFromList([track('3'), track('2')], '2')
+  assert.equal(audio[0].plays, 1)
+  assert.equal(store.getState().progressSeconds, 43)
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '2'])
+  store.getState().reverseQueue()
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['2', '3'])
+  assert.equal(store.getState().current.id, '2')
+  assert.equal(store.getState().progressSeconds, 43)
+})

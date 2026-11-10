@@ -79,6 +79,7 @@ pub struct VideoPart {
     pub title: String,
     pub duration_seconds: u64,
     pub cover_url: String,
+    pub first_frame_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +135,8 @@ pub struct AccountProfile {
     pub user_id: Option<i64>,
     pub name: Option<String>,
     pub avatar_url: Option<String>,
+    pub level: Option<i64>,
+    pub vip_active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +191,7 @@ pub struct CommentItem {
     pub user_name: String,
     pub avatar_url: String,
     pub message: String,
+    pub emotes: std::collections::HashMap<String, String>,
     pub created_at: i64,
     pub like_count: i64,
     pub liked: bool,
@@ -226,6 +230,15 @@ struct NavData {
     uname: String,
     #[serde(default)]
     face: String,
+    #[serde(default, rename = "level_info")]
+    level: Option<NavLevel>,
+    #[serde(default, rename = "vipStatus")]
+    vip_status: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct NavLevel {
+    current_level: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -238,6 +251,8 @@ struct ReplyData {
 
 #[derive(Deserialize, Default)]
 struct ReplyPageMeta {
+    #[serde(default)]
+    acount: i64,
     #[serde(default)]
     num: i64,
     #[serde(default)]
@@ -280,6 +295,13 @@ struct ReplyMember {
 struct ReplyContent {
     #[serde(default)]
     message: String,
+    emote: Option<std::collections::HashMap<String, ReplyEmote>>,
+}
+
+#[derive(Deserialize)]
+struct ReplyEmote {
+    #[serde(default)]
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -495,6 +517,8 @@ impl BilibiliProvider {
                 user_id: None,
                 name: None,
                 avatar_url: None,
+                level: None,
+                vip_active: None,
             });
         }
         let data: NavData = self.get_data(self.api_url("/x/web-interface/nav")).await?;
@@ -503,6 +527,14 @@ impl BilibiliProvider {
             user_id: data.is_login.then_some(data.mid),
             name: data.is_login.then_some(data.uname),
             avatar_url: data.is_login.then_some(normalize_url(&data.face)),
+            level: data
+                .level
+                .filter(|_| data.is_login)
+                .and_then(|level| level.current_level),
+            vip_active: data
+                .vip_status
+                .filter(|_| data.is_login)
+                .map(|status| status == 1),
         })
     }
 
@@ -526,7 +558,7 @@ impl BilibiliProvider {
                 .collect(),
             next: page + 1,
             is_end: page * page_size >= data.page.count,
-            total: data.page.count,
+            total: data.page.count.max(data.page.acount),
         })
     }
 
@@ -755,10 +787,11 @@ impl BilibiliProvider {
                     part.part
                 },
                 duration_seconds: part.duration,
-                cover_url: if part.first_frame.is_empty() {
-                    fallback_cover.clone()
-                } else {
+                first_frame_url: normalize_url(&part.first_frame),
+                cover_url: if fallback_cover.is_empty() {
                     normalize_url(&part.first_frame)
+                } else {
+                    fallback_cover.clone()
                 },
             })
             .collect();
@@ -1142,6 +1175,27 @@ fn comment_from_raw(raw: RawReply) -> CommentItem {
         user_name: raw.member.uname,
         avatar_url: normalize_url(&raw.member.avatar),
         message: raw.content.message,
+        emotes: raw
+            .content
+            .emote
+            .unwrap_or_default()
+            .into_iter()
+            .take(64)
+            .filter_map(|(token, emote)| {
+                let url = Url::parse(&normalize_url(&emote.url)).ok()?;
+                let host = url.host_str()?;
+                (url.scheme() == "https"
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && ["hdslb.com", "biliimg.com"].iter().any(|domain| {
+                        host == *domain
+                            || host
+                                .strip_suffix(*domain)
+                                .is_some_and(|prefix| prefix.ends_with('.'))
+                    }))
+                .then(|| (token, url.to_string()))
+            })
+            .collect(),
         created_at: raw.ctime,
         like_count: raw.like_count,
         liked: raw.action == 1,

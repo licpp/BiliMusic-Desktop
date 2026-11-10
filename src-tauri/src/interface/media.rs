@@ -116,12 +116,25 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
         struct Sample {
             scope: String,
             track_id: String,
-            seconds: f64,
+            seconds: Option<f64>,
+            position: Option<f64>,
+            observed_at: Option<i64>,
         }
         if let Ok(sample) = body.deserialize::<Sample>() {
             let handle = handle.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = record(&handle, &sample.scope, &sample.track_id, sample.seconds).await;
+                if let Some(seconds) = sample.seconds {
+                    let _ = record(&handle, &sample.scope, &sample.track_id, seconds).await;
+                }
+                if let (Some(position), Some(observed_at)) = (sample.position, sample.observed_at) {
+                    save_position(
+                        &handle,
+                        &sample.scope,
+                        &sample.track_id,
+                        position,
+                        observed_at,
+                    );
+                }
             });
         }
         Ok(())
@@ -133,6 +146,24 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
             eprintln!("Android listening observation failed: {error}");
         }
     });
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn save_position(
+    app: &tauri::AppHandle,
+    scope: &str,
+    id: &str,
+    seconds: f64,
+    observed_at: i64,
+) {
+    let db = app.state::<Database>();
+    if let Ok(connection) = db.0.lock() {
+        if profile(&db) == scope {
+            let _ = crate::infrastructure::repositories::library::LibraryRepository::save_playback_position(
+                &connection, id, seconds, observed_at,
+            );
+        }
+    };
 }
 
 #[tauri::command]

@@ -17,7 +17,7 @@ export function seasonCollection(season: SeasonSummary): Collection {
 }
 export function parseSeasonReference(reference:string) { const match=/^season:(\d+):(\d+)$/.exec(reference);return match ? {mid:Number(match[1]),seasonId:Number(match[2])} : null }
 export const getSeason = (mid:number,seasonId:number) => invoke<Season>('bili_season',{mid,seasonId})
-export function seasonTracks(season:Season):Track[] { return season.tracks.map(t=>({id:`bilibili:${t.bvid}:${t.cid}`,source:{provider:'bilibili',bvid:t.bvid,aid:t.aid,cid:t.cid,page:1,uploaderId:season.summary.uploaderId,uploaderName:season.summary.uploaderName},title:t.title,coverUrl:t.coverUrl,durationSeconds:t.durationSeconds,liked:false})) }
+export function seasonTracks(season:Season):Track[] { return season.tracks.map(t=>({id:`bilibili:${t.bvid}:${t.cid}`,source:{provider:'bilibili',bvid:t.bvid,aid:t.aid,cid:t.cid,page:1,uploaderId:season.summary.uploaderId,uploaderName:season.summary.uploaderName},title:t.title,coverUrl:t.coverUrl,durationSeconds:t.durationSeconds,liked:false,resolveParts:true})) }
 export const getSubtitles = (bvid:string,cid:number) => invoke<{language:string;label:string;ai:boolean}[]>('bili_subtitles',{bvid,cid})
 export const getSubtitleLines = (bvid: string, cid: number, language: string) =>
   invoke<LyricLine[]>('bili_subtitle_lines', { bvid, cid, language })

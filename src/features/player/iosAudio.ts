@@ -2,7 +2,7 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 import type { Track } from '../../domain/track'
 import type { RepeatMode } from './playerStore'
 
-export type IOSAudioState = { action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; track?: Track; revision?: number }
+export type IOSAudioState = { sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; track?: Track; revision?: number }
 let ready: Promise<unknown> | undefined
 let listener: PluginListener | undefined
 let consumer: ((state: IOSAudioState) => void) | undefined

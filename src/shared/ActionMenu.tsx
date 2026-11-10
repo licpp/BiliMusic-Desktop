@@ -4,10 +4,12 @@ import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal, X } from 'lucide-react'
 import { isMobile } from '../services/platform'
 
-export function ActionMenu({ label = '更多操作', panel = false, sheet = false, floating = false, icon, contextPosition, children }: { label?: string; panel?: boolean; sheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; children: (close: () => void) => ReactNode }) {
+export function ActionMenu({ label = '更多操作', panel = false, sheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { label?: string; panel?: boolean; sheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
   const isSheet=!floating && (sheet || isMobile) && compact
   const [position, setPosition] = useState<{ left: number; top: number; anchorTop?: number } | null>(null)
+  const open = Boolean(position)
+  useEffect(() => { onOpenChange?.(open); return () => { if (open) onOpenChange?.(false) } }, [open, onOpenChange])
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
   const close = () => setPosition(null)

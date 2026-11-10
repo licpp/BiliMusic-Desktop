@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell } from '../../services/desktopApi'
-import { usePlayerStore } from './playerStore'
+import { prepareSeasonQueueEntry, usePlayerStore } from './playerStore'
 
 export function startPreloadingNextTrack() {
   if (!inDesktopShell) return
@@ -19,12 +19,16 @@ export function startPreloadingNextTrack() {
     if (scheduled === key) return
     scheduled = key
     window.clearTimeout(timer)
-    if (!source) return
+    if (!source || !next) return
 
     // Resolve one predictable item after playback settles. No media bytes
     // are fetched, and changing the queue cancels the scheduled request.
+    const entry = next
     timer = window.setTimeout(() => {
-      void invoke('bili_warm_playback', { bvid: source.bvid, cid: source.cid }).catch(() => undefined)
+      void (async () => {
+        const target = entry.resolveParts ? (await prepareSeasonQueueEntry(entry))?.source : source
+        if (target && target.cid > 0) await invoke('bili_warm_playback', { bvid: target.bvid, cid: target.cid })
+      })().catch(() => undefined)
     }, 1500)
   }
 

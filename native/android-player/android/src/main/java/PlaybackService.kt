@@ -26,6 +26,11 @@ class PlaybackService : Service() {
     private lateinit var audioManager: AudioManager
     private lateinit var focus: AudioFocusRequest
     private val handler = Handler(Looper.getMainLooper())
+    private var sleepEndsAt = 0L
+    private var sleepDeadline = 0L
+    private var sleepDuration = 0.0
+    private var sleepExpired = false
+    private val sleepWork = Runnable { expireSleepIfNeeded() }
     private var id = ""
     private var title = "BiliMusic"
     private var artist = ""
@@ -38,6 +43,22 @@ class PlaybackService : Service() {
     private var listeningPosition: Double? = null
     private var listeningAt = 0L
     private var listeningSeconds = 0.0
+    private var positionSavedAt = 0L
+    private var didFinishTrack = false
+
+    private fun savePosition(force: Boolean = false) {
+        val scope = listeningProfile ?: return
+        val media = player ?: return
+        if (!prepared || seeking || id.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - positionSavedAt < 15_000) return
+        val position = runCatching { media.currentPosition / 1000.0 }.getOrNull() ?: return
+        val duration = runCatching { media.duration / 1000.0 }.getOrDefault(0.0)
+        val saved = if (didFinishTrack || position < 1.0 || (duration > 0 && position >= duration - 1.0)) 0.0 else position
+        positionSavedAt = now
+        listeningListener?.invoke(JSObject().put("scope", scope).put("trackId", id)
+            .put("position", saved).put("observedAt", System.currentTimeMillis()))
+    }
 
     private fun accountListening(flush: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
@@ -70,6 +91,8 @@ class PlaybackService : Service() {
     private var lastSystemStatus = ""
     private val ticker = object : Runnable {
         override fun run() {
+            if (expireSleepIfNeeded()) return
+            if (status == "playing") savePosition()
             publish(false)
             if (status == "playing" || status == "buffering") handler.postDelayed(this, 500)
         }
@@ -115,6 +138,7 @@ class PlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "prepare" -> {
+                savePosition(force = true)
                 accountListening(true)
                 seeking = false
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
@@ -133,6 +157,9 @@ class PlaybackService : Service() {
         return START_NOT_STICKY
     }
     private fun load(intent: Intent) {
+        savePosition(force = true)
+        positionSavedAt = SystemClock.elapsedRealtime()
+        didFinishTrack = false
         accountListening(true)
         seeking = false
         listeningPosition = null
@@ -181,8 +208,9 @@ class PlaybackService : Service() {
             }
             media.setOnCompletionListener {
                 if (player !== it) return@setOnCompletionListener
+                didFinishTrack = true; savePosition(force = true)
                 accountListening(true)
-                status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended"))
+                if (!expireSleepIfNeeded()) { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")) }
                 handler.postDelayed({ if (player === it && status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000)
             }
             media.setOnErrorListener { candidate, _, _ -> if (player === candidate) fail("音频播放失败，请重新播放"); true }
@@ -202,14 +230,39 @@ class PlaybackService : Service() {
         audioManager.abandonAudioFocusRequest(focus); publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
     private fun pause() {
+        savePosition(force = true)
         accountListening(true)
         if (prepared && player?.isPlaying == true) player?.pause()
         status = "paused"; handler.removeCallbacks(ticker); publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
+    private fun clearSleep() {
+        handler.removeCallbacks(sleepWork)
+        sleepEndsAt = 0L; sleepDeadline = 0L; sleepDuration = 0.0; sleepExpired = false
+    }
+    private fun scheduleSleep(seconds: Double) {
+        clearSleep()
+        sleepDuration = seconds
+        val delay = (seconds * 1000).toLong()
+        sleepEndsAt = SystemClock.elapsedRealtime() + delay
+        sleepDeadline = System.currentTimeMillis() + delay
+        handler.postDelayed(sleepWork, delay)
+        publish()
+    }
+    private fun expireSleepIfNeeded(): Boolean {
+        if (sleepEndsAt == 0L || SystemClock.elapsedRealtime() < sleepEndsAt) return false
+        handler.removeCallbacks(sleepWork)
+        sleepEndsAt = 0L; sleepDeadline = 0L; sleepExpired = true
+        control("pause")
+        return true
+    }
     fun control(action: String, value: Double = 0.0) {
         when (action) {
+            "sleepStart" -> if (value in 60.0..10800.0) scheduleSleep(value)
+            "sleepCancel" -> { clearSleep(); publish() }
+            "sleepDismiss" -> { sleepExpired = false; publish() }
+            "sleepRepeat" -> if (sleepExpired && sleepDuration > 0) { scheduleSleep(sleepDuration); control("resume") }
             "pause" -> { resumeOnFocus = false; pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
+            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                     if (!seeking) player?.start()
@@ -218,22 +271,25 @@ class PlaybackService : Service() {
                 } else { pause() }
             }
             "seek" -> if (prepared) {
+                didFinishTrack = false
                 accountListening(true)
                 seeking = true
                 player?.seekTo((value.coerceAtLeast(0.0) * 1000).toLong(), MediaPlayer.SEEK_CLOSEST)
                 publish()
             }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
-            "stop" -> { accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
     fun snapshot(): JSObject {
+        expireSleepIfNeeded()
         if (prepared) {
             lastPosition = (player?.currentPosition ?: 0) / 1000.0
             lastDuration = (player?.duration ?: 0) / 1000.0
         }
         return JSObject().put("id", id).put("status", status).put("position", lastPosition)
             .put("duration", lastDuration).put("stopped", player == null).put("error", error)
+            .put("sleepDeadline", sleepDeadline).put("sleepDuration", sleepDuration).put("sleepExpired", sleepExpired)
     }
     private fun publish(notify: Boolean = true) {
         accountListening()
@@ -318,6 +374,8 @@ class PlaybackService : Service() {
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2)).build()
     }
     override fun onDestroy() {
+        savePosition(force = true)
+        clearSleep()
         accountListening(true)
         artworkTask?.cancel(true); artworkExecutor.shutdownNow(); artworkCache.evictAll()
         handler.removeCallbacks(ticker); player?.release(); player = null

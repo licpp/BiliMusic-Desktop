@@ -126,6 +126,7 @@ pub fn run() {
             interface::commands::playlist_rename,
             interface::commands::library_tracks,
             interface::commands::library_recent,
+            interface::commands::playback_position,
             interface::commands::library_toggle_favorite,
             interface::commands::library_update_metadata,
             interface::commands::bili_search,
@@ -174,6 +175,8 @@ pub fn run() {
             interface::commands::lyrics_save,
             interface::commands::lyrics_set_bias,
             interface::commands::mobile_download_directory,
+            #[cfg(target_os = "ios")]
+            interface::commands::mobile_export_download,
             interface::commands::downloads_list,
             interface::commands::download_track,
         ])

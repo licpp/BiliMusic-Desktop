@@ -1,5 +1,5 @@
 use super::*;
-use futures_util::{StreamExt, stream};
+use futures_util::StreamExt;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,57 +117,33 @@ impl BilibiliProvider {
             }
         }
         archives.sort_by_key(|a| order.get(&text(a, "bvid")).copied().unwrap_or(usize::MAX));
-        let result = stream::iter(archives.into_iter().map(|a| {
-            let ep = known.get(&text(&a, "bvid")).cloned();
-            async move {
-                let bvid = text(&a, "bvid");
-                let mut cid = ep.as_ref().map(|e| number(e, "cid")).unwrap_or(0);
-                if cid <= 0 {
-                    let d = self.video_parts(&bvid).await?;
-                    cid = d.parts.first().map(|p| p.cid).unwrap_or(0);
-                }
-                if cid <= 0 {
-                    return Ok(None);
-                }
-                Ok::<_, ProviderError>(Some(SeasonTrack {
-                    bvid,
-                    aid: number(&a, "aid"),
-                    cid,
-                    title: ep
-                        .as_ref()
-                        .map(|e| text(e, "title"))
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| text(&a, "title")),
-                    cover_url: normalize_url(&text(&a, "pic")),
-                    duration_seconds: a["duration"].as_u64().unwrap_or(0),
-                }))
-            }
-        }))
-        .buffered(4)
-        .collect::<Vec<_>>()
-        .await;
         let mut tracks = Vec::new();
         let mut unavailable = 0;
-        let mut last_error = None;
         let mut seen = std::collections::HashSet::new();
-        for result in result {
-            match result {
-                Ok(Some(track)) => {
-                    if seen.insert(track.bvid.clone()) {
-                        tracks.push(track);
-                    }
-                }
-                Ok(None) => unavailable += 1,
-                Err(error) => {
-                    last_error = Some(error);
-                    unavailable += 1;
-                }
+        for archive in archives {
+            let bvid = text(&archive, "bvid");
+            if bvid.is_empty() {
+                unavailable += 1;
+                continue;
             }
-        }
-        if tracks.is_empty() {
-            if let Some(error) = last_error {
-                return Err(error);
+            if !seen.insert(bvid.clone()) {
+                continue;
             }
+            let episode = known.get(&bvid);
+            tracks.push(SeasonTrack {
+                aid: number(&archive, "aid"),
+                cid: episode
+                    .map(|ep| number(ep, "cid"))
+                    .unwrap_or_else(|| number(&archive, "cid"))
+                    .max(0),
+                title: episode
+                    .map(|ep| text(ep, "title"))
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| text(&archive, "title")),
+                cover_url: normalize_url(&text(&archive, "pic")),
+                duration_seconds: archive["duration"].as_u64().unwrap_or(0),
+                bvid,
+            });
         }
         if summary.cover_url.is_empty() || summary.cover_url.contains("viedeo_material_default") {
             if let Some(first) = tracks.first() {

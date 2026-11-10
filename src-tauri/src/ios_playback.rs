@@ -1,7 +1,9 @@
 //! Resolve native queue transitions even when WKWebView JavaScript is suspended.
 use crate::infrastructure::{
-    database::Database, media_proxy::MediaProxy, providers::bilibili::BilibiliProvider,
-    repositories::library::TrackInput,
+    database::Database,
+    media_proxy::MediaProxy,
+    providers::bilibili::BilibiliProvider,
+    repositories::library::{LibraryRepository, TrackInput},
 };
 use crate::interface::commands::{library_record_play, track_playback_url};
 use serde_json::{Value, json};
@@ -63,6 +65,37 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     if profile != current_profile(app) {
         return Err("播放账号已变更，请重新播放".into());
     }
+    let entry_id = track["id"].as_str().unwrap_or_default().to_owned();
+    let mut parts = Vec::new();
+    if track["resolveParts"].as_bool() == Some(true) {
+        let source = &track["source"];
+        if let Some(bvid) = source["bvid"].as_str() {
+            let provider = app.state::<BilibiliProvider>();
+            if let Ok(Ok(video)) = tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                provider.video_parts(bvid),
+            )
+            .await
+            {
+                parts = video.parts.iter().map(|part| json!({
+                    "id": format!("bilibili:{}:{}", video.bvid, part.cid),
+                    "source": {"provider":"bilibili", "bvid":video.bvid, "cid":part.cid,
+                               "page":part.page, "aid":video.aid,
+                               "uploaderId":video.uploader_id, "uploaderName":video.uploader_name},
+                    "title":part.title, "coverUrl":part.cover_url,
+                    "durationSeconds":part.duration_seconds, "liked":false,
+                })).collect();
+                if let Some(first) = parts.first() {
+                    track = first.clone();
+                }
+            }
+        }
+    }
+    if track["source"]["provider"] == "bilibili"
+        && track["source"]["cid"].as_i64().unwrap_or_default() <= 0
+    {
+        return Err("无法读取合集中的这个视频".into());
+    }
     let stored =
         library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?;
     let url = track_playback_url(
@@ -79,7 +112,22 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     track["coverUrl"] = json!(stored.cover_url);
     track["durationSeconds"] = json!(stored.duration_seconds);
     track["liked"] = json!(stored.liked);
-    Ok(json!({"url":url, "track":track}))
+    let position = if payload["restart"].as_bool() == Some(true) {
+        0.0
+    } else {
+        let db = app.state::<Database>();
+        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        let saved =
+            LibraryRepository::playback_position(&connection, &stored.id).unwrap_or_default();
+        if saved >= 1.0
+            && (stored.duration_seconds == 0 || saved < stored.duration_seconds as f64 - 1.0)
+        {
+            saved
+        } else {
+            0.0
+        }
+    };
+    Ok(json!({"url":url, "track":track, "position":position, "entryId":entry_id, "parts":parts}))
 }
 
 /// Swift owns the input C string; copy it synchronously before starting asynchronous work.
@@ -125,12 +173,15 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
     };
     tauri::async_runtime::spawn(async move {
         if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-            if let (Some(scope), Some(id), Some(seconds)) = (
-                value["profile"].as_str(),
-                value["id"].as_str(),
-                value["seconds"].as_f64(),
-            ) {
-                let _ = crate::interface::media::record(&app, scope, id, seconds).await;
+            if let (Some(scope), Some(id)) = (value["profile"].as_str(), value["id"].as_str()) {
+                if let Some(seconds) = value["seconds"].as_f64() {
+                    let _ = crate::interface::media::record(&app, scope, id, seconds).await;
+                }
+                if let (Some(position), Some(observed_at)) =
+                    (value["position"].as_f64(), value["observedAt"].as_i64())
+                {
+                    crate::interface::media::save_position(&app, scope, id, position, observed_at);
+                }
             }
         }
     });

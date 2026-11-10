@@ -2,6 +2,7 @@ import { Download, Plus } from 'lucide-react'
 import { CollectionsView } from '../collections/CollectionsView'
 import type { Playlist } from '../../services/desktopApi'
 import type { Collection } from '../../services/collections'
+import { useSwipeTabs } from '../../shared/useSwipeTabs'
 import { PlaylistEntry } from './PlaylistEntry'
 
 export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onCreate, onImport, onCollectionOpen, onOpenFolder, section, onSectionChange }: {
@@ -16,6 +17,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
   section: 'playlists' | 'collections'
   onSectionChange: (section: 'playlists' | 'collections') => void
 }) {
+  const swipe = useSwipeTabs(['playlists', 'collections'], section, onSectionChange)
   return <section className="playlists-view listening-library">
     <div className="listening-tabs" role="tablist" aria-label="个人音乐收藏" onKeyDown={event => {
       if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return
@@ -27,7 +29,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
       <button id="hub-playlists" role="tab" tabIndex={section === 'playlists' ? 0 : -1} aria-selected={section === 'playlists'} aria-controls="listening-panel" onClick={() => onSectionChange('playlists')}>歌单<small>{playlists.length}</small></button>
       <button id="hub-collections" role="tab" tabIndex={section === 'collections' ? 0 : -1} aria-selected={section === 'collections'} aria-controls="listening-panel" onClick={() => onSectionChange('collections')}>收藏</button>
     </div>
-    <div id="listening-panel" role="tabpanel" aria-labelledby={`hub-${section}`}>
+    <div id="listening-panel" ref={swipe} data-swipe-tabs role="tabpanel" aria-labelledby={`hub-${section}`}>
       {section === 'playlists' ? <>
         <div className="listening-tools">
           <span>我的歌单</span>

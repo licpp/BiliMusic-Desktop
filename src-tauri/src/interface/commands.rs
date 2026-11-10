@@ -101,6 +101,28 @@ pub fn library_tracks(
 }
 
 #[tauri::command]
+pub fn playback_position(
+    database: State<'_, Database>,
+    track_id: String,
+    seconds: Option<f64>,
+    observed_at: Option<i64>,
+    scope: Option<String>,
+) -> Result<f64, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if let (Some(seconds), Some(observed_at), Some(scope)) = (seconds, observed_at, scope) {
+        if super::media::profile(&database) != scope {
+            return Ok(0.0);
+        }
+        LibraryRepository::save_playback_position(&connection, &track_id, seconds, observed_at)
+            .map_err(CommandError::database)?;
+    }
+    LibraryRepository::playback_position(&connection, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
 pub fn library_recent(database: State<'_, Database>) -> Result<Vec<TrackRecord>, CommandError> {
     let connection = database
         .0
@@ -859,6 +881,47 @@ pub fn mobile_download_directory(app: tauri::AppHandle) -> Result<String, Comman
         .join("downloads");
     std::fs::create_dir_all(&directory).map_err(CommandError::database)?;
     Ok(directory.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "ios")]
+#[tauri::command]
+pub async fn mobile_export_download(
+    app: tauri::AppHandle,
+    database: State<'_, Database>,
+    download_id: String,
+) -> Result<(), CommandError> {
+    use tauri::Manager;
+    let target: String = {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        connection
+            .query_row(
+                "SELECT target_path FROM downloads WHERE id=?1 AND status='completed'",
+                [&download_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("找不到已下载的歌曲"))?
+    };
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(CommandError::database)?
+        .join("downloads")
+        .canonicalize()
+        .map_err(CommandError::database)?;
+    let path = std::path::PathBuf::from(target)
+        .canonicalize()
+        .map_err(CommandError::database)?;
+    if !path.starts_with(directory) || !path.is_file() {
+        return Err(CommandError::validation("下载文件不可用"));
+    }
+    tauri_plugin_ios_player::export_download(&app, &path)
+        .await
+        .map_err(CommandError::database)
 }
 
 #[tauri::command]

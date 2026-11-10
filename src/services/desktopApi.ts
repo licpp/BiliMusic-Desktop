@@ -1,11 +1,12 @@
 import { accountEpoch } from './accountScope'
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
 import { parseLrc } from '../features/lyrics/lrc'
 
 export type BiliSearchItem = { bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
-export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string }
+export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string; firstFrameUrl?: string }
 export type BiliVideoParts = { season?: import('./mediaSources').SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
 export type PlaybackSource = { audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
 export type VideoSource = { videoUrl: string; mimeType: string; codecs: string; bandwidth: number }
@@ -25,13 +26,13 @@ export type CatalogCandidate = { trackId: string; trackName: string; artistName:
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
 export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
-export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string }
+export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string; level?: number; vipActive?: boolean }
 export type FavoriteFolder = { id: number; title: string; media_count: number }
 export type FavoriteVideo = { bvid: string; title: string; cover: string }
 export type FavoritePage = { medias?: FavoriteVideo[]; has_more: boolean }
 export type LinkedFolder = { folderId: number; name: string; refreshedAt: number; videos: FavoriteVideo[] }
 export type LocalImportResult = { added: number; alreadyImported: number; failed: string[] }
-export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
+export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; emotes?: Record<string, string>; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
 export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
 export const inDesktopShell = isTauri()
@@ -46,11 +47,28 @@ export async function searchBilibili(keyword: string, page = 1): Promise<BiliSea
   return invoke<BiliSearchPage>('bili_search', { keyword, page, pageSize: 20 })
 }
 
-export const getVideoParts = (bvid: string) => invoke<BiliVideoParts>('bili_video_parts', { bvid })
+const videoDetails = new Map<string, { expires: number; request: Promise<BiliVideoParts> }>()
+export function getVideoParts(bvid: string, refresh = false) {
+  const key = `${accountEpoch()}:${bvid}`
+  const saved = videoDetails.get(key)
+  if (!refresh && saved && saved.expires > Date.now()) return saved.request
+  const request = invoke<BiliVideoParts>('bili_video_parts', { bvid })
+  videoDetails.set(key, { request, expires: Date.now() + 120_000 })
+  if (videoDetails.size > 100) videoDetails.delete(videoDetails.keys().next().value!)
+  void request.catch(() => { if (videoDetails.get(key)?.request === request) videoDetails.delete(key) })
+  return request
+}
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
 export const getTrackPlaybackUrl = (track: Track) => invoke<string>('track_playback_url', { trackId: track.id })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
+  if (track.resolveParts && track.source.cid <= 0) {
+    const epoch = accountEpoch()
+    const detail = await getVideoParts(track.source.bvid)
+    if (epoch !== accountEpoch()) throw new Error('账号已切换')
+    if (!detail.parts[0]) throw new Error('暂无可播放内容')
+    track = toTrack(detail, detail.parts[0])
+  }
   return fromStoredTrack(await invoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
 }
 export const getVideoSource = (bvid: string, cid: number) => invoke<VideoSource>('bili_video_source', { bvid, cid })

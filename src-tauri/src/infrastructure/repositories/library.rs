@@ -89,7 +89,38 @@ impl LibraryRepository {
             "DELETE FROM play_history WHERE id NOT IN (SELECT id FROM play_history ORDER BY played_at DESC, id DESC LIMIT 1000)",
             [],
         )?;
+        connection.execute("DELETE FROM playback_positions WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(id) DESC LIMIT 200)", [])?;
         Ok(record)
+    }
+
+    pub fn playback_position(connection: &Connection, id: &str) -> rusqlite::Result<f64> {
+        Ok(connection
+            .query_row(
+                "SELECT seconds FROM playback_positions WHERE track_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0.0))
+    }
+
+    pub fn save_playback_position(
+        connection: &Connection,
+        id: &str,
+        seconds: f64,
+        observed_at: i64,
+    ) -> rusqlite::Result<()> {
+        if !seconds.is_finite() || seconds < 0.0 || observed_at <= 0 {
+            return Ok(());
+        }
+        connection.execute(
+            "INSERT INTO playback_positions(track_id,seconds,observed_at)
+             SELECT ?1,?2,?3 WHERE ?1 IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(id) DESC LIMIT 200)
+             ON CONFLICT(track_id) DO UPDATE SET seconds=excluded.seconds, observed_at=excluded.observed_at
+             WHERE excluded.observed_at >= playback_positions.observed_at",
+            params![id, seconds, observed_at],
+        )?;
+        Ok(())
     }
 
     pub fn list(
@@ -300,6 +331,29 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].id, first.id);
         assert_eq!(recent[1].id, second.id);
+    }
+
+    #[test]
+    fn playback_positions_are_bounded_and_ignore_stale_updates() {
+        let mut connection = database();
+        let first = track(1);
+        LibraryRepository::record_play(&mut connection, &first).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 24.0, 10).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 0.0, 12).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 38.0, 11).unwrap();
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &first.id).unwrap(),
+            0.0
+        );
+        LibraryRepository::save_playback_position(&connection, &first.id, 40.0, 13).unwrap();
+        for cid in 2..=201 {
+            LibraryRepository::record_play(&mut connection, &track(cid)).unwrap();
+        }
+        LibraryRepository::save_playback_position(&connection, &first.id, 45.0, 14).unwrap();
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &first.id).unwrap(),
+            0.0
+        );
     }
 
     #[test]
