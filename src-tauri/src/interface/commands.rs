@@ -812,6 +812,15 @@ pub fn downloads_list(database: State<'_, Database>) -> Result<Vec<DownloadRecor
 }
 
 #[tauri::command]
+pub fn download_remove(
+    database: State<'_, Database>,
+    download_id: String,
+) -> Result<(), CommandError> {
+    let connection = database.0.lock().map_err(CommandError::database)?;
+    DownloadRepository::remove(&connection, &download_id)
+}
+
+#[tauri::command]
 pub async fn track_playback_url(
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,

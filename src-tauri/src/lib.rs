@@ -180,6 +180,7 @@ pub fn run() {
             #[cfg(target_os = "ios")]
             interface::commands::mobile_export_download,
             interface::commands::downloads_list,
+            interface::commands::download_remove,
             interface::commands::download_track,
         ])
         .run(tauri::generate_context!())

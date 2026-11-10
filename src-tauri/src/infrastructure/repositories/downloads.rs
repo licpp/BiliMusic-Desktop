@@ -1,4 +1,5 @@
-use rusqlite::{Connection, params};
+use crate::interface::error::CommandError;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +28,30 @@ mod tests {
         let rows = DownloadRepository::list(&connection).unwrap();
         assert_eq!(rows[0].status, "completed");
         assert_eq!(rows[0].received_bytes, 1024);
+    }
+
+    #[test]
+    fn deletion_preserves_active_download_and_removes_duplicate_completed_rows() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE downloads(id TEXT PRIMARY KEY,track_id TEXT,target_path TEXT,status TEXT,received_bytes INTEGER DEFAULT 0,total_bytes INTEGER,error_message TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("bilimusic-test-{}.m4a", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"fixture").unwrap();
+        let target = path.to_str().unwrap();
+        for id in ["completed", "duplicate", "active", "failed"] {
+            DownloadRepository::create(&connection, id, "track", target).unwrap();
+        }
+        DownloadRepository::complete(&connection, "completed", 7).unwrap();
+        DownloadRepository::complete(&connection, "duplicate", 7).unwrap();
+        DownloadRepository::fail(&connection, "failed", "fixture").unwrap();
+        DownloadRepository::remove(&connection, "failed").unwrap();
+        assert!(DownloadRepository::remove(&connection, "completed").is_err());
+        assert!(path.is_file());
+        DownloadRepository::complete(&connection, "active", 7).unwrap();
+        DownloadRepository::remove(&connection, "completed").unwrap();
+        assert!(!path.exists());
+        assert!(DownloadRepository::list(&connection).unwrap().is_empty());
+        DownloadRepository::remove(&connection, "completed").unwrap();
     }
 }
 
@@ -63,6 +88,49 @@ impl DownloadRepository {
 
     pub fn fail(connection: &Connection, id: &str, message: &str) -> rusqlite::Result<()> {
         connection.execute("UPDATE downloads SET status='failed',error_message=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1", params![id, message])?;
+        Ok(())
+    }
+
+    pub fn remove(connection: &Connection, id: &str) -> Result<(), CommandError> {
+        let Some((path, status)) = connection
+            .query_row(
+                "SELECT target_path,status FROM downloads WHERE id=?1",
+                [id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(CommandError::database)?
+        else {
+            return Ok(());
+        };
+        if status == "failed" {
+            connection
+                .execute("DELETE FROM downloads WHERE id=?1", [id])
+                .map_err(CommandError::database)?;
+            return Ok(());
+        }
+        let busy = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM downloads WHERE target_path=?1 AND status IN ('queued','downloading'))",
+            [&path], |row| row.get::<_, bool>(0),
+        ).map_err(CommandError::database)?;
+        if status != "completed" || busy {
+            return Err(CommandError::validation("文件正在下载，请完成后再删除"));
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(CommandError::validation(
+                    "无法删除下载文件，请确认文件未被占用并重试",
+                ));
+            }
+        }
+        connection
+            .execute(
+                "DELETE FROM downloads WHERE target_path=?1 AND status='completed'",
+                [&path],
+            )
+            .map_err(CommandError::database)?;
         Ok(())
     }
 

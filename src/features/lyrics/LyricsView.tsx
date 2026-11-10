@@ -89,12 +89,12 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
   const [rateOpen, setRateOpen] = useState(false)
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false)
   const [controlsTouched, setControlsTouched] = useState(0)
-  const revealControls = () => { setControlsShown(true); setControlsTouched(Date.now()) }
+  const revealControls = useCallback(() => { setControlsShown(true); setControlsTouched(Date.now()) }, [])
   useEffect(() => {
-    if (!controlsShown || status !== 'playing' || videoSettingsOpen) return
+    if (!controlsShown || status !== 'playing' || videoSettingsOpen || rateOpen) return
     const timer = window.setTimeout(() => setControlsShown(false), 3000)
     return () => window.clearTimeout(timer)
-  }, [controlsShown, controlsTouched, status, videoSettingsOpen])
+  }, [controlsShown, controlsTouched, status, videoSettingsOpen, rateOpen])
   const [videoFullscreen, setVideoFullscreen] = useState(false)
   useEffect(() => {
     if (!isMobile) return
@@ -231,6 +231,10 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
   }, [current?.id, mediaPreference, videoRetry])
 
   const videoReady = Boolean(videoUrl && readyVideoUrl === videoUrl)
+  useEffect(() => {
+    if (isMobile && mediaMode === 'video' && videoReady) revealControls()
+  }, [mediaMode, videoReady, videoFullscreen, revealControls])
+  const controlsHidden = isMobile && videoReady && status === 'playing' && !controlsShown && !videoSettingsOpen && !rateOpen
   const cid = current?.source.cid || 0
   const danmaku = useQuery({
     queryKey: ['video-danmaku', cid],
@@ -419,7 +423,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className="lyrics-media">
         <div ref={videoCover} className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo src={videoUrl} poster={coverUrl} active={mediaMode === 'video'} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={coverUrl} adaptAspect />}{isMobile && mediaMode === 'video' && videoReady && <button type="button" className="video-reveal-controls" aria-label="显示视频控件" onClick={revealControls}/>}</div>
-        <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`} data-controls-hidden={isMobile && mediaMode === 'video' && videoReady && status === 'playing' && !controlsShown && !videoSettingsOpen ? true : undefined} onPointerDown={revealControls}>
+        <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`} data-controls-hidden={mediaMode === 'video' && controlsHidden || undefined} onPointerDown={revealControls}>
           {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
           {mediaMode === 'video' && <>
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
@@ -429,9 +433,9 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
             </ActionMenu>
           </>}
         </div>
-        {videoFullscreen && isMobile && <div className="video-fullscreen-transport" data-controls-hidden={videoReady && status === 'playing' && !controlsShown && !videoSettingsOpen ? true : undefined} onPointerDown={revealControls}>
+        {videoFullscreen && isMobile && <div className="video-fullscreen-transport" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
           <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? 'Ⅱ' : '▶'}</button>
-          <span>{formatDuration(progressSeconds)}</span><input aria-label="视频播放进度" type="range" min={0} max={Math.max(1, duration)} step={0.1} value={Math.min(progressSeconds, Math.max(1, duration))} onChange={event => usePlayerStore.getState().seek(Number(event.target.value))}/><span>{formatDuration(duration)}</span>
+          <span>{formatDuration(progressSeconds)}</span><input aria-label="视频播放进度" type="range" min={0} max={Math.max(1, duration)} step={0.1} value={Math.min(progressSeconds, Math.max(1, duration))} onChange={event => { revealControls(); usePlayerStore.getState().seek(Number(event.target.value)) }}/><span>{formatDuration(duration)}</span>
         </div>}
         </div>
         <div className="lyrics-track-meta">

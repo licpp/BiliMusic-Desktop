@@ -172,6 +172,7 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
   return invoke<DownloadRecord[]>('downloads_list')
 }
+export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId })
 export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false) => invoke<boolean>('download_track', {
   trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting,
 })

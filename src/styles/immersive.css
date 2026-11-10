@@ -124,6 +124,11 @@
 .lyrics-timing-preview p.timing-target { color: var(--cyan); opacity: 1; background: color-mix(in srgb, var(--cyan) 12%, transparent); }
 .lyrics-cover .video-startup img { object-fit: contain; }
 .lyrics-cover:has([data-artwork-wide]) { background: color-mix(in srgb, var(--base) 60%, transparent); }
+.lyrics-media { isolation: isolate; }
+.lyrics-media .lyrics-cover.video-active { z-index: 0; }
+.lyrics-media .video-tools.video-tools-overlay,
+.lyrics-media .video-fullscreen-transport { z-index: 3; }
+.lyrics-cover .video-error { z-index: 4; }
 .video-reveal-controls { position: absolute; inset: 0; z-index: 2; width: 100%; border: 0; background: transparent; }
 .video-reveal-controls:focus-visible { outline: 2px solid var(--cyan); outline-offset: -3px; }
 .video-tools[data-controls-hidden], .video-fullscreen-transport[data-controls-hidden] { opacity: 0; pointer-events: none; visibility: hidden; }

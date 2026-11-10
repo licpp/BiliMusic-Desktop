@@ -141,9 +141,6 @@ export function App() {
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined
-  const collectionOrigin = collectionHistory.current.at(-1)
-  const collectionBackLabel = collectionOrigin?.item ? '返回上一页'
-    : activeNav === '搜索' ? '返回搜索结果' : '返回收藏合集'
   const searchActive = activeNav === '搜索' && !selectedCollection
   const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '歌单'))
   useEffect(resetCollection, [activeNav])
@@ -414,7 +411,7 @@ export function App() {
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
         <div className="stage-scroll" ref={contentScroll} hidden={searchActive}>
           {selectedCollection && <CollectionDetail key={selectedCollection.bvid} item={selectedCollection} onBack={closeCollection}
-            hideBack={Boolean(collectionOrigin?.lyrics)} backLabel={collectionBackLabel} onOpenCollection={isMobile ? undefined : item => openCollection(item, 'collection')}/>}
+            hideBack onOpenCollection={isMobile ? undefined : item => openCollection(item, 'collection')}/>}
           <div hidden={Boolean(selectedCollection)}>
           {activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
