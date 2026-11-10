@@ -4,7 +4,7 @@ const fields = {
   collectionFolder:["id","name"], collection:["bvid","folderId"], collectionProgress:["reference","checkpoint"],
   track:['id','bvid','cid','overrideTitle','overrideArtist','overrideAlbum','overrideCover'],
   playlist:['id','name','description','coverUrl'], item:['playlistId','trackId','position'],
-  favorite:['trackId'], history:['trackId','playedAt'], lyric:['id','provider','providerLyricId','biasMs','manual'],
+  favorite:['trackId'], history:['trackId','playedAt','resume'], lyric:['id','provider','providerLyricId','biasMs','manual'],
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validCollectionReference(value) {
@@ -40,6 +40,10 @@ export function validateSnapshot(value, uid) {
       if(typeof f.trackId!=='string') fail();referenced.add(f.trackId);
       if(r.kind==='item'){if(!uuid.test(f.playlistId)||key!==`item:${f.playlistId}|${f.trackId}`||!value.records[`playlist:${f.playlistId}`]||!Number.isSafeInteger(f.position)||f.position<0)fail();}
       else if(key!==`${r.kind}:${f.trackId}`) fail();
+      if(r.kind==='history'&&Object.hasOwn(f,'resume')){
+        const resume=typeof f.resume==='string'&&/^([1-9]\d*):(\d+)$/.exec(f.resume);
+        if(!resume||!Number.isSafeInteger(+resume[1])||+resume[2]>604800000)fail();
+      }
       if(r.kind==='history'&&(typeof f.playedAt!=='string'||!/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?$/.test(f.playedAt)))fail();
     }
   }

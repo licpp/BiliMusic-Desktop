@@ -92,3 +92,12 @@ test('iOS restores the parts of a video expanded during background queue playbac
   assert.equal(store.getState().progressSeconds, 8)
   assert.equal(iosTest.plays.length, 1)
 })
+
+test('iOS background queue receives automatic resume preference changes', async () => {
+  const { usePlayerStore: store } = setup()
+  await store.getState().playFromList([track('1'), track('2')], '1')
+  assert.equal(iosTest.queues.at(-1)[3], true)
+  store.getState().setAutoResume(false)
+  await Promise.resolve()
+  assert.equal(iosTest.queues.at(-1)[3], false)
+})

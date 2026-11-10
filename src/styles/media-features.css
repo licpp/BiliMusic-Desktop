@@ -59,3 +59,81 @@
 .action-menu-sheet .danmaku-settings { padding-bottom:12px; }
 .action-menu-sheet .danmaku-settings input { height:32px; }
 .action-menu-sheet .playback-quality-settings select { font-size:16px; }
+
+.settings-card > .auto-resume-switch {
+  display: grid; place-items: center; flex: 0 0 52px; width: 52px; height: 44px;
+  padding: 0; border: 0; border-radius: 12px; background: transparent;
+}
+.auto-resume-switch > span { position: relative; width: 42px; height: 24px; border-radius: 20px; background: var(--range-track); }
+.auto-resume-switch > span::after {
+  content: ''; position: absolute; inset: 3px auto auto 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: transform 140ms ease;
+}
+.auto-resume-switch[aria-checked="true"] > span { background: var(--cyan); }
+.auto-resume-switch[aria-checked="true"] > span::after { transform: translateX(18px); }
+
+.action-menu-panel.action-menu-sheet[data-touch-sheet] {
+  width: min(100%, 560px); margin-inline: auto; max-height: 84dvh; padding-top: 0;
+  padding-bottom: calc(16px + max(env(safe-area-inset-bottom), var(--native-safe-bottom, 0px)));
+  overscroll-behavior: contain; animation: touch-sheet-enter 180ms ease-out; transition: transform 160ms ease-out;
+}
+.action-menu-panel.action-menu-sheet[data-touch-dragging] { animation: none; transition: none; }
+@keyframes touch-sheet-enter { from { transform: translateY(24px); opacity: .7; } }
+.touch-sheet-header { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.touch-sheet-header > div { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; }
+.touch-sheet-header button { color: var(--muted); background: transparent; border: 0; padding: 0; cursor: pointer; }
+.touch-sheet-header > div button { display: grid; place-items: center; width: 44px; height: 44px; }
+.action-menu-sheet .touch-sheet-handle { display: grid; place-items: center; width: 100%; min-height: 27px; touch-action: none; }
+.touch-sheet-handle span { width: 36px; height: 4px; border-radius: 6px; background: var(--range-track); }
+.touch-option-list button {
+  min-height: 44px; color: var(--ink); background: var(--panel-raised); border: 1px solid var(--line);
+  border-radius: 10px; font: inherit; font-size: 14px; cursor: pointer;
+}
+.touch-option-list button[aria-pressed="true"] {
+  color: var(--cyan); background: var(--playing-row-surface); border-color: var(--cyan); font-weight: 600;
+}
+.touch-option-trigger, .touch-option-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; }
+.touch-option-trigger {
+  min-height: 48px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--ink); font: inherit; font-size: 14px; text-align: start; cursor: pointer;
+}
+.touch-option-trigger > small { margin-inline-start: auto; color: var(--muted); text-align: end; }
+.touch-option-trigger > svg { flex-shrink: 0; color: var(--muted); }
+.touch-option-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.touch-option-trigger:disabled { opacity: .55; }
+.touch-option-list { display: grid; gap: 4px; padding: 0 8px 8px; }
+.touch-option-list button { justify-content: space-between; text-align: start; }
+.touch-sheet-section { margin-top: 6px; padding: 12px 8px 4px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.action-menu-panel[data-touch-sheet] > button { min-height: 48px; }
+@media (hover: none) {
+  .action-menu-panel[data-touch-sheet] > button:not(:focus-visible):hover { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-menu-panel.action-menu-sheet[data-touch-sheet], .auto-resume-switch > span::after { animation: none; transition: none; }
+}
+
+.playback-rate-entry small { margin-inline-start: auto; color: var(--cyan); font-variant-numeric: tabular-nums; }
+.collection-dialog.playback-rate-dialog {
+  width: min(calc(100% - 24px), 460px); margin: 0 auto max(12px, env(safe-area-inset-bottom), var(--native-safe-bottom, 0px));
+  padding: 14px 18px 18px; border-radius: 20px; animation: touch-sheet-enter 180ms ease-out;
+}
+.playback-rate-dialog header { margin-bottom: 0; }
+.playback-rate-dialog header button { width: 44px; height: 44px; }
+.playback-rate-picker output { display: block; margin: 4px 0 9px; text-align: center; color: var(--cyan); font-size: 25px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.playback-rate-ruler { position: relative; height: 60px; margin-inline: 18px; }
+.playback-rate-rail { position: absolute; inset: 0; color: var(--muted); pointer-events: none; }
+.playback-rate-rail > span { position: absolute; top: 8px; display: grid; gap: 9px; justify-items: center; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.playback-rate-rail i, .playback-rate-rail b { width: 2px; height: 14px; border-radius: 4px; background: currentColor; }
+.playback-rate-rail > span[data-selected] { color: var(--cyan); font-weight: 650; }
+.playback-rate-rail b { position: absolute; top: 4px; width: 4px; height: 22px; transform: translateX(-50%); color: var(--cyan); box-shadow: 0 0 0 2px var(--panel); }
+.playback-rate-ruler input[type="range"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ew-resize; touch-action: none; }
+.playback-rate-ruler:has(input:focus-visible) { outline: 2px solid var(--cyan); outline-offset: 4px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .collection-dialog.playback-rate-dialog { animation: none; } }
+
+.touch-option-list button { touch-action: none; }
+.touch-option-list[data-tracking] button[aria-pressed="true"]:not([data-preview]) {
+  color: var(--ink); background: var(--panel-raised); border-color: var(--line); font-weight: normal;
+}
+.touch-option-list button[data-preview] {
+  color: var(--cyan); background: var(--playing-row-surface); border-color: var(--cyan); font-weight: 600;
+}

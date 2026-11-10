@@ -63,7 +63,7 @@ export function SyncSettings() {
             <details className="sync-address"><summary>服务器地址</summary><label><input aria-label="服务器地址" value={config.url} required type="url" onChange={(e) => setConfig({ ...config, url: e.target.value })} spellCheck={false} /></label></details>
             <p className="sync-note">凭据保存在系统安全存储中，直接连接坚果云。</p>
           </> : <p className="sync-note">通过 HTTPS 使用当前B站登录会话核验身份，服务器不保存该会话，后续使用设备令牌。</p>}
-          <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步播放记录<small>最近 200 首与收藏合集的续播进度，默认关闭</small></span></label>
+          <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步播放记录<small>最近 200 首的记录和断点、收藏合集续播，默认关闭</small></span></label>
           <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及所选的播放记录，并同意上述身份核验方式。</span></label>
           <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent}>{busy && <LoaderCircle className="spin" />}连接并预览</button><button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button></div>
         </fieldset>

@@ -3,18 +3,26 @@ import { ApiError, MAX_BYTES, validateSnapshot } from './protocol.mjs';
 import { syncPolicy } from './privacy.mjs';
 const formatHeader = 'x-bilimusic-sync-format';
 const checkpoints = 'checkpoints';
-function legacyView(snapshot) {
+const trackCheckpoints = 'track-checkpoints';
+function projectedView(snapshot, format) {
+  if (format === trackCheckpoints) return snapshot;
   return {...snapshot,records:Object.fromEntries(Object.entries(snapshot.records)
-    .filter(([, record])=>record.kind!=='collectionProgress')
-    .map(([key, record])=>[key,record.kind==='history'
-      ? {...record,fields:{...record.fields,playedAt:record.fields.playedAt.slice(0,19)}} : record]))};
+    .filter(([, record])=>format===checkpoints||record.kind!=='collectionProgress')
+    .map(([key, record])=>{
+      if(record.kind!=='history')return [key,record];
+      const {resume, ...fields}=record.fields;
+      if(format!==checkpoints)fields.playedAt=fields.playedAt.slice(0,19);
+      return [key,{...record,fields}];
+    }))};
 }
-function preserveExtendedRecords(snapshot, previous) {
+function preserveExtendedRecords(snapshot, previous, format) {
   for (const [key, record] of Object.entries(previous.records)) {
-    if (record.kind==='collectionProgress' && snapshot.records[`collection:${record.fields.reference}`]) {
+    if (format!==checkpoints && record.kind==='collectionProgress' && snapshot.records[`collection:${record.fields.reference}`]) {
       snapshot.records[key]=record;
-    } else if (record.kind==='history' && snapshot.records[key]?.fields.playedAt===record.fields.playedAt.slice(0,19)) {
-      snapshot.records[key]=record;
+    } else if (record.kind==='history' && snapshot.records[key]?.kind==='history') {
+      const fields=snapshot.records[key].fields;
+      if(format!==checkpoints&&fields.playedAt===record.fields.playedAt.slice(0,19))fields.playedAt=record.fields.playedAt;
+      if(record.fields.resume!==undefined)fields.resume=record.fields.resume;
     }
   }
 }
@@ -51,10 +59,10 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
       const token=req.headers.authorization?.match(/^Bearer ([\w-]{43})$/)?.[1];
       const uid=token?await store.authenticate(hash(token)):null;if(!uid)throw new ApiError(401,'同步授权已失效');
       if(path==='/vault'&&req.method==='GET') {
-        const currentFormat=req.headers[formatHeader]===checkpoints;
-        const headers=currentFormat?{[formatHeader]:checkpoints}:{};
+        const format=req.headers[formatHeader];
+        const headers=[checkpoints,trackCheckpoints].includes(format)?{[formatHeader]:format}:{};
         const v=await store.read(uid);if(!v?.snapshot)return json(404,{message:'尚无同步数据'},headers);
-        return json(200,currentFormat?v.snapshot:legacyView(v.snapshot),{...headers,ETag:`"${v.revision}"`});
+        return json(200,projectedView(v.snapshot,format),{...headers,ETag:`"${v.revision}"`});
       }
       if(path==='/vault'&&req.method==='PUT') {
         const snapshot=validateSnapshot(await readJson(req),uid);
@@ -62,10 +70,10 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
         if(!match&&!create)throw new ApiError(428,'必须提供版本条件');
         if(match&&!/^"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"$/i.test(match))throw new ApiError(400,'版本标识无效');
         const expected=match?.replace(/^"|"$/g,'');
-        if (expected && !create && req.headers[formatHeader]!==checkpoints) {
+        if (expected && !create && req.headers[formatHeader]!==trackCheckpoints) {
           const current=await store.read(uid);
           if(current?.revision!==expected)throw new ApiError(412,'云端已更新，请重新合并');
-          if(current.snapshot)preserveExtendedRecords(snapshot,current.snapshot);
+          if(current.snapshot)preserveExtendedRecords(snapshot,current.snapshot,req.headers[formatHeader]);
           validateSnapshot(snapshot,uid);
         }
         const revision=await store.write(uid,expected,create,snapshot,hash(token));

@@ -24,9 +24,10 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
       if (document.hidden || !activeRef.current) { video.pause(); return }
       const time = playbackClock()
       const now = performance.now()
+      const player = usePlayerStore.getState()
       pendingAlignment = synchronizeVideo(
-        video, time, usePlayerStore.getState().status === 'playing',
-        previousTime, force || pendingAlignment, (now - previousCheck) / 1000,
+        video, time, player.status === 'playing',
+        previousTime, force || pendingAlignment, (now - previousCheck) / 1000, player.rate,
       )
       previousTime = time
       previousCheck = now
@@ -49,7 +50,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
     video.src = src
     const slowTimer = window.setTimeout(() => setSlow(true), 5000)
     const timer = window.setInterval(ready, 250)
-    const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status) sync() })
+    const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status || state.rate !== previous.rate) sync() })
     return () => {
       syncRef.current = () => {}
       window.clearTimeout(slowTimer)

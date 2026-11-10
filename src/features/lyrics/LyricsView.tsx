@@ -1,6 +1,7 @@
 import { SeasonBrowser } from '../collections/SeasonBrowser'
 import { seasonCollection } from '../../services/mediaSources'
 import type { Collection } from '../../services/collections'
+import { MobilePlaybackRate, PlaybackRateEntry } from './MobilePlaybackRate'
 import { PlaybackSettings } from './PlaybackSettings'
 import { useBiliSubtitles } from './useBiliSubtitles'
 import { isMobile } from '../../services/platform'
@@ -12,9 +13,10 @@ import { ChevronDown, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Min
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
+import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
-import { reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
+import { playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
   getDanmaku,
@@ -84,6 +86,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
   const [readyVideoUrl, setReadyVideoUrl] = useState('')
   const videoCover = useRef<HTMLDivElement>(null)
   const [controlsShown, setControlsShown] = useState(false)
+  const [rateOpen, setRateOpen] = useState(false)
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false)
   const [controlsTouched, setControlsTouched] = useState(0)
   const revealControls = () => { setControlsShown(true); setControlsTouched(Date.now()) }
@@ -155,13 +158,13 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
     const back = (event: Event) => {
       if (event.defaultPrevented || document.querySelector('[data-overflow-panel], .mobile-comments')) return
       if (biasOpen) { event.preventDefault(); setBiasOpen(false); return }
-      if (chooserOpen || editing) return // The shared dialog handler closes these first.
+      if (chooserOpen || editing || rateOpen) return // The shared dialog handler closes these first.
       if (commentsOpen) { event.preventDefault(); setCommentsOpen(false) }
       else if (videoFullscreen) { event.preventDefault(); setVideoFullscreen(false) }
     }
     window.addEventListener('bilimusic-back', back, true)
     return () => window.removeEventListener('bilimusic-back', back, true)
-  }, [chooserOpen, editing, commentsOpen, videoFullscreen, biasOpen])
+  }, [chooserOpen, editing, rateOpen, commentsOpen, videoFullscreen, biasOpen])
   const lyricRequest = useRef(0)
   const videoRequest = useRef(0)
   const [videoRetry, setVideoRetry] = useState(0)
@@ -381,27 +384,35 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
             {subtitles.busy && <LoaderCircle size={13} className="spin" />}
             {subtitleLabel}
           </button>}
-          {!(isMobile && videoFullscreen) && <ActionMenu label="歌词页面更多操作" panel>{(close) => <>
-            {isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={() => { toggleSubtitles(); close() }}>
+          {!(isMobile && videoFullscreen) && <ActionMenu label={isMobile ? "播放设置" : "歌词页面更多操作"} panel touchSheet={isMobile}>{(close) => <>
+            {isMobile && <>
+              <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
+              <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
+            </>}
+            {isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <Sparkles size={16}/>{subtitleLabel}<small>{subtitles.active ? '已开启' : subtitles.preferred ? '歌词优先' : '已关闭'}</small>
             </button>}
-            <button role="menuitem" onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
-            <button role="menuitem" onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
-            {subtitles.active && subtitles.choices.length > 1 && <label className="lyrics-subtitle-language">
+            {subtitles.active && subtitles.choices.length > 1 && (isMobile ? <TouchOptions label="字幕版本" selected={subtitles.choice?.language ?? ''}
+              options={subtitles.choices.map(choice => ({ value: choice.language, label: choice.label || choice.language }))}
+              onChange={subtitles.select}/> : <label className="lyrics-subtitle-language">
               字幕版本
               <select aria-label="字幕版本" value={subtitles.choice?.language} onChange={event => { subtitles.select(event.target.value); close() }}>
                 {subtitles.choices.map(choice => <option key={choice.language} value={choice.language}>{choice.label || choice.language} · {choice.ai ? 'AI' : 'B 站'}</option>)}
               </select>
-            </label>}
-            <button role="menuitem" onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
-            <button role="menuitem" disabled={Boolean(subtitles.lines)} onClick={() => { close(); setHoveredLine(null); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
-            {videoDetail && videoDetail.parts.length > 1 && <button role="menuitem" onClick={() => {
+            </label>)}
+            {isMobile && <div className="touch-sheet-section">歌曲与歌词</div>}
+            <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
+            <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
+            <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
+            <button role={isMobile ? undefined : "menuitem"} disabled={Boolean(subtitles.lines)} onClick={() => { close(); setHoveredLine(null); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
+            {videoDetail && videoDetail.parts.length > 1 && <button role={isMobile ? undefined : "menuitem"} onClick={() => {
               close()
               if (isMobile) setPartsOpen(true)
               else onOpenCollection({ ...videoDetail, folderId: '' })
             }}><ListVideo size={16}/>查看分 P</button>}
-            {isMobile && <button role="menuitem" onClick={() => { close(); onOpenSleepTimer() }}><Clock3 size={16}/>定时暂停</button>}
-            <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
+            {isMobile && <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); onOpenSleepTimer() }}><Clock3 size={16}/>定时暂停</button>}
+            {!isMobile && <><PlaybackRateControl/>
+              <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/></>}
           </>}</ActionMenu>}
         </div>
       </header>
@@ -414,7 +425,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
             <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
             <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
             <ActionMenu label="视频设置" icon={<Settings2 size={18}/>} panel floating={isMobile && videoFullscreen} onOpenChange={setVideoSettingsOpen}>
-              {() => videoSettings}
+              {close => <>{isMobile && videoFullscreen && <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>}{videoSettings}</>}
             </ActionMenu>
           </>}
         </div>
@@ -457,6 +468,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
         onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
         manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
+      {rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
       {seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
       {partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
       {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} video={mediaMode === 'video' ? videoCover.current : null} />}
@@ -474,4 +486,15 @@ function parseStoredLines(stored: StoredLyrics): LyricLine[] {
 
 function centerLyric(scroll: HTMLDivElement, line: HTMLParagraphElement, behavior: ScrollBehavior) {
   scroll.scrollTo({ top: line.offsetTop - (scroll.clientHeight - line.offsetHeight) / 2, behavior })
+}
+
+function PlaybackRateControl() {
+  const rate = usePlayerStore(state => state.rate)
+  const setRate = usePlayerStore(state => state.setRate)
+  return <label className="lyrics-subtitle-language">
+    播放倍速
+    <select aria-label="播放倍速" value={rate} onChange={event => void setRate(Number(event.target.value))}>
+      {playbackRates.map(value => <option key={value} value={value}>{value}×</option>)}
+    </select>
+  </label>
 }

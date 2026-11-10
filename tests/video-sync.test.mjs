@@ -67,3 +67,12 @@ test('an explicit seek during buffering is applied once the in-flight seek finis
   assert.equal(synchronizeVideo(element, 80.2, true, 80, pending, .2), false)
   assert.equal(element.currentTime, 80.2)
 })
+
+test('video follows audio at 2× without treating expected progress as a seek', () => {
+  const element = video({ currentTime: 12 })
+  synchronizeVideo(element, 12, true, 10, false, 1, 2)
+  assert.equal(element.playbackRate, 2)
+  assert.equal(element.currentTime, 12)
+  synchronizeVideo(element, 20, true, 12, false, .25, 2)
+  assert.equal(element.currentTime, 20)
+})

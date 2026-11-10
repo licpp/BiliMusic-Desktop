@@ -33,6 +33,15 @@ impl Snapshot {
             records: BTreeMap::new(),
         }
     }
+    pub fn omit_track_positions(&mut self) {
+        for record in self
+            .records
+            .values_mut()
+            .filter(|record| record.kind == "history")
+        {
+            record.fields.remove("resume");
+        }
+    }
     pub fn use_legacy_cloud_format(&mut self) {
         self.records
             .retain(|_, record| record.kind != "collectionProgress");
@@ -139,7 +148,7 @@ impl Snapshot {
                 "item" => &["playlistId", "trackId", "position"],
                 "collectionProgress" => &["reference", "checkpoint"],
                 "favorite" => &["trackId"],
-                "history" => &["trackId", "playedAt"],
+                "history" => &["trackId", "playedAt", "resume"],
                 "lyric" => &["id", "provider", "providerLyricId", "biasMs", "manual"],
                 _ => return Err("不支持的同步记录".into()),
             };
@@ -203,7 +212,11 @@ impl Snapshot {
                 }
                 "favorite" => key == &format!("favorite:{track}"),
                 "history" => {
-                    key == &format!("history:{track}") && valid_history_time(text(r, "playedAt"))
+                    key == &format!("history:{track}")
+                        && valid_history_time(text(r, "playedAt"))
+                        && r.fields
+                            .get("resume")
+                            .is_none_or(|v| v.as_str().and_then(parse_track_position).is_some())
                 }
                 "item" => {
                     key == &format!("item:{}|{track}", text(r, "playlistId"))
@@ -275,6 +288,20 @@ pub fn parse_checkpoint(value: &str) -> Option<(i64, &str, i64, i64)> {
         && crate::infrastructure::repositories::collections::valid_reference(bvid))
     .then_some((time, bvid, cid, position))
 }
+pub fn parse_track_position(value: &str) -> Option<(i64, i64)> {
+    let (time, position) = value.split_once(':')?;
+    if !time.bytes().all(|b| b.is_ascii_digit()) || !position.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let time = time.parse::<i64>().ok()?;
+    let position = position.parse::<i64>().ok()?;
+    ((1..=9_007_199_254_740_991).contains(&time) && (0..=604_800_000).contains(&position))
+        .then_some((time, position))
+}
+pub fn track_position_order(value: &Value) -> (i64, &str) {
+    let raw = value.as_str().unwrap_or_default();
+    (parse_track_position(raw).map_or(0, |(time, _)| time), raw)
+}
 pub fn checkpoint_order(value: &Value) -> (i64, &str) {
     let raw = value.as_str().unwrap_or_default();
     (parse_checkpoint(raw).map_or(0, |entry| entry.0), raw)
@@ -314,6 +341,23 @@ pub fn merge(
         let l = local.records.get(&key);
         let r = remote.records.get(&key);
         let value = if let (Some(l), Some(r)) = (l, r)
+            && l.kind == "history"
+            && r.kind == "history"
+        {
+            let mut latest = if text(l, "playedAt") >= text(r, "playedAt") {
+                l.clone()
+            } else {
+                r.clone()
+            };
+            if let Some(position) = [l, r]
+                .into_iter()
+                .filter_map(|record| record.fields.get("resume"))
+                .max_by_key(|value| track_position_order(value))
+            {
+                latest.fields.insert("resume".into(), position.clone());
+            }
+            Some(latest)
+        } else if let (Some(l), Some(r)) = (l, r)
             && l.kind == "collectionProgress"
             && r.kind == l.kind
         {
@@ -334,49 +378,38 @@ pub fn merge(
         } else if l == b {
             r.cloned()
         } else if let (Some(l), Some(r)) = (l, r) {
-            if l.kind == "history" {
-                Some(
-                    if text(l, "playedAt") >= text(r, "playedAt") {
-                        l
-                    } else {
-                        r
-                    }
-                    .clone(),
-                )
-            } else {
-                let mut rec = l.clone();
-                let fields: BTreeSet<_> = l
-                    .fields
-                    .keys()
-                    .chain(r.fields.keys())
-                    .chain(b.into_iter().flat_map(|b| b.fields.keys()))
-                    .cloned()
-                    .collect();
-                for field in fields {
-                    let bv = b.and_then(|b| b.fields.get(&field));
-                    let lv = l.fields.get(&field);
-                    let rv = r.fields.get(&field);
-                    let v = if lv == rv || rv == bv {
-                        lv
-                    } else if lv == bv {
-                        rv
-                    } else {
-                        conflicts.push(Conflict {
-                            key: key.clone(),
-                            field: field.clone(),
-                            local: lv.cloned().unwrap_or(Value::Null),
-                            remote: rv.cloned().unwrap_or(Value::Null),
-                        });
-                        if resolution == Some("remote") { rv } else { lv }
-                    };
-                    if let Some(v) = v {
-                        rec.fields.insert(field, v.clone());
-                    } else {
-                        rec.fields.remove(&field);
-                    }
+            let mut rec = l.clone();
+            let fields: BTreeSet<_> = l
+                .fields
+                .keys()
+                .chain(r.fields.keys())
+                .chain(b.into_iter().flat_map(|b| b.fields.keys()))
+                .cloned()
+                .collect();
+            for field in fields {
+                let bv = b.and_then(|b| b.fields.get(&field));
+                let lv = l.fields.get(&field);
+                let rv = r.fields.get(&field);
+                let v = if lv == rv || rv == bv {
+                    lv
+                } else if lv == bv {
+                    rv
+                } else {
+                    conflicts.push(Conflict {
+                        key: key.clone(),
+                        field: field.clone(),
+                        local: lv.cloned().unwrap_or(Value::Null),
+                        remote: rv.cloned().unwrap_or(Value::Null),
+                    });
+                    if resolution == Some("remote") { rv } else { lv }
+                };
+                if let Some(v) = v {
+                    rec.fields.insert(field, v.clone());
+                } else {
+                    rec.fields.remove(&field);
                 }
-                Some(rec)
             }
+            Some(rec)
         } else {
             conflicts.push(Conflict {
                 key: key.clone(),

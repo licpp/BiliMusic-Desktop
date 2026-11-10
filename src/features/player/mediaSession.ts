@@ -22,7 +22,7 @@ export function connectMediaSession() {
     }
     session.playbackState = state.status === 'playing' ? 'playing' : state.current ? 'paused' : 'none'
     if (state.durationSeconds > 0 && Number.isFinite(state.durationSeconds)) {
-      try { session.setPositionState({ duration: state.durationSeconds, position: Math.max(0, Math.min(state.progressSeconds, state.durationSeconds)), playbackRate: 1 }) } catch { /* Position reporting is optional in WebView runtimes. */ }
+      try { session.setPositionState({ duration: state.durationSeconds, position: Math.max(0, Math.min(state.progressSeconds, state.durationSeconds)), playbackRate: state.rate }) } catch { /* Position reporting is optional in WebView runtimes. */ }
     }
   }
   sync(usePlayerStore.getState())

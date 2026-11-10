@@ -25,6 +25,7 @@ class PlayArgs {
     var position: Double = 0.0
     var volume: Double = 0.7
     var playing: Boolean = true
+    var rate: Double = 1.0
     var collectionRef: String? = null
 }
 @InvokeArg
@@ -198,7 +199,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("title", args.title).putExtra("artist", args.artist)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
-            .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing)
+            .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)
         activity.startForegroundService(intent)
         invoke.resolve()
     }
@@ -231,7 +232,12 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                     invoke.reject("请先开始播放"); return@runOnUiThread
                 }
                 if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
-                else service?.control(args.action, args.value)
+                else try {
+                    service?.control(args.action, args.value)
+                } catch (_: IllegalArgumentException) {
+                    invoke.reject("当前无法调整播放器设置，请重试")
+                    return@runOnUiThread
+                }
             }
             invoke.resolve()
         }

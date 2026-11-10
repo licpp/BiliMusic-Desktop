@@ -75,7 +75,7 @@ class PlaybackService : Service() {
             runCatching { media.currentPosition / 1000.0 }.getOrNull() else null
         val previous = listeningPosition
         if (position != null && previous != null) {
-            listeningSeconds += (position - previous).coerceIn(0.0, (now - listeningAt) / 1000.0)
+            listeningSeconds += ((position - previous) / playbackRate).coerceIn(0.0, (now - listeningAt) / 1000.0)
         }
         listeningPosition = position
         listeningAt = now
@@ -88,6 +88,7 @@ class PlaybackService : Service() {
     }
     private var lastPosition = 0.0
     private var lastDuration = 0.0
+    private var playbackRate = 1f
     private var volume = .7f
     private var artwork: Bitmap? = null
     private var artworkUrl: String? = null
@@ -166,10 +167,11 @@ class PlaybackService : Service() {
     }
     private fun load(intent: Intent) {
         savePosition(force = true)
+        accountListening(true)
+        playbackRate = intent.getDoubleExtra("rate", 1.0).coerceIn(0.75, 2.0).toFloat()
         positionSavedAt = SystemClock.elapsedRealtime() - 15_000
         collectionRef = intent.getStringExtra("collectionRef")
         didFinishTrack = false
-        accountListening(true)
         seeking = false
         listeningPosition = null
         listeningSeconds = 0.0
@@ -202,7 +204,7 @@ class PlaybackService : Service() {
                     seeking = true
                     it.seekTo(offset, MediaPlayer.SEEK_CLOSEST)
                 } else if (status != "paused") {
-                    it.start()
+                    startAtRate(it)
                     status = "playing"
                 }
                 if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH)
@@ -212,7 +214,8 @@ class PlaybackService : Service() {
                 if (player !== it) return@setOnSeekCompleteListener
                 seeking = false
                 listeningPosition = null
-                if (status == "buffering" && !it.isPlaying) { it.start(); status = "playing" }
+                if (status == "buffering" && !it.isPlaying) { startAtRate(it); status = "playing" }
+                savePosition(force = true)
                 publish(false)
             }
             media.setOnCompletionListener {
@@ -270,6 +273,16 @@ class PlaybackService : Service() {
         control("pause")
         return true
     }
+    private fun startAtRate(media: MediaPlayer) {
+        try {
+            media.playbackParams = PlaybackParams().allowDefaults().setSpeed(playbackRate)
+            if (!media.isPlaying) media.start()
+        } catch (_: IllegalArgumentException) {
+            playbackRate = 1f
+            media.playbackParams = PlaybackParams().allowDefaults().setSpeed(playbackRate)
+            if (!media.isPlaying) media.start()
+        }
+    }
     fun control(action: String, value: Double = 0.0) {
         when (action) {
             "sleepStart" -> if (value in 60.0..10800.0) scheduleSleep(value)
@@ -280,7 +293,7 @@ class PlaybackService : Service() {
             "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                    if (!seeking) player?.start()
+                    if (!seeking) player?.let(::startAtRate)
                     status = if (seeking) "buffering" else "playing"
                     handler.removeCallbacks(ticker); handler.post(ticker); publish()
                 } else { pause() }
@@ -290,6 +303,16 @@ class PlaybackService : Service() {
                 accountListening(true)
                 seeking = true
                 player?.seekTo((value.coerceAtLeast(0.0) * 1000).toLong(), MediaPlayer.SEEK_CLOSEST)
+                publish()
+            }
+            "rate" -> if (value in 0.75..2.0) {
+                accountListening()
+                val rate = value.toFloat()
+                if (prepared && !seeking && status != "paused" && player != null) {
+                    val media = player ?: return
+                    media.playbackParams = PlaybackParams().allowDefaults().setSpeed(rate)
+                }
+                playbackRate = rate
                 publish()
             }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
@@ -303,7 +326,7 @@ class PlaybackService : Service() {
             lastDuration = (player?.duration ?: 0) / 1000.0
         }
         return JSObject().put("id", id).put("status", status).put("position", lastPosition)
-            .put("duration", lastDuration).put("stopped", player == null).put("error", error)
+            .put("duration", lastDuration).put("rate", playbackRate).put("stopped", player == null).put("error", error)
             .put("sleepDeadline", sleepDeadline).put("sleepDuration", sleepDuration).put("sleepExpired", sleepExpired)
     }
     private fun publish(notify: Boolean = true) {
@@ -323,7 +346,7 @@ class PlaybackService : Service() {
         lastSystemStatus = status; lastSystemPosition = lastPosition
         val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
         session.setPlaybackState(PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
-            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") 1f else 0f).build())
+            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f).build())
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification())
     }
     private fun updateMetadata() {

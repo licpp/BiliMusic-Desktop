@@ -93,14 +93,30 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             add(format!("favorite:{t}"), "favorite", json!({"trackId":t}));
         }
         if history {
-            let mut q=c.prepare("SELECT track_id,MAX(played_at) FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio) GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200")?;
-            for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
-                let (t, time) = row?;
-                add(
-                    format!("history:{t}"),
-                    "history",
-                    json!({"trackId":t,"playedAt":time}),
-                );
+            let mut q = c.prepare(
+                "SELECT h.track_id,h.played_at,p.seconds,p.observed_at FROM (
+                  SELECT track_id,MAX(played_at) played_at FROM play_history
+                  WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+                  GROUP BY track_id ORDER BY played_at DESC,track_id LIMIT 200
+                ) h LEFT JOIN playback_positions p ON p.track_id=h.track_id",
+            )?;
+            for row in q.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<f64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            })? {
+                let (t, time, seconds, observed) = row?;
+                let mut fields = json!({"trackId":t,"playedAt":time});
+                if let (Some(seconds), Some(observed)) = (seconds, observed)
+                    && (0.0..=604800.0).contains(&seconds)
+                {
+                    fields["resume"] =
+                        json!(format!("{observed}:{}", (seconds * 1000.0).round() as i64));
+                }
+                add(format!("history:{t}"), "history", fields);
             }
         }
         Ok(())
@@ -290,6 +306,16 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                     params![track, time],
                 )?;
             }
+            for r in s.records.values().filter(|r| r.kind == "history") {
+                if let Some((observed, ms)) = parse_track_position(text(r, "resume")) {
+                    tx.execute(
+                        "INSERT INTO playback_positions(track_id,seconds,observed_at) VALUES(?1,?2,?3)
+                         ON CONFLICT(track_id) DO UPDATE SET seconds=excluded.seconds,observed_at=excluded.observed_at
+                         WHERE excluded.observed_at >= playback_positions.observed_at",
+                        params![text(r,"trackId"),ms as f64 / 1000.0,observed],
+                    )?;
+                }
+            }
             tx.execute_batch("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
                 AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
         }
@@ -309,6 +335,7 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
 pub fn prune(c: &Connection) -> rusqlite::Result<()> {
     // Keep exactly the visible recent-list references, never an unbounded metadata archive.
     c.execute("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200)",[])?;
+    c.execute("DELETE FROM playback_positions WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,MAX(id) DESC LIMIT 200)", [])?;
     c.execute("DELETE FROM metadata_overrides WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
     c.execute("DELETE FROM lyrics WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
     Ok(())
@@ -437,7 +464,17 @@ mod tests {
                 )
                 .unwrap();
         }
+        let track = "bilibili:BV123:2";
+        let history = format!("history:{track}");
+        LibraryRepository::save_playback_position(&local, track, 84.5, 200).unwrap();
         let snapshot = export(&local, "42", true).unwrap();
+        assert_eq!(text(&snapshot.records[&history], "resume"), "200:84500");
+        assert!(
+            !export(&local, "42", false)
+                .unwrap()
+                .records
+                .contains_key(&history)
+        );
         let remote = Connection::open_in_memory().unwrap();
         remote
             .execute_batch(include_str!("../../migrations/0001_initial.sql"))
@@ -446,6 +483,39 @@ mod tests {
         apply(&remote, &snapshot, true).unwrap();
         let recent = LibraryRepository::recent(&remote, 10).unwrap();
         assert_eq!(recent.iter().map(|t| t.cid).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(
+            LibraryRepository::playback_position(&remote, track).unwrap(),
+            84.5
+        );
+        LibraryRepository::save_playback_position(&remote, track, 0.0, 300).unwrap();
+        let restarted = export(&remote, "42", true).unwrap();
+        let (merged, conflicts) = merge(&snapshot, &restarted, &snapshot, None);
+        assert!(conflicts.is_empty());
+        assert_eq!(text(&merged.records[&history], "resume"), "300:0");
+
+        let mut left = crate::sync::dav::Doc::empty("42");
+        left.update("first", &snapshot).unwrap();
+        let mut right = left.clone();
+        let mut seeked = snapshot.clone();
+        seeked
+            .records
+            .get_mut(&history)
+            .unwrap()
+            .fields
+            .insert("resume".into(), json!("250:123000"));
+        left.update("first", &seeked).unwrap();
+        right.update("second", &restarted).unwrap();
+        left.join(right).unwrap();
+        let (dav, conflicts) = left.materialize().unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(text(&dav.records[&history], "resume"), "300:0");
+
+        apply(&local, &merged, true).unwrap();
+        assert_eq!(
+            LibraryRepository::playback_position(&local, track).unwrap(),
+            0.0
+        );
+
         assert_eq!(
             remote
                 .query_row("SELECT COUNT(*) FROM play_history", [], |r| r

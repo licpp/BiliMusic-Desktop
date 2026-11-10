@@ -1,4 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { TouchOptions } from '../../shared/TouchOptions'
+import { isMobile } from '../../services/platform'
 import { useState } from 'react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage } from '../../services/desktopApi'
@@ -46,8 +48,15 @@ export function PlaybackSettings({ track, kind, onChanged }: {
   }
 
   if (!supported) return null
+  const automatic = audio ? '自动 · 最佳音质' : '自动 · 优先流畅'
+  const touchOptions = [
+    { value: '0', label: automatic },
+    ...(choices ?? []).map(choice => ({ value: String(choice.id), label: choice.label })),
+    ...(missing ? [{ value: String(selected), label: '已记住偏好' }] : []),
+  ]
   return <div className="playback-quality-settings" data-kind={kind}>
-    <label>
+    {isMobile ? <TouchOptions label={audio ? '音质' : '清晰度'} selected={String(selected)} options={touchOptions}
+      disabled={busy || !preferences.data || !choices} onChange={value => void change(Number(value))}/> : <label>
       {audio ? '音质' : '清晰度'}
       <select aria-label={audio ? '音频质量' : '视频清晰度'} disabled={busy || !preferences.data || !choices}
         value={selected} onChange={event => void change(Number(event.target.value))}>
@@ -55,7 +64,7 @@ export function PlaybackSettings({ track, kind, onChanged }: {
         {choices?.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
         {missing && <option value={selected}>{audio ? '已记住偏好 · 本曲使用可用音质' : '已记住偏好 · 本片自动适配'}</option>}
       </select>
-    </label>
+    </label>}
     {(error || queryError) && <p role="alert">{error || commandErrorMessage(queryError)}</p>}
     {busy && <small role="status">正在切换…</small>}
   </div>

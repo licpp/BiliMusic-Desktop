@@ -379,6 +379,10 @@ pub async fn sync_now(
             initial.use_legacy_cloud_format();
             baseline.use_legacy_cloud_format();
         }
+        if !remote.track_positions {
+            initial.omit_track_positions();
+            baseline.omit_track_positions();
+        }
         let mut local = initial.clone();
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
@@ -435,6 +439,9 @@ pub async fn sync_now(
         let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
         if remote.legacy_cloud {
             current.use_legacy_cloud_format();
+        }
+        if !remote.track_positions {
+            current.omit_track_positions();
         }
         // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
         let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));

@@ -16,13 +16,13 @@ struct QueueTrack: Codable {
     var durationSeconds: Double; var liked: Bool?; var resolveParts: Bool?; var videoTitle: String?; var partCount: Int?
 }
 struct PlayArgs: Decodable {
-    let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?; let collectionRef: String?
+    let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?; let rate: Double?; let collectionRef: String?
 }
 struct ControlArgs: Decodable {
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
 }
 struct QueueArgs: Decodable {
-    let tracks: [QueueTrack]; let repeatMode: String; let shuffled: Bool
+    let tracks: [QueueTrack]; let repeatMode: String; let shuffled: Bool; let autoResume: Bool?
 }
 struct SecretArgs: Decodable {
     let key: String; let value: String?; let remove: Bool?
@@ -33,6 +33,7 @@ struct RemoveListenerArgs: Decodable { let event: String; let channelId: UInt64 
 struct PlayerSnapshot: Encodable {
     var id: String?
     var status = "paused"
+    var rate: Double = 1
     var position: Double = 0
     var duration: Double = 0
     var stopped = true
@@ -45,7 +46,7 @@ struct PlayerSnapshot: Encodable {
     var sleepExpired = false
 }
 struct ResolveRequest: Encodable {
-    let profile: String; let track: QueueTrack; let restart: Bool
+    let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
 }
 struct ResolvedTrack: Decodable {
     let url: String?; let track: QueueTrack?; let error: String?
@@ -91,8 +92,10 @@ class PlayerPlugin: Plugin {
     private var listeners: [UInt64: Channel] = [:]
     private var repeatMode = "off"
     private var shuffled = false
+    private var autoResume = true
     private var generation: Int64 = 0
     private var profile = ""
+    private var playbackRate: Float = 1
     private var desiredPlaying = false
     private var startPosition: Double = 0
     private var initialSeekPending = false
@@ -167,6 +170,7 @@ class PlayerPlugin: Plugin {
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
             savePosition(force: true)
             collectionRef = args.collectionRef
+            playbackRate = Float(min(2, max(0.75, args.rate ?? 1)))
             generation += 1; state.revision = generation
             state.id = args.id; state.track = tracks.first { $0.id == args.id }
             prepareArtwork(for: state.track)
@@ -186,7 +190,7 @@ class PlayerPlugin: Plugin {
                 if track.resolveParts == true, let parts = expandedEntries[track.id] { return parts }
                 return [track]
             }.filter { seen.insert($0.id).inserted }
-            repeatMode = args.repeatMode; shuffled = args.shuffled
+            repeatMode = args.repeatMode; shuffled = args.shuffled; autoResume = args.autoResume ?? true
             if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; prepareArtwork(for: track); nowPlaying() }
             invoke.resolve()
         }
@@ -222,6 +226,15 @@ class PlayerPlugin: Plugin {
             case "pause": pause()
             case "resume": resume()
             case "seek": seek(args.value ?? 0)
+            case "rate":
+                if let value = args.value, value.isFinite, (0.75...2).contains(value) {
+                    playbackRate = Float(value)
+                    if desiredPlaying && !initialSeekPending && player.currentItem?.status == .readyToPlay {
+                        player.playImmediately(atRate: playbackRate)
+                    }
+                    refresh()
+                    nowPlaying()
+                }
             case "volume": player.volume = Float(min(1, max(0, args.value ?? 0.7)))
             case "theme":
                 let light = args.value == 1
@@ -364,18 +377,18 @@ class PlayerPlugin: Plugin {
                             self?.onMain { [weak self] in
                                 guard let self, self.generation == request, item === self.player.currentItem else { return }
                                 self.initialSeekPending = false
-                                if completed && self.desiredPlaying { self.player.playImmediately(atRate: 1) }
+                                if completed && self.desiredPlaying { self.player.playImmediately(atRate: self.playbackRate) }
                                 self.endBackgroundTask(); self.refresh()
                             }
                         }
                     } else {
-                        if self.desiredPlaying && self.player.timeControlStatus != .playing { self.player.playImmediately(atRate: 1) }
+                        if self.desiredPlaying && self.player.timeControlStatus != .playing { self.player.playImmediately(atRate: self.playbackRate) }
                         self.endBackgroundTask(); self.refresh()
                     }
                 }
             }
         }
-        if autoplay && position == 0 { player.playImmediately(atRate: 1) } else { player.pause() }; accountListening(); publish()
+        if autoplay && position == 0 { player.playImmediately(atRate: playbackRate) } else { player.pause() }; accountListening(); publish()
     }
     private func clearSleep() {
         sleepWork?.cancel()
@@ -419,15 +432,25 @@ class PlayerPlugin: Plugin {
             try activate()
             let position = player.currentTime().seconds
             if state.duration > 0 && position.isFinite && position >= state.duration - 0.25 { seek(0) }
-            desiredPlaying = true; player.play(); refresh()
+            desiredPlaying = true; player.playImmediately(atRate: playbackRate); refresh()
         } catch { fail("无法恢复播放") }
     }
+    private var seekRevision = 0
     private func seek(_ seconds: Double) {
         accountListening(flush: true)
         guard seconds.isFinite else { return }
         didFinishTrack = false
         let target = max(0, min(seconds, state.duration > 0 ? state.duration : seconds))
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        seekRevision += 1
+        let revision = seekRevision
+        let item = player.currentItem
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
+            self?.onMain { [weak self] in
+                guard let self, completed, self.seekRevision == revision, self.player.currentItem === item else { return }
+                self.savePosition(force: true)
+                self.refresh()
+            }
+        }
         state.position = target; publish()
     }
     private func stop() {
@@ -486,6 +509,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func publish() {
+        state.rate = Double(playbackRate)
         state.expandedEntries = expandedEntries.isEmpty ? nil : expandedEntries
         state.sleepDeadline = sleepDeadline
         state.sleepDuration = sleepDuration
@@ -517,7 +541,7 @@ class PlayerPlugin: Plugin {
         lastNowPlayingStatus = state.status
         lastNowPlayingID = id
         var info: [String: Any] = [MPMediaItemPropertyTitle: state.track?.title ?? "BiliMusic", MPMediaItemPropertyArtist: state.track?.artist ?? "歌手未知", MPNowPlayingInfoPropertyExternalContentIdentifier: id,
-                                  MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? 1.0 : 0.0]
+                                  MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? Double(playbackRate) : 0.0]
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }
         if let album = state.track?.album { info[MPMediaItemPropertyAlbumTitle] = album }
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
@@ -568,7 +592,7 @@ class PlayerPlugin: Plugin {
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in self?.fail("后台加载超时，请返回应用继续播放") }
         publish()
-        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart)),
+        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
         json.withCString { resolveTrack(generation, $0) }
     }

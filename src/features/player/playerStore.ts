@@ -17,11 +17,12 @@ import { commandErrorMessage, isConnectionError } from '../../services/userError
 import { demoTracks } from '../library/demoTracks'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
+export const playbackRates = [0.75, 1, 1.25, 1.5, 1.75, 2] as const
 export type RepeatMode = 'off' | 'all' | 'one'
 type SleepState = { deadline: number; duration: number; expired: boolean }
 const noSleep = { deadline: 0, duration: 0, expired: false }
 export type QueueSource = { kind: 'video' | 'season'; title: string; collectionRef?: string }
-type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; autoResume: boolean; setAutoResume: (enabled: boolean) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
@@ -109,7 +110,7 @@ export async function resetPlayerForAccount() {
   await positionWrite
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
   if (isMobile) await controlMobileAudio('stop').catch(() => undefined)
-  usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, status: 'paused', progressSeconds: 0, durationSeconds: 0, error: null })
+  usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
   flushPlayerSnapshot()
 }
 export function playbackClock() { if (isMobile) return mobilePlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
@@ -131,6 +132,7 @@ function playerAudio() {
   audio.addEventListener('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
   audio.addEventListener('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
   audio.addEventListener('timeupdate', () => usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }))
+  audio.addEventListener('seeked', () => flushPosition(true))
   audio.addEventListener('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
   audio.addEventListener('ended', () => void usePlayerStore.getState().next(true))
   audio.addEventListener('error', () => {
@@ -142,7 +144,7 @@ function playerAudio() {
 }
 
 export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
-  sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, shuffled: false, repeatMode: 'off',
+  sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, rate: 1, autoResume: true, setAutoResume: autoResume => set({ autoResume }), shuffled: false, repeatMode: 'off',
   play: async (track, startAt, refreshing = false) => {
     const previous = get()
     if (!refreshing && startAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') return
@@ -173,28 +175,28 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const [storedTrack, , resumeAt] = await Promise.all([
         recordPlayedTrack(track),
         isMobile ? prepareMobileAudio(track) : Promise.resolve(),
-        startAt === undefined ? positionWrite.then(() => readPlaybackPosition(track.id)) : startAt,
+        startAt ?? (get().autoResume ? positionWrite.then(() => readPlaybackPosition(track.id)) : 0),
       ])
       if (request !== playRequest) return
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
-      const position = startAt === undefined ? usablePlaybackPosition(resumeAt, storedTrack.durationSeconds) : Math.max(0, resumeAt)
+      const position = startAt === undefined ? (get().autoResume ? usablePlaybackPosition(resumeAt, storedTrack.durationSeconds) : 0) : Math.max(0, resumeAt)
       set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds, progressSeconds: position })
       const [url] = await Promise.all([
         getTrackPlaybackUrl(storedTrack, refreshing || previous.status === 'error'),
         isMobile ? ensureNativeReady().then(async () => {
           if (!isIOS || request !== playRequest) return
           const state = get()
-          await syncIOSQueue(state.queue, state.repeatMode, state.shuffled)
+          await syncIOSQueue(state.queue, state.repeatMode, state.shuffled, state.autoResume)
         }) : Promise.resolve(),
       ])
       if (request !== playRequest) return
       loadedCollectionRef = get().queueSource?.collectionRef
       if (isMobile) {
         loadedTrackId = storedTrack.id
-        await playMobileAudio(storedTrack, url, position, get().volume, true, loadedCollectionRef)
+        await playMobileAudio(storedTrack, url, position, get().volume, true, loadedCollectionRef, get().rate)
         return
       }
-      const element = playerAudio(); element.src = url; element.currentTime = position; loadedTrackId = storedTrack.id; await element.play()
+      const element = playerAudio(); element.src = url; element.playbackRate = get().rate; element.currentTime = position; loadedTrackId = storedTrack.id; await element.play()
     } catch (error) {
       if (request !== playRequest) return
       if (isMobile) {
@@ -223,7 +225,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     else {
       switchCollectionContext(queueSource?.collectionRef)
       if (startAt !== undefined && loadedTrackId === selected.id) {
-        if (oldSource?.collectionRef !== queueSource?.collectionRef) get().seek(startAt)
+        if (startAt === 0 || oldSource?.collectionRef !== queueSource?.collectionRef) get().seek(startAt)
         if (status === 'paused') await get().toggle()
       }
       if (selected.resolveParts) void prepareSeasonQueueEntry(selected).catch(() => undefined)
@@ -246,6 +248,9 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   moveInQueue: (id, direction) => { ++queueIntent; set(({ queue }) => { const next = [...queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next } }) },
   toggle: async () => {
     const { current, status } = get(); if (!current) return
+    const resumeAt = () => get().autoResume || status === 'error'
+      ? usablePlaybackPosition(get().progressSeconds, get().durationSeconds) || undefined
+      : 0
     if (!inDesktopShell) { set({ status: status === 'playing' ? 'paused' : 'playing' }); return }
     if (isMobile) {
       if (status === 'resolving') {
@@ -259,7 +264,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         set({ status: pausing ? 'paused' : 'playing' })
         try {
           await controlMobileAudio(pausing ? 'pause' : 'resume')
-          if (pausing && loadedCollectionRef) window.dispatchEvent(new Event('bilimusic-data-changed'))
+          if (pausing) window.dispatchEvent(new Event('bilimusic-data-changed'))
         }
         catch (error) { set({ status, error: commandErrorMessage(error, '无法控制播放，请重试') }) }
         return
@@ -270,32 +275,43 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         const pausing = nativeState.status === 'playing' || nativeState.status === 'buffering'
         set({ status: pausing ? 'paused' : 'playing' })
         await controlMobileAudio(pausing ? 'pause' : 'resume').catch(nativeError)
-      } else await get().play(current, usablePlaybackPosition(get().progressSeconds, get().durationSeconds) || undefined)
+      } else await get().play(current, resumeAt())
       return
     }
     const element = playerAudio()
     if (status === 'resolving') { ++playRequest; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
     else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => set({ status: 'error', error: '恢复播放失败' }))
-    else await get().play(current, usablePlaybackPosition(get().progressSeconds, get().durationSeconds) || undefined)
+    else await get().play(current, resumeAt())
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
   next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null } if (fromEnded && repeatMode === 'one' && current) { await get().play(current, 0); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex], fromEnded && queue[nextIndex].id === current?.id ? 0 : undefined) },
   previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
   seek: (seconds) => { const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(nativeError); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
   setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(nativeError); else playerAudio().volume = normalized; set({ volume: normalized }) },
+  setRate: async rate => {
+    if (!playbackRates.some(option => option === rate) || rate === get().rate) return
+    const previous = get().rate
+    set({ rate })
+    try {
+      if (isMobile && loadedTrackId) await controlMobileAudio('rate', rate)
+      else if (audio) audio.playbackRate = rate
+    } catch {
+      if (get().rate === rate) set({ rate: previous, error: '当前无法调整播放速度，请重试' })
+    }
+  },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
   cycleRepeat: () => set(({ repeatMode }) => ({ shuffled:false, repeatMode: repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off' })),
   cyclePlaybackMode: () => set(({ shuffled, repeatMode }) => shuffled ? { shuffled:false, repeatMode:'off' } : repeatMode === 'off' ? { shuffled:false, repeatMode:'all' } : repeatMode === 'all' ? { shuffled:false, repeatMode:'one' } : { shuffled:true, repeatMode:'all' }),
   updateTrack: (track) => set(({ current, queue }) => ({ current: current?.id === track.id ? track : current, queue: queue.map(item => item.id === track.id ? { ...item, ...track, resolveParts: item.resolveParts } : item) })),
-}), { name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage), merge: (persisted, initial) => { const saved = persisted as Partial<PlayerState>; const normalize = (track: Track) => ({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') }); return { ...initial, ...saved, repeatMode: saved.shuffled ? 'all' : saved.repeatMode || initial.repeatMode, current: saved.current ? normalize(saved.current) : initial.current, queue: Array.isArray(saved.queue) ? saved.queue.map(normalize) : initial.queue } }, partialize: ({ current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode }) => ({ current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode }) }))
+}), { name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage), merge: (persisted, initial) => { const saved = persisted as Partial<PlayerState>; const normalize = (track: Track) => ({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') }); return { ...initial, ...saved, repeatMode: saved.shuffled ? 'all' : saved.repeatMode || initial.repeatMode, current: saved.current ? normalize(saved.current) : initial.current, queue: Array.isArray(saved.queue) ? saved.queue.map(normalize) : initial.queue } }, partialize: ({ current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, autoResume }) => ({ current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, autoResume }) }))
 
 function flushPosition(notify = false) {
   const state = usePlayerStore.getState()
   if (state.current && loadedTrackId === state.current.id) {
     savePosition(state.current, playbackClock(), state.durationSeconds)
-    if (notify && loadedCollectionRef && !isMobile) {
-      void positionWrite.then(() => window.dispatchEvent(new Event('bilimusic-data-changed')))
+    if (notify && !isMobile) {
+      void positionScope.then(scope => scope === undefined ? undefined : positionWrite.then(() => window.dispatchEvent(new Event('bilimusic-data-changed'))))
     }
   }
 }
@@ -304,7 +320,7 @@ usePlayerStore.subscribe((state, previous) => {
   if (state.current?.id !== previous.current?.id && typeof sessionStorage !== 'undefined') sessionStorage.removeItem('lyrics-subtitles-override')
   if (isMobile) return
   if (state.status === 'paused' && previous.status !== 'paused' && state.current?.id === previous.current?.id) flushPosition(true)
-  else if (state.status === 'playing' && ((loadedCollectionRef && previous.status !== 'playing') ||
+  else if (state.status === 'playing' && (previous.status !== 'playing' ||
     (state.progressSeconds !== previous.progressSeconds && Date.now() - lastPositionWrite >= 15_000))) flushPosition()
 })
 
@@ -349,7 +365,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (state.status === 'paused' && usePlayerStore.getState().status === 'resolving') ++playRequest
   loadedTrackId = state.stopped ? null : state.id
   if (state.status === 'error' && state.error && !document.hidden && recoverPlayback(state.error)) return
-  if (!state.stopped && state.status === 'paused' && loadedCollectionRef && usePlayerStore.getState().status !== 'paused') {
+  if (!state.stopped && state.status === 'paused' && usePlayerStore.getState().status !== 'paused') {
     window.dispatchEvent(new Event('bilimusic-data-changed'))
   }
   if (!state.stopped && state.status === 'playing' && nativeHistoryId !== state.id) {
@@ -405,10 +421,10 @@ if (isIOS) window.setInterval(() => {
 }, 250)
 
 if (isIOS) usePlayerStore.subscribe((state, previous) => {
-  if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled) {
+  if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled || state.autoResume !== previous.autoResume) {
     void ensureNativeReady().then(() => {
       const current = usePlayerStore.getState()
-      return syncIOSQueue(current.queue, current.repeatMode, current.shuffled)
+      return syncIOSQueue(current.queue, current.repeatMode, current.shuffled, current.autoResume)
     }).catch(error => console.warn('BiliMusic: queue update failed', error))
   }
 })
@@ -421,7 +437,7 @@ export async function reloadCurrentAudioSource() {
   const url=await getTrackPlaybackUrl(track)
   if(request!==playRequest || usePlayerStore.getState().current?.id!==track.id)return
   const state=usePlayerStore.getState(),position=playbackClock(),playing=state.status==='playing'||state.status==='buffering'
-  if(isIOS) await playIOSAudio(track,url,position,state.volume,playing,loadedCollectionRef)
-  else if(isMobile) await playMobileAudio(track,url,position,state.volume,playing,loadedCollectionRef)
-  else {const element=playerAudio();element.src=url;element.currentTime=position;if(playing)await element.play();else element.pause()}
+  if(isIOS) await playIOSAudio(track,url,position,state.volume,playing,loadedCollectionRef,state.rate)
+  else if(isMobile) await playMobileAudio(track,url,position,state.volume,playing,loadedCollectionRef,state.rate)
+  else {const element=playerAudio();element.src=url;element.playbackRate=state.rate;element.currentTime=position;if(playing)await element.play();else element.pause()}
 }

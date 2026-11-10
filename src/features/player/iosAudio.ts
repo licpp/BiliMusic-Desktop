@@ -2,13 +2,13 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 import type { Track } from '../../domain/track'
 import type { RepeatMode } from './playerStore'
 
-export type IOSAudioState = { sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; track?: Track; revision?: number }
+export type IOSAudioState = { sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; rate?: number; duration?: number; error?: string; track?: Track; revision?: number }
 let ready: Promise<unknown> | undefined
 let listener: PluginListener | undefined
 let consumer: ((state: IOSAudioState) => void) | undefined
 let listenerGeneration = 0
 let lastEventAt = performance.now()
-let clock = { position: 0, at: 0, playing: false, duration: 0 }
+let clock = { position: 0, at: 0, playing: false, rate: 1, duration: 0 }
 let revision = -1
 function bindIOSAudio() {
   const generation = ++listenerGeneration
@@ -17,7 +17,7 @@ function bindIOSAudio() {
     if ((state.revision ?? 0) < revision) return
     lastEventAt = performance.now()
     revision = state.revision ?? 0
-    if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', duration: state.duration || 0 }
+    if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', rate: state.rate ?? 1, duration: state.duration || 0 }
     consumer?.(state)
   }).then(value => { listener = value; return value }).catch(error => { if (generation === listenerGeneration) ready = undefined; throw error })
 }
@@ -36,17 +36,17 @@ export async function restartIOSAudioObservation() {
 }
 export const iosListenerAge = () => performance.now() - lastEventAt
 export const setIOSCollection = (id: string, collectionRef?: string) => invoke('plugin:ios-player|control', { action: 'collection', id, collectionRef })
-export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled })
-export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string) {
+export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, autoResume = true) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled, autoResume })
+export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1) {
   await ready
-  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef })
+  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef, rate })
 }
 export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {
   const state = await invoke<IOSAudioState>('plugin:ios-player|snapshot')
   lastEventAt = performance.now()
-  if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', duration: state.duration || 0 }
+  if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', rate: state.rate ?? 1, duration: state.duration || 0 }
   return state
 }
 export const prepareIOSAudio = (track: Track) => invoke('plugin:ios-player|control', { action: 'prepare', id: track.id })
-export function iosPlaybackClock() { return clock.position + (clock.playing ? Math.max(0, performance.now() - clock.at) / 1000 : 0) }
+export function iosPlaybackClock() { return clock.position + (clock.playing ? Math.max(0, performance.now() - clock.at) * clock.rate / 1000 : 0) }

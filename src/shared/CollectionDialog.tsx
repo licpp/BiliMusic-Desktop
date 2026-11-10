@@ -2,7 +2,7 @@ import { createPortal } from 'react-dom'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 
-export function CollectionDialog({ title, onClose, children }: {title:string;onClose:()=>void;children:ReactNode}) {
+export function CollectionDialog({ title, onClose, children, className = '' }: {title:string;className?:string;onClose:()=>void;children:ReactNode}) {
   const layer=useRef<HTMLDivElement>(null), dismiss=useRef(onClose)
   dismiss.current=onClose
   useEffect(()=>{
@@ -24,5 +24,5 @@ export function CollectionDialog({ title, onClose, children }: {title:string;onC
     layer.current?.querySelector<HTMLElement>('input,button')?.focus()
     return()=>{document.removeEventListener('keydown',keyboard,true);window.removeEventListener('bilimusic-back',back,true);if(root)root.inert=wasInert;if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus()}
   },[])
-  return createPortal(<div ref={layer} className="dialog-backdrop collection-dialog-layer" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="collection-dialog" role="dialog" aria-modal="true" aria-label={title}><header><h3>{title}</h3><button className="collection-icon" aria-label="关闭" onClick={onClose}><X size={19}/></button></header>{children}</section></div>,document.body)
+  return createPortal(<div ref={layer} className="dialog-backdrop collection-dialog-layer" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className={'collection-dialog ' + className} role="dialog" aria-modal="true" aria-label={title}><header><h3>{title}</h3><button className="collection-icon" aria-label="关闭" onClick={onClose}><X size={19}/></button></header>{children}</section></div>,document.body)
 }

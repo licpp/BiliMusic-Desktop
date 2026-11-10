@@ -136,14 +136,17 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     track["coverUrl"] = json!(stored.cover_url);
     track["durationSeconds"] = json!(stored.duration_seconds);
     track["liked"] = json!(stored.liked);
-    let position = if payload["restart"].as_bool() == Some(true) {
+    let position = if payload["restart"].as_bool() == Some(true)
+        || payload["autoResume"].as_bool() == Some(false)
+    {
         0.0
     } else {
         let db = app.state::<Database>();
         let connection = db.0.lock().map_err(|_| "数据库正忙")?;
         let saved =
             LibraryRepository::playback_position(&connection, &stored.id).unwrap_or_default();
-        if saved >= 1.0
+        if saved.is_finite()
+            && saved >= 1.0
             && (stored.duration_seconds == 0 || saved < stored.duration_seconds as f64 - 1.0)
         {
             saved

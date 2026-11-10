@@ -132,6 +132,12 @@ impl Doc {
                     .max_by_key(|r| checkpoint_order(&r.value))
                     .unwrap()
                     .value
+            } else if kind == "history" && field == "resume" {
+                &regs
+                    .iter()
+                    .max_by_key(|r| track_position_order(&r.value))
+                    .unwrap()
+                    .value
             } else if kind == "history" && field == "playedAt" {
                 &regs
                     .iter()
@@ -144,7 +150,7 @@ impl Doc {
             let distinct: BTreeSet<_> = regs.iter().map(|r| r.value.to_string()).collect();
             if distinct.len() > 1
                 && kind != "collectionProgress"
-                && !(kind == "history" && field == "playedAt")
+                && !(kind == "history" && matches!(field.as_str(), "playedAt" | "resume"))
             {
                 conflicts.push(Conflict {
                     key: key.clone(),
@@ -163,7 +169,9 @@ impl Doc {
                 kind,
                 fields: BTreeMap::new(),
             });
-            record.fields.insert(field, value.clone());
+            if !(record.kind == "history" && field == "resume" && value.is_null()) {
+                record.fields.insert(field, value.clone());
+            }
         }
         snapshot.records.retain(|k, _| !absent.contains(k));
         snapshot.compact(true);
@@ -406,6 +414,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             }),
             conflicts: vec![],
             legacy_cloud: false,
+            track_positions: true,
         });
     }
     check(status)?;
@@ -465,6 +474,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         }),
         conflicts,
         legacy_cloud: false,
+        track_positions: true,
     })
 }
 pub async fn write(

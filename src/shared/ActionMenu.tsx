@@ -1,18 +1,30 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal, X } from 'lucide-react'
 import { isMobile } from '../services/platform'
 
-export function ActionMenu({ label = '更多操作', panel = false, sheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { label?: string; panel?: boolean; sheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
+export function ActionMenu({ label = '更多操作', panel = false, sheet = false, touchSheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { label?: string; panel?: boolean; sheet?: boolean; touchSheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
-  const isSheet=!floating && (sheet || isMobile) && compact
+  const isSheet=!floating && (touchSheet || ((sheet || isMobile) && compact))
+  const touch = isSheet && touchSheet
   const [position, setPosition] = useState<{ left: number; top: number; anchorTop?: number } | null>(null)
   const open = Boolean(position)
   useEffect(() => { onOpenChange?.(open); return () => { if (open) onOpenChange?.(false) } }, [open, onOpenChange])
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
-  const close = () => setPosition(null)
+  const movedHandle = useRef(false)
+  const drag = useRef<{ id: number; y: number } | null>(null)
+  const close = () => { drag.current = null; setPosition(null) }
+  const endDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (drag.current?.id !== event.pointerId) return
+    movedHandle.current ||= Math.abs(event.clientY - drag.current.y) > 8
+    const dismiss = event.type === 'pointerup' && event.clientY - drag.current.y >= 56
+    drag.current = null
+    menu.current?.removeAttribute('data-touch-dragging')
+    menu.current?.style.removeProperty('transform')
+    if (dismiss) close()
+  }
   useEffect(() => {
     if (contextPosition) setPosition(contextPosition)
   }, [contextPosition])
@@ -58,24 +70,41 @@ export function ActionMenu({ label = '更多操作', panel = false, sheet = fals
     document.addEventListener('pointerdown', dismiss)
     document.addEventListener('keydown', escape)
     window.addEventListener('bilimusic-back', back, true)
-    window.addEventListener('resize', close)
+    if (!touch) window.addEventListener('resize', close)
     window.addEventListener('scroll', scroll, true)
     menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
     return () => {
       document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape)
       window.removeEventListener('bilimusic-back', back, true); window.removeEventListener('resize', close); window.removeEventListener('scroll', scroll, true)
     }
-  }, [position])
+  }, [position, touch])
   return <><button ref={trigger} type="button" className="action-menu-trigger" aria-label={label} title={label} aria-haspopup={panel ? 'dialog' : 'menu'} aria-expanded={Boolean(position)} onClick={(event) => {
     event.stopPropagation()
     if (position) { close(); return }
     const rect = trigger.current!.getBoundingClientRect()
     setPosition({ left: rect.right, top: rect.bottom + 6, anchorTop: rect.top })
-  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} onKeyDown={(event) => {
+  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel data-touch-sheet={touch || undefined} className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} aria-modal={touch || undefined} onKeyDown={(event) => {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input,select,textarea')) return
     event.preventDefault()
     const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
     buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus()
-  }}>{floating && <header className="action-menu-floating-heading"><span>{label}</span><button type="button" aria-label="关闭设置" onClick={close}><X size={18}/></button></header>}{isSheet&&<div className="action-sheet-heading">{label}</div>}{children(close)}{isSheet&&<button onClick={close}>取消</button>}</div></div>, document.body)}</>
+  }}>{floating && <header className="action-menu-floating-heading"><span>{label}</span><button type="button" aria-label="关闭设置" onClick={close}><X size={18}/></button></header>}{touch ? <header className="touch-sheet-header">
+    <button type="button" className="touch-sheet-handle" aria-label="收起设置" onClick={event => { if (event.detail === 0 || !movedHandle.current) close() }}
+      onPointerDown={event => {
+        movedHandle.current = false
+        drag.current = { id: event.pointerId, y: event.clientY }
+        menu.current?.setAttribute('data-touch-dragging', '')
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={event => {
+        if (drag.current?.id === event.pointerId) {
+          movedHandle.current ||= Math.abs(event.clientY - drag.current.y) > 8
+          menu.current?.style.setProperty('transform', 'translateY(' + Math.max(0, event.clientY - drag.current.y) + 'px)')
+        }
+      }}
+      onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag}><span /></button>
+    <div><strong>{label}</strong><button type="button" aria-label="关闭设置" onClick={close}><X size={18}/></button></div>
+  </header> : isSheet && <div className="action-sheet-heading">{label}</div>}
+  {children(close)}{isSheet && !touch && <button onClick={close}>取消</button>}</div></div>, document.body)}</>
 }

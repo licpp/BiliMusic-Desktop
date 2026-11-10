@@ -190,3 +190,33 @@ test('transient playback connection errors retry once with a fresh source', asyn
   assert.equal(audio[0].plays, 1)
   assert.equal(audio[0].currentTime, 27)
 })
+
+test('playback rate changes in place and carries to the next song', async () => {
+  const { store, audio, listeners } = setup()
+  await store.getState().playFromList([track('1'), track('2')], '1')
+  audio[0].currentTime = 21
+  await store.getState().setRate(1.5)
+  assert.equal(audio[0].currentTime, 21)
+  assert.equal(audio[0].plays, 1)
+  assert.equal(audio[0].playbackRate, 1.5)
+  await store.getState().next()
+  assert.equal(audio[0].playbackRate, 1.5)
+  assert.equal(audio[0].plays, 2)
+  listeners.pagehide()
+})
+
+test('automatic resume defaults on, persists off, and permits manual resume', async () => {
+  const initial = setup()
+  assert.equal(initial.store.getState().autoResume, true)
+  initial.store.getState().setAutoResume(false)
+  initial.listeners.pagehide()
+  const saved = JSON.parse(initial.storage.get('resonance-player-v1'))
+  const longTrack = { ...track('1'), durationSeconds: 720 }
+  Object.assign(saved.state, { current: longTrack, queue: [longTrack], progressSeconds: 85, durationSeconds: 720 })
+  const { store, audio } = setup(saved)
+  assert.equal(store.getState().autoResume, false)
+  await store.getState().toggle()
+  assert.equal(audio[0].currentTime, 0)
+  await store.getState().play({ ...longTrack, id: '2' }, 85)
+  assert.equal(audio[0].currentTime, 85)
+})

@@ -11,11 +11,11 @@ function hasBufferedTarget(buffered: TimeRanges, target: number) {
 
 // Returns whether an explicit alignment still needs to be applied.
 export function synchronizeVideo(
-  video: VideoClock, audioTime: number, playing: boolean, previousTime: number, force = false, elapsedSeconds = 0,
+  video: VideoClock, audioTime: number, playing: boolean, previousTime: number, force = false, elapsedSeconds = 0, rate = 1,
 ) {
   if (!playing && !video.paused) video.pause()
   const change = audioTime - previousTime
-  const jumped = change < -1 || change > elapsedSeconds + 1
+  const jumped = change < -1 || change > elapsedSeconds * rate + 1
   const align = force || jumped
   if (video.readyState < 1 || video.seeking) return align
 
@@ -27,12 +27,12 @@ export function synchronizeVideo(
   const bufferedCorrection = ready && Math.abs(drift) > 2 && hasBufferedTarget(video.buffered, target)
   if (Math.abs(drift) > .2 && (align || (ready && !playing) || bufferedCorrection)) {
     video.currentTime = target
-    video.playbackRate = 1
+    video.playbackRate = rate
     return false
   }
 
   if (ready) {
-    video.playbackRate = Math.abs(drift) < .12 ? 1 : drift > 2 ? 1.18 : drift > 0 ? 1.06 : .94
+    video.playbackRate = rate * (Math.abs(drift) < .12 ? 1 : drift > 2 ? 1.18 : drift > 0 ? 1.06 : .94)
     if (playing && video.paused) void video.play().catch(() => undefined)
   }
   return false
