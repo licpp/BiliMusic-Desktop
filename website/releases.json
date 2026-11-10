@@ -1,6 +1,6 @@
 {
-  "version": "0.2.4",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.4",
+  "version": "0.2.5",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.2.5",
   "platforms": [
     {
       "id": "mac",
@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.2.4_macOS_AppleSilicon.dmg",
-      "size": 5361797,
-      "sha256": "dcdfbc5f841be12f389c463c5ec88504ae2b1c6fc8f06186c13b767c1b072f37",
+      "file": "BiliMusic_0.2.5_macOS_AppleSilicon.dmg",
+      "size": 5129695,
+      "sha256": "0c5ac2f359a5af380fd7ad38cda51b4b69b4003ec31dadaa4190d103ecea1990",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.2.4_Windows_x64-setup.exe",
-      "size": 3781394,
-      "sha256": "a8651aed28e767a9c70cc86e4f8981a923ea5b46c2941f020a88687b6c9e4154",
+      "file": "BiliMusic_0.2.5_Windows_x64-setup.exe",
+      "size": 3833075,
+      "sha256": "8cd960be30890ebdc939dd5e23899cccee8d97e66f1a6803ea3685704e0e7e95",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,17 +59,17 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.2.4_Android_arm64.apk",
-      "size": 13814373,
-      "sha256": "9c49e4881b379baff031e6c9773370e492ad865430b700739e735d4fc7fba7b2",
+      "file": "BiliMusic_0.2.5_Android_arm64.apk",
+      "size": 13953637,
+      "sha256": "4c5083090620149471cdb5f4397dc046be2737110e4143e701fac604c0858205",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
@@ -87,20 +87,30 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_iOS_arm64-unsigned.ipa"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_iOS_arm64-unsigned.ipa"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.4/BiliMusic_0.2.4_iOS_arm64-unsigned.ipa"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.2.5/BiliMusic_0.2.5_iOS_arm64-unsigned.ipa"
         }
       ],
-      "file": "BiliMusic_0.2.4_iOS_arm64-unsigned.ipa",
-      "size": 4891090,
-      "sha256": "92c0d837c06d06e9518076561412382eeea6ce09de49af5c69f229ba6579a9d2"
+      "file": "BiliMusic_0.2.5_iOS_arm64-unsigned.ipa",
+      "size": 4977237,
+      "sha256": "aee3a83cfba0252702a5afd72447e37cc84ac026210dbf21e6a9872c43601bea"
     }
   ],
   "history": [
+    {
+      "version": "0.2.5",
+      "publishedAt": "2026-11-10T11:52:55.720664+00:00",
+      "changes": [
+        "合集和分 P 列表更清晰，打开合集或队列时会定位到当前曲目。",
+        "收藏合集支持继续上次播放，开启同步播放记录后，可在设备间接着听。",
+        "手机新增睡眠定时，搜索、评论和播放页操作更顺手。",
+        "最近播放按时间排序，临时断线会自动重试，并调整了横封面和播放标记。"
+      ]
+    },
     {
       "version": "0.2.4",
       "publishedAt": "2026-11-09T14:35:53.900806+00:00",
