@@ -7,8 +7,10 @@ import {
 } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
 import { toTrack } from '../../services/collectionTrack'
+import { PlayingMark } from '../../shared/PlayingMark'
 import { Artwork } from '../../shared/Artwork'
 import { ActionMenu } from '../../shared/ActionMenu'
+import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
 import { useRowContextMenu } from '../../shared/useRowContextMenu'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { linkedFolderKey, reloadLinkedFolder } from '../../services/linkedFolders'
@@ -29,6 +31,17 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const [bvid, setBvid] = useState('')
   const [adding, setAdding] = useState(false)
   const attempted = useRef(false)
+  const currentBvid = usePlayerStore(state => state.current?.source.bvid)
+  const list = useRef<HTMLDivElement>(null)
+  const initialVideo = useRef<string | undefined>(usePlayerStore.getState().current?.source.bvid)
+  const locate = folder.data?.videos.some(video => video.bvid === currentBvid) ? currentBvid : undefined
+  useLocateCurrentRow(list, true, locate)
+  useEffect(() => {
+    if (!folder.data || !initialVideo.current || !folder.data.videos.some(video => video.bvid === initialVideo.current)) return
+    const bvid = initialVideo.current
+    initialVideo.current = undefined
+    setExpanded(value => value || bvid)
+  }, [folder.data])
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true)
@@ -99,25 +112,26 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     {!folder.data && (folder.isLoading || refreshing) && <p className="batch-message">正在读取收藏夹…</p>}
     {folder.error && !refreshError && !refreshing && !folder.data && <p role="alert" className="inline-error">{commandErrorMessage(folder.error)}</p>}
     {folder.data?.videos.length === 0 && <p className="batch-message">这个收藏夹里还没有视频</p>}
-    <div className="result-list">{folder.data?.videos.map(video => <LinkedVideoRow key={video.bvid} video={video}
+    <div className="result-list" ref={list}>{folder.data?.videos.map(video => <LinkedVideoRow key={video.bvid} video={video} current={currentBvid === video.bvid}
       expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
       onRemove={() => { setError(''); setConfirm(video) }}/>)}</div>
   </section>
 }
 
-function LinkedVideoRow({ video, expanded, busy, onOpen, onRemove }: {
-  video: FavoriteVideo; expanded: boolean; busy: boolean; onOpen: () => void; onRemove: () => void
+function LinkedVideoRow({ video, expanded, busy, current, onOpen, onRemove }: {
+  video: FavoriteVideo; expanded: boolean; busy: boolean; current: boolean; onOpen: () => void; onRemove: () => void
 }) {
   const { position, onContextMenu } = useRowContextMenu()
   const playVideo = async () => {
     const detail = await getVideoParts(video.bvid)
-    await usePlayerStore.getState().playAll(detail.parts.map(part => toTrack(detail, part)))
+    const tracks = detail.parts.map(part => toTrack(detail, part))
+    if (tracks[0]) await usePlayerStore.getState().playFromList(tracks, tracks[0].id, { kind: 'video', title: detail.title })
   }
   const [playError, setPlayError] = useState('')
   return <article className="result-card">
-    <div className="search-result-heading" onContextMenu={onContextMenu}>
-      <button type="button" className="result-main" aria-expanded={expanded} onClick={onOpen}>
-        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i></span>
+    <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
+      <button type="button" className="result-main" aria-current={current && !expanded ? 'true' : undefined} aria-expanded={expanded} onClick={onOpen}>
+        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}</span>
         <span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.bvid}</small></span>
         {expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
       </button>
@@ -137,7 +151,7 @@ function LinkedVideoParts({ bvid }: { bvid: string }) {
   if (detail.error) return <p role="alert" className="inline-error">{commandErrorMessage(detail.error)}</p>
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
-  return <VideoPartsList tracks={video.parts.map(part => toTrack(video, part))}/>
+  return <VideoPartsList locateCurrent queueSource={{ kind: 'video', title: video.title }} tracks={video.parts.map(part => toTrack(video, part))}/>
 }
 
 export function LinkedFolderPicker({ bvid, onClose }: { bvid: string; onClose: () => void }) {

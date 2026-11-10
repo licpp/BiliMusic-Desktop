@@ -35,6 +35,25 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
                 json!({"bvid":bvid,"folderId":folder}),
             );
         }
+        if history {
+            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at FROM collection_progress p JOIN collections c ON c.bvid=p.reference LIMIT 2001")?;
+            for row in q.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            })? {
+                let (reference, bvid, cid, position, time) = row?;
+                add(
+                    format!("collectionProgress:{reference}"),
+                    "collectionProgress",
+                    json!({"reference":reference,"checkpoint":format!("{time}:{bvid}:{cid}:{position}")}),
+                );
+            }
+        }
         let mut q =
             c.prepare("SELECT id,name,description,cover_url FROM playlists ORDER BY id LIMIT 501")?;
         for row in q.query_map([], |r| {
@@ -173,6 +192,27 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         for r in s.records.values().filter(|r| r.kind == "collection") {
             tx.execute("INSERT INTO collections(bvid,folder_id) VALUES(?1,?2) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id",params![text(r,"bvid"),text(r,"folderId")])?;
         }
+        tx.execute(
+            "DELETE FROM collection_progress WHERE reference NOT IN (SELECT bvid FROM collections)",
+            [],
+        )?;
+        if history {
+            for r in s
+                .records
+                .values()
+                .filter(|r| r.kind == "collectionProgress")
+            {
+                if let Some((time, bvid, cid, position)) = parse_checkpoint(text(r, "checkpoint")) {
+                    crate::infrastructure::repositories::collections::save_progress(
+                        tx,
+                        text(r, "reference"),
+                        &format!("bilibili:{bvid}:{cid}"),
+                        position as f64 / 1000.0,
+                        time,
+                    )?;
+                }
+            }
+        }
         for r in s.records.values().filter(|r| r.kind == "track") {
             let id = text(r, "id");
             tx.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![id,text(r,"bvid"),r.fields.get("aid").and_then(Value::as_i64),number(r,"cid"),1,"",r.fields.get("uploaderId").and_then(Value::as_i64),optional(r,"uploaderName")])?;
@@ -190,35 +230,39 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 tx.execute("INSERT INTO metadata_overrides(track_id,title,artist,album,cover_url) VALUES(?1,?2,?3,?4,?5)",params![id,optional(r,"overrideTitle"),optional(r,"overrideArtist"),optional(r,"overrideAlbum"),optional(r,"overrideCover")])?;
             }
         }
-        tx.execute_batch(
-            "CREATE TEMP TABLE sync_local_items AS SELECT playlist_id,track_id,position,created_at FROM playlist_items WHERE track_id IN (SELECT track_id FROM local_audio);
-             DELETE FROM playlist_items;
-             DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio);",
-        )?;
         for r in s.records.values().filter(|r| r.kind == "playlist") {
             tx.execute(
-                "INSERT INTO playlists(id,name,description,cover_url,created_at) VALUES(?1,?2,?3,?4,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,cover_url=excluded.cover_url",
-                params![
-                    text(r, "id"),
-                    text(r, "name"),
-                    text(r, "description"),
-                    optional(r, "coverUrl")
-                ],
+                "INSERT INTO playlists(id,name,description,cover_url,created_at) VALUES(?1,?2,?3,?4,strftime('%Y-%m-%d %H:%M:%f','now'))
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,cover_url=excluded.cover_url",
+                params![text(r,"id"), text(r,"name"), text(r,"description"), optional(r,"coverUrl")],
             )?;
         }
-        tx.execute_batch("INSERT INTO playlist_items(playlist_id,track_id,position,created_at)
-            SELECT i.playlist_id,i.track_id,i.position,i.created_at FROM sync_local_items i JOIN playlists p ON p.id=i.playlist_id;
-            DROP TABLE sync_local_items;")?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE sync_item_keys(playlist_id TEXT, track_id TEXT, PRIMARY KEY(playlist_id,track_id));
+             CREATE TEMP TABLE sync_favorite_keys(track_id TEXT PRIMARY KEY);",
+        )?;
         for r in s.records.values() {
             match r.kind.as_str() {
                 "favorite" => {
+                    let id = text(r, "trackId");
+                    tx.execute("INSERT INTO sync_favorite_keys(track_id) VALUES(?1)", [id])?;
                     tx.execute(
-                        "INSERT INTO favorites(track_id) VALUES(?1)",
-                        [text(r, "trackId")],
+                        "INSERT INTO favorites(track_id) VALUES(?1) ON CONFLICT(track_id) DO NOTHING",
+                        [id],
                     )?;
                 }
                 "item" => {
-                    tx.execute("INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3)",params![text(r,"playlistId"),text(r,"trackId"),number(r,"position")])?;
+                    let playlist = text(r, "playlistId");
+                    let track = text(r, "trackId");
+                    tx.execute(
+                        "INSERT INTO sync_item_keys VALUES(?1,?2)",
+                        params![playlist, track],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3)
+                        ON CONFLICT(playlist_id,track_id) DO UPDATE SET position=excluded.position",
+                        params![playlist, track, number(r, "position")],
+                    )?;
                 }
                 "lyric" => {
                     tx.execute("INSERT INTO lyrics(track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually) VALUES(?1,?2,?3,'','[]',?4,?5) ON CONFLICT(track_id) DO UPDATE SET raw_text=CASE WHEN lyrics.provider=excluded.provider AND lyrics.provider_lyric_id IS excluded.provider_lyric_id THEN lyrics.raw_text ELSE '' END,parsed_json=CASE WHEN lyrics.provider=excluded.provider AND lyrics.provider_lyric_id IS excluded.provider_lyric_id THEN lyrics.parsed_json ELSE '[]' END,provider=excluded.provider,provider_lyric_id=excluded.provider_lyric_id,bias_ms=excluded.bias_ms,selected_manually=excluded.selected_manually",params![text(r,"id"),text(r,"provider"),optional(r,"providerLyricId"),number(r,"biasMs"),r.fields.get("manual").and_then(Value::as_bool).unwrap_or(false)])?;
@@ -226,17 +270,28 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 _ => {}
             }
         }
+        tx.execute_batch(
+            "DELETE FROM playlist_items WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+               AND NOT EXISTS(SELECT 1 FROM sync_item_keys k WHERE k.playlist_id=playlist_items.playlist_id AND k.track_id=playlist_items.track_id);
+             DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+               AND NOT EXISTS(SELECT 1 FROM sync_favorite_keys k WHERE k.track_id=favorites.track_id);
+             DROP TABLE sync_item_keys;
+             DROP TABLE sync_favorite_keys;",
+        )?;
         if history {
-            tx.execute(
-                "DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)",
-                [],
-            )?;
+            tx.execute_batch("CREATE TEMP TABLE sync_history_keys(track_id TEXT PRIMARY KEY);")?;
             for r in s.records.values().filter(|r| r.kind == "history") {
+                let track = text(r, "trackId");
+                let time = text(r, "playedAt");
+                tx.execute("INSERT INTO sync_history_keys VALUES(?1)", [track])?;
                 tx.execute(
-                    "INSERT INTO play_history(track_id,played_at) VALUES(?1,?2)",
-                    params![text(r, "trackId"), text(r, "playedAt")],
+                    "INSERT INTO play_history(track_id,played_at) SELECT ?1,?2
+                     WHERE NOT EXISTS(SELECT 1 FROM play_history WHERE track_id=?1 AND played_at>=?2)",
+                    params![track, time],
                 )?;
             }
+            tx.execute_batch("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+                AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
         }
         prune(&tx)?;
         Ok(())
@@ -285,6 +340,119 @@ mod tests {
         apply(&c, &snapshot, false).unwrap();
         assert_eq!(PlaylistRepository::list(&c).unwrap()[1].id, b);
         assert_eq!(collections::list(&c).unwrap().folders[0].id, b);
+    }
+    #[test]
+    fn applying_sync_preserves_local_favorite_addition_order() {
+        use crate::infrastructure::repositories::playlists::{
+            FAVORITES_PLAYLIST_ID, PlaylistRepository,
+        };
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        for (id, cid) in [("bilibili:BV123:2", 2), ("bilibili:BV123:1", 1)] {
+            c.execute(
+                "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV123',?2)",
+                params![id, cid],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'Track')",
+                [id],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO favorites(track_id,created_at) VALUES(?1,'2026-11-10 00:00:00')",
+                [id],
+            )
+            .unwrap();
+        }
+        let snapshot = export(&c, "42", false).unwrap();
+        apply(&c, &snapshot, false).unwrap();
+        let tracks = PlaylistRepository::tracks(&c, FAVORITES_PLAYLIST_ID).unwrap();
+        assert_eq!(tracks[0].id, "bilibili:BV123:1");
+        assert_eq!(tracks[1].id, "bilibili:BV123:2");
+    }
+    #[test]
+    fn collection_progress_merges_and_syncs_without_song_metadata_or_history() {
+        use crate::infrastructure::repositories::collections;
+        let reference = "season:42:73";
+        let local = Connection::open_in_memory().unwrap();
+        local
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        local
+            .execute(
+                "INSERT INTO collections(bvid,folder_id) VALUES(?1,'')",
+                [reference],
+            )
+            .unwrap();
+        let empty = export(&local, "42", true).unwrap();
+        collections::save_progress(&local, reference, "bilibili:BV123:5", 85.25, 100).unwrap();
+        let older = export(&local, "42", true).unwrap();
+        collections::save_progress(&local, reference, "bilibili:BV456:7", 2.25, 200).unwrap();
+        collections::save_progress(&local, reference, "bilibili:BV123:5", 99.0, 199).unwrap();
+        let newer = export(&local, "42", true).unwrap();
+        let (merged, conflicts) = merge(&empty, &newer, &older, None);
+        assert!(conflicts.is_empty());
+        assert_eq!(merged, newer);
+        assert_eq!(merged.records.len(), 2);
+        assert_eq!(export(&local, "42", false).unwrap().records.len(), 1);
+
+        let remote = Connection::open_in_memory().unwrap();
+        remote
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        apply(&remote, &merged, true).unwrap();
+        let progress = collections::progress(&remote, reference).unwrap().unwrap();
+        assert_eq!(
+            (progress.bvid.as_str(), progress.cid, progress.position_ms),
+            ("BV456", 7, 2250)
+        );
+        apply(&remote, &Snapshot::empty("42"), false).unwrap();
+        assert!(collections::progress(&remote, reference).unwrap().is_none());
+    }
+
+    #[test]
+    fn recent_order_survives_history_sync_in_record_key_order() {
+        use crate::infrastructure::repositories::library::LibraryRepository;
+        let local = Connection::open_in_memory().unwrap();
+        local
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        for (id, cid, played_at) in [
+            ("bilibili:BV123:2", 2, "2026-11-10 00:00:00.900"),
+            ("bilibili:BV123:1", 1, "2026-11-10 00:00:00.100"),
+        ] {
+            local.execute("INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV123',?2)", params![id,cid]).unwrap();
+            local
+                .execute(
+                    "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'Track')",
+                    [id],
+                )
+                .unwrap();
+            local
+                .execute(
+                    "INSERT INTO play_history(track_id,played_at) VALUES(?1,?2)",
+                    params![id, played_at],
+                )
+                .unwrap();
+        }
+        let snapshot = export(&local, "42", true).unwrap();
+        let remote = Connection::open_in_memory().unwrap();
+        remote
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        apply(&remote, &snapshot, true).unwrap();
+        apply(&remote, &snapshot, true).unwrap();
+        let recent = LibraryRepository::recent(&remote, 10).unwrap();
+        assert_eq!(recent.iter().map(|t| t.cid).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(
+            remote
+                .query_row("SELECT COUNT(*) FROM play_history", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
     #[test]
     fn collections_round_trip_without_uploading_source_cache() {

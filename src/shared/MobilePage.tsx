@@ -12,7 +12,7 @@ function updatePageStack() {
   for (const page of pages) page.inert = page !== pages.at(-1)
 }
 
-// A navigation page, with its own scroll view and keyboard-sized viewport.
+// A navigation page, with its own scroll view and fixed layout.
 // Keeping the previous page mounted preserves drafts and the search position.
 export function MobilePage({ title, onBack, actions, children, className = '' }: {
   title: string; onBack: () => void; actions?: ReactNode; children: ReactNode; className?: string
@@ -32,21 +32,10 @@ export function MobilePage({ title, onBack, actions, children, className = '' }:
       event.preventDefault(); event.stopImmediatePropagation(); back.current()
     }
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(event) }
-    const resize = () => {
-      layer.current?.style.setProperty('--page-height', `${window.visualViewport?.height || window.innerHeight}px`)
-      layer.current?.style.setProperty('--page-top', `${window.visualViewport?.offsetTop || 0}px`)
-    }
-    resize()
-    window.visualViewport?.addEventListener('resize', resize)
-    window.visualViewport?.addEventListener('scroll', resize)
-    window.addEventListener('resize', resize)
     window.addEventListener('bilimusic-back', dismiss, true)
     document.addEventListener('keydown', key, true)
     layer.current?.querySelector<HTMLElement>('header button')?.focus({ preventScroll: true })
     return () => {
-      window.visualViewport?.removeEventListener('resize', resize)
-      window.visualViewport?.removeEventListener('scroll', resize)
-      window.removeEventListener('resize', resize)
       window.removeEventListener('bilimusic-back', dismiss, true)
       document.removeEventListener('keydown', key, true)
       const index = pages.indexOf(page)

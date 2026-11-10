@@ -126,6 +126,8 @@ pub fn run() {
             interface::commands::playlist_rename,
             interface::commands::library_tracks,
             interface::commands::library_recent,
+            interface::commands::playback_position,
+            interface::commands::collection_progress,
             interface::commands::library_toggle_favorite,
             interface::commands::library_update_metadata,
             interface::commands::bili_search,
@@ -149,6 +151,7 @@ pub fn run() {
             interface::media::listening_record,
             interface::media::listening_statistics,
             interface::commands::bili_video_parts,
+            interface::commands::bili_video_pagelist,
             interface::commands::bili_playback_source,
             interface::commands::bili_video_source,
             interface::commands::bili_warm_playback,
@@ -174,6 +177,8 @@ pub fn run() {
             interface::commands::lyrics_save,
             interface::commands::lyrics_set_bias,
             interface::commands::mobile_download_directory,
+            #[cfg(target_os = "ios")]
+            interface::commands::mobile_export_download,
             interface::commands::downloads_list,
             interface::commands::download_track,
         ])

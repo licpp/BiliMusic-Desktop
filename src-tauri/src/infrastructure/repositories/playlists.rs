@@ -77,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn new_batches_prepend_without_reversing_or_moving_duplicates() {
+    fn explicit_additions_prepend_in_selection_order_without_duplicates() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
             .unwrap();
@@ -114,6 +114,9 @@ mod tests {
         assert_eq!(ids(), vec!["d", "e", "c", "a", "b", "f"]);
         assert!(PlaylistRepository::add_tracks(&c, "list", &["missing".into()], false).is_err());
         assert_eq!(ids(), vec!["d", "e", "c", "a", "b", "f"]);
+        add(&["a", "d", "a"], false);
+        add(&["e"], true);
+        assert_eq!(ids(), vec!["a", "d", "e", "c", "b", "f"]);
         PlaylistRepository::add_tracks(&c, FAVORITES_PLAYLIST_ID, &["b".into(), "a".into()], false)
             .unwrap();
         PlaylistRepository::add_track(&c, FAVORITES_PLAYLIST_ID, "c").unwrap();
@@ -229,7 +232,7 @@ impl PlaylistRepository {
                 .query_map([], LibraryRepository::map_row)?
                 .collect();
         }
-        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,pi.track_id", LibraryRepository::select_sql()))?;
+        let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,pi.created_at DESC,pi.rowid DESC", LibraryRepository::select_sql()))?;
         statement
             .query_map(params![id], LibraryRepository::map_row)?
             .collect()
@@ -251,30 +254,17 @@ impl PlaylistRepository {
     ) -> rusqlite::Result<()> {
         let tx = connection.unchecked_transaction()?;
         let mut seen = std::collections::HashSet::new();
-        let mut new_ids = Vec::new();
-        for id in track_ids {
-            if !seen.insert(id) {
-                continue;
-            }
-            let exists: bool = if playlist_id == FAVORITES_PLAYLIST_ID {
-                tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM favorites WHERE track_id=?1)",
-                    [id],
-                    |r| r.get(0),
-                )?
-            } else {
-                tx.query_row("SELECT EXISTS(SELECT 1 FROM playlist_items WHERE playlist_id=?1 AND track_id=?2)", params![playlist_id,id], |r| r.get(0))?
-            };
-            if !exists {
-                new_ids.push(id);
-            }
-        }
+        let ids = track_ids
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .collect::<Vec<_>>();
         if playlist_id == FAVORITES_PLAYLIST_ID {
-            // Reverse insertion keeps the displayed order of one selected batch.
-            for id in new_ids.iter().rev() {
+            // An explicit add brings the selected batch to the front. The key stays unique.
+            for id in ids.into_iter().rev() {
+                tx.execute("DELETE FROM favorites WHERE track_id=?1", [id])?;
                 LibraryRepository::set_favorite(&tx, id, true)?;
             }
-        } else if !new_ids.is_empty() {
+        } else if !ids.is_empty() {
             let start: i64 = if append {
                 tx.query_row(
                     "SELECT COALESCE(MAX(position)+1,0) FROM playlist_items WHERE playlist_id=?1",
@@ -284,15 +274,26 @@ impl PlaylistRepository {
             } else {
                 tx.execute(
                     "UPDATE playlist_items SET position=position+?2 WHERE playlist_id=?1",
-                    params![playlist_id, new_ids.len() as i64],
+                    params![playlist_id, ids.len() as i64],
                 )?;
                 0
             };
-            for (index, id) in new_ids.iter().enumerate() {
-                tx.execute(
-                    "INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3)",
-                    params![playlist_id, id, start + index as i64],
-                )?;
+            for (index, id) in ids.into_iter().enumerate() {
+                let position = start + index as i64;
+                if append {
+                    tx.execute(
+                        "INSERT INTO playlist_items(playlist_id,track_id,position,created_at)
+                         VALUES(?1,?2,?3,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT DO NOTHING",
+                        params![playlist_id, id, position],
+                    )?;
+                } else {
+                    tx.execute(
+                        "INSERT INTO playlist_items(playlist_id,track_id,position,created_at)
+                         VALUES(?1,?2,?3,strftime('%Y-%m-%d %H:%M:%f','now'))
+                         ON CONFLICT(playlist_id,track_id) DO UPDATE SET position=excluded.position, created_at=excluded.created_at",
+                        params![playlist_id, id, position],
+                    )?;
+                }
             }
             tx.execute(
                 "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",

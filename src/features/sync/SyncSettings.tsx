@@ -53,7 +53,7 @@ export function SyncSettings() {
       </div>}
     </div>
     {!inDesktopShell ? <p className="sync-note">请在 BiliMusic 客户端中配置同步。</p> : <>
-      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放' : ''}</span></div>}
+      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放和合集续播进度' : ''}</span></div>}
       {connected && <button className="sync-link" disabled={busy} aria-expanded={editing} onClick={() => { setEditing(!editing); setConsent(false) }}>{editing ? '收起连接设置' : '更改连接与同步内容'}</button>}
       {editing && <form className="sync-connection" onSubmit={(e) => { e.preventDefault(); if (consent && !busy) void connect() }}>
         <fieldset disabled={busy}>
@@ -63,8 +63,8 @@ export function SyncSettings() {
             <details className="sync-address"><summary>服务器地址</summary><label><input aria-label="服务器地址" value={config.url} required type="url" onChange={(e) => setConfig({ ...config, url: e.target.value })} spellCheck={false} /></label></details>
             <p className="sync-note">凭据保存在系统安全存储中，直接连接坚果云。</p>
           </> : <p className="sync-note">通过 HTTPS 使用当前B站登录会话核验身份，服务器不保存该会话，后续使用设备令牌。</p>}
-          <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步最近播放<small>最多200首，默认关闭</small></span></label>
-          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及所选的最近播放，并同意上述身份核验方式。</span></label>
+          <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步播放记录<small>最近 200 首与收藏合集的续播进度，默认关闭</small></span></label>
+          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及所选的播放记录，并同意上述身份核验方式。</span></label>
           <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent}>{busy && <LoaderCircle className="spin" />}连接并预览</button><button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button></div>
         </fieldset>
       </form>}
@@ -75,7 +75,7 @@ export function SyncSettings() {
           <div className="sync-setting-row"><div><strong>本机资料</strong><small>导入保留原资料；备份导出到本机。</small></div><div className="sync-actions"><button disabled={busy} onClick={() => void action(async () => { await invoke('sync_import_guest'); await refreshSyncedLibrary(client); setMessage('已导入本机原有资料'); setOutcome(null) })}>导入原有资料</button><button disabled={busy} onClick={() => void action(async () => { const path = await invoke<string>('sync_export'); setMessage(`备份已保存：${path}`) })}>导出备份</button></div></div>
           {connected && <div className="sync-setting-row"><div><strong>连接管理</strong><small>断开后保留本机和云端资料。</small></div><div className="sync-actions"><button disabled={busy || !saved.enabled} onClick={() => void preview()}>预览同步</button><button disabled={busy} onClick={() => void action(async () => { await invoke('sync_disconnect'); setOutcome(null); setEditing(false); notify(); setMessage('已断开连接') })}>断开连接</button>{saved.provider === 'cloud' && <button className="sync-danger" disabled={busy} onClick={() => setConfirmDelete(true)}>删除云端资料</button>}</div></div>}
         </>}
-        <details><summary>隐私与存储说明</summary><p>只同步个人资料，不上传音视频、B站原始信息或登录会话缓存。失去所有同步列表引用的歌曲修改不再上传。关闭历史同步不会删除以前已上传的历史。</p><p>BiliMusic 云保存B站UID和设备令牌摘要，令牌30天到期；身份核验会话不落库。删除云端资料会撤销全部设备令牌，加密备份最多保留两个日版本，删除内容随轮换清除。坚果云凭据不发送到BiliMusic。传输使用HTTPS，不是端到端加密。</p><p>每个账号最多500个歌单、5000首歌曲、10000个歌单成员；BiliMusic云同步包上限3MB，坚果云最多10台设备，每台快照上限12MB。</p></details>
+        <details><summary>隐私与存储说明</summary><p>只同步个人资料，不上传音视频、B站原始信息或登录会话缓存。失去所有同步列表引用的歌曲修改不再上传。每个收藏合集只保留一条续播进度。关闭播放记录同步后，已上传的播放记录仍会保留在云端。</p><p>BiliMusic 云保存B站UID和设备令牌摘要，令牌30天到期；身份核验会话不落库。删除云端资料会撤销全部设备令牌，加密备份最多保留两个日版本，删除内容随轮换清除。坚果云凭据不发送到BiliMusic。传输使用HTTPS，不是端到端加密。</p><p>每个账号最多500个歌单、5000首歌曲、10000个歌单成员；BiliMusic云同步包上限3MB，坚果云最多10台设备，每台快照上限12MB。</p></details>
       </div></details>
       {confirmDelete && <div className="sync-preview" role="alert"><strong>删除全部云端资料？</strong><p>将删除云端歌单、合集收藏、修改和历史，并撤销所有设备令牌。本机资料保留。</p><div className="sync-actions"><button className="sync-danger" disabled={busy} onClick={() => void action(async () => { await invoke('sync_delete_cloud'); setConfirmDelete(false); setOutcome(null); notify(); setMessage('已删除云端资料并暂停同步') })}>确认删除</button><button disabled={busy} onClick={() => setConfirmDelete(false)}>取消</button></div></div>}
     </>}

@@ -2,7 +2,7 @@ import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/se
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Download, FolderPlus, ListMusic, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
+import { Download, FolderPlus, ListMusic, ListVideo, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage, downloadTrack, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
 import { usePlayerStore } from '../player/playerStore'
@@ -12,8 +12,8 @@ import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActi
 export function PlaylistButton({ track, tracks }: { track?: Track; tracks?: Track[] }) {
   return <button type="button" className="icon-action playlist-action" aria-label="加入歌单" title="加入歌单" onClick={(event) => { event.stopPropagation(); chooseTrackPlaylist(tracks || (track ? [track] : [])) }}><FolderPlus size={16} /></button>
 }
-export function TrackMenuButton({ track, playlistId, tracks }: { track: Track; playlistId?: string; tracks?: Track[] }) {
-  return <button type="button" className="icon-action" aria-label="歌曲操作" title="更多操作" onClick={(event) => showTrackMenu(event, track, playlistId, tracks)}><MoreHorizontal size={17} /></button>
+export function TrackMenuButton({ track, playlistId, tracks, actions }: { track: Track; playlistId?: string; tracks?: Track[]; actions?: { openParts?: () => void; play?: () => void } }) {
+  return <button type="button" className="icon-action" aria-label="歌曲操作" title="更多操作" onClick={(event) => showTrackMenu(event, track, playlistId, tracks, actions)}><MoreHorizontal size={17} /></button>
 }
 export function TrackActionsHost() {
   const { menu, adding } = useTrackActions()
@@ -43,10 +43,11 @@ export function TrackActionsHost() {
     {menu && <div className="track-menu-scrim" onClick={event => { event.stopPropagation(); useTrackActions.setState({ menu: null }) }} />}
     {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
-      <button role="menuitem" onClick={() => { void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
+      <button role="menuitem" onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
+      {menu.openParts && <button role="menuitem" onClick={() => { useTrackActions.setState({ menu: null }); menu.openParts?.() }}><ListVideo size={15}/>查看选集</button>}
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>
-      {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); void (async()=>{try{const directory=await getDownloadDirectory() || await chooseDownloadDirectory();if(!directory)return;await saveLibraryTrack(track);await downloadTrack(track,directory);void client.invalidateQueries({queryKey:['downloads']})}catch(cause){setError(commandErrorMessage(cause))}})() }}><Download size={15} />下载歌曲</button>}
+      {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); void (async()=>{try{const directory=await getDownloadDirectory() || await chooseDownloadDirectory();if(!directory)return;const saved=await saveLibraryTrack(track);await downloadTrack(saved,directory);void client.invalidateQueries({queryKey:['downloads']})}catch(cause){setError(commandErrorMessage(cause))}})() }}><Download size={15} />下载歌曲</button>}
       <button role="menuitem" onClick={() => void edit(menu.track)}><Pencil size={15} />编辑歌曲信息</button>
       {menu.playlistId && <button role="menuitem" onClick={() => { void remove(menu.playlistId!, menu.track); useTrackActions.setState({ menu: null }) }}><Trash2 size={15} />{menu.playlistId === FAVORITES_PLAYLIST_ID ? '取消喜欢' : '从当前歌单移除'}</button>}
     </div>}

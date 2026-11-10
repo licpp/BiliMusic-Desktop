@@ -11,7 +11,8 @@ const output = await build({
     builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: `
       export const inDesktopShell = true;
       export const recordPlayedTrack = track => globalThis.testApi.record(track);
-      export const getTrackPlaybackUrl = track => globalThis.testApi.resolve(track);
+      export const getVideoParts = async () => ({ parts: [] });
+      export const getTrackPlaybackUrl = (track, refresh) => globalThis.testApi.resolve(track, refresh);
     ` }))
   } }],
 })
@@ -143,3 +144,49 @@ test('invalid list selection leaves the existing queue intact and duplicates are
  assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);
  await store.getState().playFromList([track('3')],'missing');assert.equal(store.getState().current.id,'2');assert.deepEqual(store.getState().queue.map(t=>t.id),['1','2']);listeners.pagehide();
 });
+
+test('selecting the current song in another list changes the queue without reloading audio', async () => {
+  const { store, audio } = setup()
+  await store.getState().playFromList([track('1'), track('2')], '2')
+  audio[0].currentTime = 43
+  audio[0].callbacks.timeupdate()
+  await store.getState().playFromList([track('3'), track('2')], '2')
+  assert.equal(audio[0].plays, 1)
+  assert.ok(store.getState().queueFeedback?.serial)
+  assert.equal(store.getState().progressSeconds, 43)
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '2'])
+  store.getState().reverseQueue()
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['2', '3'])
+  assert.equal(store.getState().current.id, '2')
+  assert.equal(store.getState().progressSeconds, 43)
+})
+
+test('moving a BV in the queue moves its parts together without changing the playing song', async () => {
+  const { store } = setup()
+  const first = { ...track('1'), source: { ...track('1').source, bvid: 'BVfirst' } }
+  const second = { ...track('2'), source: { ...track('2').source, bvid: 'BVfirst', page: 2 } }
+  const other = { ...track('3'), source: { ...track('3').source, bvid: 'BVother' } }
+  await store.getState().playFromList([first, second, other], '2')
+  store.getState().moveQueueRows(['1', '2'], 1, true)
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '1', '2'])
+  assert.equal(store.getState().current.id, '2')
+  store.getState().moveQueueRows(['1'], -1, false)
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '1', '2'])
+  store.getState().removeQueueRows(['1', '2'])
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3'])
+})
+
+test('transient playback connection errors retry once with a fresh source', async () => {
+  const { store, audio } = setup()
+  const refreshes = []
+  globalThis.testApi.resolve = async (value, refresh) => {
+    refreshes.push(refresh)
+    if (!refresh) throw new Error('Could not connect to the server')
+    return `local://${value.id}`
+  }
+  await store.getState().play(track('1'), 27)
+  await new Promise(setImmediate)
+  assert.deepEqual(refreshes, [false, true])
+  assert.equal(audio[0].plays, 1)
+  assert.equal(audio[0].currentTime, 27)
+})

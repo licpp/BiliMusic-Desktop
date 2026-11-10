@@ -2,7 +2,7 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 import type { Track } from '../../domain/track'
 import type { RepeatMode } from './playerStore'
 
-export type IOSAudioState = { action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; track?: Track; revision?: number }
+export type IOSAudioState = { sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; duration?: number; error?: string; track?: Track; revision?: number }
 let ready: Promise<unknown> | undefined
 let listener: PluginListener | undefined
 let consumer: ((state: IOSAudioState) => void) | undefined
@@ -35,10 +35,11 @@ export async function restartIOSAudioObservation() {
   lastEventAt = performance.now()
 }
 export const iosListenerAge = () => performance.now() - lastEventAt
+export const setIOSCollection = (id: string, collectionRef?: string) => invoke('plugin:ios-player|control', { action: 'collection', id, collectionRef })
 export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled })
-export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true) {
+export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string) {
   await ready
-  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing })
+  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef })
 }
 export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {

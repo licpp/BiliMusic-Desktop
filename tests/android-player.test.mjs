@@ -11,8 +11,10 @@ const output = await build({
     b.onLoad({ filter: /.*/, namespace: 'mock' }, ({ path }) => ({ contents: path === 'api' ? `
       export const inDesktopShell = true;
       export const recordPlayedTrack = async t => t;
+      export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
     ` : path === 'platform' ? 'export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
+      export const setAndroidCollection = async () => {};
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;
@@ -23,7 +25,7 @@ const output = await build({
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {} }
+  globalThis.window = { addEventListener() {}, dispatchEvent() {} }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('Android must not create WebView audio') } }
@@ -71,8 +73,8 @@ test('Android notification pause while resolving prevents deferred autoplay', as
   assert.equal(nativeTest.plays.length, 0)
   assert.equal(s.getState().status, 'paused')
 })
-test('Android string rejections keep the actual bridge or provider error message', async () => {
+test('Android source errors show a localized playback message', async () => {
   const s = setup(); nativeTest.resolve = async () => { throw 'source service returned HTTP 403' }
   await s.getState().play(track)
-  assert.equal(s.getState().error, 'source service returned HTTP 403')
+  assert.equal(s.getState().error, '暂时无法播放这首歌，请重试')
 })

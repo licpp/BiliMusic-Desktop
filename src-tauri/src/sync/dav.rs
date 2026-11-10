@@ -126,9 +126,26 @@ impl Doc {
             if field == "__record" {
                 continue;
             }
-            let value = &regs[0].value;
+            let value = if kind == "collectionProgress" && field == "checkpoint" {
+                &regs
+                    .iter()
+                    .max_by_key(|r| checkpoint_order(&r.value))
+                    .unwrap()
+                    .value
+            } else if kind == "history" && field == "playedAt" {
+                &regs
+                    .iter()
+                    .max_by_key(|r| r.value.as_str().unwrap_or_default())
+                    .unwrap()
+                    .value
+            } else {
+                &regs[0].value
+            };
             let distinct: BTreeSet<_> = regs.iter().map(|r| r.value.to_string()).collect();
-            if distinct.len() > 1 {
+            if distinct.len() > 1
+                && kind != "collectionProgress"
+                && !(kind == "history" && field == "playedAt")
+            {
                 conflicts.push(Conflict {
                     key: key.clone(),
                     field: field.clone(),
@@ -388,6 +405,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
                 needs_publish: true,
             }),
             conflicts: vec![],
+            legacy_cloud: false,
         });
     }
     check(status)?;
@@ -446,6 +464,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             doc,
         }),
         conflicts,
+        legacy_cloud: false,
     })
 }
 pub async fn write(

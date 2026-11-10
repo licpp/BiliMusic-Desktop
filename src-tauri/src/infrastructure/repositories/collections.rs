@@ -31,6 +31,65 @@ pub fn valid_reference(value: &str) -> bool {
     }
     value.starts_with("BV") && value.len() <= 32 && value.bytes().all(|b| b.is_ascii_alphanumeric())
 }
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionProgress {
+    pub bvid: String,
+    pub cid: i64,
+    pub position_ms: i64,
+}
+
+pub fn progress(c: &Connection, reference: &str) -> rusqlite::Result<Option<CollectionProgress>> {
+    use rusqlite::OptionalExtension;
+    c.query_row(
+        "SELECT bvid,cid,position_ms FROM collection_progress WHERE reference=?1",
+        [reference],
+        |row| {
+            Ok(CollectionProgress {
+                bvid: row.get(0)?,
+                cid: row.get(1)?,
+                position_ms: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+}
+
+pub fn save_progress(
+    c: &Connection,
+    reference: &str,
+    track_id: &str,
+    seconds: f64,
+    observed_at: i64,
+) -> rusqlite::Result<bool> {
+    let Some((bvid, cid)) = track_id
+        .strip_prefix("bilibili:")
+        .and_then(|id| id.split_once(':'))
+    else {
+        return Ok(false);
+    };
+    let Ok(cid) = cid.parse::<i64>() else {
+        return Ok(false);
+    };
+    if bvid.len() <= 2
+        || !bvid.starts_with("BV")
+        || !valid_reference(bvid)
+        || cid <= 0
+        || (reference != bvid && !reference.starts_with("season:"))
+        || !seconds.is_finite()
+        || !(0.0..=604800.0).contains(&seconds)
+        || observed_at <= 0
+    {
+        return Ok(false);
+    }
+    c.execute(
+        "INSERT INTO collection_progress(reference,bvid,cid,position_ms,observed_at)
+         SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM collections WHERE bvid=?1)
+         ON CONFLICT(reference) DO UPDATE SET bvid=excluded.bvid,cid=excluded.cid,position_ms=excluded.position_ms,observed_at=excluded.observed_at
+         WHERE excluded.observed_at >= collection_progress.observed_at",
+        params![reference, bvid, cid, (seconds * 1000.0).round() as i64, observed_at],
+    ).map(|changed| changed > 0)
+}
 pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
     let mut q = c.prepare("SELECT id,name FROM collection_folders ORDER BY rowid DESC")?;
     let folders = q
@@ -140,7 +199,7 @@ pub fn change(
                 {
                     return Err("最多收藏2000个合集".into());
                 }
-                tx.execute("INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,cover_url=excluded.cover_url,uploader_name=excluded.uploader_name",params![i.bvid,i.folder_id,i.title,i.cover_url,i.uploader_name]).map_err(|e|e.to_string())?;
+                tx.execute("INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name,created_at) VALUES(?1,?2,?3,?4,?5,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,cover_url=excluded.cover_url,uploader_name=excluded.uploader_name,created_at=excluded.created_at",params![i.bvid,i.folder_id,i.title,i.cover_url,i.uploader_name]).map_err(|e|e.to_string())?;
             }
             "cache" => {
                 let i = item.ok_or("缺少合集信息")?;
@@ -159,11 +218,12 @@ pub fn change(
                     return Err("收藏夹不存在".into());
                 }
                 execute(
-                    "UPDATE collections SET folder_id=?2 WHERE bvid=?1",
+                    "UPDATE collections SET folder_id=?2,created_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE bvid=?1 AND folder_id<>?2",
                     &[&id, &name],
                 )?;
             }
             "remove" => {
+                execute("DELETE FROM collection_progress WHERE reference=?1", &[&id])?;
                 execute("DELETE FROM collections WHERE bvid=?1", &[&id])?;
             }
             _ => return Err("不支持的收藏操作".into()),

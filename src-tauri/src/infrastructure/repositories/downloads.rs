@@ -67,7 +67,7 @@ impl DownloadRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
-        let mut statement = connection.prepare("SELECT id,track_id,target_path,status,received_bytes,total_bytes,error_message FROM downloads ORDER BY updated_at DESC LIMIT 200")?;
+        let mut statement = connection.prepare("SELECT id,track_id,target_path,status,received_bytes,total_bytes,error_message FROM downloads ORDER BY rowid DESC LIMIT 200")?;
         statement
             .query_map([], |row| {
                 Ok(DownloadRecord {

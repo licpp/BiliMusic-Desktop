@@ -67,12 +67,13 @@ pub async fn bili_season(
     provider: State<'_, BilibiliProvider>,
     mid: i64,
     season_id: i64,
+    refresh: Option<bool>,
 ) -> Result<Season, CommandError> {
     if mid <= 0 || season_id <= 0 {
         return Err(CommandError::validation("合集标识无效"));
     }
     provider
-        .season(mid, season_id)
+        .season(mid, season_id, refresh.unwrap_or(false))
         .await
         .map_err(CommandError::provider)
 }
@@ -116,12 +117,27 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
         struct Sample {
             scope: String,
             track_id: String,
-            seconds: f64,
+            seconds: Option<f64>,
+            position: Option<f64>,
+            observed_at: Option<i64>,
+            collection_ref: Option<String>,
         }
         if let Ok(sample) = body.deserialize::<Sample>() {
             let handle = handle.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = record(&handle, &sample.scope, &sample.track_id, sample.seconds).await;
+                if let Some(seconds) = sample.seconds {
+                    let _ = record(&handle, &sample.scope, &sample.track_id, seconds).await;
+                }
+                if let (Some(position), Some(observed_at)) = (sample.position, sample.observed_at) {
+                    save_position(
+                        &handle,
+                        &sample.scope,
+                        &sample.track_id,
+                        position,
+                        observed_at,
+                        sample.collection_ref.as_deref(),
+                    );
+                }
             });
         }
         Ok(())
@@ -133,6 +149,38 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
             eprintln!("Android listening observation failed: {error}");
         }
     });
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn save_position(
+    app: &tauri::AppHandle,
+    scope: &str,
+    id: &str,
+    seconds: f64,
+    observed_at: i64,
+    collection_ref: Option<&str>,
+) {
+    let db = app.state::<Database>();
+    if let Ok(connection) = db.0.lock() {
+        if profile(&db) == scope {
+            let _ = crate::infrastructure::repositories::library::LibraryRepository::save_playback_position(
+                &connection, id, seconds, observed_at,
+            );
+            if let Some(reference) = collection_ref
+                && crate::infrastructure::repositories::collections::save_progress(
+                    &connection,
+                    reference,
+                    id,
+                    seconds,
+                    observed_at,
+                )
+                .unwrap_or(false)
+            {
+                use tauri::Emitter;
+                let _ = app.emit("collection-progress-changed", reference);
+            }
+        }
+    };
 }
 
 #[tauri::command]

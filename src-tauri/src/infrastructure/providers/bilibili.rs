@@ -11,11 +11,14 @@ use reqwest::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 const API_ORIGIN: &str = "https://api.bilibili.com";
 const WEB_ORIGIN: &str = "https://www.bilibili.com/";
@@ -79,6 +82,7 @@ pub struct VideoPart {
     pub title: String,
     pub duration_seconds: u64,
     pub cover_url: String,
+    pub first_frame_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +138,8 @@ pub struct AccountProfile {
     pub user_id: Option<i64>,
     pub name: Option<String>,
     pub avatar_url: Option<String>,
+    pub level: Option<i64>,
+    pub vip_active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +194,7 @@ pub struct CommentItem {
     pub user_name: String,
     pub avatar_url: String,
     pub message: String,
+    pub emotes: std::collections::HashMap<String, String>,
     pub created_at: i64,
     pub like_count: i64,
     pub liked: bool,
@@ -226,6 +233,15 @@ struct NavData {
     uname: String,
     #[serde(default)]
     face: String,
+    #[serde(default, rename = "level_info")]
+    level: Option<NavLevel>,
+    #[serde(default, rename = "vipStatus")]
+    vip_status: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct NavLevel {
+    current_level: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -238,6 +254,8 @@ struct ReplyData {
 
 #[derive(Deserialize, Default)]
 struct ReplyPageMeta {
+    #[serde(default)]
+    acount: i64,
     #[serde(default)]
     num: i64,
     #[serde(default)]
@@ -280,6 +298,13 @@ struct ReplyMember {
 struct ReplyContent {
     #[serde(default)]
     message: String,
+    emote: Option<std::collections::HashMap<String, ReplyEmote>>,
+}
+
+#[derive(Deserialize)]
+struct ReplyEmote {
+    #[serde(default)]
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -334,7 +359,7 @@ struct Owner {
 }
 
 #[derive(Deserialize)]
-struct PageData {
+pub(super) struct PageData {
     cid: i64,
     page: u32,
     part: String,
@@ -391,10 +416,30 @@ pub struct BilibiliProvider {
     search_session: Mutex<bool>,
     session_cookie: RwLock<Option<String>>,
     dash_cache: RwLock<HashMap<DashKey, DashEntry>>,
+    catalog_epoch: AtomicU64,
+    seasons: RwLock<HashMap<(u64, i64, i64), (Instant, Season)>>,
+    pages: RwLock<HashMap<(u64, String), PageEntry>>,
+    page_slots: Semaphore,
 }
 
 impl BilibiliProvider {
     pub fn new() -> Result<Self, reqwest::Error> {
+        let cookies = Arc::new(Jar::default());
+        let client = Self::build_client(cookies.clone())?;
+        Ok(Self {
+            client,
+            cookies,
+            search_session: Mutex::new(false),
+            session_cookie: RwLock::new(None),
+            dash_cache: RwLock::new(HashMap::new()),
+            catalog_epoch: AtomicU64::new(0),
+            seasons: RwLock::new(HashMap::new()),
+            pages: RwLock::new(HashMap::new()),
+            page_slots: Semaphore::new(3),
+        })
+    }
+
+    fn build_client(cookies: Arc<Jar>) -> Result<Client, reqwest::Error> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -406,27 +451,23 @@ impl BilibiliProvider {
         );
         headers.insert(ORIGIN, HeaderValue::from_static("https://www.bilibili.com"));
         headers.insert(REFERER, HeaderValue::from_static(WEB_ORIGIN));
-        let cookies = Arc::new(Jar::default());
-        let client = Client::builder()
-            .cookie_provider(cookies.clone())
+        Client::builder()
+            .cookie_provider(cookies)
+            .pool_idle_timeout(Duration::from_secs(30))
             .default_headers(headers)
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(20))
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
-            .build()?;
-        Ok(Self {
-            client,
-            cookies,
-            search_session: Mutex::new(false),
-            session_cookie: RwLock::new(None),
-            dash_cache: RwLock::new(HashMap::new()),
-        })
+            .build()
     }
 
     pub async fn set_session_cookie(&self, cookie: Option<String>) {
         let mut cache = self.dash_cache.write().await;
         *self.session_cookie.write().await = cookie;
         cache.clear();
+        self.catalog_epoch.fetch_add(1, Ordering::Relaxed);
+        self.seasons.write().await.clear();
+        self.pages.write().await.clear();
     }
 
     pub async fn qr_login_generate(&self) -> Result<QrLogin, ProviderError> {
@@ -495,6 +536,8 @@ impl BilibiliProvider {
                 user_id: None,
                 name: None,
                 avatar_url: None,
+                level: None,
+                vip_active: None,
             });
         }
         let data: NavData = self.get_data(self.api_url("/x/web-interface/nav")).await?;
@@ -503,6 +546,14 @@ impl BilibiliProvider {
             user_id: data.is_login.then_some(data.mid),
             name: data.is_login.then_some(data.uname),
             avatar_url: data.is_login.then_some(normalize_url(&data.face)),
+            level: data
+                .level
+                .filter(|_| data.is_login)
+                .and_then(|level| level.current_level),
+            vip_active: data
+                .vip_status
+                .filter(|_| data.is_login)
+                .map(|status| status == 1),
         })
     }
 
@@ -526,7 +577,7 @@ impl BilibiliProvider {
                 .collect(),
             next: page + 1,
             is_end: page * page_size >= data.page.count,
-            total: data.page.count,
+            total: data.page.count.max(data.page.acount),
         })
     }
 
@@ -726,42 +777,23 @@ impl BilibiliProvider {
     }
 
     pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
+        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         let mut url = self.api_url("/x/web-interface/view");
         url.query_pairs_mut().append_pair("bvid", bvid);
         let detail: DetailData = self.get_data(url).await?;
         let fallback_cover = normalize_url(&detail.pic);
-        let season = detail.ugc_season.as_ref().and_then(|s| {
-            Some(SeasonSummary {
-                id: s["id"].as_i64()?,
-                uploader_id: s["mid"]
-                    .as_i64()
-                    .filter(|n| *n > 0)
-                    .unwrap_or(detail.owner.mid),
-                title: s["title"].as_str().unwrap_or_default().into(),
-                cover_url: normalize_url(s["cover"].as_str().unwrap_or_default()),
-                uploader_name: detail.owner.name.clone(),
-            })
-        });
+        let season = detail
+            .ugc_season
+            .as_ref()
+            .and_then(|season| season_summary(season, &detail.owner));
         let title = detail.title;
-        let parts = detail
-            .pages
-            .into_iter()
-            .map(|part| VideoPart {
-                cid: part.cid,
-                page: part.page,
-                title: if part.part.trim().is_empty() {
-                    title.clone()
-                } else {
-                    part.part
-                },
-                duration_seconds: part.duration,
-                cover_url: if part.first_frame.is_empty() {
-                    fallback_cover.clone()
-                } else {
-                    normalize_url(&part.first_frame)
-                },
-            })
-            .collect();
+        let parts = normalize_pages(detail.pages, &title, &fallback_cover);
+        self.remember_pages(epoch, bvid, parts.clone()).await;
+        if let (Some(raw), Some(summary)) = (detail.ugc_season.as_ref(), season.as_ref()) {
+            if let Some(snapshot) = complete_season(raw, summary, &detail.bvid) {
+                self.remember_season(epoch, snapshot).await;
+            }
+        }
         Ok(VideoParts {
             bvid: detail.bvid,
             aid: detail.aid,
@@ -848,6 +880,13 @@ impl BilibiliProvider {
         }
         let dash = self.play_dash(bvid, cid, expanded).await?;
         Self::select_video_quality(&dash.video, video_height)
+    }
+
+    pub async fn invalidate_playback(&self, bvid: &str, cid: i64) {
+        self.dash_cache
+            .write()
+            .await
+            .retain(|(video, part, _), _| video != bvid || *part != cid);
     }
 
     pub async fn warm_playback(&self, bvid: &str, cid: i64) -> Result<(), ProviderError> {
@@ -1027,14 +1066,19 @@ impl BilibiliProvider {
     }
 
     async fn get_data<T: DeserializeOwned>(&self, url: Url) -> Result<T, ProviderError> {
-        let envelope: Envelope<T> = self
-            .authenticated_get(url)
-            .await
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let request = self.authenticated_get(url.clone()).await;
+        let response = match request.send().await {
+            Err(error) if error.is_connect() || (error.is_request() && !error.is_timeout()) => {
+                // A resumed app may still hold a dead pooled connection. Retry this read with a fresh pool.
+                let fresh = Self::build_client(self.cookies.clone())?;
+                self.authenticated_get_with(&fresh, url)
+                    .await
+                    .send()
+                    .await?
+            }
+            result => result?,
+        };
+        let envelope: Envelope<T> = response.error_for_status()?.json().await?;
         if envelope.code != 0 {
             return Err(ProviderError::Api {
                 code: envelope.code,
@@ -1048,7 +1092,11 @@ impl BilibiliProvider {
     }
 
     async fn authenticated_get(&self, url: Url) -> reqwest::RequestBuilder {
-        let request = self.client.get(url.clone());
+        self.authenticated_get_with(&self.client, url).await
+    }
+
+    async fn authenticated_get_with(&self, client: &Client, url: Url) -> reqwest::RequestBuilder {
+        let request = client.get(url.clone());
         match self.session_cookie.read().await.as_deref() {
             Some(session) => {
                 // Explicit login headers otherwise replace the jar's visitor cookies.
@@ -1142,6 +1190,27 @@ fn comment_from_raw(raw: RawReply) -> CommentItem {
         user_name: raw.member.uname,
         avatar_url: normalize_url(&raw.member.avatar),
         message: raw.content.message,
+        emotes: raw
+            .content
+            .emote
+            .unwrap_or_default()
+            .into_iter()
+            .take(64)
+            .filter_map(|(token, emote)| {
+                let url = Url::parse(&normalize_url(&emote.url)).ok()?;
+                let host = url.host_str()?;
+                (url.scheme() == "https"
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && ["hdslb.com", "biliimg.com"].iter().any(|domain| {
+                        host == *domain
+                            || host
+                                .strip_suffix(*domain)
+                                .is_some_and(|prefix| prefix.ends_with('.'))
+                    }))
+                .then(|| (token, url.to_string()))
+            })
+            .collect(),
         created_at: raw.ctime,
         like_count: raw.like_count,
         liked: raw.action == 1,

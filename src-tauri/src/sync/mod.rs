@@ -296,7 +296,10 @@ pub async fn sync_disconnect(
 }
 fn preserve_history(base: &mut Snapshot, local: &mut Snapshot, remote: &Snapshot) {
     for (k, r) in &remote.records {
-        if r.kind == "history" {
+        if r.kind == "collectionProgress" {
+            base.records.insert(k.clone(), r.clone());
+            local.records.insert(k.clone(), r.clone());
+        } else if r.kind == "history" {
             base.records.insert(k.clone(), r.clone());
             local.records.insert(k.clone(), r.clone());
             let t = format!("track:{}", text(r, "trackId"));
@@ -370,8 +373,13 @@ pub async fn sync_now(
                 return Err(e);
             }
         };
-        let mut local = initial.clone();
+        let mut initial = initial.clone();
         let mut baseline = base.clone();
+        if remote.legacy_cloud {
+            initial.use_legacy_cloud_format();
+            baseline.use_legacy_cloud_format();
+        }
+        let mut local = initial.clone();
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
         }
@@ -424,7 +432,10 @@ pub async fn sync_now(
             return Err("同步已取消".into());
         }
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        let current = storage::export(&c, &cfg.uid, cfg.history)?;
+        let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
+        if remote.legacy_cloud {
+            current.use_legacy_cloud_format();
+        }
         // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
         let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));
         final_local.compact(true);

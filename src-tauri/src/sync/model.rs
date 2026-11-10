@@ -33,9 +33,25 @@ impl Snapshot {
             records: BTreeMap::new(),
         }
     }
+    pub fn use_legacy_cloud_format(&mut self) {
+        self.records
+            .retain(|_, record| record.kind != "collectionProgress");
+        for record in self
+            .records
+            .values_mut()
+            .filter(|record| record.kind == "history")
+        {
+            if let Some(Value::String(time)) = record.fields.get_mut("playedAt") {
+                if time.as_bytes().get(19) == Some(&b'.') {
+                    time.truncate(19);
+                }
+            }
+        }
+    }
     pub fn compact(&mut self, history: bool) {
         if !history {
-            self.records.retain(|_, r| r.kind != "history");
+            self.records
+                .retain(|_, r| !matches!(r.kind.as_str(), "history" | "collectionProgress"));
         }
         let mut recent: Vec<_> = self
             .records
@@ -69,6 +85,15 @@ impl Snapshot {
         }
         self.records.retain(|_, r| {
             r.kind != "item" || lists.contains(&format!("playlist:{}", text(r, "playlistId")))
+        });
+        let collections: BTreeSet<_> = self
+            .records
+            .values()
+            .filter(|r| r.kind == "collection")
+            .map(|r| text(r, "bvid").to_owned())
+            .collect();
+        self.records.retain(|_, r| {
+            r.kind != "collectionProgress" || collections.contains(text(r, "reference"))
         });
         let referenced: BTreeSet<_> = self
             .records
@@ -112,6 +137,7 @@ impl Snapshot {
                 "collectionFolder" => &["id", "name"],
                 "collection" => &["bvid", "folderId"],
                 "item" => &["playlistId", "trackId", "position"],
+                "collectionProgress" => &["reference", "checkpoint"],
                 "favorite" => &["trackId"],
                 "history" => &["trackId", "playedAt"],
                 "lyric" => &["id", "provider", "providerLyricId", "biasMs", "manual"],
@@ -159,6 +185,17 @@ impl Snapshot {
                                 .get(&format!("collectionFolder:{}", text(r, "folderId")))
                                 .is_some_and(|r| r.kind == "collectionFolder"))
                 }
+                "collectionProgress" => {
+                    let reference = text(r, "reference");
+                    key == &format!("collectionProgress:{reference}")
+                        && self
+                            .records
+                            .get(&format!("collection:{reference}"))
+                            .is_some_and(|r| r.kind == "collection")
+                        && parse_checkpoint(text(r, "checkpoint")).is_some_and(|(_, bvid, _, _)| {
+                            reference.starts_with("season:") || reference == bvid
+                        })
+                }
                 "playlist" => {
                     key == &format!("playlist:{id}")
                         && uuid::Uuid::parse_str(id).is_ok()
@@ -166,11 +203,7 @@ impl Snapshot {
                 }
                 "favorite" => key == &format!("favorite:{track}"),
                 "history" => {
-                    key == &format!("history:{track}")
-                        && text(r, "playedAt").len() == 19
-                        && text(r, "playedAt")
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || b"- :".contains(&b))
+                    key == &format!("history:{track}") && valid_history_time(text(r, "playedAt"))
                 }
                 "item" => {
                     key == &format!("item:{}|{track}", text(r, "playlistId"))
@@ -203,6 +236,7 @@ impl Snapshot {
         for (kind, limit) in [
             ("collectionFolder", 100),
             ("collection", 2000),
+            ("collectionProgress", 2000),
             ("playlist", 500),
             ("track", 5000),
             ("item", 10000),
@@ -214,6 +248,36 @@ impl Snapshot {
         }
         Ok(())
     }
+}
+fn valid_history_time(time: &str) -> bool {
+    matches!(time.len(), 19 | 23)
+        && time.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            10 => b == b' ',
+            13 | 16 => b == b':',
+            19 => b == b'.',
+            _ => b.is_ascii_digit(),
+        })
+}
+pub fn parse_checkpoint(value: &str) -> Option<(i64, &str, i64, i64)> {
+    let mut fields = value.split(':');
+    let time = fields.next()?.parse::<i64>().ok()?;
+    let bvid = fields.next()?;
+    let cid = fields.next()?.parse::<i64>().ok()?;
+    let position = fields.next()?.parse::<i64>().ok()?;
+    (fields.next().is_none()
+        && time > 0
+        && time <= 9_007_199_254_740_991
+        && cid > 0
+        && (0..=604_800_000).contains(&position)
+        && bvid.len() > 2
+        && bvid.starts_with("BV")
+        && crate::infrastructure::repositories::collections::valid_reference(bvid))
+    .then_some((time, bvid, cid, position))
+}
+pub fn checkpoint_order(value: &Value) -> (i64, &str) {
+    let raw = value.as_str().unwrap_or_default();
+    (parse_checkpoint(raw).map_or(0, |entry| entry.0), raw)
 }
 pub fn safe_cover(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|u| {
@@ -249,7 +313,23 @@ pub fn merge(
         let b = base.records.get(&key);
         let l = local.records.get(&key);
         let r = remote.records.get(&key);
-        let value = if l == r || r == b {
+        let value = if let (Some(l), Some(r)) = (l, r)
+            && l.kind == "collectionProgress"
+            && r.kind == l.kind
+        {
+            [l, r]
+                .into_iter()
+                .max_by_key(|record| checkpoint_order(&record.fields["checkpoint"]))
+                .cloned()
+        } else if key.starts_with("collectionProgress:") {
+            if l == b {
+                r.cloned()
+            } else if r == b {
+                l.cloned()
+            } else {
+                None
+            }
+        } else if l == r || r == b {
             l.cloned()
         } else if l == b {
             r.cloned()

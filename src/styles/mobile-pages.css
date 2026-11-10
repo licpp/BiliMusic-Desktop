@@ -44,7 +44,7 @@
 .mobile-lyrics-chooser .mobile-lookup-fields>.mobile-page-primary { justify-self:end; }
 .mobile-manual-lyrics textarea { display:block;width:100%;min-height:55dvh;resize:vertical;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);font-size:16px;line-height:1.7;outline:none; }
 .mobile-parts-summary { display:flex;align-items:center;gap:14px;margin-bottom:18px; }
-.mobile-parts-summary>.artwork { width:72px;height:54px;flex:0 0 72px;border-radius:10px;overflow:hidden; }
+.mobile-parts-summary>.artwork { width:80px;height:45px;flex:0 0 80px;border-radius:10px;overflow:hidden; }
 .mobile-parts-summary>div { min-width:0; }
 .mobile-parts-summary h3 { margin:0;font-size:16px;line-height:1.45;overflow-wrap:anywhere; }
 .mobile-parts-summary p { margin:6px 0 0;color:var(--muted);font-size:12px; }
@@ -58,7 +58,6 @@
 :root:is([data-platform="ios"],[data-platform="android"]) .video-part-play>strong { grid-column:2;white-space:normal;font-size:15px;line-height:1.45; }
 :root:is([data-platform="ios"],[data-platform="android"]) .video-part-play>small { display:block;grid-column:2;font-size:12px;color:var(--muted); }
 :root:is([data-platform="ios"],[data-platform="android"]) .video-part-play>svg { display:none; }
-.video-parts-list .current-part .video-part-play>strong { color:var(--cyan); }
 .lyric-search-fields { display:contents; }
 @keyframes mobile-page-in { from { transform:translate3d(18px,0,0);opacity:.6; } to { transform:translate3d(0,0,0);opacity:1; } }
 @media(prefers-reduced-motion:reduce) { .mobile-page { animation:none; } }
@@ -101,3 +100,48 @@
 }
 .action-menu-floating-panel>button { font-size:14px; }
 .action-menu-floating-panel>label { font-size:13px; }
+
+[data-swipe-tabs] { touch-action: pan-y; }
+:root[data-keyboard-open] .mobile-page-content { padding-bottom: var(--keyboard-overlap, 0px); }
+:root[data-keyboard-open] .comments-panel.comments-sheet.mobile-comments.expanded .comment-compose { bottom: var(--keyboard-overlap, 0px); }
+:root[data-keyboard-open] .comments-panel.comments-sheet.mobile-comments.expanded .comments-scroll { padding-bottom: calc(110px + var(--keyboard-overlap, 0px)); }
+@media (max-width: 960px) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-tabs {
+    position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--tab-count), minmax(0, 1fr));
+    gap: 0; width: min(100%, 420px); margin: 0 auto 16px; padding: 4px; border: 1px solid var(--line);
+    border-radius: 16px; overflow: visible; background: color-mix(in srgb, var(--panel-raised) 74%, var(--base));
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-tabs::before {
+    content: ''; position: absolute; z-index: -1; inset: 4px auto 4px 4px;
+    width: calc((100% - 8px) / var(--tab-count)); border-radius: 12px;
+    transform: translateX(calc(var(--tab-index) * 100%)); transition: transform 230ms cubic-bezier(.22,.78,.28,1);
+    background: var(--panel); box-shadow: 0 1px 6px #0002, inset 0 0 0 1px color-mix(in srgb, var(--cyan) 13%, var(--line));
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-tabs button {
+    display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 0; min-height: 39px; padding: 0 4px;
+    border: 0; border-radius: 11px; background: transparent; color: var(--muted); font-size: 14px; font-weight: 550;
+    transition: color 160ms ease;
+  }
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; }
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-panel { animation: segmented-panel-in 160ms ease-out both; }
+}
+@keyframes segmented-panel-in { from { opacity: .65; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) {
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-tabs::before { transition: none; }
+  :root:is([data-platform="ios"], [data-platform="android"]) .segmented-panel { animation: none; }
+}
+
+.sleep-timer-notice { position: fixed; z-index: 400; top: max(14px, var(--native-safe-top, env(safe-area-inset-top, 14px))); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; width: min(calc(100% - 28px), 420px); padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--panel); color: var(--ink); box-shadow: 0 12px 38px #0003; }
+.sleep-timer-notice div { flex: 1; display: grid; gap: 3px; }
+.sleep-timer-notice small { color: var(--muted); font-size: 12px; }
+.sleep-timer-notice button, .sleep-timer-settings button { min-height: 40px; border: 0; border-radius: 10px; padding: 6px 10px; color: var(--ink); background: var(--line); font-size: 14px; }
+.sleep-timer-notice button:last-of-type, .sleep-timer-settings .mobile-page-primary { background: var(--cyan); color: var(--base); }
+.sleep-timer-backdrop { z-index: 250; }
+.sleep-timer-settings { width: min(100%, 400px); padding: 18px; border-radius: 20px; background: var(--panel); }
+.sleep-timer-settings header, .sleep-timer-settings footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sleep-timer-settings h3 { margin: 0; font-size: 17px; }
+.sleep-timer-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0; }
+.sleep-timer-presets button[aria-pressed="true"] { color: var(--cyan); }
+.sleep-timer-settings label { display: block; margin-bottom: 15px; color: var(--muted); font-size: 14px; }
+.sleep-timer-settings input { width: 64px; min-height: 40px; margin: 0 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--base); color: var(--ink); text-align: center; font-size: 16px; }
+.sleep-timer-settings footer { justify-content: flex-end; }

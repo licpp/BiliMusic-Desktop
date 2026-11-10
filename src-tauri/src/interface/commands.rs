@@ -3,7 +3,8 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
     AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
-    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, VideoParts, VideoSource,
+    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, VideoPart, VideoParts,
+    VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -98,6 +99,56 @@ pub fn library_tracks(
         LibraryRepository::list(&connection, favorites_only.unwrap_or(false), 500)
             .map_err(CommandError::database)
     }
+}
+
+#[tauri::command]
+pub fn collection_progress(
+    database: State<'_, Database>,
+    reference: String,
+) -> Result<
+    Option<crate::infrastructure::repositories::collections::CollectionProgress>,
+    CommandError,
+> {
+    let connection = database.0.lock().map_err(CommandError::database)?;
+    crate::infrastructure::repositories::collections::progress(&connection, &reference)
+        .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub fn playback_position(
+    app: tauri::AppHandle,
+    database: State<'_, Database>,
+    track_id: String,
+    seconds: Option<f64>,
+    observed_at: Option<i64>,
+    scope: Option<String>,
+    collection_ref: Option<String>,
+) -> Result<f64, CommandError> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if let (Some(seconds), Some(observed_at), Some(scope)) = (seconds, observed_at, scope) {
+        if super::media::profile(&database) != scope {
+            return Ok(0.0);
+        }
+        LibraryRepository::save_playback_position(&connection, &track_id, seconds, observed_at)
+            .map_err(CommandError::database)?;
+        if let Some(reference) = collection_ref
+            && crate::infrastructure::repositories::collections::save_progress(
+                &connection,
+                &reference,
+                &track_id,
+                seconds,
+                observed_at,
+            )
+            .map_err(CommandError::database)?
+        {
+            use tauri::Emitter;
+            let _ = app.emit("collection-progress-changed", reference);
+        }
+    }
+    LibraryRepository::playback_position(&connection, &track_id).map_err(CommandError::database)
 }
 
 #[tauri::command]
@@ -314,6 +365,20 @@ pub async fn bili_video_parts(
     }
     provider
         .video_parts(&bvid)
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_video_pagelist(
+    provider: State<'_, BilibiliProvider>,
+    bvid: String,
+) -> Result<Vec<VideoPart>, CommandError> {
+    if !valid_bvid(&bvid) {
+        return Err(CommandError::validation("无效的 BV 号"));
+    }
+    provider
+        .video_pagelist(&bvid)
         .await
         .map_err(CommandError::provider)
 }
@@ -752,6 +817,7 @@ pub async fn track_playback_url(
     provider: State<'_, BilibiliProvider>,
     media_proxy: State<'_, MediaProxy>,
     track_id: String,
+    refresh: Option<bool>,
 ) -> Result<String, CommandError> {
     let (track, paths, local_path) = {
         let connection = database
@@ -803,6 +869,9 @@ pub async fn track_playback_url(
             .map_err(|_| CommandError::database("数据库正忙"))?;
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
+    if refresh.unwrap_or(false) {
+        provider.invalidate_playback(&track.bvid, track.cid).await;
+    }
     let source = provider
         .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
         .await
@@ -859,6 +928,47 @@ pub fn mobile_download_directory(app: tauri::AppHandle) -> Result<String, Comman
         .join("downloads");
     std::fs::create_dir_all(&directory).map_err(CommandError::database)?;
     Ok(directory.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "ios")]
+#[tauri::command]
+pub async fn mobile_export_download(
+    app: tauri::AppHandle,
+    database: State<'_, Database>,
+    download_id: String,
+) -> Result<(), CommandError> {
+    use tauri::Manager;
+    let target: String = {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        connection
+            .query_row(
+                "SELECT target_path FROM downloads WHERE id=?1 AND status='completed'",
+                [&download_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("找不到已下载的歌曲"))?
+    };
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(CommandError::database)?
+        .join("downloads")
+        .canonicalize()
+        .map_err(CommandError::database)?;
+    let path = std::path::PathBuf::from(target)
+        .canonicalize()
+        .map_err(CommandError::database)?;
+    if !path.starts_with(directory) || !path.is_file() {
+        return Err(CommandError::validation("下载文件不可用"));
+    }
+    tauri_plugin_ios_player::export_download(&app, &path)
+        .await
+        .map_err(CommandError::database)
 }
 
 #[tauri::command]

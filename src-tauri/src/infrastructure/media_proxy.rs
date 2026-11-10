@@ -51,6 +51,7 @@ impl MediaProxy {
             access_token: Uuid::new_v4().simple().to_string(),
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(8))
+                .pool_idle_timeout(Duration::from_secs(30))
                 .build()?,
             entries: Arc::new(RwLock::new(HashMap::new())),
         };

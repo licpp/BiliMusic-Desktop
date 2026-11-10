@@ -1,6 +1,23 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { ApiError, MAX_BYTES, validateSnapshot } from './protocol.mjs';
 import { syncPolicy } from './privacy.mjs';
+const formatHeader = 'x-bilimusic-sync-format';
+const checkpoints = 'checkpoints';
+function legacyView(snapshot) {
+  return {...snapshot,records:Object.fromEntries(Object.entries(snapshot.records)
+    .filter(([, record])=>record.kind!=='collectionProgress')
+    .map(([key, record])=>[key,record.kind==='history'
+      ? {...record,fields:{...record.fields,playedAt:record.fields.playedAt.slice(0,19)}} : record]))};
+}
+function preserveExtendedRecords(snapshot, previous) {
+  for (const [key, record] of Object.entries(previous.records)) {
+    if (record.kind==='collectionProgress' && snapshot.records[`collection:${record.fields.reference}`]) {
+      snapshot.records[key]=record;
+    } else if (record.kind==='history' && snapshot.records[key]?.fields.playedAt===record.fields.playedAt.slice(0,19)) {
+      snapshot.records[key]=record;
+    }
+  }
+}
 const hash = s=>createHash('sha256').update(s).digest('hex');
 export async function verifyBilibili(cookie) {
   const response=await fetch('https://api.bilibili.com/x/web-interface/nav',{headers:{Cookie:cookie,'User-Agent':'Mozilla/5.0','Referer':'https://www.bilibili.com/'},redirect:'error',signal:AbortSignal.timeout(10000)});
@@ -34,15 +51,24 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
       const token=req.headers.authorization?.match(/^Bearer ([\w-]{43})$/)?.[1];
       const uid=token?await store.authenticate(hash(token)):null;if(!uid)throw new ApiError(401,'同步授权已失效');
       if(path==='/vault'&&req.method==='GET') {
-        const v=await store.read(uid);if(!v?.snapshot)return json(404,{message:'尚无同步数据'});
-        return json(200,v.snapshot,{ETag:`"${v.revision}"`});
+        const currentFormat=req.headers[formatHeader]===checkpoints;
+        const headers=currentFormat?{[formatHeader]:checkpoints}:{};
+        const v=await store.read(uid);if(!v?.snapshot)return json(404,{message:'尚无同步数据'},headers);
+        return json(200,currentFormat?v.snapshot:legacyView(v.snapshot),{...headers,ETag:`"${v.revision}"`});
       }
       if(path==='/vault'&&req.method==='PUT') {
         const snapshot=validateSnapshot(await readJson(req),uid);
         const match=req.headers['if-match'];const create=req.headers['if-none-match']==='*';
         if(!match&&!create)throw new ApiError(428,'必须提供版本条件');
         if(match&&!/^"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"$/i.test(match))throw new ApiError(400,'版本标识无效');
-        const revision=await store.write(uid,match?.replace(/^"|"$/g,''),create,snapshot,hash(token));
+        const expected=match?.replace(/^"|"$/g,'');
+        if (expected && !create && req.headers[formatHeader]!==checkpoints) {
+          const current=await store.read(uid);
+          if(current?.revision!==expected)throw new ApiError(412,'云端已更新，请重新合并');
+          if(current.snapshot)preserveExtendedRecords(snapshot,current.snapshot);
+          validateSnapshot(snapshot,uid);
+        }
+        const revision=await store.write(uid,expected,create,snapshot,hash(token));
         if(!revision)throw new ApiError(412,'云端已更新，请重新合并');return json(200,{ok:true},{ETag:`"${revision}"`});
       }
       if(path==='/session'&&req.method==='DELETE'){await store.revoke(hash(token));return json(200,{ok:true});}

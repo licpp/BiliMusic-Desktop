@@ -25,3 +25,44 @@ test('collection references sync without part lists or source caches',()=>{
  delete s.records[`collectionFolder:${id}`];assert.throws(()=>validateSnapshot(s,'42'));
  s.records['collection:BV123'].fields.folderId='';assert.equal(validateSnapshot(s,'42'),s);
 });
+
+test('collection checkpoints require a saved collection and contain no source metadata', () => {
+  const record = {kind:'collectionProgress', fields:{reference:'season:42:73', checkpoint:'1794355030000:BV123:7:85000'}};
+  const snapshot = {schema:1, uid:'42', records:{
+    'collection:season:42:73': {kind:'collection', fields:{bvid:'season:42:73', folderId:''}},
+    'collectionProgress:season:42:73': record,
+  }};
+  assert.equal(validateSnapshot(snapshot, '42'), snapshot);
+  record.fields.checkpoint = '1794355030000:BV123:7:-1';
+  assert.throws(() => validateSnapshot(snapshot, '42'));
+  record.fields.checkpoint = '1794355030000:BV123:7:85000';
+  delete snapshot.records['collection:season:42:73'];
+  assert.throws(() => validateSnapshot(snapshot, '42'));
+});
+
+test('old cloud clients can read and update a vault while preserving extended data', async t => {
+  const {url,auth} = await setup(t);
+  const headers = {Authorization:`Bearer ${await auth('SESSDATA=one')}`};
+  const format = {'x-bilimusic-sync-format':'checkpoints'};
+  const key = 'collectionProgress:BV123';
+  const historyKey = 'history:bilibili:BV1:1';
+  const snapshot = sample('42');
+  snapshot.records['collection:BV123'] = {kind:'collection',fields:{bvid:'BV123',folderId:''}};
+  snapshot.records[key] = {kind:'collectionProgress',fields:{reference:'BV123',checkpoint:'1794355030000:BV123:7:85000'}};
+  snapshot.records[historyKey] = {kind:'history',fields:{trackId:'bilibili:BV1:1',playedAt:'2026-11-10 00:00:00.123'}};
+  const write = await fetch(url+'/vault',{method:'PUT',headers:{...headers,...format,'If-None-Match':'*'},body:JSON.stringify(snapshot)});
+  assert.equal(write.status,200);
+  const legacyRead = await fetch(url+'/vault',{headers});
+  const legacy = await legacyRead.json();
+  assert.equal(legacy.records[key],undefined);
+  assert.equal(legacy.records[historyKey].fields.playedAt,'2026-11-10 00:00:00');
+  legacy.records['track:bilibili:BV1:1'].fields.overrideArtist='Singer';
+  const update = await fetch(url+'/vault',{method:'PUT',headers:{...headers,'If-Match':legacyRead.headers.get('etag')},body:JSON.stringify(legacy)});
+  assert.equal(update.status,200);
+  const read = await fetch(url+'/vault',{headers:{...headers,...format}});
+  assert.equal(read.headers.get('x-bilimusic-sync-format'),'checkpoints');
+  const restored = await read.json();
+  assert.deepEqual(restored.records[key],snapshot.records[key]);
+  assert.deepEqual(restored.records[historyKey],snapshot.records[historyKey]);
+  assert.equal(restored.records['track:bilibili:BV1:1'].fields.overrideArtist,'Singer');
+});

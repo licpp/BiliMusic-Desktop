@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { isMobile } from '../../services/platform'
 
@@ -10,12 +10,30 @@ function subscribeToLayout(listener: () => void) {
 }
 const isMobileLayout = () => isMobile || window.matchMedia(mobileQuery).matches
 
-export function CommentsSurface({ children, onClose, onBackFromThread }: { children: ReactNode; onClose: () => void; onBackFromThread?: () => void }) {
+export function CommentsSurface({ children, onClose, onBackFromThread, video }: { children: ReactNode; onClose: () => void; onBackFromThread?: () => void; video?: HTMLElement | null }) {
   const mobile = useSyncExternalStore(subscribeToLayout, isMobileLayout)
   const [expanded, setExpanded] = useState(false)
   const panel = useRef<HTMLElement>(null)
   const gesture = useRef<number | null>(null)
   const suppressClick = useRef(false)
+  const shift = useRef(0)
+  useLayoutEffect(() => {
+    if (!mobile || !panel.current) return
+    const sheet = panel.current
+    const update = () => {
+      const height = window.innerHeight
+      const fullTop = height - sheet.offsetHeight
+      const target = video?.getBoundingClientRect().bottom ?? height * .34
+      shift.current = Math.max(0, Math.min(target - fullTop, height - fullTop - 230))
+      sheet.style.setProperty('--comment-sheet-shift', `${shift.current}px`)
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(sheet)
+    if (video) observer.observe(video)
+    window.addEventListener('resize', update)
+    update()
+    return () => { observer.disconnect(); window.removeEventListener('resize', update) }
+  }, [mobile, video])
   const forceExpanded = Boolean(onBackFromThread)
   const back = () => {
     if (onBackFromThread) onBackFromThread()
@@ -49,7 +67,7 @@ export function CommentsSurface({ children, onClose, onBackFromThread }: { child
 
   if (!mobile) return <aside className="comments-panel" aria-label="歌曲评论">{children}</aside>
 
-  return createPortal(<div className="comments-sheet-overlay" onPointerDown={event => { if (event.target === event.currentTarget) onClose() }} onKeyDown={event => {
+  return createPortal(<div className="comments-sheet-overlay" data-video={video && !expanded && !forceExpanded ? true : undefined} onPointerDown={event => { if (event.target === event.currentTarget) onClose() }} onKeyDown={event => {
     if (event.key === 'Escape') { event.stopPropagation(); back() }
     if (event.key !== 'Tab') return
     const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, a[href], [tabindex="0"]')
@@ -64,7 +82,7 @@ export function CommentsSurface({ children, onClose, onBackFromThread }: { child
         onPointerMove={event => {
           if (gesture.current === null) return
           const delta = event.clientY - gesture.current
-          const distance = forceExpanded ? Math.max(0, delta) : expanded ? Math.max(0, delta) : Math.max(-window.innerHeight * .26, delta)
+          const distance = forceExpanded ? Math.max(0, delta) : expanded ? Math.max(0, delta) : Math.max(-shift.current, delta)
           panel.current?.style.setProperty('--comment-drag-y', `${distance}px`)
         }}
         onPointerCancel={() => { gesture.current = null; panel.current?.removeAttribute('data-dragging'); panel.current?.style.removeProperty('--comment-drag-y') }}

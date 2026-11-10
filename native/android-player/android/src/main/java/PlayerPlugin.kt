@@ -25,12 +25,14 @@ class PlayArgs {
     var position: Double = 0.0
     var volume: Double = 0.7
     var playing: Boolean = true
+    var collectionRef: String? = null
 }
 @InvokeArg
 class ControlArgs {
     lateinit var action: String
     var value: Double = 0.0
     var id: String = ""
+    var collectionRef: String? = null
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
     var coverUrl: String? = null
@@ -128,8 +130,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     override fun load(webView: WebView) {
         managedWebView = webView
         // Own system-bar/IME insets, including Android 15+ enforced edge-to-edge.
-        // Resize the actual WebView instead of guessing CSS safe areas on Android.
+        // Keep layout stable; the IME covers the bottom of the WebView.
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        activity.window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
@@ -137,7 +140,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val left = if (immersive) 0 else bars.left
             val top = if (immersive) 0 else bars.top
             val right = if (immersive) 0 else bars.right
-            val bottom = if (immersive) keyboard.bottom else maxOf(bars.bottom, keyboard.bottom)
+            val bottom = if (immersive) 0 else bars.bottom
             params?.let {
                 if (it.leftMargin != left || it.topMargin != top || it.rightMargin != right || it.bottomMargin != bottom) {
                     it.setMargins(left, top, right, bottom)
@@ -149,7 +152,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val safeBottom = if (immersive && keyboard.bottom == 0) bars.bottom / density else 0f
             val safeLeft = if (immersive) bars.left / density else 0f
             val safeRight = if (immersive) bars.right / density else 0f
-            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-safe-top','${safeTop}px');" +
+            val keyboardOverlap = (keyboard.bottom - bottom).coerceAtLeast(0) / density
+            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-keyboard','${keyboardOverlap}px');" +
+                "window.dispatchEvent(new Event('bilimusic-keyboard'));" +
+                "document.documentElement.style.setProperty('--native-safe-top','${safeTop}px');" +
                 "document.documentElement.style.setProperty('--native-safe-bottom','${safeBottom}px');" +
                 "document.documentElement.style.setProperty('--native-safe-left','${safeLeft}px');" +
                 "document.documentElement.style.setProperty('--native-safe-right','${safeRight}px');", null)
@@ -191,7 +197,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("title", args.title).putExtra("artist", args.artist)
-            .putExtra("coverUrl", args.coverUrl)
+            .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing)
         activity.startForegroundService(intent)
         invoke.resolve()
@@ -219,7 +225,14 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 controller.isAppearanceLightNavigationBars = light
                 updateSystemBars()
                 activity.window.decorView.setBackgroundColor(android.graphics.Color.parseColor(if (light) "#f4f6fa" else "#071019"))
-            } else PlaybackService.instance?.control(args.action, args.value)
+            } else {
+                val service = PlaybackService.instance
+                if (args.action.startsWith("sleep") && service == null) {
+                    invoke.reject("请先开始播放"); return@runOnUiThread
+                }
+                if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
+                else service?.control(args.action, args.value)
+            }
             invoke.resolve()
         }
     }

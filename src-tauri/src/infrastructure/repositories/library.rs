@@ -82,14 +82,45 @@ impl LibraryRepository {
             Self::upsert(connection, track)?
         };
         connection.execute(
-            "INSERT INTO play_history (track_id) VALUES (?1)",
+            "INSERT INTO play_history (track_id,played_at) VALUES (?1,strftime('%Y-%m-%d %H:%M:%f','now'))",
             params![track.id],
         )?;
         connection.execute(
             "DELETE FROM play_history WHERE id NOT IN (SELECT id FROM play_history ORDER BY played_at DESC, id DESC LIMIT 1000)",
             [],
         )?;
+        connection.execute("DELETE FROM playback_positions WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC, MAX(id) DESC LIMIT 200)", [])?;
         Ok(record)
+    }
+
+    pub fn playback_position(connection: &Connection, id: &str) -> rusqlite::Result<f64> {
+        Ok(connection
+            .query_row(
+                "SELECT seconds FROM playback_positions WHERE track_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0.0))
+    }
+
+    pub fn save_playback_position(
+        connection: &Connection,
+        id: &str,
+        seconds: f64,
+        observed_at: i64,
+    ) -> rusqlite::Result<()> {
+        if !seconds.is_finite() || seconds < 0.0 || observed_at <= 0 {
+            return Ok(());
+        }
+        connection.execute(
+            "INSERT INTO playback_positions(track_id,seconds,observed_at)
+             SELECT ?1,?2,?3 WHERE ?1 IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC, MAX(id) DESC LIMIT 200)
+             ON CONFLICT(track_id) DO UPDATE SET seconds=excluded.seconds, observed_at=excluded.observed_at
+             WHERE excluded.observed_at >= playback_positions.observed_at",
+            params![id, seconds, observed_at],
+        )?;
+        Ok(())
     }
 
     pub fn list(
@@ -121,7 +152,13 @@ impl LibraryRepository {
 
     pub fn saved(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
         let mut statement = connection.prepare(&format!(
-            "{} WHERE f.track_id IS NOT NULL OR EXISTS(SELECT 1 FROM playlist_items pi WHERE pi.track_id=t.id) ORDER BY t.updated_at DESC,t.id LIMIT ?1",
+            "{} JOIN (
+                SELECT track_id, MAX(strftime('%Y-%m-%d %H:%M:%f',added_at) || ':' || printf('%020d',added_row)) AS latest FROM (
+                    SELECT track_id, created_at AS added_at, rowid AS added_row FROM favorites
+                    UNION ALL SELECT track_id, created_at, rowid FROM playlist_items
+                ) GROUP BY track_id
+            ) membership ON membership.track_id=t.id
+            ORDER BY membership.latest DESC, t.id LIMIT ?1",
             Self::select_sql()
         ))?;
         statement
@@ -131,7 +168,7 @@ impl LibraryRepository {
 
     pub fn recent(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
         let mut statement = connection.prepare(&format!(
-            "{} JOIN (SELECT track_id,MAX(id) latest_id FROM play_history GROUP BY track_id) h ON h.track_id=t.id ORDER BY h.latest_id DESC LIMIT ?1",
+            "{} JOIN (SELECT track_id,MAX(played_at) latest_time,MAX(id) latest_id FROM play_history GROUP BY track_id) h ON h.track_id=t.id ORDER BY h.latest_time DESC,h.latest_id DESC LIMIT ?1",
             Self::select_sql()
         ))?;
         statement
@@ -157,7 +194,7 @@ impl LibraryRepository {
     pub fn set_favorite(connection: &Connection, id: &str, liked: bool) -> rusqlite::Result<()> {
         if liked {
             connection.execute(
-                "INSERT INTO favorites(track_id) VALUES(?1) ON CONFLICT(track_id) DO NOTHING",
+                "INSERT INTO favorites(track_id,created_at) VALUES(?1,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(track_id) DO NOTHING",
                 params![id],
             )?;
         } else {
@@ -300,6 +337,29 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].id, first.id);
         assert_eq!(recent[1].id, second.id);
+    }
+
+    #[test]
+    fn playback_positions_are_bounded_and_ignore_stale_updates() {
+        let mut connection = database();
+        let first = track(1);
+        LibraryRepository::record_play(&mut connection, &first).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 24.0, 10).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 0.0, 12).unwrap();
+        LibraryRepository::save_playback_position(&connection, &first.id, 38.0, 11).unwrap();
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &first.id).unwrap(),
+            0.0
+        );
+        LibraryRepository::save_playback_position(&connection, &first.id, 40.0, 13).unwrap();
+        for cid in 2..=201 {
+            LibraryRepository::record_play(&mut connection, &track(cid)).unwrap();
+        }
+        LibraryRepository::save_playback_position(&connection, &first.id, 45.0, 14).unwrap();
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &first.id).unwrap(),
+            0.0
+        );
     }
 
     #[test]

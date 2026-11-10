@@ -1,23 +1,28 @@
-import { getSeason, parseSeasonReference, seasonCollection, seasonTracks } from '../../services/mediaSources'
+import type { Track } from '../../domain/track'
+import { getSeason, parseSeasonReference, seasonCollection, seasonTracks, seasonVideoRow, videoDetailFromTrack } from '../../services/mediaSources'
 import { createPlaylist, saveLibraryTrack, addTracksToPlaylist } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
 import { SeasonBrowser } from './SeasonBrowser'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { listen } from '@tauri-apps/api/event'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowDownUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderInput, ListPlus, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
-import { changeCollection, listCollections, type Collection } from '../../services/collections'
+import { ArrowLeft, ArrowDownUp, Bookmark, Check, ChevronDown, ChevronRight, Folder, FolderInput, ListPlus, LoaderCircle, Play, History, Plus, RefreshCw, Search, X } from 'lucide-react'
+import { changeCollection, listCollections, readCollectionProgress, type Collection } from '../../services/collections'
 import { commandErrorMessage, getVideoParts, type Playlist } from '../../services/desktopApi'
 import { Artwork } from '../../shared/Artwork'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { toTrack } from '../../services/collectionTrack'
-import { usePlayerStore } from '../player/playerStore'
+import { MobilePartsPage } from '../library/MobilePartsPage'
+import { getVideoPages } from '../../services/videoPages'
+import { playbackIntent, resolveSeasonEntry, seasonPlaybackQueue, usePlayerStore } from '../player/playerStore'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { PlaylistEntry } from '../library/PlaylistEntry'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import type { MenuPosition } from '../../shared/useRowContextMenu'
+import { formatDuration } from '../../shared/time'
 import { isMobile } from '../../services/platform'
 
 const useCollections = () => useQuery({ queryKey: ['collections'], queryFn: listCollections })
@@ -175,19 +180,55 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false }: {
+export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false }: {
   item: Collection
   onBack: () => void
   onOpenCollection?: (item: Collection) => void
   backLabel?: string
   embedded?: boolean
+  locateCurrent?: boolean
+  hideBack?: boolean
 }) {
   const reference=parseSeasonReference(item.bvid)
-  const q=useQuery({queryKey:['collection-detail',item.bvid],queryFn:async()=>{
-    if(reference){const season=await getSeason(reference.mid,reference.seasonId);return {title:season.summary.title,coverUrl:season.summary.coverUrl,uploaderName:season.summary.uploaderName,tracks:seasonTracks(season),season:undefined,unavailable:season.unavailable}}
-    const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),unavailable:0}
+  const bookmarks = useCollections()
+  const saved = bookmarks.data?.items.some(collection => collection.bvid === item.bvid)
+  const progress = useQuery({
+    queryKey: ['collection-progress', accountEpoch(), item.bvid],
+    queryFn: () => readCollectionProgress(item.bvid),
+    enabled: Boolean(saved),
+    staleTime: 0,
+  })
+  const { refetch: refreshProgress } = progress
+  useEffect(() => {
+    if (!saved) return
+    const stop = listen<string>('collection-progress-changed', event => {
+      if (event.payload === item.bvid) void refreshProgress()
+    }).catch(() => undefined)
+    return () => { void stop.then(unlisten => unlisten?.()) }
+  }, [item.bvid, refreshProgress, saved])
+  const [resuming, setResuming] = useState(false)
+  const forceRefresh = useRef(false)
+  const q=useQuery({queryKey:['collection-detail',accountEpoch(),item.bvid],queryFn:async()=>{
+    if(reference){
+      const refresh = forceRefresh.current
+      forceRefresh.current = false
+      const catalog = await getSeason(reference.mid, reference.seasonId, refresh)
+      return { title: catalog.summary.title, coverUrl: catalog.summary.coverUrl, uploaderName: catalog.summary.uploaderName,
+        tracks: catalog.tracks.map(video => seasonVideoRow(video, catalog.summary)), catalog, season: undefined, unavailable: catalog.unavailable }
+    }
+    const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),catalog:undefined,unavailable:0}
   }})
   const [filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[seasonOpen,setSeasonOpen]=useState(false),[copying,setCopying]=useState(false),[message,setMessage]=useState(''),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
+  const [openedVideo, setOpenedVideo] = useState<Track>()
+  const nested = useQuery({
+    queryKey: ['collection-video-parts', accountEpoch(), openedVideo?.source.bvid],
+    queryFn: async () => {
+      const row = openedVideo!
+      const member = q.data?.catalog?.tracks.find(video => video.bvid === row.source.bvid)
+      return videoDetailFromTrack(row, member?.parts ?? await getVideoPages(row.source.bvid))
+    },
+    enabled: Boolean(openedVideo),
+  })
   const [reversedCollection, setReversedCollection] = useState<string>()
   const client=useQueryClient()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
@@ -198,15 +239,59 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     if (!detail) return []
     return reversed ? [...detail.tracks].reverse() : detail.tracks
   }, [detail, reversed])
+  const playbackTracks = useMemo(() => {
+    if (!detail?.catalog) return tracks
+    const catalog = detail.catalog
+    return seasonTracks(reversed ? { ...catalog, tracks: [...catalog.tracks].reverse() } : catalog)
+  }, [detail?.catalog, reversed, tracks])
+  const queueSource = { kind: reference ? 'season' as const : 'video' as const, title: detail?.title || item.title, collectionRef: item.bvid }
   const unit=reference?'个视频':'个分 P'
   const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes(filter.toLowerCase()))
+  const checkpoint = saved ? progress.data : undefined
+  const canResume = checkpoint && playbackTracks.some(track => track.source.bvid === checkpoint.bvid &&
+    (track.source.cid === checkpoint.cid || track.resolveParts))
+  const resumeTime = checkpoint?.positionMs ? formatDuration(Math.floor(checkpoint.positionMs / 1000)) : ''
+  const resumeLabel = resuming ? '正在读取选集' : `继续上次播放${resumeTime ? ` · ${resumeTime}` : ''}`
+  const resume = async () => {
+    if (!canResume || !checkpoint || resuming) return
+    const epoch = accountEpoch()
+    const intent = playbackIntent()
+    const id = `bilibili:${checkpoint.bvid}:${checkpoint.cid}`
+    setResuming(true)
+    setMessage('')
+    try {
+      let queue = playbackTracks
+      if (!queue.some(track => track.id === id && !track.resolveParts)) {
+        const entry = queue.find(track => track.resolveParts && track.source.bvid === checkpoint.bvid)
+        if (entry) {
+          const parts = await resolveSeasonEntry(entry)
+          const part = parts.find(track => track.id === id)
+          if (part) queue = seasonPlaybackQueue(queue, part, parts)
+        }
+      }
+      if (epoch !== accountEpoch() || intent !== playbackIntent()) return
+      if (!queue.some(track => track.id === id && !track.resolveParts)) {
+        setMessage('上次播放的分 P 已不在这个合集里。')
+        return
+      }
+      await player.playFromList(queue, id, queueSource, checkpoint.positionMs / 1000)
+    } catch (error) { setMessage(commandErrorMessage(error)) }
+    finally { setResuming(false) }
+  }
   const copy=async()=>{
     const epoch=accountEpoch();setCopying(true);setMessage('')
-    try{const list=await createPlaylist(detail?.title||item.title||'B 站合集');const ids:string[]=[];for(const track of tracks){if(epoch!==accountEpoch())return;ids.push((await saveLibraryTrack(track)).id)}if(epoch!==accountEpoch())return;await addTracksToPlaylist(list.id,ids,true);await client.invalidateQueries({queryKey:['playlists']});setMessage('已复制到我的歌单')}
+    try{const list=await createPlaylist(detail?.title||item.title||'B 站合集');const ids:string[]=[];for (const entry of playbackTracks) {
+        if (epoch !== accountEpoch()) return
+        const parts = entry.resolveParts ? await resolveSeasonEntry(entry) : [entry]
+        for (const track of parts) {
+          if (epoch !== accountEpoch()) return
+          ids.push((await saveLibraryTrack(track)).id)
+        }
+      }if(epoch!==accountEpoch())return;await addTracksToPlaylist(list.id,ids,true);await client.invalidateQueries({queryKey:['playlists']});setMessage('已复制到我的歌单')}
     catch(error){setMessage(commandErrorMessage(error))}finally{setCopying(false)}
   }
   return <section className="collection-detail">
-    {!embedded&&<button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{backLabel}</button>}
+    {!embedded && !hideBack && <button className="collection-flat-button collection-back" onClick={onBack}><ArrowLeft size={17}/>{backLabel}</button>}
     <header onContextMenu={event => {
       event.preventDefault()
       setContext({ left: event.clientX, top: event.clientY, nonce: Date.now() })
@@ -223,14 +308,19 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
       else setSeasonOpen(true)
     }}><span>所属合集 · {season.title}</span><span>›</span></button>}
     <div className="collection-detail-toolbar">
-      <button className="collection-primary" disabled={!tracks.length} onClick={()=>void player.playFromList(tracks,tracks[0].id)}><Play size={16}/>播放全部{tracks.length?` · ${tracks.length}`:''}</button>
-      <div>
-        <button className="collection-icon collection-order" aria-label="倒序排列" aria-pressed={reversed} title={reversed ? '恢复原顺序' : '倒序排列'} disabled={tracks.length < 2} onClick={() => setReversedCollection(reversed ? undefined : item.bvid)}><ArrowDownUp size={16}/><span>{reversed ? '倒序' : '原序'}</span></button>
+      <div className="collection-play-actions">
+        <button className="collection-primary" disabled={!tracks.length} onClick={()=>void player.playFromList(playbackTracks, tracks[0].id, queueSource)}><Play size={15}/>播放全部</button>
+        {canResume && <button className="collection-resume" disabled={resuming} aria-busy={resuming} aria-label={resumeLabel} title={resumeLabel} onClick={() => void resume()}>
+          {resuming ? <LoaderCircle size={15} className="spin"/> : <History size={15}/>}续播
+        </button>}
+      </div>
+      <div className="collection-list-actions">
+        <button className="collection-icon collection-order" aria-label={reversed ? '恢复原顺序' : '倒序排列'} aria-pressed={reversed} title={reversed ? '恢复原顺序' : '倒序排列'} disabled={tracks.length < 2} onClick={() => setReversedCollection(reversed ? undefined : item.bvid)}><ArrowDownUp size={16}/><span>{reversed ? '倒序' : '原序'}</span></button>
         <button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button>
         <CollectionMenu item={item} contextPosition={context} additionalActions={close => <>
-          <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(tracks);close()}}><ListPlus size={16}/>全部加入队列</button>
+          <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(playbackTracks);close()}}><ListPlus size={16}/>全部加入队列</button>
           <button role="menuitem" disabled={!tracks.length||copying} onClick={()=>{close();void copy()}}><Plus size={16}/>{copying?'正在复制…':'复制为本地歌单'}</button>
-          <button role="menuitem" disabled={q.isFetching} onClick={()=>{void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button>
+          <button role="menuitem" disabled={q.isFetching} onClick={()=>{if (reference) forceRefresh.current = true; else void getVideoParts(item.bvid, true); void q.refetch();close()}}><RefreshCw size={16}/>刷新列表</button>
         </>}/>
       </div>
     </div>
@@ -240,7 +330,20 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     {q.isLoading&&<p>正在读取列表…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
     {!q.isLoading&&!q.error&&!tracks.length&&<p className="collection-empty">暂无可播放内容</p>}
     {Boolean(detail?.unavailable)&&<p className="batch-message">有 {detail?.unavailable} 个视频暂不可用，已保留其余内容。</p>}
-    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)}/>
+    <VideoPartsList tracks={tracks} visibleTracks={visibleTracks} videoCollection={Boolean(reference)} locateCurrent={locateCurrent}
+      playbackTracks={playbackTracks} queueSource={queueSource} onOpenParts={reference ? setOpenedVideo : undefined}/>
+    {openedVideo && (() => {
+      const video = nested.data
+      const parts = video?.parts.map(part => toTrack(video, part)) ?? []
+      const close = () => setOpenedVideo(undefined)
+      const queue = parts.length ? seasonPlaybackQueue(playbackTracks, parts[0], parts) : playbackTracks
+      if (isMobile && video && parts.length > 1) return <MobilePartsPage detail={video} onBack={close} playbackTracks={queue} queueSource={queueSource} showSeasonLink={false}/>
+      return <CollectionDialog title={openedVideo.title} onClose={close}>
+        {nested.isError ? <button className="load-more" onClick={() => void nested.refetch()}>{commandErrorMessage(nested.error)} · 重试</button> :
+          !video ? <p className="batch-message">正在读取选集…</p> :
+          parts.length > 1 ? <VideoPartsList locateCurrent tracks={parts} playbackTracks={queue} queueSource={queueSource}/> : <p className="batch-message">这个视频可以直接播放。</p>}
+      </CollectionDialog>
+    })()}
     {seasonOpen&&season&&<SeasonBrowser summary={season} onClose={()=>setSeasonOpen(false)}/>}
   </section>
 }
