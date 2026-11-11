@@ -352,8 +352,6 @@ class PlayerPlugin: Plugin {
         invoke.resolve(["value": value])
     }
     private func localMediaURL(_ value: String) -> URL? {
-        if let url = URL(string: value), url.scheme == "https", let host = url.host,
-           (host == "bilivideo.com" || host.hasSuffix(".bilivideo.com") || host == "bilivideo.cn" || host.hasSuffix(".bilivideo.cn")), url.user == nil, url.password == nil { return url }
         guard let url = URL(string: value), url.scheme == "http", url.host == "127.0.0.1", url.port != nil, url.user == nil, url.password == nil, url.path.split(separator: "/").count == 2 else { return nil }
         return url
     }
@@ -368,9 +366,7 @@ class PlayerPlugin: Plugin {
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
         state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position; initialSeekPending = position > 0
-        let headers = ["Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0"]
-        let asset = AVURLAsset(url: url, options: url.scheme == "https" ? ["AVURLAssetHTTPHeaderFieldsKey": headers] : nil)
-        let item = AVPlayerItem(asset: asset); item.preferredForwardBufferDuration = 8
+        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 8
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
         itemStatus = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -391,12 +387,12 @@ class PlayerPlugin: Plugin {
                                 guard let self, self.generation == request, item === self.player.currentItem else { return }
                                 self.initialSeekPending = false
                                 if completed && self.desiredPlaying { self.player.playImmediately(atRate: self.playbackRate) }
-                                self.endBackgroundTask(); self.refresh()
+                                self.refresh()
                             }
                         }
                     } else {
                         if self.desiredPlaying && self.player.timeControlStatus != .playing { self.player.playImmediately(atRate: self.playbackRate) }
-                        self.endBackgroundTask(); self.refresh()
+                        self.refresh()
                     }
                 }
             }
@@ -471,7 +467,7 @@ class PlayerPlugin: Plugin {
         // Recreate failed items natively so lock-screen playback recovers while
         // the WebView is suspended. One refresh is allowed per user attempt.
         if desiredPlaying && recoverCurrentPlayback() { return }
-        fail("音频连接已失效，请点击播放重试")
+        fail(player.currentItem?.status == .failed ? "音频加载失败，请重新播放" : "音频缓冲超时，请检查网络后重试")
     }
     private func watchPlayback() {
         playbackWatchdog?.cancel()
@@ -481,7 +477,7 @@ class PlayerPlugin: Plugin {
             self.playbackFailed()
         }
         playbackWatchdog = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
     }
     private var seekRevision = 0
     private func seek(_ seconds: Double) {
@@ -550,7 +546,7 @@ class PlayerPlugin: Plugin {
     }
     private func refresh() {
         if expireSleepIfNeeded() { return }
-        if player.timeControlStatus == .playing { playbackWatchdog?.cancel() }
+        if player.timeControlStatus == .playing { playbackWatchdog?.cancel(); endBackgroundTask() }
         if let item = player.currentItem {
             let position = player.currentTime().seconds, duration = item.duration.seconds
             if position.isFinite && !initialSeekPending && item.status != .failed { state.position = max(0, position) }

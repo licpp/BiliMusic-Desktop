@@ -293,3 +293,15 @@
   :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive) .dock-controls>.play-toggle { grid-area:1/1;min-width:0;padding:0; }
   :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive) .dock-controls>.queue-control { grid-area:1/2;min-width:0;padding:0; }
 }
+/* Native iOS button wrappers must not shift SVGs in either player layout. */
+@media(max-width:960px) {
+ :root:is([data-platform="ios"],[data-platform="android"]) .dock-controls>.play-toggle {
+   -webkit-appearance:none;appearance:none;display:flex!important;
+   align-items:center;justify-content:center;padding:0;line-height:0;
+ }
+ :root:is([data-platform="ios"],[data-platform="android"]) :is(.dock-controls>button,.lyrics-meta-actions>button,.rail-button) { -webkit-appearance:none;appearance:none; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .dock-controls>button>svg { display:block;flex-shrink:0;width:20px;height:20px;margin:0; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .lyrics-meta-actions>button {
+   display:flex;align-items:center;justify-content:center;line-height:0;
+ }
+}

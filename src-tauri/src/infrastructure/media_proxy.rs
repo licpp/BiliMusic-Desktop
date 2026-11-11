@@ -346,6 +346,28 @@ fn status_response(status: StatusCode) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::MediaProxy;
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili CDN access"]
+    async fn live_audio_proxy_supports_avplayer_range_requests() {
+        use crate::infrastructure::providers::bilibili::BilibiliProvider;
+        let provider = BilibiliProvider::new().unwrap();
+        let detail = provider.video_parts("BV1GJ411x7h7").await.unwrap();
+        let cid = detail.parts[0].cid;
+        for refresh in [false, true] {
+            if refresh { provider.invalidate_playback(&detail.bvid, cid).await; }
+            let source = provider.playback_source(&detail.bvid, cid).await.unwrap();
+            let proxy = MediaProxy::start().await.unwrap();
+            let url = proxy.register_stream(source.audio_url, source.backup_urls, source.mime_type).await;
+            let response = reqwest::Client::new().get(url).header("Range", "bytes=0-4095")
+                .timeout(std::time::Duration::from_secs(15)).send().await.unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::PARTIAL_CONTENT);
+            let bytes = response.bytes().await.unwrap();
+            assert_eq!(bytes.len(), 4096);
+            assert!(bytes.windows(4).any(|part| part == b"ftyp"));
+        }
+    }
+
     use crate::infrastructure::providers::bilibili::BilibiliProvider;
 
     #[test]
