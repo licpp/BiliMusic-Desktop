@@ -140,12 +140,24 @@
   .app-shell.lyrics-immersive .lyrics-media .lyrics-cover:has([data-artwork-wide]) { max-width: 100%; aspect-ratio: 16 / 9; }
 }
 
-/* Compact desktop playback retains space for the video and transport. */
+/* Narrow desktop windows share the vertical player used by mobile layouts. */
 @media (max-width:960px) {
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:48px minmax(0,1fr); }
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) { display:flex;grid-area:2/1;padding:8px 16px; }
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-track-meta { display:none; }
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll { display:none; }
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-media { width:100%;height:100%; }
-  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-media .lyrics-cover { width:100%;height:100%;max-height:none;aspect-ratio:auto; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:48px minmax(72px,24dvh) minmax(64px,1fr) auto; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-media { width:min(calc(100% - 48px),calc((24dvh - 16px) * 16 / 9),520px);height:calc(100% - 16px);margin:8px 0; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) > .lyrics-track-meta { width:min(calc(100% - 64px),520px);max-width:520px;padding:8px 0; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-meta-copy h1 { display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll { width:min(100%,640px);justify-self:center;padding-inline:32px; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll p { text-align:center; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .dock-tools { display:none; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-status { min-height:0;height:100%;padding:8px;gap:10px; }
+}
+@media (max-width:960px) and (max-height:540px) {
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:40px minmax(96px,24dvh) minmax(64px,1fr) auto; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-track-meta { max-height:94px;overflow:auto; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-track-meta h1 { font-size:16px;-webkit-line-clamp:1; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll p { font-size:17px;margin-bottom:16px; }
+}
+@media (max-width:960px) {
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll:has(.lyrics-status)::before,
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll:has(.lyrics-status)::after { display:none; }
 }

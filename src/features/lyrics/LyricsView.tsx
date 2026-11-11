@@ -1,3 +1,4 @@
+import { useCompactLayout } from '../../shared/useCompactLayout'
 import { SleepTimerEntry } from '../player/SleepTimer'
 import { SeasonBrowser } from '../collections/SeasonBrowser'
 import { seasonCollection } from '../../services/mediaSources'
@@ -47,6 +48,7 @@ const danmakuDensityLabels = ['1/8', '1/4', '1/2', '全屏']
 type Props = { onOpenSleepTimer: () => void; onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
 
 export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
+  const compact = useCompactLayout()
   const queryClient = useQueryClient()
   const status = usePlayerStore(state => state.status)
   const duration = usePlayerStore(state => state.durationSeconds)
@@ -384,21 +386,21 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
         <span>正在播放</span>
         <div className="lyrics-actions">
           <button className="lyrics-comments-trigger" aria-label="查看评论" title="评论" onClick={openComments} disabled={!current.source.aid}><MessageCircle size={18} /></button>
-          {bvid && !isMobile && <button className="lyrics-subtitle-toggle" aria-pressed={subtitles.active} aria-busy={subtitles.busy}
+          {bvid && !compact && <button className="lyrics-subtitle-toggle" aria-pressed={subtitles.active} aria-busy={subtitles.busy}
             onClick={toggleSubtitles}>
             {subtitles.busy && <LoaderCircle size={13} className="spin" />}
             {subtitleLabel}
           </button>}
-          {!(isMobile && videoFullscreen) && <ActionMenu label={isMobile ? "播放设置" : "歌词页面更多操作"} panel panelClassName={isMobile ? "mobile-playback-settings" : undefined} touchSheet={isMobile}>{(close) => <>
-            {isMobile && <>
+          {!(isMobile && videoFullscreen) && <ActionMenu label={compact ? "播放设置" : "歌词页面更多操作"} panel panelClassName={compact ? "mobile-playback-settings" : undefined} touchSheet={compact}>{(close) => <>
+            {compact && <>
               <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
-              <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>
+              {isMobile && <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>}
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
             </>}
-            {isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
+            {compact && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <Sparkles size={18}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
-            {subtitles.active && subtitles.choices.length > 1 && (isMobile ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
+            {subtitles.active && subtitles.choices.length > 1 && (compact ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
               options={subtitles.choices.map(choice => ({ value: choice.language, label: choice.label || choice.language }))}
               onChange={subtitles.select}/> : <label className="lyrics-subtitle-language">
               字幕版本
@@ -406,7 +408,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
                 {subtitles.choices.map(choice => <option key={choice.language} value={choice.language}>{choice.label || choice.language} · {choice.ai ? 'AI' : 'B 站'}</option>)}
               </select>
             </label>)}
-            {isMobile && <div className="touch-sheet-section">歌曲与歌词</div>}
+            {compact && <div className="touch-sheet-section">歌曲与歌词</div>}
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
@@ -416,7 +418,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
               if (isMobile) setPartsOpen(true)
               else onOpenCollection({ ...videoDetail, folderId: '' })
             }}><ListVideo size={16}/>查看分 P</button>}
-            {!isMobile && <><PlaybackRateControl/>
+            {!compact && <><PlaybackRateControl/>
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/></>}
           </>}</ActionMenu>}
         </div>
