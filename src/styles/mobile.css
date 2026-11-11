@@ -269,3 +269,27 @@
 @media(prefers-reduced-motion:reduce) {
   :root:is([data-platform="ios"],[data-platform="android"]) .dock-track-group { transition:none!important;animation:none!important; }
 }
+/* Avoid WebKit text inflation and intrinsic grid tracks on smaller phones. */
+:root:is([data-platform="ios"],[data-platform="android"]) {
+  -webkit-text-size-adjust:100%;text-size-adjust:100%;
+}
+@media(max-width:960px) {
+  :root:is([data-platform="ios"],[data-platform="android"]) .rail-nav {
+    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;min-width:0;gap:0;
+  }
+  :root:is([data-platform="ios"],[data-platform="android"]) .rail-button {
+    width:100%;min-width:0;max-width:64px;justify-self:center;padding:4px 0;
+    grid-template-columns:minmax(0,1fr);grid-template-rows:22px 14px;row-gap:3px;
+  }
+  :root:is([data-platform="ios"],[data-platform="android"]) .mobile-nav-label {
+    white-space:nowrap;word-break:keep-all;line-height:14px;font-size:10px;min-width:0;
+  }
+  :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive)>.player-dock {
+    grid-template-columns:minmax(0,1fr) 90px;
+  }
+  :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive) .dock-controls {
+    width:90px;min-width:0;max-width:90px;grid-template-columns:44px 44px;justify-content:start;column-gap:2px;
+  }
+  :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive) .dock-controls>.play-toggle { grid-area:1/1;min-width:0;padding:0; }
+  :root:is([data-platform="ios"],[data-platform="android"]) .app-shell:not(.lyrics-immersive) .dock-controls>.queue-control { grid-area:1/2;min-width:0;padding:0; }
+}
