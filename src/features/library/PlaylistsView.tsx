@@ -27,12 +27,11 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
       <div className="segmented-panel" key={section}>
       {section === 'playlists' ? <>
         <div className="listening-tools">
-          <span>我的歌单</span>
           <button type="button" className="collection-icon" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
           <button type="button" className="collection-icon" aria-label="导入 B 站收藏夹" onClick={onImport}><Download size={18}/></button>
         </div>
         <div className="playlist-grid">{playlists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>
-      </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen}/> : <CollectionsView linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
+      </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen}/> : <CollectionsView hideHeading linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
       </div>
     </div>
   </section>

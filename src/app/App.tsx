@@ -374,13 +374,12 @@ export function App() {
       </aside>
 
       <aside id="library-navigation" className="library-panel" aria-label="歌单导航">
-        <header>
-          <span className="eyebrow">BILIMUSIC</span>
-          <h1>把声音留在身边</h1>
-        </header>
+        <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
-          <div className="section-heading"><span>我的歌单</span><button aria-label="新建歌单" onClick={() => setCreatingPlaylist((value) => !value)}>＋</button></div>
-          <button className="import-trigger" onClick={() => setImportOpen(true)}><Download size={14} />导入 B 站收藏夹</button>
+          <div className="section-heading"><span>歌单</span><div className="sidebar-heading-actions">
+            <button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}>＋</button>
+            <button type="button" aria-label="导入 B 站收藏夹" title="导入 B 站收藏夹" onClick={() => setImportOpen(true)}><Download size={16}/></button>
+          </div></div>
 
           <div className="collection-list">
             {localPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar

@@ -160,7 +160,7 @@ export function CreatorsView({
       ) || []
   return (
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
-      {followed && <h2>关注</h2>}
+      {sidebar && <h2>关注</h2>}
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
@@ -175,7 +175,7 @@ export function CreatorsView({
       {result.isLoading && <p>正在搜索 UP 主…</p>}
       {!items.length && !result.isLoading && (
         <p className="batch-message">
-          {followed
+          {sidebar ? '暂无关注' : followed
             ? '关注喜欢的 UP 主，随时查看最新投稿'
             : '没有找到相关 UP 主'}
         </p>

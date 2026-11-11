@@ -66,8 +66,9 @@ function FolderEditor({action,id='',initial='',onDone,controlledOpen,onClose}:{a
   return <>{controlledOpen===undefined&&<button className="collection-flat-button" aria-label={title} onClick={()=>{setName(initial);setError('');setOpen(true)}}>{action==='create'?<><Plus size={16}/><span>新建收藏夹</span></>:action==='rename'?'重命名':'删除收藏夹'}</button>}{visible&&<CollectionDialog title={title} onClose={close}><form onSubmit={async e=>{e.preventDefault();setBusy(true);try{await changeCollection(action,id,name);close();onDone()}catch(e){setError(commandErrorMessage(e))}finally{setBusy(false)}}}>{action==='delete'?<p>里面的合集会移回默认收藏夹，不会取消收藏。</p>:<input aria-label="收藏夹名称" value={name} maxLength={80} onChange={e=>setName(e.target.value)} placeholder="收藏夹名称"/>}{error&&<p role="alert" className="inline-error">{error}</p>}<footer><button type="button" className="collection-flat-button" onClick={close}>取消</button><button className="collection-primary" type="submit" disabled={busy||(action!=='delete'&&!name.trim())}>{busy?'处理中…':'确认'}</button></footer></form></CollectionDialog>}</>
 }
 
-export function CollectionsView({ sidebar = false, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
+export function CollectionsView({ hideHeading = false, sidebar = false, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
   sidebar?: boolean
+  hideHeading?: boolean
   folderId?: string
   linkedFolders?: Playlist[]
   onOpenFolder: (id: string) => void
@@ -133,7 +134,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
   if (sidebar) return <section className="collections-sidebar">
     <div className="collections-heading">
       <button type="button" className="collections-collapse" aria-expanded={expanded} onClick={toggle}>
-        {expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}收藏合集
+        <span>收藏</span>{expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
       </button>
       {expanded && <FolderEditor action="create" onDone={refresh}/>}
     </div>
@@ -141,8 +142,8 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
     {moveError}
   </section>
   return <section className="collections-view collections-embedded">
-    <div className="collections-heading">
-      <h3>{folder?.name || '收藏合集'}</h3>
+    <div className={`collections-heading${hideHeading && root ? ' collections-tools-only' : ''}`}>
+      {(!hideHeading || !root) && <h3>{folder?.name || '收藏'}</h3>}
       <div className="collections-heading-actions">
         <button type="button" className="collection-icon" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setFilter('') }}><Search size={18}/></button>
         {root ? <FolderEditor action="create" onDone={refresh}/> : folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
