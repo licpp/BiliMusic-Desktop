@@ -139,3 +139,13 @@
 @media (max-width: 960px) {
   .app-shell.lyrics-immersive .lyrics-media .lyrics-cover:has([data-artwork-wide]) { max-width: 100%; aspect-ratio: 16 / 9; }
 }
+
+/* Compact desktop playback retains space for the video and transport. */
+@media (max-width:960px) {
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-view { grid-template-rows:48px minmax(0,1fr); }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-album-pane:not(.video-fullscreen) { display:flex;grid-area:2/1;padding:8px 16px; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-track-meta { display:none; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll { display:none; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-media { width:100%;height:100%; }
+  :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-media .lyrics-cover { width:100%;height:100%;max-height:none;aspect-ratio:auto; }
+}

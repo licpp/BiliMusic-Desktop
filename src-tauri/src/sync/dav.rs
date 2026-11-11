@@ -415,6 +415,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             conflicts: vec![],
             legacy_cloud: false,
             track_positions: true,
+            creators: true,
         });
     }
     check(status)?;
@@ -475,6 +476,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         conflicts,
         legacy_cloud: false,
         track_positions: true,
+        creators: true,
     })
 }
 pub async fn write(

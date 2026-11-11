@@ -1,3 +1,4 @@
+import { CreatorsView } from '../collections/CreatorsView'
 import { Download, Plus } from 'lucide-react'
 import { CollectionsView } from '../collections/CollectionsView'
 import type { Playlist } from '../../services/desktopApi'
@@ -15,12 +16,12 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
   onImport: () => void
   onCollectionOpen: (item: Collection) => void
   onOpenFolder: (id: string) => void
-  section: 'playlists' | 'collections'
-  onSectionChange: (section: 'playlists' | 'collections') => void
+  section: 'playlists' | 'collections' | 'creators'
+  onSectionChange: (section: 'playlists' | 'collections' | 'creators') => void
 }) {
-  const swipe = useSwipeTabs(['playlists', 'collections'], section, onSectionChange)
+  const swipe = useSwipeTabs(['playlists', 'collections', 'creators'], section, onSectionChange)
   return <section className="playlists-view listening-library">
-    <SegmentedTabs tabs={[{ id: 'playlists', label: '歌单' }, { id: 'collections', label: '收藏' }]}
+    <SegmentedTabs tabs={[{ id: 'playlists', label: '歌单' }, { id: 'collections', label: '收藏' }, { id: 'creators', label: '关注' }]}
       value={section} onChange={onSectionChange} idPrefix="hub" panelId="listening-panel" label="个人音乐收藏" className="listening-tabs"/>
     <div id="listening-panel" ref={swipe} data-swipe-tabs role="tabpanel" aria-labelledby={`hub-${section}`}>
       <div className="segmented-panel" key={section}>
@@ -31,7 +32,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
           <button type="button" className="collection-icon" aria-label="导入 B 站收藏夹" onClick={onImport}><Download size={18}/></button>
         </div>
         <div className="playlist-grid">{playlists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>
-      </> : <CollectionsView linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
+      </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen}/> : <CollectionsView linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
       </div>
     </div>
   </section>

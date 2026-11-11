@@ -9,6 +9,7 @@ const fields = {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validCollectionReference(value) {
   if (typeof value !== 'string') return false;
+  if (/^up:[1-9][0-9]{0,18}$/.test(value)) return BigInt(value.slice(3)) <= 9223372036854775807n;
   if (/^BV[a-zA-Z0-9]+$/.test(value)) return value.length <= 32;
   const match = /^season:([1-9][0-9]{0,18}):([1-9][0-9]{0,18})$/.exec(value);
   return !!match && BigInt(match[1]) <= 9223372036854775807n && BigInt(match[2]) <= 9223372036854775807n;

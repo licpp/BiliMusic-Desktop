@@ -1,3 +1,5 @@
+import { CreatorsView } from '../collections/CreatorsView'
+import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { isMobile } from '../../services/platform'
 import { MobilePartsPage } from '../library/MobilePartsPage'
 import { toTrack } from '../../services/collectionTrack'
@@ -23,7 +25,7 @@ import { chooseTrackPlaylist } from '../library/trackActionStore'
 
 type ExpandedState = { open?: boolean; loading?: boolean; detail?: BiliVideoParts; error?: string }
 
-export function SearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
+function VideoSearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
   const [partsPage, setPartsPage] = useState<BiliVideoParts | null>(null)
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
   const [linking, setLinking] = useState<string>()
@@ -151,4 +153,9 @@ function SearchResultCard({ bvid, active, count, open, onContextMenu, children }
 
 function EmptyState({ icon: Icon, title, detail, spinning, action }: { icon: typeof Waves; title: string; detail: string; spinning?: boolean; action?: ReactNode }) {
   return <div className="search-empty"><span><Icon className={spinning ? 'spin' : ''} /></span><h2>{title}</h2><p>{detail}</p>{action}</div>
+}
+
+export function SearchView(props: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
+  const [tab,setTab] = useState<'video'|'creator'>('video')
+  return <><SegmentedTabs className="listening-tabs" tabs={[{id:'video',label:'视频'},{id:'creator',label:'UP 主'}]} value={tab} onChange={setTab} idPrefix="search-kind" panelId="search-kind-panel" label="搜索类型"/><div id="search-kind-panel"><div hidden={tab !== 'video'}><VideoSearchView {...props} active={props.active && tab === 'video'}/></div>{tab === 'creator' && <CreatorsView query={props.query} onOpen={item => props.onCollectionOpen?.(item)}/>}</div></>
 }

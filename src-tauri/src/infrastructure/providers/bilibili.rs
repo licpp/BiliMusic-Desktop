@@ -1,3 +1,5 @@
+#[path = "bilibili_creators.rs"]
+mod creators;
 #[path = "bilibili_extras.rs"]
 mod extras;
 pub use extras::*;

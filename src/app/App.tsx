@@ -1,3 +1,4 @@
+import { CreatorsView } from '../features/collections/CreatorsView'
 import { PlaylistEntry } from '../features/library/PlaylistEntry'
 import { LinkedFolderView } from '../features/library/LinkedFolderView'
 import type { Collection } from '../services/collections'
@@ -60,12 +61,14 @@ import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/l
 import { showTrackMenu } from '../features/library/trackActionStore'
 import { isMobile } from '../services/platform'
 import { PlayerProgress } from '../features/player/PlayerProgress'
+import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 
 const navigation = [
   { label: '此刻', icon: Home },
   { label: '搜索', icon: Search },
   { label: '音乐库', icon: Library },
   { label: '歌单', icon: ListMusic },
+  { label: '关注', icon: UserRound },
   { label: '我的', icon: UserRound },
 ]
 
@@ -73,7 +76,7 @@ export function App() {
   const compact=useCompactLayout()
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
-  const [hubSection,setHubSection]=useState<'playlists'|'collections'>('playlists')
+  const [hubSection,setHubSection]=useState<'playlists'|'collections'|'creators'>('playlists')
   const contentScroll=useRef<HTMLDivElement>(null)
   const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean }[]>([])
   const libraryReturn = useRef<{ nav: string; scroll: number } | null>(null)
@@ -356,7 +359,7 @@ export function App() {
           <Waves size={23} strokeWidth={2.5} />
         </button>
         <nav className="rail-nav">
-          {navigation.filter(item=>!compact||item.label!=='歌单').map(({ label, icon: Icon }) => (
+          {navigation.filter(item=>!compact||(item.label!=='歌单' && item.label!=='关注')).map(({ label, icon: Icon }) => (
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
@@ -371,7 +374,7 @@ export function App() {
         </nav>
       </aside>
 
-      <aside className="library-panel" aria-label="歌单导航">
+      <aside id="library-navigation" className="library-panel" aria-label="歌单导航">
         <header>
           <span className="eyebrow">BILIMUSIC</span>
           <h1>把声音留在身边</h1>
@@ -389,6 +392,7 @@ export function App() {
           onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
+      {!isMobile && <SidebarResizeHandle/>}
 
       <main className="content-stage">
         <form className={`topbar ${searchActive ? 'searching' : ''}`} onSubmit={submitSearch}>
@@ -418,7 +422,7 @@ export function App() {
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
           activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage}/> :
           activeNav === '歌单' || libraryDetail ? hub :
-          activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
+          activeNav === '关注' ? <CreatorsView followed onOpen={openCollection}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
           activeNav === '我的' ? <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">

@@ -1,3 +1,4 @@
+import { startCreatorQueue } from './services/creatorQueue'
 import { startPreloadingNextTrack } from './features/player/preloadNextTrack'
 import { startListeningStatistics } from './services/listeningStatistics'
 import { startCloudSync } from './services/sync'
@@ -33,6 +34,7 @@ startCloudSync(queryClient)
 startAutomaticLyrics()
 startListeningStatistics()
 startPreloadingNextTrack()
+startCreatorQueue()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -212,3 +212,11 @@
 .collection-resume:hover { background:color-mix(in srgb,var(--cyan) 13%,transparent); }
 .collection-resume:focus-visible { outline:2px solid var(--cyan);outline-offset:2px; }
 .collection-resume:disabled { opacity:.65; }
+.creator-row { display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--line); }
+.creator-open { display:flex;align-items:center;gap:14px;flex:1;min-width:0;border:0;background:transparent;text-align:left;color:var(--ink);cursor:pointer; }
+.creator-open .artwork { width:52px;height:52px;flex:0 0 52px;border-radius:50%;overflow:hidden; }
+.creator-open strong { overflow:hidden;text-overflow:ellipsis; }
+.creator-season { width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;text-align:left;color:var(--ink);cursor:pointer; }
+.creator-season .artwork { width:96px;height:60px;border-radius:10px;overflow:hidden; }
+.creator-row .collection-flat-button { flex-shrink:0; }
+@media(max-width:960px) { .creator-page,.creators-view { padding:8px 4px; }.creator-open{gap:10px}.creator-row{gap:8px}.creator-row h2{font-size:20px} }

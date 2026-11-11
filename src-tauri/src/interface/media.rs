@@ -264,3 +264,22 @@ pub fn listening_statistics(database: State<'_, Database>) -> Result<Value, Comm
     };
     run().map_err(CommandError::database)
 }
+
+#[tauri::command]
+pub async fn bili_creator_catalog(
+    provider: State<'_, BilibiliProvider>,
+    action: String,
+    keyword: Option<String>,
+    mid: Option<i64>,
+    page: Option<u32>,
+) -> Result<Value, CommandError> {
+    provider
+        .creator_catalog(
+            &action,
+            keyword.as_deref().unwrap_or(""),
+            mid.unwrap_or(0),
+            page.unwrap_or(1),
+        )
+        .await
+        .map_err(CommandError::provider)
+}

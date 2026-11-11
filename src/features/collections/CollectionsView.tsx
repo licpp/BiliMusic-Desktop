@@ -1,3 +1,4 @@
+import { CreatorPage } from './CreatorsView'
 import type { Track } from '../../domain/track'
 import { getSeason, parseSeasonReference, seasonCollection, seasonTracks, seasonVideoRow, videoDetailFromTrack } from '../../services/mediaSources'
 import { createPlaylist, saveLibraryTrack, addTracksToPlaylist } from '../../services/desktopApi'
@@ -94,7 +95,7 @@ export function CollectionsView({ sidebar = false, folderId, linkedFolders = [],
   const moveError = move.error && <button type="button" className="library-toast" role="alert" onClick={move.reset}>
     移动失败：{commandErrorMessage(move.error)}
   </button>
-  const items = query.data?.items || []
+  const items = query.data?.items.filter(item => !item.bvid.startsWith('up:')) || []
   const needle = filter.trim().toLowerCase()
   const matches = (value: string) => value.toLowerCase().includes(needle)
   const visibleItems = items.filter(item => (root && needle ? true : item.folderId === (folderId || '')) && matches(item.title || item.bvid))
@@ -180,7 +181,7 @@ function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
   </>
 }
 
-export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false }: {
+function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false }: {
   item: Collection
   onBack: () => void
   onOpenCollection?: (item: Collection) => void
@@ -346,4 +347,8 @@ export function CollectionDetail({ item, onBack, onOpenCollection, backLabel = '
     })()}
     {seasonOpen&&season&&<SeasonBrowser summary={season} onClose={()=>setSeasonOpen(false)}/>}
   </section>
+}
+
+export function CollectionDetail(props: Parameters<typeof StandardCollectionDetail>[0]) {
+  return props.item.bvid.startsWith('up:') ? <CreatorPage item={props.item} onOpen={props.onOpenCollection}/> : <StandardCollectionDetail {...props}/>
 }

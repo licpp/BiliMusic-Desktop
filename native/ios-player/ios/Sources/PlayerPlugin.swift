@@ -40,6 +40,7 @@ struct PlayerSnapshot: Encodable {
     var error: String?
     var track: QueueTrack?
     var revision: Int64 = 0
+    var recoveryAttempted = false
     var expandedEntries: [String: [QueueTrack]]?
     var sleepDeadline: Double = 0
     var sleepDuration: Double = 0
@@ -47,6 +48,7 @@ struct PlayerSnapshot: Encodable {
 }
 struct ResolveRequest: Encodable {
     let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
+    let refresh: Bool; let position: Double?
 }
 struct ResolvedTrack: Decodable {
     let url: String?; let track: QueueTrack?; let error: String?
@@ -100,6 +102,9 @@ class PlayerPlugin: Plugin {
     private var startPosition: Double = 0
     private var initialSeekPending = false
     private var resumeAfterInterruption = false
+    private var pausedAt: TimeInterval?
+    private var recoveryAttempted = false
+    private var playbackWatchdog: DispatchWorkItem?
     private var itemStatus: NSKeyValueObservation?
     private var timeStatus: NSKeyValueObservation?
     private var timeObserver: Any?
@@ -144,7 +149,7 @@ class PlayerPlugin: Plugin {
         })
         notifications.append(center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] note in
             guard let self = self, let item = note.object as? AVPlayerItem, item === self.player.currentItem else { return }
-            self.fail("音频播放失败，请重新播放")
+            self.playbackFailed()
         })
         notifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in self?.interrupted(note) })
         notifications.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
@@ -157,6 +162,7 @@ class PlayerPlugin: Plugin {
         bindRemoteCommands()
     }
     deinit {
+        playbackWatchdog?.cancel()
         if let observer = timeObserver { player.removeTimeObserver(observer) }
         notifications.forEach { NotificationCenter.default.removeObserver($0) }
         remoteTargets.forEach { $0.0.removeTarget($0.1) }
@@ -170,6 +176,7 @@ class PlayerPlugin: Plugin {
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
             savePosition(force: true)
             collectionRef = args.collectionRef
+            recoveryAttempted = false; pausedAt = nil
             playbackRate = Float(min(2, max(0.75, args.rate ?? 1)))
             generation += 1; state.revision = generation
             state.id = args.id; state.track = tracks.first { $0.id == args.id }
@@ -200,6 +207,8 @@ class PlayerPlugin: Plugin {
         onMain { [self] in
             switch args.action {
             case "prepare":
+                playbackWatchdog?.cancel()
+                recoveryAttempted = false; pausedAt = nil
                 savePosition(force: true)
                 accountListening(flush: true)
                 guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
@@ -366,7 +375,7 @@ class PlayerPlugin: Plugin {
                 if item.status == .failed {
                     let error = item.error as NSError?
                     if let error { NSLog("BiliMusic audio item failed: %@ (%ld)", error.domain, error.code) }
-                    self.fail(error?.localizedDescription ?? "音频流加载失败，请重试")
+                    self.playbackFailed()
                     return
                 }
                 if item.status == .readyToPlay {
@@ -388,6 +397,7 @@ class PlayerPlugin: Plugin {
                 }
             }
         }
+        if autoplay { watchPlayback() }
         if autoplay && position == 0 { player.playImmediately(atRate: playbackRate) } else { player.pause() }; accountListening(); publish()
     }
     private func clearSleep() {
@@ -416,6 +426,8 @@ class PlayerPlugin: Plugin {
         return true
     }
     private func pause() {
+        playbackWatchdog?.cancel()
+        if pausedAt == nil { pausedAt = Date().timeIntervalSince1970 }
         savePosition(force: true)
         accountListening(flush: true)
         resumeAfterInterruption = false
@@ -425,6 +437,13 @@ class PlayerPlugin: Plugin {
     }
     private func resume() {
         if expireSleepIfNeeded() { return }
+        if desiredPlaying && state.status == "buffering" && state.stopped { return }
+        recoveryAttempted = false
+        let stale = pausedAt.map { Date().timeIntervalSince1970 - $0 >= 300 } ?? false
+        pausedAt = nil
+        if player.currentItem?.status == .failed || state.error != nil || stale {
+            if recoverCurrentPlayback() { return }
+        }
         guard player.currentItem != nil else {
             if let track = state.track ?? tracks.first(where: { $0.id == state.id }) { resolve(track) }; return
         }
@@ -432,8 +451,33 @@ class PlayerPlugin: Plugin {
             try activate()
             let position = player.currentTime().seconds
             if state.duration > 0 && position.isFinite && position >= state.duration - 0.25 { seek(0) }
-            desiredPlaying = true; player.playImmediately(atRate: playbackRate); refresh()
+            desiredPlaying = true; player.playImmediately(atRate: playbackRate); watchPlayback(); refresh()
         } catch { fail("无法恢复播放") }
+    }
+    @discardableResult
+    private func recoverCurrentPlayback() -> Bool {
+        guard !recoveryAttempted, let track = state.track ?? tracks.first(where: { $0.id == state.id }) else { return false }
+        let current = player.currentTime().seconds
+        let position = current.isFinite && current > 0 && !initialSeekPending ? current : max(state.position, startPosition)
+        recoveryAttempted = true
+        resolve(track, refresh: true, position: position)
+        return true
+    }
+    private func playbackFailed() {
+        // Recreate failed items natively so lock-screen playback recovers while
+        // the WebView is suspended. One refresh is allowed per user attempt.
+        if desiredPlaying && recoverCurrentPlayback() { return }
+        fail("音频连接已失效，请点击播放重试")
+    }
+    private func watchPlayback() {
+        playbackWatchdog?.cancel()
+        let request = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == request, self.desiredPlaying, self.player.timeControlStatus != .playing else { return }
+            self.playbackFailed()
+        }
+        playbackWatchdog = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
     }
     private var seekRevision = 0
     private func seek(_ seconds: Double) {
@@ -454,6 +498,8 @@ class PlayerPlugin: Plugin {
         state.position = target; publish()
     }
     private func stop() {
+        playbackWatchdog?.cancel()
+        pausedAt = nil; recoveryAttempted = false
         clearSleep()
         savePosition(force: true)
         accountListening(flush: true)
@@ -467,6 +513,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
+        playbackWatchdog?.cancel()
         accountListening(flush: true)
         resumeAfterInterruption = false
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
@@ -499,9 +546,10 @@ class PlayerPlugin: Plugin {
     }
     private func refresh() {
         if expireSleepIfNeeded() { return }
+        if player.timeControlStatus == .playing { playbackWatchdog?.cancel() }
         if let item = player.currentItem {
             let position = player.currentTime().seconds, duration = item.duration.seconds
-            if position.isFinite && !initialSeekPending { state.position = max(0, position) }
+            if position.isFinite && !initialSeekPending && item.status != .failed { state.position = max(0, position) }
             if duration.isFinite && duration > 0 { state.duration = duration }
             if desiredPlaying && player.timeControlStatus == .playing { savePosition() }
             if state.error == nil { state.status = desiredPlaying ? (player.timeControlStatus == .playing ? "playing" : "buffering") : "paused" }
@@ -509,6 +557,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func publish() {
+        state.recoveryAttempted = recoveryAttempted
         state.rate = Double(playbackRate)
         state.expandedEntries = expandedEntries.isEmpty ? nil : expandedEntries
         state.sleepDeadline = sleepDeadline
@@ -581,18 +630,20 @@ class PlayerPlugin: Plugin {
         let target = shuffled && tracks.count > 1 ? (max(0, index) + Int.random(in: 1..<tracks.count)) % tracks.count : (index + direction + tracks.count) % tracks.count
         resolve(tracks[target])
     }
-    private func resolve(_ track: QueueTrack, restart: Bool = false) {
+    private func resolve(_ track: QueueTrack, restart: Bool = false, refresh: Bool = false, position: Double? = nil) {
+        playbackWatchdog?.cancel()
+        if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
         generation += 1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
-        state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
+        state.id = track.id; state.track = track; state.position = position ?? 0; state.duration = track.durationSeconds
         prepareArtwork(for: track)
         state.error = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in self?.fail("后台加载超时，请返回应用继续播放") }
         publish()
-        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume)),
+        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume, refresh: refresh, position: position)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
         json.withCString { resolveTrack(generation, $0) }
     }

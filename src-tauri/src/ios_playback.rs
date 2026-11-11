@@ -119,14 +119,22 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     {
         return Err("无法读取合集中的这个视频".into());
     }
-    let stored =
-        library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?;
+    let refresh = payload["refresh"].as_bool() == Some(true);
+    let stored = if refresh {
+        let db = app.state::<Database>();
+        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        LibraryRepository::get(&connection, &entry_id)
+            .map_err(|_| "无法读取歌曲信息")?
+            .ok_or("歌曲不存在")?
+    } else {
+        library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?
+    };
     let url = track_playback_url(
         app.state::<Database>(),
         app.state::<BilibiliProvider>(),
         app.state::<MediaProxy>(),
         stored.id.clone(),
-        None,
+        Some(refresh),
     )
     .await
     .map_err(|e| e.message)?;
@@ -136,7 +144,16 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     track["coverUrl"] = json!(stored.cover_url);
     track["durationSeconds"] = json!(stored.duration_seconds);
     track["liked"] = json!(stored.liked);
-    let position = if payload["restart"].as_bool() == Some(true)
+    let position = if let Some(position) = payload["position"]
+        .as_f64()
+        .filter(|p| refresh && p.is_finite() && *p >= 0.0)
+    {
+        if stored.duration_seconds > 0 {
+            position.min(stored.duration_seconds as f64)
+        } else {
+            position
+        }
+    } else if payload["restart"].as_bool() == Some(true)
         || payload["autoResume"].as_bool() == Some(false)
     {
         0.0

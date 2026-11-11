@@ -101,3 +101,23 @@ test('iOS background queue receives automatic resume preference changes', async 
   await Promise.resolve()
   assert.equal(iosTest.queues.at(-1)[3], false)
 })
+
+test('iOS native recovery is bounded and a later user retry retains the current position', async () => {
+  const { usePlayerStore: store } = setup()
+  let resolutions = 0
+  iosTest.resolve = async t => { resolutions++; return `http://127.0.0.1:1234/token/${t.id}` }
+  await store.getState().playFromList([track('1'), track('2')], '1')
+  iosTest.event({ id: '1', status: 'playing', position: 42, duration: 120, stopped: false })
+  // The native player has already refreshed the source. The WebView must not
+  // launch another recovery cycle if that bounded attempt failed offline.
+  iosTest.event({ id: '1', status: 'error', position: 42, stopped: false,
+    error: 'Could not connect to the server', recoveryAttempted: true })
+  await new Promise(setImmediate)
+  assert.equal(resolutions, 1)
+  assert.equal(store.getState().status, 'error')
+  store.getState().setAutoResume(false)
+  await store.getState().toggle()
+  assert.equal(resolutions, 2)
+  assert.equal(iosTest.plays.at(-1)[2], 42)
+  assert.deepEqual(store.getState().queue.map(t => t.id), ['1', '2'])
+})

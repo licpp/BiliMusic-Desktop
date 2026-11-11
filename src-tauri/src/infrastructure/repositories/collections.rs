@@ -20,6 +20,9 @@ pub struct Collections {
     pub items: Vec<Collection>,
 }
 pub fn valid_reference(value: &str) -> bool {
+    if let Some(mid) = value.strip_prefix("up:") {
+        return mid.parse::<i64>().is_ok_and(|n| n > 0) && mid.bytes().all(|b| b.is_ascii_digit());
+    }
     if let Some(rest) = value.strip_prefix("season:") {
         let parts: Vec<_> = rest.split(':').collect();
         return parts.len() == 2

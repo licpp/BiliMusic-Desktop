@@ -33,6 +33,10 @@ impl Snapshot {
             records: BTreeMap::new(),
         }
     }
+    pub fn omit_creators(&mut self) {
+        self.records
+            .retain(|_, r| !(r.kind == "collection" && text(r, "bvid").starts_with("up:")));
+    }
     pub fn omit_track_positions(&mut self) {
         for record in self
             .records

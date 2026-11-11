@@ -383,6 +383,10 @@ pub async fn sync_now(
             initial.omit_track_positions();
             baseline.omit_track_positions();
         }
+        if !remote.creators {
+            initial.omit_creators();
+            baseline.omit_creators();
+        }
         let mut local = initial.clone();
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
@@ -443,8 +447,20 @@ pub async fn sync_now(
         if !remote.track_positions {
             current.omit_track_positions();
         }
+        let local_creators: Vec<_> = current
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "collection" && text(r, "bvid").starts_with("up:"))
+            .map(|(k, r)| (k.clone(), r.clone()))
+            .collect();
+        if !remote.creators {
+            current.omit_creators();
+        }
         // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
         let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));
+        if !remote.creators {
+            final_local.records.extend(local_creators);
+        }
         final_local.compact(true);
         if !post_conflicts.is_empty() {
             return Err("同步期间本机数据发生冲突，已保留本机修改，请再次同步".into());

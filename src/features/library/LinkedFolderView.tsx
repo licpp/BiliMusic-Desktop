@@ -1,3 +1,6 @@
+import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
+import { seasonTracks, type Season } from '../../services/mediaSources'
+import { seasonPlaybackQueue } from '../player/playerStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Link2, Play, Plus, RefreshCw, X } from 'lucide-react'
@@ -74,6 +77,8 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     await client.invalidateQueries({ queryKey: ['playlists'] })
   }
 
+  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: (folder.data?.videos || []).map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: 0 })) }
+  const queue = seasonTracks(season)
   return <section className="library-view linked-folder">
     <header>
       <div><span className="eyebrow">BILIBILI</span>
@@ -112,46 +117,50 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     {!folder.data && (folder.isLoading || refreshing) && <p className="batch-message">正在读取收藏夹…</p>}
     {folder.error && !refreshError && !refreshing && !folder.data && <p role="alert" className="inline-error">{commandErrorMessage(folder.error)}</p>}
     {folder.data?.videos.length === 0 && <p className="batch-message">这个收藏夹里还没有视频</p>}
-    <div className="result-list" ref={list}>{folder.data?.videos.map(video => <LinkedVideoRow key={video.bvid} video={video} current={currentBvid === video.bvid}
+    <div className="result-list" ref={list}>{folder.data?.videos.map(video => <LinkedVideoRow key={video.bvid} video={video} queue={queue} title={name} current={currentBvid === video.bvid}
       expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
       onRemove={() => { setError(''); setConfirm(video) }}/>)}</div>
   </section>
 }
 
-function LinkedVideoRow({ video, expanded, busy, current, onOpen, onRemove }: {
+function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, onRemove }: {
+  queue: import('../../domain/track').Track[]; title: string
   video: FavoriteVideo; expanded: boolean; busy: boolean; current: boolean; onOpen: () => void; onRemove: () => void
 }) {
   const { position, onContextMenu } = useRowContextMenu()
+  const { ref, pages } = useVisibleVideoPages(video.bvid, true)
+  const multiple = (pages?.length ?? 0) > 1
   const playVideo = async () => {
     const detail = await getVideoParts(video.bvid)
     const tracks = detail.parts.map(part => toTrack(detail, part))
-    if (tracks[0]) await usePlayerStore.getState().playFromList(tracks, tracks[0].id, { kind: 'video', title: detail.title })
+    if (tracks[0]) await usePlayerStore.getState().playFromList(seasonPlaybackQueue(queue, tracks[0], tracks), tracks[0].id, { kind: 'season', title })
   }
   const [playError, setPlayError] = useState('')
-  return <article className="result-card">
+  return <article ref={ref} className="result-card">
     <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
-      <button type="button" className="result-main" aria-current={current && !expanded ? 'true' : undefined} aria-expanded={expanded} onClick={onOpen}>
+      <button type="button" className="result-main" aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}>
         <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}</span>
         <span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.bvid}</small></span>
-        {expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+        {multiple && (expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>)}
       </button>
       <ActionMenu sheet label={`操作 ${video.title || video.bvid}`} contextPosition={position}>{close => <>
-        <button role="menuitem" onClick={() => { close(); onOpen() }}>{expanded ? '收起分 P' : '展开分 P'}</button>
+        {multiple && <button role="menuitem" onClick={() => { close(); onOpen() }}>{expanded ? '收起分 P' : '展开分 P'}</button>}
         <button role="menuitem" disabled={busy} onClick={() => { close(); onRemove() }}>从 B 站收藏夹移除</button>
       </>}</ActionMenu>
     </div>
     {playError && <p role="alert" className="inline-error">{playError}</p>}
-    {expanded && <LinkedVideoParts bvid={video.bvid}/>}
+    {expanded && multiple && <LinkedVideoParts bvid={video.bvid} queue={queue} title={title}/>}
   </article>
 }
 
-function LinkedVideoParts({ bvid }: { bvid: string }) {
+function LinkedVideoParts({ bvid, queue, title }: { bvid: string; queue: import('../../domain/track').Track[]; title: string }) {
   const detail = useQuery({ queryKey: ['collection-parts', bvid], queryFn: () => getVideoParts(bvid) })
   if (detail.isLoading) return <p className="batch-message">正在加载分 P…</p>
   if (detail.error) return <p role="alert" className="inline-error">{commandErrorMessage(detail.error)}</p>
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
-  return <VideoPartsList locateCurrent queueSource={{ kind: 'video', title: video.title }} tracks={video.parts.map(part => toTrack(video, part))}/>
+  const tracks = video.parts.map(part => toTrack(video, part))
+  return <VideoPartsList locateCurrent queueSource={{ kind: 'season', title }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
 }
 
 export function LinkedFolderPicker({ bvid, onClose }: { bvid: string; onClose: () => void }) {

@@ -21,7 +21,7 @@ export const playbackRates = [0.75, 1, 1.25, 1.5, 1.75, 2] as const
 export type RepeatMode = 'off' | 'all' | 'one'
 type SleepState = { deadline: number; duration: number; expired: boolean }
 const noSleep = { deadline: 0, duration: 0, expired: false }
-export type QueueSource = { kind: 'video' | 'season'; title: string; collectionRef?: string }
+export type QueueSource = { creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
 type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; autoResume: boolean; setAutoResume: (enabled: boolean) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let audio: HTMLAudioElement | null = null
@@ -364,7 +364,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (state.id !== usePlayerStore.getState().current?.id) return
   if (state.status === 'paused' && usePlayerStore.getState().status === 'resolving') ++playRequest
   loadedTrackId = state.stopped ? null : state.id
-  if (state.status === 'error' && state.error && !document.hidden && recoverPlayback(state.error)) return
+  if (state.status === 'error' && state.error && !state.recoveryAttempted && !document.hidden && recoverPlayback(state.error)) return
   if (!state.stopped && state.status === 'paused' && usePlayerStore.getState().status !== 'paused') {
     window.dispatchEvent(new Event('bilimusic-data-changed'))
   }
