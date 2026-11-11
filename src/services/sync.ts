@@ -1,3 +1,4 @@
+import { accountEpoch } from './accountScope'
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell, fromStoredTrack } from './desktopApi'
 import type { QueryClient } from '@tanstack/react-query'
@@ -10,11 +11,13 @@ export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export const syncNow = (preview = false, resolution?: 'local' | 'remote', automatic = false) => invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
 export async function refreshSyncedLibrary(client: QueryClient) {
+  const epoch = accountEpoch()
   await Promise.all(['library', 'playlists', 'home-recent', 'collections', 'collection-progress'].map((key) => client.invalidateQueries({ queryKey: [key] })))
+  if (epoch !== accountEpoch()) return
   const current = usePlayerStore.getState().current
   if (current) {
     const stored = await invoke<import('./desktopApi').StoredTrack | null>('sync_current_track', { trackId: current.id })
-    if (stored) usePlayerStore.getState().updateTrack(fromStoredTrack(stored))
+    if (stored && epoch === accountEpoch()) usePlayerStore.getState().updateTrack(fromStoredTrack(stored))
   }
 }
 export function startCloudSync(client: QueryClient) {

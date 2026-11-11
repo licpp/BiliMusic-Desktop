@@ -10,6 +10,7 @@ let listenerGeneration = 0
 let lastEventAt = performance.now()
 let clock = { position: 0, at: 0, playing: false, rate: 1, duration: 0 }
 let revision = -1
+let latestState: IOSAudioState | undefined
 function bindIOSAudio() {
   const generation = ++listenerGeneration
   return addPluginListener<IOSAudioState>('ios-player', 'state', state => {
@@ -17,6 +18,7 @@ function bindIOSAudio() {
     if ((state.revision ?? 0) < revision) return
     lastEventAt = performance.now()
     revision = state.revision ?? 0
+    latestState = state
     if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', rate: state.rate ?? 1, duration: state.duration || 0 }
     consumer?.(state)
   }).then(value => { listener = value; return value }).catch(error => { if (generation === listenerGeneration) ready = undefined; throw error })
@@ -44,6 +46,9 @@ export async function playIOSAudio(track: Track, url: string, position: number, 
 export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {
   const state = await invoke<IOSAudioState>('plugin:ios-player|snapshot')
+  if ((state.revision ?? 0) < revision && latestState) return latestState
+  revision = state.revision ?? 0
+  latestState = state
   lastEventAt = performance.now()
   if (state.position !== undefined) clock = { position: state.position, at: performance.now(), playing: state.status === 'playing', rate: state.rate ?? 1, duration: state.duration || 0 }
   return state

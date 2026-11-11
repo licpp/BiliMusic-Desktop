@@ -25,7 +25,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     assert.ok(new RegExp(`@objc public func ${command}\\(`).test(swift), `${command} has no exported Swift selector`)
     calls.push(command)
     if (command === 'register_listener') handler = payload.handler
-    if (command === 'snapshot') return {id:'test',status:'playing',position:5,revision:2}
+    if (command === 'snapshot') return {id:'test',status:'playing',position:8,revision:3}
   })
   try {
     const m = {exports:{}}
@@ -39,7 +39,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     await audio.prepareIOSAudio(track)
     await audio.syncIOSQueue([track],'all',false)
     await audio.playIOSAudio(track,'http://127.0.0.1:1234/token/media',0,.7)
-    await audio.snapshotIOSAudio(); await subscription.unregister()
+    await audio.snapshotIOSAudio(); emit(2,2,1); assert.equal(states.length,1); assert.ok(audio.iosPlaybackClock() >= 8); await subscription.unregister()
     assert.deepEqual(calls,['register_listener','control','queue','play','snapshot','remove_listener'])
     assert.ok(!commands.has('secret'), 'Keychain access must remain Rust-only')
   } finally { clearMocks() }

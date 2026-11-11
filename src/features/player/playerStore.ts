@@ -30,6 +30,8 @@ let loadedTrackId: string | null = null
 let queueIntent = 0
 let loadedCollectionRef: string | undefined
 let recoveryAttempted = false
+let accountResetting = false
+let accountReset: Promise<void> | undefined
 let queueFeedbackSerial = 0
 export const playbackIntent = () => queueIntent
 let positionWrite = Promise.resolve()
@@ -101,17 +103,27 @@ export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Tra
   switchCollectionContext(collectionRef)
 }
 
-export async function resetPlayerForAccount() {
+export function resetPlayerForAccount() {
+  if (accountReset) return accountReset
+  accountResetting = true
   flushPosition()
   advanceAccountEpoch()
   ++queueIntent; ++playRequest;
   loadedTrackId = null
   loadedCollectionRef = undefined
-  await positionWrite
+  nativeHistoryId = undefined
+  recoveryAttempted = false
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
-  if (isMobile) await controlMobileAudio('stop').catch(() => undefined)
-  usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
+  usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
   flushPlayerSnapshot()
+  accountReset = (async () => {
+    // Stop native playback immediately, even if saving the old position fails.
+    await Promise.all([
+      positionWrite.catch(() => undefined),
+      isMobile ? controlMobileAudio('stop').catch(() => undefined) : Promise.resolve(),
+    ])
+  })().finally(() => { accountResetting = false; accountReset = undefined })
+  return accountReset
 }
 export function playbackClock() { if (isMobile) return mobilePlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
 let persistTimer: ReturnType<typeof setTimeout> | undefined
@@ -146,6 +158,7 @@ function playerAudio() {
 export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, rate: 1, autoResume: true, setAutoResume: autoResume => set({ autoResume }), shuffled: false, repeatMode: 'off',
   play: async (track, startAt, refreshing = false) => {
+    if (accountResetting) return
     const previous = get()
     if (!refreshing && startAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') return
     if (!refreshing) recoveryAttempted = false
@@ -208,6 +221,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     }
   },
   playFromList: async (tracks, trackId, queueSource, startAt) => {
+    if (accountResetting) return
     const queue = uniqueTracks(tracks)
     const selected = queue.find(track => track.id === trackId)
     if (!selected) return
@@ -334,6 +348,7 @@ function randomOtherIndex(length: number, current: number) {
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
 let nativeHistoryId: string | undefined
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
+  if (accountResetting) return
   if (state.sleepDeadline !== undefined) {
     const sleep = usePlayerStore.getState().sleep
     const next = { deadline: state.sleepDeadline, duration: state.sleepDuration ?? 0, expired: Boolean(state.sleepExpired) }

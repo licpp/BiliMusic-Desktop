@@ -491,7 +491,6 @@ pub async fn bili_qr_login_poll(
     key: String,
     sync: State<'_, crate::sync::SyncState>,
 ) -> Result<QrLoginStatus, CommandError> {
-    sync.interrupt();
     let _gate = sync.gate.lock().await;
     if key.trim().is_empty() {
         return Err(CommandError::validation("二维码登录标识为空"));
@@ -501,6 +500,7 @@ pub async fn bili_qr_login_poll(
         .await
         .map_err(CommandError::provider)?;
     if let Some(cookie) = &status.cookie_header {
+        sync.interrupt();
         let profile = provider
             .account_profile()
             .await

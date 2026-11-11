@@ -23,7 +23,7 @@ const output = await build({
       export const observeMobileAudio = cb => { globalThis.iosTest.event = state => { globalThis.iosTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotMobileAudio = async () => globalThis.iosTest.state || ({});
       export const mobilePlaybackClock = () => 0;
-      export const controlMobileAudio = async (...args) => globalThis.iosTest.controls.push(args);
+      export const controlMobileAudio = async (...args) => { globalThis.iosTest.controls.push(args); if (args[0] === 'stop' && globalThis.iosTest.stop) await globalThis.iosTest.stop(); };
       export const prepareMobileAudio = async t => globalThis.iosTest.controls.push(['prepare', t.id]);
       export const playMobileAudio = async (...args) => globalThis.iosTest.plays.push(args);
     ` }))
@@ -120,4 +120,23 @@ test('iOS native recovery is bounded and a later user retry retains the current 
   assert.equal(resolutions, 2)
   assert.equal(iosTest.plays.at(-1)[2], 42)
   assert.deepEqual(store.getState().queue.map(t => t.id), ['1', '2'])
+})
+
+test('account reset clears immediately and ignores native events until stop completes', async () => {
+  const { usePlayerStore: store, resetPlayerForAccount } = setup()
+  await store.getState().playFromList([track('1'),track('2')], '1')
+  let finishStop
+  iosTest.stop = () => new Promise(resolve => { finishStop = resolve })
+  const reset = resetPlayerForAccount()
+  assert.equal(store.getState().current, null)
+  assert.deepEqual(store.getState().queue, [])
+  assert.equal(resetPlayerForAccount(), reset)
+  iosTest.event({ id:'1',track:track('1'),status:'playing',position:30,sleepDeadline:99999 })
+  assert.equal(store.getState().sleep.deadline, 0)
+  await store.getState().playFromList([track('2')], '2')
+  assert.deepEqual(store.getState().queue, [])
+  finishStop(); await reset
+  assert.equal(iosTest.controls.filter(([action])=>action==='stop').length, 1)
+  await store.getState().playFromList([track('2')], '2')
+  assert.equal(store.getState().current.id, '2')
 })

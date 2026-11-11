@@ -14,6 +14,7 @@ export function startListeningStatistics() {
   const tick=()=>{const now=performance.now(),nextPosition=playbackClock();if(current.status==='playing')seconds+=Math.max(0,Math.min((now-last)/1000,(nextPosition-position)/current.rate));last=now;position=nextPosition}
   usePlayerStore.subscribe((next)=>{if(next.current?.id!==current.current?.id || next.status!==current.status || next.rate!==current.rate){tick();flush();current=next;last=performance.now();position=playbackClock()}})
   window.setInterval(()=>{tick();if(seconds>=15)flush()},1000)
+  window.addEventListener('bilimusic-account-changed',()=>{void loadScope().catch(()=>undefined)})
   window.addEventListener('pagehide',()=>{tick();flush()})
-  window.addEventListener('bilimusic-account-changing',()=>{seconds=0;scope=undefined;last=performance.now();position=playbackClock();void loadScope().catch(()=>undefined)})
+  window.addEventListener('bilimusic-account-changing',()=>{generation++;seconds=0;scope=undefined;last=performance.now();position=playbackClock()})
 }
