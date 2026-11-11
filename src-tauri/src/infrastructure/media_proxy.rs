@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 const ENTRY_LIFETIME: Duration = Duration::from_secs(6 * 3600);
 const MAX_ENTRIES: usize = 24;
+const PREFIX_LIMIT: usize = 256 * 1024;
 const MEDIA_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ struct MediaEntry {
     content_type: String,
     expires_at: Instant,
     local_path: Option<std::path::PathBuf>,
+    prefix: Arc<RwLock<(Vec<u8>, u64)>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +97,16 @@ impl MediaProxy {
         }
         let mut entries = self.state.entries.write().await;
         entries.retain(|_, entry| entry.expires_at > Instant::now());
+        if let Some((id, _)) = entries.iter().find(|(_, entry)| {
+            entry.local_path.is_none()
+                && entry.content_type == content_type
+                && entry
+                    .upstream_urls
+                    .iter()
+                    .any(|url| url == &upstream_urls[0])
+        }) {
+            return format!("{}/{}/{}", self.base_url, self.state.access_token, id);
+        }
         if entries.len() >= MAX_ENTRIES {
             if let Some(oldest) = entries
                 .iter()
@@ -111,6 +123,7 @@ impl MediaProxy {
                 content_type,
                 expires_at: Instant::now() + ENTRY_LIFETIME,
                 local_path: None,
+                prefix: Arc::new(RwLock::new((Vec::new(), 0))),
             },
         );
         format!("{}/{}/{}", self.base_url, self.state.access_token, media_id)
@@ -136,6 +149,7 @@ impl MediaProxy {
                 content_type: "audio/mp4".into(),
                 expires_at: Instant::now() + Duration::from_secs(24 * 3600),
                 local_path: Some(path),
+                prefix: Arc::new(RwLock::new((Vec::new(), 0))),
             },
         );
         format!("{}/{}/{}", self.base_url, self.state.access_token, id)
@@ -164,6 +178,29 @@ async fn proxy_media(
         return serve_local(&path, &request_headers).await;
     }
 
+    // Only answer fully cached ranges; large or open-ended requests still stream.
+    if let Some(range) = request_headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+    {
+        let cache = entry.prefix.read().await;
+        if let Some((start, end)) = byte_range(Some(range), cache.1) {
+            if end < cache.0.len() as u64 {
+                return Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, &entry.content_type)
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{}", cache.1),
+                    )
+                    .header(header::CONTENT_LENGTH, end - start + 1)
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .body(Body::from(cache.0[start as usize..=end as usize].to_vec()))
+                    .unwrap();
+            }
+        }
+    }
     let client = state.client.read().await.clone();
     let range = request_headers.get(header::RANGE);
     let Some((upstream, selected, prefix)) =
@@ -194,21 +231,148 @@ async fn proxy_media(
             response = response.header(name, value);
         }
     }
+    let content_type = entry.content_type.clone();
+    let span = response_span(upstream.headers());
+    let body = resumable_media(
+        upstream,
+        prefix,
+        client,
+        entry,
+        selected,
+        span,
+        Duration::from_secs(6),
+    );
     response
-        .header(header::CONTENT_TYPE, entry.content_type)
-        .header(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        )
-        .body(Body::from_stream(
-            futures_util::stream::once(async move { Ok::<_, std::io::Error>(prefix) })
-                .chain(bounded_media_stream(upstream, Duration::from_secs(10))),
-        ))
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from_stream(body))
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+fn response_span(headers: &HeaderMap) -> Option<(u64, u64, u64)> {
+    let range = headers
+        .get(header::CONTENT_RANGE)?
+        .to_str()
+        .ok()?
+        .strip_prefix("bytes ")?;
+    let (span, total) = range.split_once('/')?;
+    let (start, end) = span.split_once('-')?;
+    let (start, end, total) = (
+        start.parse::<u64>().ok()?,
+        end.parse::<u64>().ok()?,
+        total.parse::<u64>().ok()?,
+    );
+    (start <= end && end < total).then_some((start, end, total))
+}
+
+struct Transfer {
+    response: reqwest::Response,
+    pending: Option<axum::body::Bytes>,
+    client: Client,
+    entry: MediaEntry,
+    span: Option<(u64, u64, u64)>,
+    offset: u64,
+    selected: usize,
+    retries: u8,
+    done: bool,
+    idle: Duration,
+}
+fn resumable_media(
+    response: reqwest::Response,
+    prefix: axum::body::Bytes,
+    client: Client,
+    entry: MediaEntry,
+    selected: usize,
+    span: Option<(u64, u64, u64)>,
+    idle: Duration,
+) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> {
+    let transfer = Transfer {
+        response,
+        pending: Some(prefix),
+        client,
+        entry,
+        span,
+        offset: span.map(|v| v.0).unwrap_or(0),
+        selected,
+        retries: 0,
+        done: false,
+        idle,
+    };
+    futures_util::stream::unfold(transfer, |mut t| async move {
+        if t.done {
+            return None;
+        }
+        loop {
+            let result = if let Some(chunk) = t.pending.take() {
+                Ok(Ok(Some(chunk)))
+            } else {
+                tokio::time::timeout(t.idle, t.response.chunk()).await
+            };
+            if let Ok(Ok(Some(chunk))) = result {
+                if let Some((_, end, total)) = t.span {
+                    if chunk.len() as u64 > end + 1 - t.offset {
+                        t.done = true;
+                        return Some((Err(std::io::Error::other("media range overflow")), t));
+                    }
+                    let mut cache = t.entry.prefix.write().await;
+                    if t.offset == cache.0.len() as u64 && cache.0.len() < PREFIX_LIMIT {
+                        let count = chunk.len().min(PREFIX_LIMIT - cache.0.len());
+                        cache.0.extend_from_slice(&chunk[..count]);
+                        cache.1 = total;
+                    }
+                }
+                t.offset += chunk.len() as u64;
+                if t.span.is_some_and(|(_, end, _)| t.offset == end + 1) {
+                    t.done = true;
+                }
+                return Some((Ok(chunk), t));
+            }
+            if matches!(result, Ok(Ok(None))) && t.span.is_none() {
+                return None;
+            }
+            // Never splice different representations or an unvalidated full response.
+            if let Some((_, end, total)) = t.span {
+                if t.offset > end {
+                    return None;
+                }
+                if t.retries < 2 {
+                    t.retries += 1;
+                    let urls: Vec<_> = t
+                        .entry
+                        .upstream_urls
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != t.selected)
+                        .map(|(_, url)| url.clone())
+                        .collect();
+                    let range =
+                        HeaderValue::from_str(&format!("bytes={}-{end}", t.offset)).unwrap();
+                    if let Some((next, index, prefix)) =
+                        fetch_playback_range(&t.client, &urls, Some(&range)).await
+                    {
+                        if response_span(next.headers()) == Some((t.offset, end, total)) {
+                            t.selected = t
+                                .entry
+                                .upstream_urls
+                                .iter()
+                                .position(|url| url == &urls[index])
+                                .unwrap();
+                            t.response = next;
+                            t.pending = Some(prefix);
+                            continue;
+                        }
+                    }
+                }
+            }
+            t.done = true;
+            return Some((Err(std::io::Error::other("media transfer interrupted")), t));
+        }
+    })
 }
 
 // An open connection can stop delivering after sleep or a network change.
 // End the response so the player can rebuild from its position with a fresh source.
+#[cfg(test)]
 fn bounded_media_stream(
     response: reqwest::Response,
     idle: Duration,
@@ -259,8 +423,16 @@ async fn fetch_playback_range(
                 {
                     return None;
                 }
-                let prefix = response.chunk().await.ok()??;
-                Some((response, index, prefix))
+                // A tiny first packet is not evidence of a fast media route.
+                // Race a useful startup block, or the entire short probe range.
+                let mut prefix = response.chunk().await.ok()??.to_vec();
+                while prefix.len() < 64 * 1024 {
+                    match response.chunk().await.ok()? {
+                        Some(chunk) => prefix.extend_from_slice(&chunk),
+                        None => break,
+                    }
+                }
+                Some((response, index, axum::body::Bytes::from(prefix)))
             })
             .await
             .ok()?
@@ -381,6 +553,151 @@ fn status_response(status: StatusCode) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::MediaProxy;
+
+    #[tokio::test]
+    async fn interrupted_range_resumes_exactly_and_caches_prefix() {
+        use futures_util::StreamExt;
+        use axum::{
+            Router,
+            body::Body,
+            http::{HeaderMap, Response},
+            routing::get,
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let count = Arc::new(AtomicUsize::new(0));
+        let requests = count.clone();
+        let app = Router::new()
+            .route(
+                "/backup",
+                get(move |headers: HeaderMap| {
+                    let count = requests.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(headers["range"], "bytes=3-9");
+                        Response::builder()
+                            .status(206)
+                            .header("Content-Range", "bytes 3-9/10")
+                            .header("Content-Length", "7")
+                            .body(Body::from("3456789"))
+                            .unwrap()
+                    }
+                }),
+            )
+            .route(
+                "/truncated",
+                get(|| async {
+                    Response::builder()
+                        .status(206)
+                        .header("Content-Range", "bytes 0-9/10")
+                        .body(Body::from_stream(
+                            futures_util::stream::once(async {
+                                Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"012"))
+                            })
+                            .chain(futures_util::stream::pending()),
+                        ))
+                        .unwrap()
+                }),
+            );
+        let app = app.route(
+            "/wrong",
+            get(|| async {
+                Response::builder()
+                    .status(206)
+                    .header("Content-Range", "bytes 3-9/11")
+                    .body(Body::from("BADBYTES"))
+                    .unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+        let mut response = client
+            .get(format!("{base}/truncated"))
+            .send()
+            .await
+            .unwrap();
+        let prefix = response.chunk().await.unwrap().unwrap();
+        let cache = Arc::new(tokio::sync::RwLock::new((Vec::new(), 0)));
+        let entry = super::MediaEntry {
+            upstream_urls: vec![format!("{base}/truncated"), format!("{base}/backup")],
+            content_type: "audio/mp4".into(),
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
+            local_path: None,
+            prefix: cache.clone(),
+        };
+        let stream = super::resumable_media(
+            response,
+            prefix,
+            client.clone(),
+            entry.clone(),
+            0,
+            Some((0, 9, 10)),
+            std::time::Duration::from_millis(50),
+        );
+        let bytes = axum::body::to_bytes(Body::from_stream(stream), 1024)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), b"0123456789");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(cache.read().await.0.as_slice(), b"0123456789");
+        let mut broken = client
+            .get(format!("{base}/truncated"))
+            .send()
+            .await
+            .unwrap();
+        let first = broken.chunk().await.unwrap().unwrap();
+        let mut wrong = entry.clone();
+        wrong.upstream_urls[1] = format!("{base}/wrong");
+        wrong.prefix = Arc::new(tokio::sync::RwLock::new((Vec::new(), 0)));
+        let stream = super::resumable_media(
+            broken,
+            first,
+            client.clone(),
+            wrong,
+            0,
+            Some((0, 9, 10)),
+            std::time::Duration::from_millis(50),
+        );
+        assert!(
+            axum::body::to_bytes(Body::from_stream(stream), 1024)
+                .await
+                .is_err()
+        );
+        // Serve a Safari-style repeat probe entirely from the cached prefix.
+        let proxy = MediaProxy::start().await.unwrap();
+        proxy
+            .state
+            .entries
+            .write()
+            .await
+            .insert("cached".into(), entry);
+        let url = format!("{}/{}/cached", proxy.base_url, proxy.state.access_token);
+        let response = client
+            .get(url)
+            .header("Range", "bytes=1-2")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.headers()["Content-Range"], "bytes 1-2/10");
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"12");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let first = proxy
+            .register_stream(format!("{base}/resource"), vec![], "audio/mp4".into())
+            .await;
+        let second = proxy
+            .register_stream(format!("{base}/resource"), vec![], "audio/mp4".into())
+            .await;
+        assert_eq!(first, second);
+        assert!(super::response_span(&HeaderMap::new()).is_none());
+        server.abort();
+    }
 
     #[tokio::test]
     async fn stalled_media_response_ends_instead_of_waiting_forever() {

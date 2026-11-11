@@ -18,6 +18,8 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
     setError(''); setVisible(false); setSlow(false)
     let firstFrameShown = false
     let pendingAlignment = true
+    let startupRequested = false
+    let disposed = false
     let previousTime = playbackClock()
     let previousCheck = performance.now()
     const sync = (force = false) => {
@@ -25,6 +27,14 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
       const time = playbackClock()
       const now = performance.now()
       const player = usePlayerStore.getState()
+      // WKWebView may stop preloading at metadata. Request playback before
+      // waiting for decoded data, once per playback intent rather than each tick.
+      if (player.status === 'playing' && !startupRequested) {
+        startupRequested = true
+        void video.play().catch(cause => {
+          if (!disposed && cause?.name === 'NotAllowedError') setError('请再次点击播放视频')
+        })
+      } else if (player.status === 'paused') startupRequested = false
       pendingAlignment = synchronizeVideo(
         video, time, player.status === 'playing',
         previousTime, force || pendingAlignment, (now - previousCheck) / 1000, player.rate,
@@ -48,10 +58,13 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
     for (const event of events) video.addEventListener(event, ready)
     video.addEventListener('error', failed)
     video.src = src
+    video.load()
+    sync()
     const slowTimer = window.setTimeout(() => setSlow(true), 5000)
     const timer = window.setInterval(ready, 250)
     const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status || state.rate !== previous.rate) sync() })
     return () => {
+      disposed = true
       syncRef.current = () => {}
       window.clearTimeout(slowTimer)
       window.clearInterval(timer)

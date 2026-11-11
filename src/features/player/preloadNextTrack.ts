@@ -8,9 +8,9 @@ export function startPreloadingNextTrack() {
   let timer: number | undefined
 
   function update() {
-    const { current, queue, status, shuffled, repeatMode } = usePlayerStore.getState()
+    const { current, queue, status, shuffled, repeatMode, progressSeconds, durationSeconds } = usePlayerStore.getState()
     let next
-    if (current && status === 'playing' && !document.hidden && !shuffled && repeatMode !== 'one') {
+    if (current && status === 'playing' && durationSeconds > 0 && durationSeconds - progressSeconds <= 20 && !document.hidden && !shuffled && repeatMode !== 'one') {
       const index = queue.findIndex(track => track.id === current.id)
       if (index >= 0) next = queue[index + 1] ?? (repeatMode === 'all' ? queue[0] : undefined)
     }
@@ -21,7 +21,7 @@ export function startPreloadingNextTrack() {
     window.clearTimeout(timer)
     if (!source || !next) return
 
-    // Resolve one predictable item after playback settles. No media bytes
+    // Resolve one predictable item shortly before playback ends. No media bytes
     // are fetched, and changing the queue cancels the scheduled request.
     const entry = next
     timer = window.setTimeout(() => {
@@ -35,7 +35,7 @@ export function startPreloadingNextTrack() {
   usePlayerStore.subscribe((state, previous) => {
     if (state.current?.id !== previous.current?.id || state.queue !== previous.queue ||
       state.status !== previous.status || state.repeatMode !== previous.repeatMode ||
-      state.shuffled !== previous.shuffled) update()
+      state.shuffled !== previous.shuffled || Math.floor(state.progressSeconds) !== Math.floor(previous.progressSeconds)) update()
   })
   document.addEventListener('visibilitychange', update)
   update()

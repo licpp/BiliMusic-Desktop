@@ -375,7 +375,7 @@ class PlayerPlugin: Plugin {
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
         state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position; initialSeekPending = position > 0
-        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 8
+        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 2
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
         itemStatus = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -391,7 +391,7 @@ class PlayerPlugin: Plugin {
                     let position = self.startPosition; self.startPosition = 0
                     if position > 0 {
                         self.state.position = position
-                        self.player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
+                        self.player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: CMTime(seconds: 0.1, preferredTimescale: 600), toleranceAfter: CMTime(seconds: 0.1, preferredTimescale: 600)) { [weak self] completed in
                             self?.onMain { [weak self] in
                                 guard let self, self.generation == request, item === self.player.currentItem else { return }
                                 self.initialSeekPending = false

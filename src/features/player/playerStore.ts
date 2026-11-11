@@ -139,7 +139,21 @@ const playerStorage = {
 window.addEventListener('pagehide', () => { flushPosition(); flushPlayerSnapshot() })
 function playerAudio() {
   if (audio) return audio
-  audio = new Audio(); audio.preload = 'metadata'; audio.volume = usePlayerStore.getState().volume
+  audio = new Audio(); audio.preload = 'auto'; audio.volume = usePlayerStore.getState().volume
+  let stallTimer: ReturnType<typeof setTimeout> | undefined
+  const clearStall = () => { clearTimeout(stallTimer); stallTimer = undefined }
+  audio.addEventListener('waiting', () => {
+    if (stallTimer) return
+    const id = loadedTrackId, position = audio?.currentTime || 0
+    stallTimer = setTimeout(() => {
+      stallTimer = undefined
+      if (id && id === loadedTrackId && usePlayerStore.getState().status === 'buffering' &&
+          (audio?.currentTime || 0) < position + .1) {
+        if (!recoverPlayback('Network error')) usePlayerStore.setState({ status: 'error', error: '音频缓冲停滞，请重新播放' })
+      }
+    }, 12000)
+  })
+  for (const event of ['playing', 'pause', 'emptied', 'error', 'ended']) audio.addEventListener(event, clearStall)
   audio.addEventListener('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
   audio.addEventListener('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
   audio.addEventListener('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
