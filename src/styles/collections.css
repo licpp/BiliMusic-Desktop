@@ -260,3 +260,8 @@
 .creator-resume:focus-visible { outline:2px solid var(--cyan);outline-offset:3px; }
 .creator-resume:disabled { opacity:.6;cursor:wait; }
 @media(max-width:640px) { .creator-header > .creator-open { flex-basis:100%; }.creator-header-actions { margin-left:0;gap:8px;width:100%; }.creator-header-actions > .collection-flat-button,.creator-resume { min-height:40px; } }
+
+.video-part-meta { display:flex;align-items:center;gap:12px; }
+.video-part-meta > small { color:var(--muted);font-size:12px;font-weight:400; }
+.video-part-meta > .video-part-inline-duration { display:none; }
+.video-part-duration { font-variant-numeric:tabular-nums;white-space:nowrap; }

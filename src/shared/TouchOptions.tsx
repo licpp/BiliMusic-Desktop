@@ -1,7 +1,8 @@
 import { Check, ChevronDown } from 'lucide-react'
-import { useId, useRef, useState, type PointerEvent } from 'react'
+import { useId, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 
-export function TouchOptions({ label, selected, options, onChange, disabled = false }: {
+export function TouchOptions({ label, selected, options, onChange, disabled = false, icon }: {
+  icon?: ReactNode
   label: string
   selected: string
   options: { value: string; label: string }[]
@@ -26,7 +27,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
     }}>
     <button type="button" className="touch-option-trigger" disabled={disabled} aria-expanded={open && !disabled} aria-controls={id}
       onClick={() => setOpen(value => !value)}>
-      <span>{label}</span><small>{options.find(option => option.value === selected)?.label}</small><ChevronDown size={16}/>
+      {icon}<span>{label}</span><small>{options.find(option => option.value === selected)?.label}</small><ChevronDown size={16}/>
     </button>
     {open && !disabled && <div id={id} className="touch-option-list" role="group" aria-label={label} data-touch-picker data-tracking={preview !== undefined || undefined}
       onPointerDown={event => {

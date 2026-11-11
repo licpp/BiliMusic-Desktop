@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, X } from 'lucide-react'
+import { Clock3, X, ChevronRight } from 'lucide-react'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
 import { controlMobileAudio } from './mobileAudio'
 import { usePlayerStore } from './playerStore'
 
-const durations = [15, 30, 45, 60, 90]
+const durations = [15, 30, 45, 60]
 
 export function SleepTimer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const sleep = usePlayerStore(state => state.sleep)
@@ -45,4 +45,19 @@ export function SleepTimer({ open, onClose }: { open: boolean; onClose: () => vo
           <button className="mobile-page-primary" disabled={busy || !Number.isInteger(minutes) || minutes < 1 || minutes > 180} onClick={() => void action('sleepStart', minutes * 60)}>{sleep.deadline > 0 ? '重新计时' : '开始计时'}</button></footer>
       </section>
     </div>, document.body)
+}
+
+export function SleepTimerEntry({ onOpen }: { onOpen: () => void }) {
+  const deadline = usePlayerStore(state => state.sleep.deadline)
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (!deadline) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [deadline])
+  const remaining = Math.max(0, Math.ceil((deadline - now) / 1000))
+  return <button type="button" className="sleep-timer-entry" onClick={onOpen}>
+    <Clock3 size={18}/><span>定时暂停</span><small>{deadline > 0 ? formatDuration(remaining) : '未开启'}</small><ChevronRight size={16}/>
+  </button>
 }

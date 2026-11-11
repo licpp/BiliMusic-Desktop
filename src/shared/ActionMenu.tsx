@@ -4,7 +4,7 @@ import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal, X } from 'lucide-react'
 import { isMobile } from '../services/platform'
 
-export function ActionMenu({ label = '更多操作', panel = false, sheet = false, touchSheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { label?: string; panel?: boolean; sheet?: boolean; touchSheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
+export function ActionMenu({ panelClassName = '', label = '更多操作', panel = false, sheet = false, touchSheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { panelClassName?: string; label?: string; panel?: boolean; sheet?: boolean; touchSheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
   const isSheet=!floating && (touchSheet || ((sheet || isMobile) && compact))
   const touch = isSheet && touchSheet
@@ -83,7 +83,7 @@ export function ActionMenu({ label = '更多操作', panel = false, sheet = fals
     if (position) { close(); return }
     const rect = trigger.current!.getBoundingClientRect()
     setPosition({ left: rect.right, top: rect.bottom + 6, anchorTop: rect.top })
-  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel data-touch-sheet={touch || undefined} className={`action-menu-panel ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} aria-modal={touch || undefined} onKeyDown={(event) => {
+  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel data-touch-sheet={touch || undefined} className={`action-menu-panel ${panelClassName} ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} aria-modal={touch || undefined} onKeyDown={(event) => {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input,select,textarea')) return
     event.preventDefault()
     const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]

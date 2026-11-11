@@ -1,3 +1,4 @@
+import { SleepTimerEntry } from '../player/SleepTimer'
 import { SeasonBrowser } from '../collections/SeasonBrowser'
 import { seasonCollection } from '../../services/mediaSources'
 import type { Collection } from '../../services/collections'
@@ -9,7 +10,7 @@ import { controlMobileAudio } from '../player/mobileAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Clock3, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2 } from 'lucide-react'
+import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
@@ -388,15 +389,16 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
             {subtitles.busy && <LoaderCircle size={13} className="spin" />}
             {subtitleLabel}
           </button>}
-          {!(isMobile && videoFullscreen) && <ActionMenu label={isMobile ? "播放设置" : "歌词页面更多操作"} panel touchSheet={isMobile}>{(close) => <>
+          {!(isMobile && videoFullscreen) && <ActionMenu label={isMobile ? "播放设置" : "歌词页面更多操作"} panel panelClassName={isMobile ? "mobile-playback-settings" : undefined} touchSheet={isMobile}>{(close) => <>
             {isMobile && <>
               <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
+              <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
             </>}
             {isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
-              <Sparkles size={16}/>{subtitleLabel}<small>{subtitles.active ? '已开启' : subtitles.preferred ? '歌词优先' : '已关闭'}</small>
+              <Sparkles size={18}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
-            {subtitles.active && subtitles.choices.length > 1 && (isMobile ? <TouchOptions label="字幕版本" selected={subtitles.choice?.language ?? ''}
+            {subtitles.active && subtitles.choices.length > 1 && (isMobile ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
               options={subtitles.choices.map(choice => ({ value: choice.language, label: choice.label || choice.language }))}
               onChange={subtitles.select}/> : <label className="lyrics-subtitle-language">
               字幕版本
@@ -414,7 +416,6 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
               if (isMobile) setPartsOpen(true)
               else onOpenCollection({ ...videoDetail, folderId: '' })
             }}><ListVideo size={16}/>查看分 P</button>}
-            {isMobile && <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); onOpenSleepTimer() }}><Clock3 size={16}/>定时暂停</button>}
             {!isMobile && <><PlaybackRateControl/>
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/></>}
           </>}</ActionMenu>}

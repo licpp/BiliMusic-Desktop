@@ -137,3 +137,24 @@
 .touch-option-list button[data-preview] {
   color: var(--cyan); background: var(--playing-row-surface); border-color: var(--cyan); font-weight: 600;
 }
+
+.action-menu-panel.mobile-playback-settings[data-touch-sheet] { padding-inline:16px;padding-bottom:calc(12px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
+.mobile-playback-settings .touch-sheet-header > div { padding:0 0 8px; }
+.mobile-playback-settings .touch-sheet-header strong { font-size:17px; }
+.action-menu-panel.mobile-playback-settings > button,
+.mobile-playback-settings .touch-option-trigger { display:flex;align-items:center;gap:12px;min-height:50px;width:100%;margin:0;padding:10px 4px;border:0;border-radius:10px;background:transparent;color:var(--ink);text-align:left;font-size:14px!important; }
+.mobile-playback-settings > button > svg:first-child,
+.mobile-playback-settings .touch-option-trigger > svg:first-child { width:20px;height:20px;flex:0 0 20px;color:var(--muted); }
+.mobile-playback-settings > button > svg:last-child:not(:first-child),
+.mobile-playback-settings .touch-option-trigger > svg:last-child { width:16px;height:16px;flex-shrink:0;color:var(--muted); }
+.mobile-playback-settings > button > small,
+.mobile-playback-settings .touch-option-trigger > small { margin-inline-start:auto;max-width:48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;font-weight:400; }
+.mobile-playback-settings > .playback-quality-settings { padding:0;gap:0; }
+.mobile-playback-settings .touch-sheet-section { margin:8px 0 4px;padding:12px 4px 4px;font-size:11px; }
+.mobile-playback-settings > .lyrics-subtitle-menu-item { margin-top:8px;padding-top:12px;border-top:1px solid var(--line);border-radius:0; }
+.playback-setting-switch { display:inline-flex;align-items:center;width:38px;height:23px;flex:0 0 38px;padding:3px;border-radius:20px;background:var(--range-track);margin-inline-start:auto; }
+.playback-setting-switch i { width:17px;height:17px;border-radius:50%;background:white;box-shadow:0 1px 3px #0002;transition:transform 160ms ease; }
+.playback-setting-switch[data-enabled="true"] { background:var(--cyan); }
+.playback-setting-switch[data-enabled="true"] i { transform:translateX(15px); }
+.mobile-playback-settings .lyrics-subtitle-menu-item small + .playback-setting-switch { margin-inline-start:0; }
+.mobile-playback-settings > button:active,.mobile-playback-settings .touch-option-trigger:active { background:var(--panel-raised); }

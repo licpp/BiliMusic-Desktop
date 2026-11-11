@@ -71,7 +71,7 @@ function VideoPartsRow({ track, index, active, videoCollection, selecting, check
       <span>{label}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
     </label> : <>
       <button type="button" className="video-part-play" aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
-        <span className="video-part-index">{videoCollection ? <Artwork src={track.coverUrl}/> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}{openParts && <small className="video-part-count">{count} P</small>}</strong>{videoCollection && track.playCount !== undefined && <small>{formatAudienceCount(track.playCount)} 次播放</small>}</span><small>{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
+        <span className="video-part-index">{videoCollection ? <Artwork src={track.coverUrl}/> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}{openParts && <small className="video-part-count">{count} P</small>}</strong><span className="video-part-meta">{videoCollection && track.playCount !== undefined && <small className="video-part-views">{formatAudienceCount(track.playCount)} 次播放</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
       </button>
       {!isMobile && renderActions?.(track)}
       <TrackMenuButton track={actionTrack} tracks={playbackTracks} actions={actions}/>

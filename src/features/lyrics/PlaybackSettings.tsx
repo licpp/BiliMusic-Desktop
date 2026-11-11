@@ -1,3 +1,4 @@
+import { Headphones, Monitor } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { TouchOptions } from '../../shared/TouchOptions'
 import { isMobile } from '../../services/platform'
@@ -55,7 +56,7 @@ export function PlaybackSettings({ track, kind, onChanged }: {
     ...(missing ? [{ value: String(selected), label: '已记住偏好' }] : []),
   ]
   return <div className="playback-quality-settings" data-kind={kind}>
-    {isMobile ? <TouchOptions label={audio ? '音质' : '清晰度'} selected={String(selected)} options={touchOptions}
+    {isMobile ? <TouchOptions icon={audio ? <Headphones size={18}/> : <Monitor size={18}/>} label={audio ? '音质' : '清晰度'} selected={String(selected)} options={touchOptions}
       disabled={busy || !preferences.data || !choices} onChange={value => void change(Number(value))}/> : <label>
       {audio ? '音质' : '清晰度'}
       <select aria-label={audio ? '音频质量' : '视频清晰度'} disabled={busy || !preferences.data || !choices}
