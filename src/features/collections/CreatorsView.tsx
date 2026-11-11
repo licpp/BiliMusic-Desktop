@@ -9,7 +9,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Bookmark, Check, RefreshCw } from 'lucide-react'
+import { Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   readCollectionProgress,
   changeCollection,
@@ -220,10 +220,15 @@ export function CreatorPage({
   })
   useEffect(() => {
     if (!followed) return
-    const subscription = listen<string>('collection-progress-changed', event => {
-      if (event.payload === item.bvid) void checkpoint.refetch()
-    }).catch(() => undefined)
-    return () => { void subscription.then(stop => stop?.()) }
+    const subscription = listen<string>(
+      'collection-progress-changed',
+      (event) => {
+        if (event.payload === item.bvid) void checkpoint.refetch()
+      },
+    ).catch(() => undefined)
+    return () => {
+      void subscription.then((stop) => stop?.())
+    }
   }, [followed, item.bvid, checkpoint.refetch])
   const [resuming, setResuming] = useState(false)
 
@@ -231,26 +236,32 @@ export function CreatorPage({
   const [parts, setParts] =
     useState<Awaited<ReturnType<typeof getVideoParts>>>()
   const [error, setError] = useState('')
-  const result = useInfiniteQuery({
-    queryKey: ['creator-catalog', mid, tab],
+  const videoResult = useInfiniteQuery({
+    queryKey: ['creator-catalog', mid, 'videos'],
     initialPageParam: 1,
-    queryFn: ({ pageParam }) => catalog(tab, mid, pageParam),
-    getNextPageParam: (last) => {
-      const count =
-        tab === 'videos'
-          ? last.data.page?.count
-          : last.data.items_lists?.page?.total
-      return last.page * (tab === 'videos' ? 30 : 20) < count
-        ? last.page + 1
-        : undefined
-    },
+    queryFn: ({ pageParam }) => catalog('videos', mid, pageParam),
+    getNextPageParam: (last) =>
+      last.page * 30 < last.data.page?.count ? last.page + 1 : undefined,
   })
+  const seasonResult = useInfiniteQuery({
+    queryKey: ['creator-catalog', mid, 'seasons'],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) => catalog('seasons', mid, pageParam),
+    enabled: tab === 'seasons',
+    getNextPageParam: (last) =>
+      last.page * 20 < last.data.items_lists?.page?.total
+        ? last.page + 1
+        : undefined,
+  })
+  const result = tab === 'videos' ? videoResult : seasonResult
   const videos =
-    result.data?.pages.flatMap((page) => page.data.list?.vlist || []) || []
+    videoResult.data?.pages.flatMap((page) => page.data.list?.vlist || []) || []
   const seasons =
-    result.data?.pages.flatMap(
+    seasonResult.data?.pages.flatMap(
       (page) => page.data.items_lists?.seasons_list || [],
     ) || []
+  const totalVideos: number | undefined =
+    videoResult.data?.pages[0]?.data.page?.count
   const queue = seasonTracks({
     unavailable: 0,
     summary: {
@@ -262,9 +273,81 @@ export function CreatorPage({
     },
     tracks: videos.map(creatorVideoRow),
   })
+  const resumeButton = followed && checkpoint.data && (
+    <button
+      className="creator-resume"
+      disabled={resuming}
+      onClick={async () => {
+        setResuming(true)
+        setError('')
+        const scope = accountEpoch(),
+          intent = playbackIntent()
+        const point = checkpoint.data!
+        try {
+          let entries = [...videos],
+            page = videoResult.data?.pages.length || 0
+          let total = totalVideos ?? Infinity
+          while (
+            !entries.some((video) => video.bvid === point.bvid) &&
+            entries.length < total
+          ) {
+            const next = await catalog('videos', mid, ++page)
+            if (scope !== accountEpoch() || intent !== playbackIntent()) return
+            const rows = next.data.list?.vlist || []
+            if (!rows.length) break
+            entries.push(...rows)
+            total = next.data.page?.count ?? entries.length
+          }
+          if (!entries.some((video) => video.bvid === point.bvid))
+            throw new Error('上次播放的视频已不在这个 UP 主的投稿中')
+          const detail = await getVideoParts(point.bvid)
+          if (scope !== accountEpoch() || intent !== playbackIntent()) return
+          const parts = detail.parts.map((part) => toTrack(detail, part))
+          const selected = parts.find((track) => track.source.cid === point.cid)
+          if (!selected) throw new Error('上次播放的分 P 已不可用')
+          const full = seasonTracks({
+            unavailable: 0,
+            summary: {
+              id: mid,
+              uploaderId: mid,
+              title: item.title,
+              uploaderName: item.title,
+              coverUrl: item.coverUrl,
+            },
+            tracks: entries.map(creatorVideoRow),
+          })
+          await usePlayerStore.getState().playFromList(
+            seasonPlaybackQueue(full, selected, parts),
+            selected.id,
+            {
+              kind: 'season',
+              title: item.title,
+              collectionRef: item.bvid,
+              creatorMid: mid,
+              creatorPage: page,
+              creatorTotal: total,
+            },
+            point.positionMs / 1000,
+          )
+        } catch (cause) {
+          setError(commandErrorMessage(cause))
+        } finally {
+          setResuming(false)
+        }
+      }}
+    >
+      {resuming ? (
+        <LoaderCircle size={17} className="spin" />
+      ) : (
+        <Play size={17} fill="currentColor" />
+      )}
+      <span>{resuming ? '加载中' : '继续播放'}</span>
+      <small>{formatDuration(checkpoint.data.positionMs / 1000)}</small>
+    </button>
+  )
   return (
     <section className="creator-page">
-      <header className="creator-row">
+      <header className="creator-row creator-header">
         <div className="creator-open">
           <Artwork src={profile.data?.data.card?.face || item.coverUrl} />
           <div>
@@ -276,89 +359,18 @@ export function CreatorPage({
             )}
           </div>
         </div>
-        <CreatorFollow item={item} />
-        <button
-          className="collection-icon"
-          aria-label="刷新投稿"
-          onClick={() => void result.refetch()}
-        >
-          <RefreshCw size={18} />
-        </button>
+        <div className="creator-header-actions">
+          <CreatorFollow item={item} />
+          {resumeButton}
+          <button
+            className="collection-icon"
+            aria-label="刷新投稿"
+            onClick={() => void result.refetch()}
+          >
+            <RefreshCw size={18} />
+          </button>
+        </div>
       </header>
-      {followed && checkpoint.data && (
-        <button
-          className="collection-flat-button"
-          disabled={resuming}
-          onClick={async () => {
-            setResuming(true)
-            setError('')
-            const scope = accountEpoch(),
-              intent = playbackIntent()
-            const point = checkpoint.data!
-            try {
-              let entries = [...videos],
-                page = result.data?.pages.length || 0
-              let total = result.data?.pages[0]?.data.page?.count ?? Infinity
-              while (
-                !entries.some((video) => video.bvid === point.bvid) &&
-                entries.length < total
-              ) {
-                const next = await catalog('videos', mid, ++page)
-                if (scope !== accountEpoch() || intent !== playbackIntent())
-                  return
-                const rows = next.data.list?.vlist || []
-                if (!rows.length) break
-                entries.push(...rows)
-                total = next.data.page?.count ?? entries.length
-              }
-              if (!entries.some((video) => video.bvid === point.bvid))
-                throw new Error('上次播放的视频已不在这个 UP 主的投稿中')
-              const detail = await getVideoParts(point.bvid)
-              if (scope !== accountEpoch() || intent !== playbackIntent())
-                return
-              const parts = detail.parts.map((part) => toTrack(detail, part))
-              const selected = parts.find(
-                (track) => track.source.cid === point.cid,
-              )
-              if (!selected) throw new Error('上次播放的分 P 已不可用')
-              const full = seasonTracks({
-                unavailable: 0,
-                summary: {
-                  id: mid,
-                  uploaderId: mid,
-                  title: item.title,
-                  uploaderName: item.title,
-                  coverUrl: item.coverUrl,
-                },
-                tracks: entries.map(creatorVideoRow),
-              })
-              await usePlayerStore
-                .getState()
-                .playFromList(
-                  seasonPlaybackQueue(full, selected, parts),
-                  selected.id,
-                  {
-                    kind: 'season',
-                    title: item.title,
-                    collectionRef: item.bvid,
-                    creatorMid: mid,
-                    creatorPage: page,
-                    creatorTotal: total,
-                  },
-                  point.positionMs / 1000,
-                )
-            } catch (cause) {
-              setError(commandErrorMessage(cause))
-            } finally {
-              setResuming(false)
-            }
-          }}
-        >
-          {resuming
-            ? '正在读取…'
-            : `继续播放 · ${formatDuration(checkpoint.data.positionMs / 1000)}`}
-        </button>
-      )}
       <SegmentedTabs
         className="listening-tabs"
         tabs={[
@@ -382,6 +394,7 @@ export function CreatorPage({
         {tab === 'videos' ? (
           <VideoPartsList
             videoCollection
+            totalCount={totalVideos}
             locateCurrent
             tracks={queue}
             queueSource={{
@@ -389,8 +402,8 @@ export function CreatorPage({
               title: item.title,
               collectionRef: item.bvid,
               creatorMid: mid,
-              creatorPage: result.data?.pages.length || 1,
-              creatorTotal: result.data?.pages[0]?.data.page?.count || 0,
+              creatorPage: videoResult.data?.pages.length || 1,
+              creatorTotal: totalVideos || 0,
             }}
             onOpenParts={(track) => {
               void getVideoParts(track.source.bvid)
@@ -439,8 +452,8 @@ export function CreatorPage({
                 title: item.title,
                 collectionRef: item.bvid,
                 creatorMid: mid,
-                creatorPage: result.data?.pages.length || 1,
-                creatorTotal: result.data?.pages[0]?.data.page?.count || 0,
+                creatorPage: videoResult.data?.pages.length || 1,
+                creatorTotal: totalVideos || 0,
               }}
             />
           </div>

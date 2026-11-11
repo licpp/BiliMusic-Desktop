@@ -13,7 +13,8 @@ import { TrackMenuButton } from './TrackActions'
 import { showTrackMenu } from './trackActionStore'
 import { BatchTrackActions, useTrackSelection } from './useTrackSelection'
 
-export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, videoCollection = false, locateCurrent = false, onOpenParts, playbackTracks = tracks, queueSource }: {
+export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, videoCollection = false, locateCurrent = false, onOpenParts, playbackTracks = tracks, queueSource, totalCount }: {
+  totalCount?: number
   videoCollection?: boolean
   locateCurrent?: boolean
   onOpenParts?: (track: Track) => void
@@ -35,7 +36,7 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
   return <div className="parts-list video-parts-list" ref={root}>
     {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} /> :
       <div className="video-parts-toolbar">
-        <span>{visibleTracks.length} {videoCollection || (tracks.length === 1 && tracks[0].partCount === 1) ? '个视频' : '个分 P'}</span>
+        <span>{totalCount ?? visibleTracks.length} {videoCollection || (tracks.length === 1 && tracks[0].partCount === 1) ? '个视频' : '个分 P'}</span>
         <button type="button" className="collection-flat-button" onClick={selection.enter}><ListChecks size={16}/>多选</button>
       </div>}
     {visibleTracks.map((track, index) => <VideoPartsRow key={track.id} track={track} index={index}
