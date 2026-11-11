@@ -311,16 +311,22 @@
 .linked-folder .result-main>svg { flex-shrink:0;width:16px; }
 .linked-folder .result-copy small { display:block;margin-top:6px;color:var(--muted); }
 .listening-library { position:relative; }
-.listening-library>.listening-tabs { padding-right:76px; }
-.listening-library .listening-tools { position:absolute;top:26px;right:0; }
-.listening-library .collections-view { margin-top:0;padding-top:0;border-top:0; }
-@media(max-width:960px) {
- :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 16px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { padding-right:4px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .listening-tools { position:static;height:28px;margin:0; }
+/* Toolbars share the tab row; transformed panels would make them reserve
+   space or anchor to the list instead of this header. */
+.listening-library #listening-panel>.segmented-panel { animation:none; }
+.listening-library>.listening-tabs { padding-right:84px; }
+.listening-library :is(.listening-tools,.collections-heading.collections-tools-only) {
+ position:absolute;top:26px;right:0;height:30px;min-height:30px;margin:0;
 }
-.listening-library .collections-heading.collections-tools-only { position:absolute;right:0;top:26px;min-height:30px;margin:0; }
+.listening-library .collections-view { margin:0;padding:0;border:0; }
+.listening-library .creators-view:not(.creators-sidebar) { padding-top:0; }
+.music-library .library-tab-content { padding-top:0; }
+.music-library .collection-actions { margin-top:0; }
 @media(max-width:960px) {
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .collections-heading.collections-tools-only { position:static;height:28px;min-height:28px;margin:0; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 12px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library { padding-top:12px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { width:calc(100% - 84px);margin:0 0 10px;padding:4px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-heading.collections-tools-only) { top:18px;height:36px;min-height:36px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .music-library .download-list { padding-top:0; }
 }
