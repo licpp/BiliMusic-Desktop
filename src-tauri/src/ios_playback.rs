@@ -59,12 +59,13 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
         .as_str()
         .ok_or("播放账号已变更，请重新播放")?;
     let mut track = payload["track"].clone();
-    // Account switches share this gate. Never record an old queue item in a new account.
+    // Check briefly under the account gate; sync network requests must not block playback.
     let sync = app.state::<crate::sync::SyncState>();
-    let _gate = sync.gate.lock().await;
+    let gate = sync.account_gate.lock().await;
     if profile != current_profile(app) {
         return Err("播放账号已变更，请重新播放".into());
     }
+    drop(gate);
     let entry_id = track["id"].as_str().unwrap_or_default().to_owned();
     let mut parts = Vec::new();
     if track["resolveParts"].as_bool() == Some(true) {
@@ -119,6 +120,10 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     {
         return Err("无法读取合集中的这个视频".into());
     }
+    let gate = sync.account_gate.lock().await;
+    if profile != current_profile(app) {
+        return Err("播放账号已变更，请重新播放".into());
+    }
     let refresh = payload["refresh"].as_bool() == Some(true);
     let stored = if refresh {
         let db = app.state::<Database>();
@@ -129,6 +134,7 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     } else {
         library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?
     };
+    drop(gate);
     let url = track_playback_url(
         app.state::<Database>(),
         app.state::<BilibiliProvider>(),
@@ -138,6 +144,10 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
     )
     .await
     .map_err(|e| e.message)?;
+    let _gate = sync.account_gate.lock().await;
+    if profile != current_profile(app) {
+        return Err("播放账号已变更，请重新播放".into());
+    }
     track["title"] = json!(stored.title);
     track["artist"] = json!(stored.artist);
     track["album"] = json!(stored.album);

@@ -34,7 +34,7 @@ struct MediaEntry {
 #[derive(Clone)]
 struct ProxyState {
     access_token: String,
-    client: Client,
+    client: Arc<RwLock<Client>>,
     entries: Arc<RwLock<HashMap<String, MediaEntry>>>,
 }
 
@@ -49,10 +49,7 @@ impl MediaProxy {
         let address = listener.local_addr()?;
         let state = ProxyState {
             access_token: Uuid::new_v4().simple().to_string(),
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(8))
-                .pool_idle_timeout(Duration::from_secs(30))
-                .build()?,
+            client: Arc::new(RwLock::new(Self::build_client()?)),
             entries: Arc::new(RwLock::new(HashMap::new())),
         };
         let router = Router::new()
@@ -67,6 +64,20 @@ impl MediaProxy {
             base_url: format!("http://{address}"),
             state,
         })
+    }
+
+    fn build_client() -> Result<Client, reqwest::Error> {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .build()
+    }
+
+    pub async fn refresh_connections(
+        &self,
+    ) -> Result<(), super::providers::bilibili::ProviderError> {
+        *self.state.client.write().await = Self::build_client()?;
+        Ok(())
     }
 
     pub async fn register_stream(
@@ -153,9 +164,10 @@ async fn proxy_media(
         return serve_local(&path, &request_headers).await;
     }
 
+    let client = state.client.read().await.clone();
     let range = request_headers.get(header::RANGE);
     let Some((upstream, selected, prefix)) =
-        fetch_playback_range(&state.client, &entry.upstream_urls, range).await
+        fetch_playback_range(&client, &entry.upstream_urls, range).await
     else {
         return status_response(StatusCode::BAD_GATEWAY);
     };
@@ -189,10 +201,33 @@ async fn proxy_media(
             HeaderValue::from_static("*"),
         )
         .body(Body::from_stream(
-            futures_util::stream::once(async move { Ok::<_, reqwest::Error>(prefix) })
-                .chain(upstream.bytes_stream()),
+            futures_util::stream::once(async move { Ok::<_, std::io::Error>(prefix) })
+                .chain(bounded_media_stream(upstream, Duration::from_secs(10))),
         ))
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+// An open connection can stop delivering after sleep or a network change.
+// End the response so the player can rebuild from its position with a fresh source.
+fn bounded_media_stream(
+    response: reqwest::Response,
+    idle: Duration,
+) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> {
+    futures_util::stream::unfold(Some(response), move |response| async move {
+        let mut response = response?;
+        match tokio::time::timeout(idle, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => Some((Ok(chunk), Some(response))),
+            Ok(Ok(None)) => None,
+            Ok(Err(error)) => Some((Err(std::io::Error::other(error)), None)),
+            Err(_) => Some((
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "media stream stopped delivering data",
+                )),
+                None,
+            )),
+        }
+    })
 }
 
 async fn fetch_playback_range(
@@ -348,6 +383,40 @@ mod tests {
     use super::MediaProxy;
 
     #[tokio::test]
+    async fn stalled_media_response_ends_instead_of_waiting_forever() {
+        use futures_util::StreamExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/stall",
+            axum::routing::get(|| async {
+                axum::body::Body::from_stream(
+                    futures_util::stream::once(async {
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"first"))
+                    })
+                    .chain(futures_util::stream::pending()),
+                )
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut response = reqwest::get(format!("http://{address}/stall"))
+            .await
+            .unwrap();
+        assert_eq!(response.chunk().await.unwrap().unwrap().as_ref(), b"first");
+        let stream = super::bounded_media_stream(response, std::time::Duration::from_millis(50));
+        tokio::pin!(stream);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(stream.next().await.is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
     #[ignore = "requires live Bilibili CDN access"]
     async fn live_audio_proxy_supports_avplayer_range_requests() {
         use crate::infrastructure::providers::bilibili::BilibiliProvider;
@@ -355,12 +424,21 @@ mod tests {
         let detail = provider.video_parts("BV1GJ411x7h7").await.unwrap();
         let cid = detail.parts[0].cid;
         for refresh in [false, true] {
-            if refresh { provider.invalidate_playback(&detail.bvid, cid).await; }
+            if refresh {
+                provider.invalidate_playback(&detail.bvid, cid).await;
+            }
             let source = provider.playback_source(&detail.bvid, cid).await.unwrap();
             let proxy = MediaProxy::start().await.unwrap();
-            let url = proxy.register_stream(source.audio_url, source.backup_urls, source.mime_type).await;
-            let response = reqwest::Client::new().get(url).header("Range", "bytes=0-4095")
-                .timeout(std::time::Duration::from_secs(15)).send().await.unwrap();
+            let url = proxy
+                .register_stream(source.audio_url, source.backup_urls, source.mime_type)
+                .await;
+            let response = reqwest::Client::new()
+                .get(url)
+                .header("Range", "bytes=0-4095")
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .unwrap();
             assert_eq!(response.status(), reqwest::StatusCode::PARTIAL_CONTENT);
             let bytes = response.bytes().await.unwrap();
             assert_eq!(bytes.len(), 4096);

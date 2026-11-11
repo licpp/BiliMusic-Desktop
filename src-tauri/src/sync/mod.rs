@@ -13,6 +13,8 @@ use tauri::{AppHandle, State};
 #[derive(Default)]
 pub struct SyncState {
     pub gate: tokio::sync::Mutex<()>,
+    // Playback only waits for actual account mutations, never sync HTTP requests.
+    pub account_gate: tokio::sync::Mutex<()>,
     active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 impl SyncState {
@@ -209,6 +211,7 @@ pub async fn sync_connect(
                 .map_err(|_| "读取登录状态失败")?
                 .ok_or("请重新登录")?
         };
+        let _account = state.account_gate.lock().await;
         database.switch(Some(uid), Some(&cookie))?;
     }
     active(&database, &settings.uid)?;
@@ -611,4 +614,22 @@ pub async fn sync_delete_cloud(
         .execute("DELETE FROM sync_base WHERE provider='cloud'", [])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod playback_gate_tests {
+    #[tokio::test]
+    async fn slow_sync_does_not_lock_playback_account_access() {
+        let state = super::SyncState::default();
+        let _sync = state.gate.lock().await;
+        let account = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            state.account_gate.lock(),
+        )
+        .await
+        .unwrap();
+        assert!(state.account_gate.try_lock().is_err());
+        drop(account);
+        assert!(state.account_gate.try_lock().is_ok());
+    }
 }

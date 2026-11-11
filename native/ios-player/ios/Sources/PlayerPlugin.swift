@@ -104,6 +104,8 @@ class PlayerPlugin: Plugin {
     private var resumeAfterInterruption = false
     private var pausedAt: TimeInterval?
     private var recoveryAttempted = false
+    private var backgroundedAt: TimeInterval?
+    private var backgroundPlaybackWanted = false
     private var playbackWatchdog: DispatchWorkItem?
     private var itemStatus: NSKeyValueObservation?
     private var timeStatus: NSKeyValueObservation?
@@ -155,9 +157,12 @@ class PlayerPlugin: Plugin {
         notifications.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
             if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause() }
         })
-        notifications.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() })
+        notifications.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.returnedToForeground() })
         notifications.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.accountListening(flush: true); self?.savePosition(force: true)
+            guard let self else { return }
+            self.backgroundedAt = ProcessInfo.processInfo.systemUptime
+            self.backgroundPlaybackWanted = self.desiredPlaying
+            self.accountListening(flush: true); self.savePosition(force: true)
         })
         bindRemoteCommands()
     }
@@ -176,6 +181,8 @@ class PlayerPlugin: Plugin {
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
             savePosition(force: true)
             collectionRef = args.collectionRef
+            cancelPlaybackWatchdog()
+            backgroundPlaybackWanted = false
             recoveryAttempted = false; pausedAt = nil
             playbackRate = Float(min(2, max(0.75, args.rate ?? 1)))
             generation += 1; state.revision = generation
@@ -207,7 +214,8 @@ class PlayerPlugin: Plugin {
         onMain { [self] in
             switch args.action {
             case "prepare":
-                playbackWatchdog?.cancel()
+                cancelPlaybackWatchdog()
+                backgroundPlaybackWanted = false
                 recoveryAttempted = false; pausedAt = nil
                 savePosition(force: true)
                 accountListening(flush: true)
@@ -361,6 +369,7 @@ class PlayerPlugin: Plugin {
         try session.setActive(true)
     }
     private func start(_ url: URL, at position: Double = 0, autoplay: Bool = true) throws {
+        cancelPlaybackWatchdog()
         didFinishTrack = false
         positionSavedAt = ProcessInfo.processInfo.systemUptime - 15
         accountListening(flush: true)
@@ -426,7 +435,8 @@ class PlayerPlugin: Plugin {
         return true
     }
     private func pause() {
-        playbackWatchdog?.cancel()
+        cancelPlaybackWatchdog()
+        backgroundPlaybackWanted = false
         if pausedAt == nil { pausedAt = Date().timeIntervalSince1970 }
         savePosition(force: true)
         accountListening(flush: true)
@@ -439,7 +449,8 @@ class PlayerPlugin: Plugin {
         if expireSleepIfNeeded() { return }
         if desiredPlaying && state.status == "buffering" && state.stopped { return }
         recoveryAttempted = false
-        let stale = pausedAt.map { Date().timeIntervalSince1970 - $0 >= 300 } ?? false
+        backgroundPlaybackWanted = false
+        let stale = pausedAt.map { Date().timeIntervalSince1970 - $0 >= 120 } ?? false
         pausedAt = nil
         if player.currentItem?.status == .failed || state.error != nil || stale {
             if recoverCurrentPlayback() { return }
@@ -464,16 +475,31 @@ class PlayerPlugin: Plugin {
         return true
     }
     private func playbackFailed() {
+        if expireSleepIfNeeded() { return }
+        // Failed requests belonging to an intentionally paused item must not
+        // become a playback error or start a new source in the background.
+        guard desiredPlaying else {
+            cancelPlaybackWatchdog()
+            refresh()
+            return
+        }
         // Recreate failed items natively so lock-screen playback recovers while
         // the WebView is suspended. One refresh is allowed per user attempt.
         if desiredPlaying && recoverCurrentPlayback() { return }
         fail(player.currentItem?.status == .failed ? "音频加载失败，请重新播放" : "音频缓冲超时，请检查网络后重试")
     }
-    private func watchPlayback() {
+    private func cancelPlaybackWatchdog() {
         playbackWatchdog?.cancel()
+        playbackWatchdog = nil
+    }
+    private func watchPlayback() {
+        // The periodic refresh must not postpone this deadline indefinitely.
+        guard playbackWatchdog == nil, desiredPlaying else { return }
         let request = generation
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.generation == request, self.desiredPlaying, self.player.timeControlStatus != .playing else { return }
+            guard let self, self.generation == request else { return }
+            self.playbackWatchdog = nil
+            guard self.desiredPlaying, self.player.timeControlStatus != .playing else { return }
             self.playbackFailed()
         }
         playbackWatchdog = work
@@ -498,7 +524,9 @@ class PlayerPlugin: Plugin {
         state.position = target; publish()
     }
     private func stop() {
-        playbackWatchdog?.cancel()
+        cancelPlaybackWatchdog()
+        backgroundPlaybackWanted = false
+        backgroundedAt = nil
         pausedAt = nil; recoveryAttempted = false
         clearSleep()
         savePosition(force: true)
@@ -513,7 +541,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
-        playbackWatchdog?.cancel()
+        cancelPlaybackWatchdog()
         accountListening(flush: true)
         resumeAfterInterruption = false
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
@@ -546,7 +574,12 @@ class PlayerPlugin: Plugin {
     }
     private func refresh() {
         if expireSleepIfNeeded() { return }
-        if player.timeControlStatus == .playing { playbackWatchdog?.cancel(); endBackgroundTask() }
+        if player.timeControlStatus == .playing {
+            cancelPlaybackWatchdog(); endBackgroundTask()
+        } else if desiredPlaying && !state.stopped && state.error == nil {
+            // A stream can stall again long after its startup timer was cancelled.
+            watchPlayback()
+        }
         if let item = player.currentItem {
             let position = player.currentTime().seconds, duration = item.duration.seconds
             if position.isFinite && !initialSeekPending && item.status != .failed { state.position = max(0, position) }
@@ -631,7 +664,7 @@ class PlayerPlugin: Plugin {
         resolve(tracks[target])
     }
     private func resolve(_ track: QueueTrack, restart: Bool = false, refresh: Bool = false, position: Double? = nil) {
-        playbackWatchdog?.cancel()
+        cancelPlaybackWatchdog()
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
@@ -641,7 +674,11 @@ class PlayerPlugin: Plugin {
         prepareArtwork(for: track)
         state.error = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in self?.fail("后台加载超时，请返回应用继续播放") }
+        let request = generation
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in
+            guard let self, self.generation == request, self.desiredPlaying else { return }
+            self.fail("后台加载超时，请返回应用继续播放")
+        }
         publish()
         guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume, refresh: refresh, position: position)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
@@ -662,6 +699,26 @@ class PlayerPlugin: Plugin {
             prepareArtwork(for: track)
         }
         do { try start(url, at: result.position ?? 0) } catch { fail(error.localizedDescription) }
+    }
+    private func returnedToForeground() {
+        let absence = backgroundedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
+        let wasPlaying = backgroundPlaybackWanted
+        backgroundedAt = nil
+        backgroundPlaybackWanted = false
+        // Sleep expiry, manual pause and account stop all revoke automatic recovery.
+        if expireSleepIfNeeded() { return }
+        guard state.id != nil, !sleepExpired, pausedAt == nil,
+              desiredPlaying || (wasPlaying && state.status == "error") else { refresh(); return }
+        // Do not replace a source request already being resolved by Rust.
+        if state.stopped && state.status == "buffering" { refresh(); return }
+        if player.currentItem?.status == .failed || state.error != nil ||
+            (absence >= 2 && player.timeControlStatus != .playing) {
+            // One extra recovery per actual foreground transition. Subsequent
+            // callbacks use the normal single-attempt budget until a user retry.
+            recoveryAttempted = false
+            if recoverCurrentPlayback() { return }
+        }
+        refresh()
     }
     private func endBackgroundTask() {
         if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }

@@ -492,6 +492,7 @@ pub async fn bili_qr_login_poll(
     sync: State<'_, crate::sync::SyncState>,
 ) -> Result<QrLoginStatus, CommandError> {
     let _gate = sync.gate.lock().await;
+    let _account = sync.account_gate.lock().await;
     if key.trim().is_empty() {
         return Err(CommandError::validation("二维码登录标识为空"));
     }
@@ -559,6 +560,7 @@ pub async fn bili_logout(
 ) -> Result<(), CommandError> {
     sync.interrupt();
     let _gate = sync.gate.lock().await;
+    let _account = sync.account_gate.lock().await;
     provider.set_session_cookie(None).await;
     let connection = database
         .0
@@ -879,6 +881,10 @@ pub async fn track_playback_url(
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
     if refresh.unwrap_or(false) {
+        media_proxy
+            .refresh_connections()
+            .await
+            .map_err(CommandError::provider)?;
         provider.invalidate_playback(&track.bvid, track.cid).await;
     }
     let source = provider
