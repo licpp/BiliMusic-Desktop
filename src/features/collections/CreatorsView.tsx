@@ -163,6 +163,7 @@ export function CreatorsView({
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
       {sidebar && <button className="sidebar-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => { localStorage.setItem('creators-expanded', String(!value)); return !value })}>关注{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}
       <div hidden={sidebar && !expanded}>
+      {followed && !sidebar && <div className="creators-tools"><span className="hub-summary">{items.length} 位 UP 主</span></div>}
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}

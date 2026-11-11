@@ -326,7 +326,15 @@
  :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 12px; }
  :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
  :root:is([data-platform="ios"],[data-platform="android"]) .listening-library { padding-top:12px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { width:calc(100% - 84px);margin:0 0 10px;padding:4px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-heading.collections-tools-only) { top:18px;height:36px;min-height:36px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { width:min(100%,420px);margin:0 auto 8px;padding:4px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) { position:static;display:flex;align-items:center;justify-content:flex-end;gap:4px;height:40px;min-height:40px;margin:0 0 4px;padding:0 4px; }
  :root:is([data-platform="ios"],[data-platform="android"]) .music-library .download-list { padding-top:0; }
+}
+
+.hub-summary,.creators-tools { display:none; }
+@media(max-width:960px) {
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .hub-summary { display:block;flex:1;margin:0;min-width:0;color:var(--muted);font-size:12px;font-weight:400;line-height:18px;letter-spacing:.01em;font-variant-numeric:tabular-nums; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .hub-summary small { font-size:inherit;color:inherit; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-tools-only) .collection-icon { width:36px;height:36px;color:var(--ink);border:0;background:transparent; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .creators-view { padding:0; }
 }

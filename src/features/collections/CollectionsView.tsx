@@ -144,6 +144,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
   return <section className="collections-view collections-embedded">
     <div className={`collections-heading${hideHeading && root ? ' collections-tools-only' : ''}`}>
       {(!hideHeading || !root) && <h3>{folder?.name || '收藏'}</h3>}
+      {hideHeading && root && <span className="hub-summary">{items.length + linkedFolders.length} 项收藏{folders.length > 0 && <small> · {folders.length} 个文件夹</small>}</span>}
       <div className="collections-heading-actions">
         <button type="button" className="collection-icon" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setFilter('') }}><Search size={18}/></button>
         {root ? <FolderEditor action="create" onDone={refresh}/> : folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
