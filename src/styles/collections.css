@@ -287,3 +287,40 @@
 .library-panel .creator-copy small,.library-panel .library-entry-copy small { color:var(--muted);font-size:10px;line-height:1.3; }
 .library-panel .creator-open strong { white-space:nowrap;text-overflow:ellipsis;overflow:hidden; }
 .library-panel .creators-sidebar .batch-message { margin:6px 0;padding:0 6px;font-size:11px; }
+/* Keep group controls stable as content grows. */
+.library-panel { scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--muted) 25%,transparent) transparent;scrollbar-gutter:stable; }
+.library-panel::-webkit-scrollbar { width:5px; }
+.library-panel::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--muted) 25%,transparent);border-radius:8px; }
+.library-panel::-webkit-scrollbar-track { background:transparent; }
+.library-panel>section { flex-shrink:0; }
+.sidebar-collapse { display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1;width:100%;border:0;background:transparent;color:var(--muted);font-size:12px;font-weight:600;padding:6px 0;cursor:pointer; }
+.creators-sidebar>.sidebar-collapse { padding:6px;margin-bottom:6px; }
+[hidden] { display:none!important; }
+.lyrics-meta-copy .lyrics-uploader { display:block;max-width:100%;margin-top:8px; }
+.lyrics-meta-copy .lyrics-season-link { display:flex;width:fit-content;max-width:100%;gap:6px;margin-top:10px; }
+.lyrics-season-link span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.listening-library .listening-tools:has(button) { height:30px;min-height:0;margin:4px 0; }
+.listening-library .playlist-grid { margin-top:0;padding-top:0; }
+.music-library .library-tab-content>header { display:none; }
+.music-library .library-tabs { display:flex;justify-content:flex-start;gap:28px;padding:0;margin-bottom:16px; }
+.music-library .library-tabs button { font-size:17px;font-weight:600;padding:12px 3px;color:var(--muted); }
+.music-library .library-tabs button[aria-selected=true] { color:var(--ink); }
+.linked-folder .result-main { display:flex;align-items:center;gap:12px;min-width:0; }
+.linked-folder .result-cover { flex:0 0 76px;width:76px;height:48px; }
+.linked-folder .result-copy { flex:1;min-width:0; }
+.linked-folder .result-main>svg { flex-shrink:0;width:16px; }
+.linked-folder .result-copy small { display:block;margin-top:6px;color:var(--muted); }
+.listening-library { position:relative; }
+.listening-library>.listening-tabs { padding-right:76px; }
+.listening-library .listening-tools { position:absolute;top:26px;right:0; }
+.listening-library .collections-view { margin-top:0;padding-top:0;border-top:0; }
+@media(max-width:960px) {
+ :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 16px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { padding-right:4px; }
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .listening-tools { position:static;height:28px;margin:0; }
+}
+.listening-library .collections-heading.collections-tools-only { position:absolute;right:0;top:26px;min-height:30px;margin:0; }
+@media(max-width:960px) {
+ :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .collections-heading.collections-tools-only { position:static;height:28px;min-height:28px;margin:0; }
+}

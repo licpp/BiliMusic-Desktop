@@ -885,6 +885,10 @@ pub async fn track_playback_url(
         .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
         .await
         .map_err(CommandError::provider)?;
+    // AVPlayer must own the upstream connection while the WebView is suspended.
+    #[cfg(target_os = "ios")]
+    return Ok(source.audio_url);
+    #[cfg(not(target_os = "ios"))]
     Ok(media_proxy
         .register_stream(source.audio_url, source.backup_urls, source.mime_type)
         .await)

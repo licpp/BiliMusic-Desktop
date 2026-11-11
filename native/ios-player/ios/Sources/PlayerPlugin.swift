@@ -352,6 +352,8 @@ class PlayerPlugin: Plugin {
         invoke.resolve(["value": value])
     }
     private func localMediaURL(_ value: String) -> URL? {
+        if let url = URL(string: value), url.scheme == "https", let host = url.host,
+           (host == "bilivideo.com" || host.hasSuffix(".bilivideo.com") || host == "bilivideo.cn" || host.hasSuffix(".bilivideo.cn")), url.user == nil, url.password == nil { return url }
         guard let url = URL(string: value), url.scheme == "http", url.host == "127.0.0.1", url.port != nil, url.user == nil, url.password == nil, url.path.split(separator: "/").count == 2 else { return nil }
         return url
     }
@@ -366,7 +368,9 @@ class PlayerPlugin: Plugin {
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
         state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position; initialSeekPending = position > 0
-        let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 4
+        let headers = ["Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0"]
+        let asset = AVURLAsset(url: url, options: url.scheme == "https" ? ["AVURLAssetHTTPHeaderFieldsKey": headers] : nil)
+        let item = AVPlayerItem(asset: asset); item.preferredForwardBufferDuration = 8
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
         itemStatus = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in

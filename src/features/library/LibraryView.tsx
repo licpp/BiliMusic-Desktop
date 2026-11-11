@@ -80,7 +80,7 @@ export function LibraryView({ recent = false, local = false, playlist, onPlaylis
       setFavoriteError(`收藏失败，已恢复原状态：${commandErrorMessage(cause)}`)
     } finally { setFavoritePending(value => { const copy = new Set(value); copy.delete(track.id); return copy }) }
   }
-  return <section className="library-view">
+  return <section className={`library-view${playlist ? '' : ' library-tab-content'}`}>
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (local ? '本地音乐' : recent ? '最近播放' : '已收藏')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : local ? '导入 MP3、M4A 或 WAV 文件，在本机播放。' : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
     {selection.selecting ? <BatchTrackActions selection={selection} total={tracks.data?.length || 0} onRemove={playlist ? async selected => {

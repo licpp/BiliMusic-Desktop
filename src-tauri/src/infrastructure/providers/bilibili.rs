@@ -161,6 +161,10 @@ pub struct FavoriteVideo {
     pub title: String,
     #[serde(default)]
     pub cover: String,
+    #[serde(default)]
+    pub duration: u64,
+    #[serde(default)]
+    pub cnt_info: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

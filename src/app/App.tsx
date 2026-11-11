@@ -73,6 +73,7 @@ const navigation = [
 
 export function App() {
   const compact=useCompactLayout()
+  const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
   const [hubSection,setHubSection]=useState<'playlists'|'collections'|'creators'>('playlists')
@@ -376,12 +377,12 @@ export function App() {
       <aside id="library-navigation" className="library-panel" aria-label="歌单导航">
         <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
-          <div className="section-heading"><span>歌单</span><div className="sidebar-heading-actions">
+          <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions" hidden={!playlistsExpanded}>
             <button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}>＋</button>
             <button type="button" aria-label="导入 B 站收藏夹" title="导入 B 站收藏夹" onClick={() => setImportOpen(true)}><Download size={16}/></button>
           </div></div>
 
-          <div className="collection-list">
+          <div className="collection-list" hidden={!playlistsExpanded}>
             {localPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
               active={activeNav === `playlist:${playlist.id}`} onOpen={() => openPlaylist(playlist.id)} onRemoved={() => playlistRemoved(playlist.id)}/>)}
           </div>

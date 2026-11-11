@@ -9,7 +9,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   readCollectionProgress,
   changeCollection,
@@ -141,6 +141,7 @@ export function CreatorsView({
   followed?: boolean
   sidebar?: boolean
 }) {
+  const [expanded, setExpanded] = useState(() => localStorage.getItem('creators-expanded') !== 'false')
   const saved = useQuery({
     queryKey: ['collections'],
     queryFn: listCollections,
@@ -160,7 +161,8 @@ export function CreatorsView({
       ) || []
   return (
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
-      {sidebar && <h2>关注</h2>}
+      {sidebar && <button className="sidebar-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => { localStorage.setItem('creators-expanded', String(!value)); return !value })}>关注{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}
+      <div hidden={sidebar && !expanded}>
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
@@ -187,6 +189,7 @@ export function CreatorsView({
           onLoad={() => void result.fetchNextPage()}
         />
       )}
+    </div>
     </section>
   )
 }

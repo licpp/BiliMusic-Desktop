@@ -1,3 +1,5 @@
+import { formatDuration } from '../../shared/time'
+import { formatPlayCount } from '../../shared/count'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { seasonTracks, type Season } from '../../services/mediaSources'
 import { seasonPlaybackQueue } from '../player/playerStore'
@@ -77,7 +79,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     await client.invalidateQueries({ queryKey: ['playlists'] })
   }
 
-  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: (folder.data?.videos || []).map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: 0 })) }
+  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: (folder.data?.videos || []).map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }
   const queue = seasonTracks(season)
   return <section className="library-view linked-folder">
     <header>
@@ -140,7 +142,7 @@ function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, 
     <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
       <button type="button" className="result-main" aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}>
         <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}</span>
-        <span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.bvid}</small></span>
+        <span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</small></span>
         {multiple && (expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>)}
       </button>
       <ActionMenu sheet label={`操作 ${video.title || video.bvid}`} contextPosition={position}>{close => <>
