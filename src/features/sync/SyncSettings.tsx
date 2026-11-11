@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { Cloud, LoaderCircle, RefreshCw } from 'lucide-react'
-import { resetPlayerForAccount } from '../player/playerStore'
 import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
 import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome } from '../../services/sync'
 
@@ -30,7 +29,7 @@ export function SyncSettings() {
     finally { await status.refetch(); setBusy(false) }
   }
   const connect = () => action(async () => {
-    await resetPlayerForAccount()
+    setOutcome(null)
     await invoke('sync_connect', { settings: config, username, password, consent })
     setPassword(''); setConsent(false); setEditing(false)
     await client.invalidateQueries()
