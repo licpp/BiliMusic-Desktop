@@ -21,6 +21,8 @@ pub struct Season {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeasonTrack {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub play_count: Option<u64>,
     pub bvid: String,
     pub aid: i64,
     pub cid: i64,
@@ -154,6 +156,10 @@ fn season_member(archive: &Value, episode: Option<&Value>) -> SeasonTrack {
         (hint == 0 || hint == first.cid).then_some(pages)
     });
     SeasonTrack {
+        play_count: archive["stat"]["view"]
+            .as_u64()
+            .or_else(|| arc["stat"]["view"].as_u64())
+            .or_else(|| archive["play"].as_u64()),
         bvid,
         aid: number(archive, "aid")
             .max(number(arc, "aid"))

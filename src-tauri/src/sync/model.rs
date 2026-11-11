@@ -34,8 +34,10 @@ impl Snapshot {
         }
     }
     pub fn omit_creators(&mut self) {
-        self.records
-            .retain(|_, r| !(r.kind == "collection" && text(r, "bvid").starts_with("up:")));
+        self.records.retain(|_, r| {
+            !((r.kind == "collection" && text(r, "bvid").starts_with("up:"))
+                || (r.kind == "collectionProgress" && text(r, "reference").starts_with("up:")))
+        });
     }
     pub fn omit_track_positions(&mut self) {
         for record in self
@@ -206,7 +208,9 @@ impl Snapshot {
                             .get(&format!("collection:{reference}"))
                             .is_some_and(|r| r.kind == "collection")
                         && parse_checkpoint(text(r, "checkpoint")).is_some_and(|(_, bvid, _, _)| {
-                            reference.starts_with("season:") || reference == bvid
+                            reference.starts_with("season:")
+                                || reference.starts_with("up:")
+                                || reference == bvid
                         })
                 }
                 "playlist" => {

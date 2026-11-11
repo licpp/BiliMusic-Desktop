@@ -19,6 +19,7 @@ export type Track = {
   liked: boolean
   resolveParts?: boolean
   videoTitle?: string
+  playCount?: number
   partCount?: number
 }
 

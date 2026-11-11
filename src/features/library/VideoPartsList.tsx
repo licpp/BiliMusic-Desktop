@@ -1,3 +1,5 @@
+import { Artwork } from '../../shared/Artwork'
+import { formatAudienceCount } from '../../shared/count'
 import { isMobile } from '../../services/platform'
 import { useMemo, useRef, type ReactNode } from 'react'
 import { ListChecks, Play } from 'lucide-react'
@@ -53,8 +55,9 @@ function VideoPartsRow({ track, index, active, videoCollection, selecting, check
   const openParts = onOpenParts && (count ?? 0) > 1 ? () => onOpenParts(track) : undefined
   const play = () => void usePlayerStore.getState().playFromList(playbackTracks, track.id, queueSource)
   const actions = { openParts, play }
+  const duration = track.durationSeconds || (count === 1 ? pages?.[0]?.durationSeconds : undefined)
   const label = videoCollection ? index + 1 : track.partCount === 1 ? '视频' : `P${track.source.page}`
-  return <div ref={ref} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${selecting ? '' : ' playing-row'}`}
+  return <div ref={ref} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${videoCollection ? ' video-with-cover' : ''}${selecting ? '' : ' playing-row'}`}
     onContextMenu={event => {
       event.preventDefault()
       event.stopPropagation()
@@ -67,7 +70,7 @@ function VideoPartsRow({ track, index, active, videoCollection, selecting, check
       <span>{label}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
     </label> : <>
       <button type="button" className="video-part-play" aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
-        <span className="video-part-index">{active ? <PlayingMark/> : label}</span><strong>{track.title}{openParts && <small className="video-part-count">{count} P</small>}</strong><small>{formatDuration(track.durationSeconds)}</small><Play size={14}/>
+        <span className="video-part-index">{videoCollection ? <Artwork src={track.coverUrl}/> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}{openParts && <small className="video-part-count">{count} P</small>}</strong>{videoCollection && track.playCount !== undefined && <small>{formatAudienceCount(track.playCount)} 次播放</small>}</span><small>{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
       </button>
       {!isMobile && renderActions?.(track)}
       <TrackMenuButton track={actionTrack} tracks={playbackTracks} actions={actions}/>

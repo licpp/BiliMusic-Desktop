@@ -4,14 +4,15 @@ import { syncPolicy } from './privacy.mjs';
 const formatHeader = 'x-bilimusic-sync-format';
 const checkpoints = 'checkpoints';
 const trackCheckpoints = 'track-checkpoints';
-const creators = 'creators';
+const creators = 'creator-progress';
+const oldCreators = 'creators';
 function projectedView(snapshot, format) {
   if (format === creators) return snapshot;
   return {...snapshot,records:Object.fromEntries(Object.entries(snapshot.records)
-    .filter(([, record])=>!(record.kind==='collection' && record.fields.bvid.startsWith('up:')))
-    .filter(([, record])=>[checkpoints,trackCheckpoints,creators].includes(format)||record.kind!=='collectionProgress')
+    .filter(([, record])=>!((format!==oldCreators && record.kind==='collection' && record.fields.bvid.startsWith('up:')) || (record.kind==='collectionProgress' && record.fields.reference.startsWith('up:'))))
+    .filter(([, record])=>[checkpoints,trackCheckpoints,oldCreators,creators].includes(format)||record.kind!=='collectionProgress')
     .map(([key, record])=>{
-      if(format===trackCheckpoints||record.kind!=='history')return [key,record];
+      if(format===trackCheckpoints||format===oldCreators||record.kind!=='history')return [key,record];
       const {resume, ...fields}=record.fields;
       if(format!==checkpoints)fields.playedAt=fields.playedAt.slice(0,19);
       return [key,{...record,fields}];
@@ -19,9 +20,9 @@ function projectedView(snapshot, format) {
 }
 function preserveExtendedRecords(snapshot, previous, format) {
   for (const [key, record] of Object.entries(previous.records)) {
-    if (record.kind==='collection' && record.fields.bvid.startsWith('up:')) { snapshot.records[key]=record; } else if (format!==trackCheckpoints && format!==checkpoints && record.kind==='collectionProgress' && snapshot.records[`collection:${record.fields.reference}`]) {
+    if ((format!==oldCreators && record.kind==='collection' && record.fields.bvid.startsWith('up:')) || (record.kind==='collectionProgress' && record.fields.reference.startsWith('up:') && snapshot.records[`collection:${record.fields.reference}`])) { snapshot.records[key]=record; } else if (format!==oldCreators && format!==trackCheckpoints && format!==checkpoints && record.kind==='collectionProgress' && snapshot.records[`collection:${record.fields.reference}`]) {
       snapshot.records[key]=record;
-    } else if (format!==trackCheckpoints && record.kind==='history' && snapshot.records[key]?.kind==='history') {
+    } else if (format!==oldCreators && format!==trackCheckpoints && record.kind==='history' && snapshot.records[key]?.kind==='history') {
       const fields=snapshot.records[key].fields;
       if(format!==checkpoints&&fields.playedAt===record.fields.playedAt.slice(0,19))fields.playedAt=record.fields.playedAt;
       if(record.fields.resume!==undefined)fields.resume=record.fields.resume;
@@ -62,7 +63,7 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
       const uid=token?await store.authenticate(hash(token)):null;if(!uid)throw new ApiError(401,'同步授权已失效');
       if(path==='/vault'&&req.method==='GET') {
         const format=req.headers[formatHeader];
-        const headers=[checkpoints,trackCheckpoints,creators].includes(format)?{[formatHeader]:format}:{};
+        const headers=[checkpoints,trackCheckpoints,oldCreators,creators].includes(format)?{[formatHeader]:format}:{};
         const v=await store.read(uid);if(!v?.snapshot)return json(404,{message:'尚无同步数据'},headers);
         return json(200,projectedView(v.snapshot,format),{...headers,ETag:`"${v.revision}"`});
       }

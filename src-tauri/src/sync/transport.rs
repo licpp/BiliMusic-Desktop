@@ -6,7 +6,7 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 const CLOUD_FORMAT_HEADER: &str = "x-bilimusic-sync-format";
-const CLOUD_FORMAT_CREATORS: &str = "creators";
+const CLOUD_FORMAT_CREATORS: &str = "creator-progress";
 const CLOUD_FORMAT_TRACKS: &str = "track-checkpoints";
 const CLOUD_FORMAT_CHECKPOINTS: &str = "checkpoints";
 pub const CLOUD: &str = "https://bilimusic.cn/api/sync/v1";

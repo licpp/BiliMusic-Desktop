@@ -444,7 +444,7 @@ export function LyricsView({ onOpenSleepTimer, onClose, onFavorite, favoritePend
           <h1>{current.title}</h1>
           <p>{current.artist || '歌手未知'}</p>
           {current.album && <small>{current.album}</small>}
-          {current.source.uploaderName && <small>UP 主 · {current.source.uploaderName}</small>}
+          {current.source.uploaderName && <button type="button" className="lyrics-uploader" disabled={!current.source.uploaderId} onClick={() => onOpenCollection({bvid:`up:${current.source.uploaderId}`,folderId:'',title:current.source.uploaderName || '',coverUrl:'',uploaderName:current.source.uploaderName || ''})}>UP 主 · {current.source.uploaderName}</button>}
           {season && <button className="lyrics-season-link" title={season.title} onClick={() => {
             if (isMobile) setSeasonOpen(true)
             else onOpenCollection(seasonCollection(season))

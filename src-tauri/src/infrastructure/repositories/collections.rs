@@ -78,7 +78,7 @@ pub fn save_progress(
         || !bvid.starts_with("BV")
         || !valid_reference(bvid)
         || cid <= 0
-        || (reference != bvid && !reference.starts_with("season:"))
+        || (reference != bvid && !reference.starts_with("season:") && !reference.starts_with("up:"))
         || !seconds.is_finite()
         || !(0.0..=604800.0).contains(&seconds)
         || observed_at <= 0

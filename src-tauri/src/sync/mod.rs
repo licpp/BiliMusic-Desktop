@@ -450,7 +450,10 @@ pub async fn sync_now(
         let local_creators: Vec<_> = current
             .records
             .iter()
-            .filter(|(_, r)| r.kind == "collection" && text(r, "bvid").starts_with("up:"))
+            .filter(|(_, r)| {
+                (r.kind == "collection" && text(r, "bvid").starts_with("up:"))
+                    || (r.kind == "collectionProgress" && text(r, "reference").starts_with("up:"))
+            })
             .map(|(k, r)| (k.clone(), r.clone()))
             .collect();
         if !remote.creators {

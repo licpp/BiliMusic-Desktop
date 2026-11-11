@@ -77,17 +77,25 @@ test('old cloud clients can read and update a vault while preserving extended da
 test('creator subscriptions are projected out for old clients and survive their writes', async t => {
   const {url,auth}=await setup(t);
   const token=await auth('SESSDATA=one');
-  const headers={Authorization:`Bearer ${token}`,'x-bilimusic-sync-format':'creators'};
+  const headers={Authorization:`Bearer ${token}`,'x-bilimusic-sync-format':'creator-progress'};
   const snapshot=sample('42');
   snapshot.records['collection:up:42']={kind:'collection',fields:{bvid:'up:42',folderId:''}};
+  snapshot.records['collectionProgress:up:42']={kind:'collectionProgress',fields:{reference:'up:42',checkpoint:'1794364100000:BV123:7:85000'}};
   const put=await fetch(url+'/vault',{method:'PUT',headers:{...headers,'If-None-Match':'*'},body:JSON.stringify(snapshot)});
   assert.equal(put.status,200);
   const olderHeaders={...headers,'x-bilimusic-sync-format':'track-checkpoints'};
+  const creatorView=await fetch(url+'/vault',{headers:{...headers,'x-bilimusic-sync-format':'creators'}});
+  const creatorSnapshot=await creatorView.json();
+  assert.ok(creatorSnapshot.records['collection:up:42']);
+  assert.equal(creatorSnapshot.records['collectionProgress:up:42'],undefined);
   const old=await fetch(url+'/vault',{headers:olderHeaders});
   const oldSnapshot=await old.json();
   assert.equal(oldSnapshot.records['collection:up:42'],undefined);
+  assert.equal(oldSnapshot.records['collectionProgress:up:42'],undefined);
   const written=await fetch(url+'/vault',{method:'PUT',headers:{...olderHeaders,'If-Match':old.headers.get('etag')},body:JSON.stringify(oldSnapshot)});
   assert.equal(written.status,200);
   const restored=await fetch(url+'/vault',{headers});
-  assert.deepEqual((await restored.json()).records['collection:up:42'],snapshot.records['collection:up:42']);
+  const records=(await restored.json()).records;
+  assert.deepEqual(records['collection:up:42'],snapshot.records['collection:up:42']);
+  assert.deepEqual(records['collectionProgress:up:42'],snapshot.records['collectionProgress:up:42']);
 });

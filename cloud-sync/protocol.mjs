@@ -33,7 +33,7 @@ export function validateSnapshot(value, uid) {
     else if(r.kind==='collection'){if(!validCollectionReference(f.bvid)||key!==`collection:${f.bvid}`||typeof f.folderId!=='string'||(f.folderId!==''&&value.records[`collectionFolder:${f.folderId}`]?.kind!=='collectionFolder'))fail();}
     else if(r.kind==='collectionProgress'){
       const match=typeof f.checkpoint==='string' && /^([1-9]\d*):(BV[a-zA-Z0-9]+):([1-9]\d*):(\d+)$/.exec(f.checkpoint);
-      if(!validCollectionReference(f.reference)||key!==`collectionProgress:${f.reference}`||value.records[`collection:${f.reference}`]?.kind!=='collection'||!match||!Number.isSafeInteger(+match[1])||!validCollectionReference(match[2])||BigInt(match[3])>9223372036854775807n||+match[4]>604800000||(!f.reference.startsWith('season:')&&f.reference!==match[2]))fail();
+      if(!validCollectionReference(f.reference)||key!==`collectionProgress:${f.reference}`||value.records[`collection:${f.reference}`]?.kind!=='collection'||!match||!Number.isSafeInteger(+match[1])||!validCollectionReference(match[2])||BigInt(match[3])>9223372036854775807n||+match[4]>604800000||(!f.reference.startsWith('season:')&&!f.reference.startsWith('up:')&&f.reference!==match[2]))fail();
     }
     else if(r.kind==='playlist') {if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
     else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}

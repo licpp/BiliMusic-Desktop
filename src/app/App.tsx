@@ -68,7 +68,6 @@ const navigation = [
   { label: '搜索', icon: Search },
   { label: '音乐库', icon: Library },
   { label: '歌单', icon: ListMusic },
-  { label: '关注', icon: UserRound },
   { label: '我的', icon: UserRound },
 ]
 
@@ -390,6 +389,7 @@ export function App() {
         </section>
         <CollectionsView sidebar linkedFolders={linkedFolders} onOpenFolder={openFolder} onOpenLinked={openPlaylist}
           onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/>
+        <CreatorsView followed sidebar onOpen={openCollection}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
       {!isMobile && <SidebarResizeHandle/>}

@@ -6,7 +6,7 @@ import { accountEpoch } from './accountScope'
 import type { BiliVideoPart, BiliVideoParts, LyricLine } from './desktopApi'
 import type { Collection } from './collections'
 export type SeasonSummary = { id:number; uploaderId:number; title:string; coverUrl:string; uploaderName:string }
-export type SeasonVideo = { bvid: string; aid: number; cid: number; title: string; coverUrl: string; durationSeconds: number; parts?: BiliVideoPart[] }
+export type SeasonVideo = { bvid: string; aid: number; cid: number; title: string; coverUrl: string; durationSeconds: number; playCount?: number; parts?: BiliVideoPart[] }
 export type Season = { unavailable: number; summary: SeasonSummary; tracks: SeasonVideo[] }
 export type QualityPreferences = { audioId:number; videoHeight:number }
 export type MediaOptions = { audio:{id:number;label:string}[]; video:{id:number;label:string}[] }
@@ -42,7 +42,7 @@ export function seasonVideoRow(video: SeasonVideo, summary: SeasonSummary): Trac
     id: `bilibili:${video.bvid}:${video.cid}`,
     source: { provider: 'bilibili', bvid: video.bvid, aid: video.aid, cid: video.cid, page: 1, uploaderId: summary.uploaderId, uploaderName: summary.uploaderName },
     title: video.title, videoTitle: video.title, coverUrl: video.coverUrl, durationSeconds: video.parts?.[0]?.durationSeconds ?? video.durationSeconds,
-    liked: false, partCount: video.parts?.length, resolveParts: !video.parts?.length,
+    liked: false, playCount: video.playCount, partCount: video.parts?.length, resolveParts: !video.parts?.length,
   }
 }
 
@@ -63,3 +63,8 @@ export const getSubtitleLines = (bvid: string, cid: number, language: string) =>
 export const getMediaOptions = (bvid:string,cid:number) => invoke<MediaOptions>('bili_media_options',{bvid,cid})
 export const getMediaPreferences = () => invoke<QualityPreferences>('media_preferences')
 export const setMediaPreferences = (value:Partial<QualityPreferences>) => invoke<QualityPreferences>('media_set_preferences',value)
+
+export function creatorVideoRow(video: { bvid:string; aid:number; title:string; pic:string; length?:string; duration?:number; play?:number }): SeasonVideo {
+  const duration = video.length?.split(':').reduce((seconds,part)=>seconds*60 + Number(part),0)
+  return {bvid:video.bvid,aid:video.aid,cid:0,title:video.title,coverUrl:video.pic,durationSeconds:Number.isFinite(duration) ? duration! : video.duration || 0,playCount:typeof video.play === 'number' && Number.isFinite(video.play) ? video.play : undefined}
+}
