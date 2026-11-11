@@ -319,8 +319,14 @@ export function App() {
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
-      if (target.closest('button, a')) return
-      if (event.code === 'Space') { event.preventDefault(); void usePlayerStore.getState().toggle() }
+      // Space belongs to playback controls even after a mouse click leaves
+      // previous/next focused. Other buttons retain native keyboard activation.
+      if (target.isContentEditable) return
+      if (target.closest('button, a') && !target.closest('.dock-controls')) return
+      if (event.code === 'Space' && !event.altKey && !event.metaKey && !event.ctrlKey && !event.defaultPrevented) {
+        event.preventDefault()
+        if (!event.repeat) void usePlayerStore.getState().toggle()
+      }
     }
     window.addEventListener('keydown', handler)
     const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
