@@ -8,7 +8,7 @@ import { useSwipeTabs } from '../../shared/useSwipeTabs'
 import { PlaylistEntry } from './PlaylistEntry'
 import { ImportPlaylistButton } from './ImportFavorites'
 
-export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onCreate, onImport, onCollectionOpen, onOpenFolder, section, onSectionChange }: {
+export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onCreate, onImport, onCollectionOpen, onOpenFolder, onOpenCreatorFolder, section, onSectionChange }: {
   playlists: Playlist[]
   linkedFolders: Playlist[]
   onOpen: (id: string) => void
@@ -17,6 +17,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
   onImport: () => void
   onCollectionOpen: (item: Collection) => void
   onOpenFolder: (id: string) => void
+  onOpenCreatorFolder: (id: string) => void
   section: 'playlists' | 'collections' | 'creators'
   onSectionChange: (section: 'playlists' | 'collections' | 'creators') => void
 }) {
@@ -33,7 +34,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
           <ImportPlaylistButton onClick={onImport}/>
         </div>
         <div className="playlist-grid">{playlists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>
-      </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen}/> : <CollectionsView hideHeading linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
+      </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/> : <CollectionsView hideHeading linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
       </div>
     </div>
   </section>

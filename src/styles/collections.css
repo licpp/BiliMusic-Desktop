@@ -315,7 +315,7 @@
    space or anchor to the list instead of this header. */
 .listening-library #listening-panel>.segmented-panel { animation:none; }
 .listening-library>.listening-tabs { padding-right:84px; }
-.listening-library :is(.listening-tools,.collections-heading.collections-tools-only) {
+.listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) {
  position:absolute;top:26px;right:0;height:30px;min-height:30px;margin:0;
 }
 .listening-library .collections-view { margin:0;padding:0;border:0; }

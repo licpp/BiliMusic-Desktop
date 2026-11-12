@@ -163,7 +163,8 @@ export function App() {
   const linkedFolders = allPlaylists.filter(playlist => playlist.biliFolderId)
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
-  const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined
+  const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
+  const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined || activeCreatorFolder!==undefined
   const searchActive = activeNav === '搜索' && !selectedCollection
   const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '歌单'))
   useEffect(resetCollection, [activeNav])
@@ -187,11 +188,12 @@ export function App() {
   }
   const openPlaylist = (id: string) => openLibraryPage(`playlist:${id}`)
   const openFolder = (id: string) => openLibraryPage(`collections:${id}`)
+  const openCreatorFolder=(id:string)=>openLibraryPage(`creator-folder:${id}`)
   const playlistRemoved = (id: string) => { if (activeNav === `playlist:${id}`) closeLibraryPage() }
   const folderRemoved = (id: string) => { if (activeFolder === id) closeLibraryPage() }
   const hub = <PlaylistsView playlists={localPlaylists} linkedFolders={linkedFolders} onOpen={openPlaylist} onRemoved={playlistRemoved}
     onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)}
-    onCollectionOpen={openCollection} onOpenFolder={openFolder} section={hubSection} onSectionChange={setHubSection}/>
+    onCollectionOpen={openCollection} onOpenFolder={openFolder} onOpenCreatorFolder={openCreatorFolder} section={hubSection} onSectionChange={setHubSection}/>
   const current = usePlayerStore((state) => state.current)
   useEffect(() => {
     if (!inDesktopShell || current?.source.provider !== 'bilibili' || current.partCount || current.resolveParts) return
@@ -450,7 +452,7 @@ export function App() {
         </section>
         <CollectionsView sidebar linkedFolders={linkedFolders} onOpenFolder={openFolder} onOpenLinked={openPlaylist}
           onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/>
-        <CreatorsView followed sidebar onOpen={openCollection}/>
+        <CreatorsView followed sidebar onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={id=>{if(activeCreatorFolder===id)closeLibraryPage()}}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
       </aside>
       {!isMobile && <SidebarResizeHandle/>}
@@ -459,7 +461,7 @@ export function App() {
         <form className={`topbar ${searchActive ? 'searching' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
             {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
-            <strong>{selectedCollection ? '合集详情' : activePlaylist?.name || (activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
+            <strong>{selectedCollection ? '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
           <div className="history-buttons"><button type="button" aria-label={libraryDetail || selectedCollection ? '返回上一页' : '返回主页'}
             onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
@@ -478,12 +480,12 @@ export function App() {
           {selectedCollection && <CollectionDetail key={selectedCollection.bvid} item={selectedCollection} onBack={closeCollection}
             hideBack onOpenCollection={item => openCollection(item, 'collection')}/>}
           <div hidden={Boolean(selectedCollection)}>
-          {activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
+          {activeCreatorFolder!==undefined ? <CreatorsView key={activeCreatorFolder} followed folderId={activeCreatorFolder} onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={closeLibraryPage}/> : activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
           activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
           activeNav === '歌单' || libraryDetail ? hub :
-          activeNav === '关注' ? <CreatorsView followed onOpen={openCollection}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
+          activeNav === '关注' ? <CreatorsView followed onOpen={openCollection} onOpenFolder={openCreatorFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
           activeNav === '我的' ? <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/> : activeNav === '搜索' ? null : <>
           <section className="hero">
             <div className="hero-copy">

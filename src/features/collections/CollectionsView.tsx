@@ -1,3 +1,4 @@
+import { FolderEditor, FolderMenu } from './CollectionFolderControls'
 import { CreatorPage } from './CreatorsView'
 import type { Track } from '../../domain/track'
 import { getSeason, parseSeasonReference, seasonCollection, seasonTracks, seasonVideoRow, videoDetailFromTrack } from '../../services/mediaSources'
@@ -56,14 +57,6 @@ export function CollectionMenu({item,contextPosition,onOpen,additionalActions}:{
     <button role="menuitem" onClick={()=>{close();setPicking(true)}}><FolderInput size={16}/>收藏到…</button>
     {saved&&<button role="menuitem" disabled={busy} onClick={()=>{close();void change('remove')}}><Bookmark size={16}/>取消收藏</button>}
   </>}</ActionMenu>{error&&<p className="inline-error" role="alert">{error}</p>}{picking&&<CollectionDialog title="收藏到" onClose={()=>setPicking(false)}><p>{item.title||item.bvid}</p><div className="collection-folder-options">{[{id:'',name:'默认收藏夹'},...(q.data?.folders||[]).filter(f=>f.scope!=='creators')].map(f=><button key={f.id} disabled={busy} onClick={()=>void change(saved?'move':'save',f.id)}><Folder size={17}/><span>{f.name}</span>{saved?.folderId===f.id&&<Check size={17}/>}</button>)}</div><FolderEditor action="create" onDone={()=>void client.invalidateQueries({queryKey:['collections']})}/>{error&&<p role="alert" className="inline-error">{error}</p>}</CollectionDialog>}</>
-}
-
-function FolderEditor({action,id='',initial='',onDone,controlledOpen,onClose}:{action:'create'|'rename'|'delete';id?:string;initial?:string;onDone:()=>void;controlledOpen?:boolean;onClose?:()=>void}){
-  const [open,setOpen]=useState(false),[name,setName]=useState(initial),[error,setError]=useState(''),[busy,setBusy]=useState(false)
-  const visible=controlledOpen??open
-  const close=()=>{setOpen(false);onClose?.()}
-  const title=action==='create'?'新建收藏夹':action==='rename'?'重命名收藏夹':'删除收藏夹'
-  return <>{controlledOpen===undefined&&<button className="collection-flat-button" aria-label={title} onClick={()=>{setName(initial);setError('');setOpen(true)}}>{action==='create'?<><Plus size={16}/><span>新建收藏夹</span></>:action==='rename'?'重命名':'删除收藏夹'}</button>}{visible&&<CollectionDialog title={title} onClose={close}><form onSubmit={async e=>{e.preventDefault();setBusy(true);try{await changeCollection(action,id,name);close();onDone()}catch(e){setError(commandErrorMessage(e))}finally{setBusy(false)}}}>{action==='delete'?<p>里面的合集会移回默认收藏夹，不会取消收藏。</p>:<input aria-label="收藏夹名称" value={name} maxLength={80} onChange={e=>setName(e.target.value)} placeholder="收藏夹名称"/>}{error&&<p role="alert" className="inline-error">{error}</p>}<footer><button type="button" className="collection-flat-button" onClick={close}>取消</button><button className="collection-primary" type="submit" disabled={busy||(action!=='delete'&&!name.trim())}>{busy?'处理中…':'确认'}</button></footer></form></CollectionDialog>}</>
 }
 
 export function CollectionsView({ hideHeading = false, sidebar = false, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
@@ -160,27 +153,6 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
     {entries}
     {moveError}
   </section>
-}
-
-type FolderInfo = { id: string; name: string }
-
-function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemoved }: {
-  folder: FolderInfo
-  contextPosition?: MenuPosition
-  onOpen?: () => void
-  onChanged: () => void
-  onRemoved: () => void
-}) {
-  const [action, setAction] = useState<'rename' | 'delete'>()
-  return <>
-    <ActionMenu sheet label={`收藏夹操作：${folder.name}`} contextPosition={contextPosition}>{close => <>
-      {onOpen && <button role="menuitem" onClick={() => { close(); onOpen() }}><Folder size={16}/>打开收藏夹</button>}
-      <button role="menuitem" onClick={() => { close(); setAction('rename') }}>重命名收藏夹</button>
-      <button role="menuitem" onClick={() => { close(); setAction('delete') }}>删除收藏夹</button>
-    </>}</ActionMenu>
-    {action && <FolderEditor action={action} id={folder.id} initial={folder.name} controlledOpen
-      onClose={() => setAction(undefined)} onDone={() => { if (action === 'delete') onRemoved(); onChanged() }} />}
-  </>
 }
 
 function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false }: {

@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react'
 
-export function LoadMore({ onLoad, busy, label, automatic = true }: {
+export function LoadMore({ onLoad, busy, label, automatic = true, presentation = 'button' }: {
   onLoad: () => void
   busy: boolean
   label: string
   automatic?: boolean
+  presentation?: 'button' | 'status'
 }) {
-  const ref = useRef<HTMLButtonElement>(null)
+  const ref = useRef<HTMLElement | null>(null)
   const state = useRef({ onLoad, busy, automatic })
   state.current = { onLoad, busy, automatic }
 
@@ -22,7 +23,8 @@ export function LoadMore({ onLoad, busy, label, automatic = true }: {
     }, { threshold: 0.25 })
     observer.observe(ref.current)
     return () => observer.disconnect()
-  }, [])
+  }, [busy, automatic, presentation])
 
-  return <button ref={ref} className="load-more" disabled={busy} onClick={onLoad}>{busy ? '加载中…' : label}</button>
+  if(presentation==='status')return <div ref={node=>{ref.current=node}} className="load-more-status" role="status">{busy?'加载中…':label}</div>
+  return <button ref={node=>{ref.current=node}} className="load-more" disabled={busy} onClick={onLoad}>{busy ? '加载中…' : label}</button>
 }

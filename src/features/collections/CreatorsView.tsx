@@ -1,3 +1,5 @@
+import { FolderMenu } from './CollectionFolderControls'
+import { LibraryEntry } from '../library/LibraryEntry'
 import { CreatorActions, CreatorManager } from './CreatorTools'
 import { listen } from '@tauri-apps/api/event'
 import { formatAudienceCount } from '../../shared/count'
@@ -10,7 +12,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
+import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   readCollectionProgress,
   changeCollection,
@@ -119,22 +121,8 @@ function CreatorEntry({
         uploaderName: card.name,
       }
     : { ...item, title: item.title || `UP 主 ${item.bvid.slice(3)}` }
-  return (
-    <div className={`creator-row${sidebar ? ' creator-sidebar-row' : ''}`}>
-      <button className="creator-open" onClick={() => onOpen(display)}>
-        <Artwork src={display.coverUrl} />
-        <span className="creator-copy">
-          <strong>{item.note || display.title}</strong>
-          {item.note && <small>{display.title}</small>}
-          {display.followers !== undefined && (
-            <small>{formatAudienceCount(display.followers)} 粉丝</small>
-          )}
-        </span>
-      </button>
-      {!sidebar && <CreatorFollow item={display} />}
-      {editable && <CreatorActions item={item} folders={folders}/>}
-    </div>
-  )
+  const subtitle=[item.note?display.title:'',display.followers!==undefined?`${formatAudienceCount(display.followers)} 粉丝`:''].filter(Boolean).join(' · ')
+  return <LibraryEntry className="creator-entry" title={item.note||display.title} subtitle={subtitle||'UP 主'} sidebar={sidebar} coverClassName="creator-avatar-cover" cover={<Artwork src={display.coverUrl} fallback={<UserRound size={22}/>}/>} onOpen={()=>onOpen(display)} menu={position=><>{!sidebar&&<CreatorFollow item={display}/>} {editable&&<CreatorActions item={item} folders={folders} contextPosition={position}/>}</>}/>
 }
 
 export function CreatorsView({
@@ -142,7 +130,9 @@ export function CreatorsView({
   onOpen,
   followed = false,
   sidebar = false,
+  folderId, onOpenFolder, onFolderRemoved,
 }: {
+  folderId?:string;onOpenFolder?:(id:string)=>void;onFolderRemoved?:(id:string)=>void
   query?: string
   onOpen: (item: Collection) => void
   followed?: boolean
@@ -167,14 +157,20 @@ export function CreatorsView({
     : result.data?.pages.flatMap((page) =>
         (page.data.result || []).map((up: Creator) => creatorItem(up)),
       ) || []
+  const folders=(saved.data?.folders||[]).filter(f=>f.scope==='creators')
+  const selectedFolder=folderId??(group==='all'?undefined:group)
+  const root=selectedFolder===undefined
+  const openFolder=(id:string)=>onOpenFolder?onOpenFolder(id):setGroup(id)
   return (
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
-      {followed && <CreatorManager sidebar={sidebar} expanded={expanded} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')} items={items} selected={group} onSelect={setGroup}/>}
+      {followed && root && <CreatorManager sidebar={sidebar} expanded={expanded} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} folders={folders} items={items}/>}
+      {followed&&!root&&<div className="collections-heading"><h3>{folders.find(f=>f.id===selectedFolder)?.name||'关注文件夹'}</h3><div className="collections-heading-actions">{!folderId&&<button className="collection-icon" aria-label="返回关注" onClick={()=>setGroup('all')}><ArrowLeft size={18}/></button>}{folders.filter(f=>f.id===selectedFolder).map(folder=><FolderMenu key={folder.id} creator folder={folder} onChanged={()=>void saved.refetch()} onRemoved={()=>{setGroup('all');onFolderRemoved?.(folder.id)}}/>)}</div></div>}
       <div hidden={sidebar && !expanded}>
+      {followed&&root&&folders.map(folder=><LibraryEntry key={folder.id} title={folder.name} subtitle={`${items.filter(item=>item.folderId===folder.id).length} 位 UP 主`} sidebar={sidebar} cover={<Artwork fallback={<Folder aria-hidden="true"/>}/>} onOpen={()=>openFolder(folder.id)} menu={position=><FolderMenu creator folder={folder} contextPosition={position} onOpen={()=>openFolder(folder.id)} onChanged={()=>void saved.refetch()} onRemoved={()=>{if(selectedFolder===folder.id)setGroup('all');onFolderRemoved?.(folder.id)}}/>}/>)}
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
-      {items.filter(item => !followed || group === 'all' || item.folderId === group).map((item) => (
+      {items.filter(item => !followed || item.folderId === (selectedFolder||'')).map((item) => (
         <CreatorEntry
           key={item.bvid}
           item={{...item,...saved.data?.items.find(saved=>saved.bvid===item.bvid)}}
@@ -185,10 +181,10 @@ export function CreatorsView({
         />
       ))}
       {result.isLoading && <p>正在搜索 UP 主…</p>}
-      {!items.length && !result.isLoading && (
+      {!items.filter(item=>!followed||item.folderId===(selectedFolder||'')).length && (!root||!folders.length) && !result.isLoading && (
         <p className="batch-message">
           {sidebar ? '暂无关注' : followed
-            ? '关注喜欢的 UP 主，随时查看最新投稿'
+            ? root ? '关注喜欢的 UP 主，随时查看最新投稿' : '这个关注文件夹还没有 UP 主。'
             : '没有找到相关 UP 主'}
         </p>
       )}
