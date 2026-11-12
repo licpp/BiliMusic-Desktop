@@ -370,7 +370,7 @@ export function App() {
       // Space belongs to playback controls even after a mouse click leaves
       // previous/next focused. Other buttons retain native keyboard activation.
       if (target.isContentEditable) return
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && target.closest('button, a') && !target.closest('.dock-controls,.mini-player-controls')) return
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
       if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
       const shortcut = playerShortcut(event)
       if (!shortcut) return

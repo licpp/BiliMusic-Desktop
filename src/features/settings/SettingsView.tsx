@@ -2,7 +2,7 @@ import { UpdateSettings } from './UpdateSettings'
 import { PlaybackCacheSettings } from './PlaybackCacheSettings'
 import { SyncSettings } from '../sync/SyncSettings'
 import { isMobile } from '../../services/platform'
-import { Download, FolderOpen, History, LoaderCircle, Settings2, Sun } from 'lucide-react'
+import { ChevronDown, Download, FolderOpen, History, Keyboard, LoaderCircle, Settings2, Sun } from 'lucide-react'
 import { usePlayerStore } from '../player/playerStore'
 import { useThemeStore } from '../../services/theme'
 import { useEffect, useState } from 'react'
@@ -10,6 +10,9 @@ import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
 import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 
 export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?: boolean; onOpenDownloads?: () => void }) {
+  const mac = /Macintosh|Mac OS X/i.test(navigator.userAgent)
+  const modifier = mac ? '⌘' : 'Ctrl'
+  const seekModifier = mac ? 'Option' : 'Alt'
   const theme = useThemeStore((state) => state.theme)
   const setTheme = useThemeStore((state) => state.setTheme)
   const autoResume = usePlayerStore(state => state.autoResume)
@@ -36,5 +39,13 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     <div className="settings-icon"><History /></div>
     <div><strong id="auto-resume-label">自动断点续播</strong><small>开启时从上次进度播放，关闭时从头播放。</small></div>
     <button type="button" className="auto-resume-switch" role="switch" aria-checked={autoResume} aria-labelledby="auto-resume-label" onClick={() => setAutoResume(!autoResume)}><span aria-hidden="true"/></button>
-  </div>{!isMobile && <div className="settings-card keyboard-shortcuts"><div><strong>播放快捷键</strong><small>空格：播放 / 暂停<br/>⌘ / Ctrl + ← / →：上一首 / 下一首<br/>⌘ / Ctrl + ↑ / ↓：调节音量<br/>Alt / Option + ← / →：快退 / 快进 10 秒</small></div></div>}<PlaybackCacheSettings/><SyncSettings /><UpdateSettings /></section>
+  </div>{!isMobile && <details className="settings-card keyboard-shortcuts">
+    <summary><span className="settings-icon"><Keyboard /></span><span className="shortcuts-heading"><strong>播放快捷键</strong><small>查看播放控制与组合键</small></span><ChevronDown className="shortcuts-chevron" size={17}/></summary>
+    <div className="shortcuts-list">
+      <div><span>播放 / 暂停</span><span><kbd>空格</kbd></span></div>
+      <div><span>上一首 / 下一首</span><span><kbd>{modifier}</kbd><b>+</b><kbd>←</kbd><b>/</b><kbd>→</kbd></span></div>
+      <div><span>调节音量</span><span><kbd>{modifier}</kbd><b>+</b><kbd>↑</kbd><b>/</b><kbd>↓</kbd></span></div>
+      <div><span>快退 / 快进 10 秒</span><span><kbd>{seekModifier}</kbd><b>+</b><kbd>←</kbd><b>/</b><kbd>→</kbd></span></div>
+    </div>
+  </details>}<PlaybackCacheSettings/><SyncSettings /><UpdateSettings /></section>
 }
