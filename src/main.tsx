@@ -6,7 +6,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './app/App'
-import { isAndroid, isIOS } from './services/platform'
+import { isAndroid, isIOS, isOHOS, isMobile } from './services/platform'
 import { installMobileKeyboard } from './shared/mobileKeyboard'
 import { installMobileGestures } from './shared/mobileGestures'
 import { startAutomaticLyrics } from './features/lyrics/automaticLyrics'
@@ -16,7 +16,8 @@ import './styles/mobile.css'
 import './styles/immersive.css'
 import './styles/comments.css'
 
-document.documentElement.dataset.platform = isIOS ? 'ios' : isAndroid ? 'android' : 'desktop'
+document.documentElement.dataset.platform = isOHOS ? 'ohos' : isIOS ? 'ios' : isAndroid ? 'android' : 'desktop'
+document.documentElement.dataset.layout = isMobile ? 'mobile' : 'desktop'
 installMobileGestures()
 installMobileKeyboard()
 

@@ -7,6 +7,8 @@ mod interface;
 mod ios_playback;
 #[cfg(desktop)]
 mod mini_player;
+#[cfg(target_env = "ohos")]
+mod ohos_playback;
 mod sync;
 
 use infrastructure::database::Database;
@@ -46,14 +48,15 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_android_player::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_ios_player::init());
-    let builder = builder
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_opener::Builder::new()
-                .open_js_links_on_click(false)
-                .build(),
-        )
-        .plugin(tauri_plugin_store::Builder::default().build());
+    #[cfg(target_env = "ohos")]
+    let builder = builder.plugin(tauri_plugin_ohos_player::init());
+    #[cfg(not(target_env = "ohos"))]
+    let builder = builder.plugin(tauri_plugin_dialog::init()).plugin(
+        tauri_plugin_opener::Builder::new()
+            .open_js_links_on_click(false)
+            .build(),
+    );
+    let builder = builder.plugin(tauri_plugin_store::Builder::default().build());
 
     builder
         .setup(|app| {
@@ -81,6 +84,8 @@ pub fn run() {
             ios_playback::initialize(app.handle().clone());
             #[cfg(target_os = "android")]
             interface::media::observe_android_listening(app.handle().clone());
+            #[cfg(target_env = "ohos")]
+            interface::media::observe_ohos_listening(app.handle().clone());
             #[cfg(desktop)]
             {
                 let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;

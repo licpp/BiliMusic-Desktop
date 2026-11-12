@@ -1,6 +1,6 @@
 import { isTauri, invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { isAndroid, isIOS, isMobile } from './platform'
+import { isAndroid, isIOS, isMobile, isOHOS } from './platform'
 
 export const desktopFrame = isTauri() && !isMobile
   ? /Windows/i.test(navigator.userAgent) ? 'windows' : /Macintosh|Mac OS X/i.test(navigator.userAgent) ? 'macos' : 'browser'
@@ -23,7 +23,8 @@ export function setMiniPlayerPanel(expanded: boolean): Promise<void> {
 export function setImmersiveWindow(active: boolean) {
   // Serialize native frame changes so a quick open/close always restores the frame.
   appearance = appearance.catch(() => undefined).then(async () => {
-    if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0 })
+    if (isOHOS) await invoke('plugin:ohos-player|control', { action: 'immersive', value: active ? 1 : 0 })
+    else if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0 })
     else if (isIOS) await invoke('plugin:ios-player|control', { action: 'immersive', value: active ? 1 : 0 })
     else if (desktopFrame === 'macos') await getCurrentWindow().setTitleBarStyle(active ? 'overlay' : 'visible')
     else if (desktopFrame === 'windows') await getCurrentWindow().setDecorations(!active)

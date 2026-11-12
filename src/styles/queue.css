@@ -17,9 +17,9 @@
 .queue-tree .queue-row-main > .rotated { transform: rotate(180deg); }
 .queue-tree .queue-row-main > svg:last-child { transition: transform 160ms ease; }
 .queue-tree .queue-loading, .queue-tree .queue-resolve-error { margin: 0; padding: 9px; color: var(--muted); font-size: 12px; }
-:root:is([data-platform="ios"],[data-platform="android"]) .queue-drawer.queue-sheet .queue-tree .queue-entry { min-height: 49px; padding: 2px 7px; border: 0; }
-:root:is([data-platform="ios"],[data-platform="android"]) .queue-drawer.queue-sheet .queue-tree .queue-entry > button.queue-row-main { min-height: 45px; grid-template-columns: 26px minmax(0, 1fr) auto; }
-:root:is([data-platform="ios"],[data-platform="android"]) .queue-drawer.queue-sheet .queue-tree .queue-entry > .action-menu-trigger { width: 42px; min-height: 44px; }
+:root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry { min-height: 49px; padding: 2px 7px; border: 0; }
+:root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry > button.queue-row-main { min-height: 45px; grid-template-columns: 26px minmax(0, 1fr) auto; }
+:root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry > .action-menu-trigger { width: 42px; min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { .queue-tree .queue-row-main > svg:last-child { transition: none; } }
 .queue-drawer > header > div:first-child { min-width: 0; }
 .queue-heading-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

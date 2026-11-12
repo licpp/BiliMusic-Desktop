@@ -147,11 +147,16 @@ fn secret(
     {
         tauri_plugin_ios_player::secret(app, &key, value, remove)
     }
+    #[cfg(target_env = "ohos")]
+    {
+        tauri_plugin_ohos_player::secret(app, &key, value, remove)
+    }
     #[cfg(not(any(
         target_os = "macos",
         target_os = "windows",
         target_os = "android",
-        target_os = "ios"
+        target_os = "ios",
+        target_env = "ohos"
     )))]
     {
         let _ = (app, key, value, remove);

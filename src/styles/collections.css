@@ -190,21 +190,21 @@
 .video-part-play .video-part-count { display: inline-block; margin-inline-start: 6px; font-size: 10px; color: var(--muted); white-space: nowrap; }
 
 @media (max-width: 960px) {
-  :root:is([data-platform="ios"], [data-platform="android"]) .music-library .library-view > header .eyebrow { display: none; }
-  :root:is([data-platform="ios"], [data-platform="android"]) .music-library .library-view > header { padding-bottom: 8px; }
-  :root:is([data-platform="ios"], [data-platform="android"]) .music-library .library-view > header h2 { font-size: 21px; }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid { gap: 0; padding-top: 5px; }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid .library-track {
+  :root[data-layout="mobile"] .music-library .library-view > header .eyebrow { display: none; }
+  :root[data-layout="mobile"] .music-library .library-view > header { padding-bottom: 8px; }
+  :root[data-layout="mobile"] .music-library .library-view > header h2 { font-size: 21px; }
+  :root[data-layout="mobile"] .library-grid { gap: 0; padding-top: 5px; }
+  :root[data-layout="mobile"] .library-grid .library-track {
     grid-template-columns: 60px minmax(0, 1fr) 40px; min-height: 65px; gap: 10px;
     padding: 7px 6px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent;
   }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid .playing-row[data-current-row] {
+  :root[data-layout="mobile"] .library-grid .playing-row[data-current-row] {
     background: var(--playing-row-surface);border-bottom-color:transparent;border-radius:10px;
   }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid .library-art { width: 48px; height: 48px; background: var(--panel-raised); }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid .library-art:has([data-artwork-wide]) { width:60px; height:38px; }
+  :root[data-layout="mobile"] .library-grid .library-art { width: 48px; height: 48px; background: var(--panel-raised); }
+  :root[data-layout="mobile"] .library-grid .library-art:has([data-artwork-wide]) { width:60px; height:38px; }
   .library-art > .artwork { width:100%; height:100%; }
-  :root:is([data-platform="ios"], [data-platform="android"]) .library-grid .library-copy strong { font-size: 14px; line-height: 1.4; }
+  :root[data-layout="mobile"] .library-grid .library-copy strong { font-size: 14px; line-height: 1.4; }
 }
 
 
@@ -323,18 +323,18 @@
 .music-library .library-tab-content { padding-top:0; }
 .music-library .collection-actions { margin-top:0; }
 @media(max-width:960px) {
- :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 12px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library { padding-top:12px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library>.listening-tabs { width:min(100%,420px);margin:0 auto 8px;padding:4px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) { position:static;display:flex;align-items:center;justify-content:flex-end;gap:4px;height:40px;min-height:40px;margin:0 0 4px;padding:0 4px; }
- :root:is([data-platform="ios"],[data-platform="android"]) .music-library .download-list { padding-top:0; }
+ :root[data-layout="mobile"] .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 12px; }
+ :root[data-layout="mobile"] .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
+ :root[data-layout="mobile"] .listening-library { padding-top:12px; }
+ :root[data-layout="mobile"] .listening-library>.listening-tabs { width:min(100%,420px);margin:0 auto 8px;padding:4px; }
+ :root[data-layout="mobile"] .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) { position:static;display:flex;align-items:center;justify-content:flex-end;gap:4px;height:40px;min-height:40px;margin:0 0 4px;padding:0 4px; }
+ :root[data-layout="mobile"] .music-library .download-list { padding-top:0; }
 }
 
 .hub-summary,.creators-tools { display:none; }
 @media(max-width:960px) {
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .hub-summary { display:block;flex:1;margin:0;padding-inline-start:9px;min-width:0;color:var(--muted);font-size:12px;font-weight:400;line-height:18px;letter-spacing:.01em;font-variant-numeric:tabular-nums; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .hub-summary small { font-size:inherit;color:inherit; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library :is(.listening-tools,.collections-tools-only) .collection-icon { width:36px;height:36px;color:var(--ink);border:0;background:transparent; }
- :root:is([data-platform="ios"],[data-platform="android"]) .listening-library .creators-view { padding:0; }
+ :root[data-layout="mobile"] .listening-library .hub-summary { display:block;flex:1;margin:0;padding-inline-start:9px;min-width:0;color:var(--muted);font-size:12px;font-weight:400;line-height:18px;letter-spacing:.01em;font-variant-numeric:tabular-nums; }
+ :root[data-layout="mobile"] .listening-library .hub-summary small { font-size:inherit;color:inherit; }
+ :root[data-layout="mobile"] .listening-library :is(.listening-tools,.collections-tools-only) .collection-icon { width:36px;height:36px;color:var(--ink);border:0;background:transparent; }
+ :root[data-layout="mobile"] .listening-library .creators-view { padding:0; }
 }

@@ -14,7 +14,12 @@
     "android:build": "tauri android build --apk --target aarch64",
     "ios:init": "tauri icon public/app-icon.png --output src-tauri/.ios-icons && tauri ios init --ci --skip-targets-install && node scripts/ios-prepare.mjs",
     "ios:dev": "tauri ios dev",
-    "ios:build": "tauri ios build --ci --target aarch64 --no-sign --archive-only && node scripts/ios-package.mjs"
+    "ios:build": "tauri ios build --ci --target aarch64 --no-sign --archive-only && node scripts/ios-package.mjs",
+    "ohos:tools": "node scripts/ohos.mjs tools",
+    "ohos:prepare": "node scripts/ohos.mjs prepare",
+    "ohos:check": "node scripts/ohos.mjs check",
+    "ohos:init": "node scripts/ohos.mjs init",
+    "ohos:build": "node scripts/ohos.mjs build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.89.0",

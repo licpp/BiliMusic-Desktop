@@ -28,7 +28,11 @@ pub fn local_audio_import(
     database: State<'_, Database>,
     paths: Vec<String>,
 ) -> Result<ImportResult, CommandError> {
-    if cfg!(any(target_os = "android", target_os = "ios")) {
+    if cfg!(any(
+        target_os = "android",
+        target_os = "ios",
+        target_env = "ohos"
+    )) {
         return Err(CommandError::validation("本地歌曲导入目前支持桌面端"));
     }
     if paths.len() > 500 {
