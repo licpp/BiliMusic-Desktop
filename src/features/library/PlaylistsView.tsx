@@ -1,11 +1,12 @@
 import { CreatorsView } from '../collections/CreatorsView'
-import { Download, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { CollectionsView } from '../collections/CollectionsView'
 import type { Playlist } from '../../services/desktopApi'
 import type { Collection } from '../../services/collections'
 import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { useSwipeTabs } from '../../shared/useSwipeTabs'
 import { PlaylistEntry } from './PlaylistEntry'
+import { ImportPlaylistButton } from './ImportFavorites'
 
 export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onCreate, onImport, onCollectionOpen, onOpenFolder, section, onSectionChange }: {
   playlists: Playlist[]
@@ -29,7 +30,7 @@ export function PlaylistsView({ playlists, linkedFolders, onOpen, onRemoved, onC
         <div className="listening-tools">
           <span className="hub-summary">{playlists.length} 个歌单</span>
           <button type="button" className="collection-icon" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
-          <button type="button" className="collection-icon" aria-label="导入 B 站收藏夹" onClick={onImport}><Download size={18}/></button>
+          <ImportPlaylistButton onClick={onImport}/>
         </div>
         <div className="playlist-grid">{playlists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>
       </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen}/> : <CollectionsView hideHeading linkedFolders={linkedFolders} onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}

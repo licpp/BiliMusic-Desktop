@@ -1,3 +1,4 @@
+import { statisticsRequest } from './statistics.mjs';
 import { randomBytes, createHash } from 'node:crypto';
 import { ApiError, MAX_BYTES, validateSnapshot } from './protocol.mjs';
 import { syncPolicy } from './privacy.mjs';
@@ -61,6 +62,7 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
       }
       const token=req.headers.authorization?.match(/^Bearer ([\w-]{43})$/)?.[1];
       const uid=token?await store.authenticate(hash(token)):null;if(!uid)throw new ApiError(401,'同步授权已失效');
+      if(await statisticsRequest(req,res,store,uid,path,hash(token)))return;
       if(path==='/vault'&&req.method==='GET') {
         const format=req.headers[formatHeader];
         const headers=[checkpoints,trackCheckpoints,oldCreators,creators].includes(format)?{[formatHeader]:format}:{};

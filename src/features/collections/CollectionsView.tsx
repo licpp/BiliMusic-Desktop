@@ -106,7 +106,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
       const contents = items.filter(item => item.folderId === folder.id)
       const onOpen = () => onOpenFolder(folder.id)
       return <LibraryEntry key={folder.id} title={folder.name} subtitle={`${contents.length} 个收藏`} sidebar={sidebar}
-        cover={<Artwork src={contents[0]?.coverUrl} fallback={<Folder aria-hidden="true"/>}/>}
+        cover={<Artwork src={contents[0]?.coverUrl} adaptAspect fallback={<Folder aria-hidden="true"/>}/>}
         dropFolderId={folder.id} onOpen={onOpen}
         menu={position => <FolderMenu folder={folder} contextPosition={position} onOpen={onOpen}
           onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)}/>}/>
@@ -125,7 +125,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
       const onOpen = () => onSelect(item)
       const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
       return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || (parseSeasonReference(item.bvid) ? '打开查看视频' : '打开查看分 P')} sidebar={sidebar}
-        cover={<Artwork src={item.coverUrl}/>} onOpen={onOpen}
+        cover={<Artwork src={item.coverUrl} adaptAspect/>} onOpen={onOpen}
         drag={canMove && !isMobile ? { folderId: item.folderId, onMove: target => move.mutate({ item, target }) } : undefined}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
     })}
@@ -222,6 +222,13 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
     const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),catalog:undefined,unavailable:0}
   }})
   const [filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[seasonOpen,setSeasonOpen]=useState(false),[copying,setCopying]=useState(false),[message,setMessage]=useState(''),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
+  useEffect(() => {
+    const open = () => { setSearchOpen(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.collection-detail .detail-search input')?.focus()) }
+    const filter = (event:Event) => setFilter((event as CustomEvent<string>).detail)
+    window.addEventListener('bilimusic-search-collection', open)
+    window.addEventListener('bilimusic-filter-collection', filter)
+    return () => { window.removeEventListener('bilimusic-search-collection', open); window.removeEventListener('bilimusic-filter-collection', filter) }
+  }, [])
   const [openedVideo, setOpenedVideo] = useState<Track>()
   const nested = useQuery({
     queryKey: ['collection-video-parts', accountEpoch(), openedVideo?.source.bvid],
@@ -327,7 +334,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
         </>}/>
       </div>
     </div>
-    {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索列表" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
+    {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索此合集中的内容" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
     {copying&&<p className="batch-message" role="status">正在复制到我的歌单…</p>}
     {message&&<p className="batch-message" role="status">{message}</p>}
     {q.isLoading&&<p>正在读取列表…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}

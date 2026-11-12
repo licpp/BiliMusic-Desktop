@@ -3,11 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell, fromStoredTrack } from './desktopApi'
 import type { QueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '../features/player/playerStore'
-export type SyncConfig = { enabled: boolean; provider: 'cloud' | 'webdav'; uid: string; url: string; history: boolean; initialized: boolean; deviceId: string }
+export type SyncConfig = { enabled: boolean; provider: 'cloud' | 'webdav'; uid: string; url: string; history: boolean; statistics: boolean; initialized: boolean; deviceId: string }
 export type SyncStatus = { config: SyncConfig; lastSuccess?: string; records: number; bytes: number }
 export type SyncConflict = { key: string; field: string; local: unknown; remote: unknown }
 export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean }
-export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav', uid: '', url: 'https://dav.jianguoyun.com/dav/', history: false, initialized: false, deviceId: '' }
+export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav', uid: '', url: 'https://dav.jianguoyun.com/dav/', history: false, statistics: false, initialized: false, deviceId: '' }
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export const syncNow = (preview = false, resolution?: 'local' | 'remote', automatic = false) => invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
 export async function refreshSyncedLibrary(client: QueryClient) {
@@ -22,10 +22,20 @@ export async function refreshSyncedLibrary(client: QueryClient) {
 }
 export function startCloudSync(client: QueryClient) {
   if (!inDesktopShell) return () => undefined
+  let statsBusy = false, statsNext = 0
+  const runStatistics = async (force = false) => {
+    if (statsBusy || document.hidden || (!force && Date.now() < statsNext)) return
+    statsBusy = true
+    try { await invoke('listening_sync'); statsNext = Date.now() + 15 * 60_000; await client.invalidateQueries({queryKey:['listening-statistics']}) }
+    catch { statsNext = Date.now() + 5 * 60_000 }
+    finally { statsBusy = false }
+  }
   let busy = false, stopped = false, failures = 0, blocked = false
   let nextAllowed = 0, timer = 0
   const run = async () => {
-    if (stopped || busy || blocked || document.hidden || Date.now() < nextAllowed) return
+    if (stopped || document.hidden) return
+    void runStatistics()
+    if (busy || blocked || Date.now() < nextAllowed) return
     busy = true
     try {
       const status = await syncStatus()
@@ -43,14 +53,15 @@ export function startCloudSync(client: QueryClient) {
     } finally { busy = false }
   }
   const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 10_000) }
-  const reconfigure = () => { blocked = false; nextAllowed = 0; failures = 0; schedule() }
+  const reconfigure = () => { statsNext = 0; void runStatistics(); blocked = false; nextAllowed = 0; failures = 0; schedule() }
   const foreground = () => { if (!document.hidden) void run() }
   window.addEventListener('bilimusic-data-changed', schedule)
   window.addEventListener('bilimusic-sync-configured', reconfigure)
+  window.addEventListener('bilimusic-account-changed', reconfigure)
   document.addEventListener('visibilitychange', foreground)
   const interval = window.setInterval(() => void run(), 180_000)
   schedule()
-  return () => { stopped = true; window.clearTimeout(timer); window.clearInterval(interval); window.removeEventListener('bilimusic-data-changed', schedule); window.removeEventListener('bilimusic-sync-configured', reconfigure); document.removeEventListener('visibilitychange', foreground) }
+  return () => { stopped = true; window.clearTimeout(timer); window.clearInterval(interval); window.removeEventListener('bilimusic-data-changed', schedule); window.removeEventListener('bilimusic-sync-configured', reconfigure); window.removeEventListener('bilimusic-account-changed', reconfigure); document.removeEventListener('visibilitychange', foreground) }
 }
 
 export async function hydrateVisibleTracks(tracks: import('../domain/track').Track[] | undefined, client: QueryClient) {

@@ -196,6 +196,17 @@ pub fn library_update_metadata(
 }
 
 #[tauri::command]
+pub async fn bili_search_suggestions(
+    provider: State<'_, BilibiliProvider>,
+    keyword: String,
+) -> Result<Vec<String>, CommandError> {
+    provider
+        .search_suggestions(&keyword)
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
 pub async fn bili_search(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
@@ -406,10 +417,12 @@ pub async fn bili_playback_source(
         .await
         .map_err(CommandError::provider)?;
     source.audio_url = media_proxy
-        .register_stream(
-            source.audio_url,
-            source.backup_urls.clone(),
-            source.mime_type.clone(),
+        .register_audio(
+            &format!("bilibili:{bvid}:{cid}"),
+            &bvid,
+            cid,
+            quality.audio_id,
+            source.clone(),
         )
         .await;
     source.backup_urls.clear();
@@ -453,6 +466,10 @@ pub async fn bili_video_source(
         .video_source_with_quality(&bvid, cid, quality.video_height)
         .await
         .map_err(CommandError::provider)?;
+    media_proxy
+        .ensure_running()
+        .await
+        .map_err(|_| CommandError::provider("本机视频服务恢复失败，请稍后重试"))?;
     source.video_url = media_proxy
         .register_stream(
             source.video_url,
@@ -649,6 +666,7 @@ pub async fn lyrics_search(
         return Err(CommandError::validation("歌曲名不能为空"));
     }
     let key = serde_json::to_string(&(
+        "multi-source-v2",
         title.to_lowercase(),
         artist.as_deref().unwrap_or("").trim().to_lowercase(),
     ))
@@ -720,7 +738,7 @@ pub async fn metadata_catalog_search(
         return Err(CommandError::validation("请先填写歌曲名"));
     }
     let source = source.as_deref().unwrap_or("auto");
-    if !["auto", "itunes", "musicbrainz"].contains(&source) {
+    if !["auto", "netease", "qq", "itunes", "musicbrainz"].contains(&source) {
         return Err(CommandError::validation("不支持的歌曲信息来源"));
     }
     provider
@@ -763,7 +781,7 @@ pub fn lyrics_save(
     if lyrics.raw_text.len() > 2_000_000 || lyrics.parsed_json.len() > 2_000_000 {
         return Err(CommandError::validation("歌词内容过大"));
     }
-    if !["lrclib", "netease", "local"].contains(&lyrics.provider.as_str()) {
+    if !["lrclib", "netease", "qq", "local"].contains(&lyrics.provider.as_str()) {
         return Err(CommandError::validation("不支持的歌词来源"));
     }
     serde_json::from_str::<serde_json::Value>(&lyrics.parsed_json)
@@ -830,6 +848,10 @@ pub async fn track_playback_url(
     track_id: String,
     refresh: Option<bool>,
 ) -> Result<String, CommandError> {
+    media_proxy
+        .ensure_running()
+        .await
+        .map_err(|_| CommandError::provider("本机音频服务恢复失败，请稍后重试"))?;
     let (track, paths, local_path) = {
         let connection = database
             .0
@@ -887,12 +909,25 @@ pub async fn track_playback_url(
             .map_err(CommandError::provider)?;
         provider.invalidate_playback(&track.bvid, track.cid).await;
     }
-    let source = provider
+    if !refresh.unwrap_or(false) {
+        if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
+            return Ok(url);
+        }
+    }
+    let source = match provider
         .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
         .await
-        .map_err(CommandError::provider)?;
+    {
+        Ok(source) => source,
+        Err(error) => {
+            if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
+                return Ok(url);
+            }
+            return Err(CommandError::provider(error));
+        }
+    };
     Ok(media_proxy
-        .register_stream(source.audio_url, source.backup_urls, source.mime_type)
+        .register_audio(&track_id, &track.bvid, track.cid, quality.audio_id, source)
         .await)
 }
 

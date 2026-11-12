@@ -3,7 +3,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 import { rememberVideoPages } from './videoPages'
 import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
-import { parseLrc } from '../features/lyrics/lrc'
+import { attachSupplementalLyrics, candidateLines } from '../features/lyrics/lrc'
+import { rankCatalogCandidates, rankLyricCandidates } from './musicMatchRanking'
 
 export type BiliSearchItem = { bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
@@ -15,14 +16,14 @@ export type DanmakuItem = { timeSeconds: number; mode: number; fontSize: number;
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
-export type LyricLine = { endTimeMs?: number; timeMs: number; text: string }
-export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string }
+export type LyricLine = { endTimeMs?: number; timeMs: number; text: string; translation?: string; romanization?: string }
+export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'qq' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string; translatedLyrics?: string; romanizedLyrics?: string }
 export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
 export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean; biliFolderId?: number }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
-export type CatalogSource = 'auto' | 'itunes' | 'musicbrainz'
+export type CatalogSource = 'auto' | 'netease' | 'qq' | 'itunes' | 'musicbrainz'
 export type CatalogCandidate = { trackId: string; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string; source: string }
 export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string }
 export type QrLogin = { key: string; url: string }
@@ -46,6 +47,11 @@ async function write<T>(command: string, args: Record<string, unknown>): Promise
 export async function searchBilibili(keyword: string, page = 1): Promise<BiliSearchPage> {
   if (!inDesktopShell) return { items: [], page, pageSize: 20, total: 0 }
   return invoke<BiliSearchPage>('bili_search', { keyword, page, pageSize: 20 })
+}
+
+export async function getSearchSuggestions(keyword: string): Promise<string[]> {
+  if (!inDesktopShell) return []
+  return invoke<string[]>('bili_search_suggestions', { keyword })
 }
 
 const videoDetails = new Map<string, { expires: number; request: Promise<BiliVideoParts> }>()
@@ -113,7 +119,27 @@ export async function updateStoredMetadata(trackId: string, patch: MetadataPatch
 
 export async function searchLyrics(title: string, artist?: string, forceRefresh = false): Promise<LyricSearchResult> {
   if (!inDesktopShell) return { candidates: [] }
-  return invoke<LyricSearchResult>('lyrics_search', { title, artist, forceRefresh })
+  const result = await invoke<LyricSearchResult>('lyrics_search', { title, artist, forceRefresh })
+  return { ...result, candidates: rankLyricCandidates(result.candidates, title, artist) }
+}
+
+const lyricSupplements = new Map<string, Promise<LyricCandidate | null>>()
+export async function enrichStoredLyricLines(stored: StoredLyrics): Promise<LyricLine[] | null> {
+  if (!inDesktopShell || !['netease', 'qq'].includes(stored.provider)) return null
+  const epoch = accountEpoch(), key = `${epoch}:${stored.provider}:${stored.providerLyricId}`
+  let request = lyricSupplements.get(key)
+  if (!request) {
+    request = invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+    lyricSupplements.set(key, request)
+    if (lyricSupplements.size > 50) lyricSupplements.delete(lyricSupplements.keys().next().value!)
+    void request.catch(() => { if (lyricSupplements.get(key) === request) lyricSupplements.delete(key) })
+  }
+  const candidate = await request
+  if (epoch !== accountEpoch() || !candidate) return null
+  const parsed = JSON.parse(stored.parsedJson)
+  if (!Array.isArray(parsed) || !parsed.every(line => Number.isFinite(line?.timeMs) && typeof line?.text === 'string')) return null
+  // Enrich the saved timeline, preserving its original text and the user's bias.
+  return attachSupplementalLyrics(parsed, candidate.translatedLyrics, candidate.romanizedLyrics)
 }
 
 export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
@@ -127,7 +153,7 @@ export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | n
     try {
       const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
       if (epoch !== accountEpoch()) return null
-      if (candidate) { const raw = candidate.syncedLyrics || candidate.plainLyrics || ''; return invoke<StoredLyrics>('lyrics_save', { trackId, manual: stored.selectedManually, lyrics: { provider: stored.provider, providerLyricId: stored.providerLyricId, rawText: raw, parsedJson: JSON.stringify(parseLrc(raw)) } }) }
+      if (candidate) { const raw = candidate.syncedLyrics || candidate.plainLyrics || ''; return invoke<StoredLyrics>('lyrics_save', { trackId, manual: stored.selectedManually, lyrics: { provider: stored.provider, providerLyricId: stored.providerLyricId, rawText: raw, parsedJson: JSON.stringify(candidateLines(candidate)) } }) }
     } catch { /* Keep the synced selection and bias available when the provider is offline. */ }
   }
   return stored
@@ -166,7 +192,8 @@ export const deletePlaylist = (playlistId: string) => write<void>('playlist_dele
 export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
 export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto'): Promise<CatalogCandidate[]> {
   if (!inDesktopShell) return []
-  return invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist, source })
+  const candidates = await invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist, source })
+  return rankCatalogCandidates(candidates, title, artist)
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []

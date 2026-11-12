@@ -209,6 +209,10 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             tx.execute("INSERT INTO collections(bvid,folder_id) VALUES(?1,?2) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id",params![text(r,"bvid"),text(r,"folderId")])?;
         }
         tx.execute(
+            "DELETE FROM creator_notes WHERE bvid NOT IN (SELECT bvid FROM collections)",
+            [],
+        )?;
+        tx.execute(
             "DELETE FROM collection_progress WHERE reference NOT IN (SELECT bvid FROM collections)",
             [],
         )?;
@@ -543,6 +547,7 @@ mod tests {
                 title: "local cache".into(),
                 cover_url: "".into(),
                 uploader_name: "local uploader".into(),
+                note: String::new(),
             }),
         )
         .unwrap();

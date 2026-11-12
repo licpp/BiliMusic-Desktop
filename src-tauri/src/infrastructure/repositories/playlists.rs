@@ -3,6 +3,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 
 pub const FAVORITES_PLAYLIST_ID: &str = "system:favorites";
+const PLAYLIST_COVER: &str = "COALESCE(NULLIF(p.cover_url,''),(SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM playlist_items first_item JOIN tracks t ON t.id=first_item.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE first_item.playlist_id=p.id ORDER BY first_item.position,first_item.created_at DESC,first_item.rowid DESC LIMIT 1))";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +22,86 @@ pub struct PlaylistRecord {
 mod tests {
     use super::*;
     use crate::infrastructure::repositories::library::{LibraryRepository, TrackInput};
+
+    #[test]
+    fn covers_follow_the_first_track_and_its_metadata_without_copying_urls() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        for (index, id) in ["a", "b"].iter().enumerate() {
+            c.execute(
+                "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BVtest',?2)",
+                params![id, index + 1],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO tracks(id,source_item_id,title,cover_url) VALUES(?1,?1,?1,?2)",
+                params![id, format!("https://cover/{id}")],
+            )
+            .unwrap();
+        }
+        PlaylistRepository::create(&c, "list", "test").unwrap();
+        PlaylistRepository::add_track(&c, "list", "a").unwrap();
+        PlaylistRepository::add_track(&c, "list", "b").unwrap();
+        assert_eq!(
+            PlaylistRepository::get(&c, "list")
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://cover/b")
+        );
+        c.execute("INSERT INTO metadata_overrides(track_id,title,cover_url) VALUES('b','b','https://cover/edited')",[]).unwrap();
+        assert_eq!(
+            PlaylistRepository::list(&c).unwrap()[1]
+                .cover_url
+                .as_deref(),
+            Some("https://cover/edited")
+        );
+        LibraryRepository::set_favorite(&c, "a", true).unwrap();
+        LibraryRepository::set_favorite(&c, "b", true).unwrap();
+        assert_eq!(
+            PlaylistRepository::get(&c, FAVORITES_PLAYLIST_ID)
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://cover/edited")
+        );
+        PlaylistRepository::remove_track(&c, "list", "b").unwrap();
+        assert_eq!(
+            PlaylistRepository::get(&c, "list")
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://cover/a")
+        );
+        c.execute(
+            "UPDATE playlists SET cover_url='https://custom' WHERE id='list'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            PlaylistRepository::get(&c, "list")
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://custom")
+        );
+        LibraryRepository::set_favorite(&c, "b", false).unwrap();
+        assert_eq!(
+            PlaylistRepository::get(&c, FAVORITES_PLAYLIST_ID)
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://cover/a")
+        );
+        LibraryRepository::set_favorite(&c, "a", false).unwrap();
+        assert!(
+            PlaylistRepository::get(&c, FAVORITES_PLAYLIST_ID)
+                .unwrap()
+                .cover_url
+                .is_none()
+        );
+    }
 
     #[test]
     fn default_favorites_playlist_shares_hearts_and_cannot_be_deleted_or_renamed() {
@@ -196,7 +277,7 @@ impl PlaylistRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<PlaylistRecord>> {
-        let mut statement = connection.prepare("SELECT p.id,p.name,p.description,p.cover_url,COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC")?;
+        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
         let mut playlists = vec![Self::get(connection, FAVORITES_PLAYLIST_ID)?];
         playlists.extend(
             statement
@@ -212,14 +293,14 @@ impl PlaylistRepository {
                 id: id.into(),
                 name: "我喜欢".into(),
                 description: "点击红心收藏的歌曲 · 默认歌单".into(),
-                cover_url: None,
+                cover_url: connection.query_row("SELECT (SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM favorites f JOIN tracks t ON t.id=f.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id ORDER BY f.created_at DESC,f.rowid DESC LIMIT 1)",[],|row|row.get(0))?,
                 track_count: connection
                     .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))?,
                 is_system: true,
                 bili_folder_id: None,
             });
         }
-        connection.query_row("SELECT p.id,p.name,p.description,p.cover_url,COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id", params![id], Self::map_row)
+        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
     }
 
     pub fn tracks(connection: &Connection, id: &str) -> rusqlite::Result<Vec<TrackRecord>> {

@@ -40,6 +40,8 @@ export function SyncSettings() {
     if (result.conflicts.length && !resolution) { setMessage('发现不同修改，请选择保留哪一侧。'); return }
     await refreshSyncedLibrary(client)
     setOutcome(null); setMessage('同步完成'); notify()
+    try { await invoke('listening_sync'); await client.invalidateQueries({queryKey:['listening-statistics']}) }
+    catch(e) { setMessage(`资料已同步，听歌统计尚未完成：${commandErrorMessage(e)}`) }
     void invoke<number>('sync_hydrate_sources').then(() => refreshSyncedLibrary(client)).catch(() => undefined)
   })
   const preview = () => action(async () => { setOutcome(await syncNow(true)) })
@@ -52,7 +54,7 @@ export function SyncSettings() {
       </div>}
     </div>
     {!inDesktopShell ? <p className="sync-note">请在 BiliMusic 客户端中配置同步。</p> : <>
-      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放和合集续播进度' : ''}</span></div>}
+      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放和合集续播进度' : ''}{saved?.statistics ? '、听歌统计' : ''}</span></div>}
       {connected && <button className="sync-link" disabled={busy} aria-expanded={editing} onClick={() => { setEditing(!editing); setConsent(false) }}>{editing ? '收起连接设置' : '更改连接与同步内容'}</button>}
       {editing && <form className="sync-connection" onSubmit={(e) => { e.preventDefault(); if (consent && !busy) void connect() }}>
         <fieldset disabled={busy}>
@@ -63,7 +65,8 @@ export function SyncSettings() {
             <p className="sync-note">凭据保存在系统安全存储中，直接连接坚果云。</p>
           </> : <p className="sync-note">通过 HTTPS 使用当前B站登录会话核验身份，服务器不保存该会话，后续使用设备令牌。</p>}
           <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步播放记录<small>最近 200 首的记录和断点、收藏合集续播，默认关闭</small></span></label>
-          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及所选的播放记录，并同意上述身份核验方式。</span></label>
+          <label className="sync-check"><input type="checkbox" checked={!!config.statistics} onChange={(e) => setConfig({ ...config, statistics: e.target.checked })} /><span>同步听歌统计<small>完整保留歌曲月累计，近 90 天逐日明细；约每 15 分钟批量同步</small></span></label>
+          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及所选的播放记录和听歌统计，并同意上述身份核验方式。</span></label>
           <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent}>{busy && <LoaderCircle className="spin" />}连接并预览</button><button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button></div>
         </fieldset>
       </form>}

@@ -1,3 +1,4 @@
+use super::domestic_music;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, time::Duration};
@@ -6,8 +7,10 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
-    #[error("音乐资料服务请求失败: {0}")]
+    #[error("音乐资料服务连接失败，请稍后重试或切换来源")]
     Network(#[from] reqwest::Error),
+    #[error("音乐资料服务暂时不可用，请稍后重试或切换来源")]
+    Unavailable,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -46,7 +49,8 @@ impl MusicCatalogProvider {
     pub fn new() -> Result<Self, reqwest::Error> {
         Ok(Self {
             client: Client::builder()
-                .timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(8))
                 .user_agent("BiliMusic/0.1.6 (https://github.com/licpp/BiliMusic-Desktop)")
                 .build()?,
             musicbrainz_gate: Mutex::new(None),
@@ -62,11 +66,79 @@ impl MusicCatalogProvider {
         if source == "musicbrainz" {
             return self.search_musicbrainz(title, artist).await;
         }
-        let results = self.search_itunes(title, artist).await;
-        if source == "itunes" || results.as_ref().is_ok_and(|items| !items.is_empty()) {
-            return results;
+        if source == "netease" || source == "qq" {
+            return self.search_domestic(title, artist, source).await;
         }
-        self.search_musicbrainz(title, artist).await
+        if source == "itunes" {
+            return self.search_itunes(title, artist).await;
+        }
+        let (netease, qq, itunes) = tokio::join!(
+            self.search_domestic(title, artist, "netease"),
+            self.search_domestic(title, artist, "qq"),
+            self.search_itunes(title, artist)
+        );
+        let mut items = vec![];
+        let mut succeeded = false;
+        // Interleave catalogs so one provider cannot crowd all others out of the result page.
+        let mut sources = vec![];
+        for result in [netease, qq, itunes] {
+            if let Ok(found) = result {
+                succeeded = true;
+                sources.push(found.into_iter())
+            }
+        }
+        for _ in 0..20 {
+            for source in &mut sources {
+                if let Some(item) = source.next() {
+                    items.push(item)
+                }
+            }
+        }
+        if !items.is_empty() {
+            return Ok(deduplicate(items));
+        }
+        match self.search_musicbrainz(title, artist).await {
+            Ok(found) => Ok(found),
+            Err(_) if succeeded => Ok(vec![]),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn search_domestic(
+        &self,
+        title: &str,
+        artist: &str,
+        source: &str,
+    ) -> Result<Vec<CatalogCandidate>, CatalogError> {
+        let keyword = format!("{title} {artist}");
+        let songs = if source == "netease" {
+            domestic_music::search_netease(
+                &self.client,
+                "https://music.163.com",
+                keyword.trim(),
+                12,
+                true,
+            )
+            .await
+        } else {
+            domestic_music::search_qq(&self.client, "https://u.y.qq.com", keyword.trim(), 12).await
+        }
+        .map_err(|_| CatalogError::Unavailable)?;
+        Ok(songs
+            .into_iter()
+            .map(|song| CatalogCandidate {
+                track_id: format!("{source}:{}", song.id),
+                track_name: song.name,
+                artist_name: song.artist,
+                collection_name: song.album,
+                artwork_url: song.cover,
+                source: if source == "netease" {
+                    "网易云音乐".into()
+                } else {
+                    "QQ 音乐".into()
+                },
+            })
+            .collect())
     }
 
     async fn search_itunes(
@@ -287,6 +359,43 @@ mod tests {
         let results = deduplicate(vec![candidate, duplicate, live]);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].source, "iTunes · TW");
+    }
+    #[tokio::test]
+    #[ignore = "requires live domestic music catalog access"]
+    async fn live_domestic_catalog_has_album_and_loadable_artwork() {
+        let provider = MusicCatalogProvider::new().unwrap();
+        for source in ["netease", "qq"] {
+            let items = provider.search("晴天", "周杰伦", source).await.unwrap();
+            let candidate = items
+                .iter()
+                .find(|s| {
+                    s.track_name == "晴天" && s.collection_name.is_some() && s.artwork_url.is_some()
+                })
+                .expect("album and cover");
+            let response = provider
+                .client
+                .get(candidate.artwork_url.as_ref().unwrap())
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+            assert!(
+                response
+                    .headers()
+                    .get("content-type")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("image/")
+            );
+            println!(
+                "{source}: {} / {} / artwork HTTP {}",
+                candidate.track_name,
+                candidate.collection_name.as_ref().unwrap(),
+                response.status()
+            );
+        }
     }
     #[tokio::test]
     #[ignore = "requires live catalog network access"]

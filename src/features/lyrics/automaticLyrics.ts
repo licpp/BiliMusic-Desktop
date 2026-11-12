@@ -4,24 +4,14 @@ import { getStoredLyrics, inDesktopShell, saveStoredLyrics, searchLyrics, type L
 import { usePlayerStore } from '../player/playerStore'
 import { bestCandidate, candidateLines } from './lrc'
 
-export function automaticLyricQuery(track: Track) {
-  let title = track.title.replace(/^\s*(?:P\s*)?\d+[.、．\s]+/i, '').trim()
-  let artist = track.artist?.trim() || ''
-  const pair = title.match(/^(.{1,40}?)\s*[-–—]\s*(.+)$/)
-  if (pair && (!artist || pair[1].trim() === artist)) {
-    artist ||= pair[1].trim()
-    title = pair[2].trim()
-  }
-  title = title.replace(/【[^】]*】/g, '').replace(/\s*[（(](?:live|现场|完整版|歌词版|高清|无损)[^）)]*[）)]/gi, '').trim()
-  return { title, artist }
-}
+import { automaticLyricQueries } from './lyricQuery'
+export { automaticLyricQuery } from './lyricQuery'
 
 const normalize = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '')
 export function chooseAutomaticLyrics(track: Track, candidates: LyricCandidate[]) {
-  const query = automaticLyricQuery(track)
+  const queries = automaticLyricQueries(track)
   return bestCandidate(candidates.filter(candidate => {
-    if (candidate.instrumental || normalize(candidate.trackName) !== normalize(query.title)) return false
-    if (query.artist && !normalize(candidate.artistName).includes(normalize(query.artist))) return false
+    if (candidate.instrumental || !queries.some(query => normalize(candidate.trackName) === normalize(query.title) && (!query.artist || normalize(candidate.artistName) === normalize(query.artist)))) return false
     return !track.durationSeconds || !candidate.duration || Math.abs(track.durationSeconds - candidate.duration) <= Math.max(15, track.durationSeconds * .08)
   }), track.durationSeconds)
 }
@@ -36,11 +26,14 @@ export function startAutomaticLyrics() {
     const valid = () => { const current = usePlayerStore.getState().current; return current !== null && keyFor(current) === key }
     try {
       if (await getStoredLyrics(track.id) || !valid()) return
-      const query = automaticLyricQuery(track)
-      if (!query.title) return
-      const result = await searchLyrics(query.title, query.artist || undefined)
-      if (!valid()) return
-      const candidate = chooseAutomaticLyrics(track, result.candidates)
+      let candidate: LyricCandidate | undefined
+      for (const query of automaticLyricQueries(track)) {
+        if (!query.title || !valid()) return
+        const result = await searchLyrics(query.title, query.artist || undefined)
+        if (!valid()) return
+        candidate = chooseAutomaticLyrics({ ...track, ...query }, result.candidates)
+        if (candidate && candidateLines(candidate).length) break
+      }
       if (!candidate || !candidateLines(candidate).length) return
       // Recheck after the network request: a manual selection may have won.
       if (await getStoredLyrics(track.id) || !valid()) return

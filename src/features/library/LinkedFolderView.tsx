@@ -190,7 +190,7 @@ export function LinkedFolderPicker({ bvid, onClose }: { bvid: string; onClose: (
     {folders.map(folder => <button key={folder.id} disabled={pending} onClick={() => void add(folder.biliFolderId!)}>
       <span>{folder.name}</span><Link2 size={16}/>
     </button>)}
-    {!playlists.isLoading && !folders.length && <p>请先通过「导入 B 站收藏夹」关联一个收藏夹。</p>}
+    {!playlists.isLoading && !folders.length && <p>请通过「导入歌单 → B 站收藏夹」关联一个收藏夹。</p>}
     {status && <p role="status">{status}</p>}
   </div></div>
 }

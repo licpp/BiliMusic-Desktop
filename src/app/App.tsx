@@ -24,7 +24,6 @@ import {
   ArrowDownUp,
   ChevronDown,
   ChevronRight,
-  Clock3,
   Download,
   Heart,
   Home,
@@ -33,6 +32,7 @@ import {
   Trash2,
   Pause,
   Play,
+  Plus,
   Search,
   SkipBack,
   SkipForward,
@@ -43,8 +43,10 @@ import {
   Moon,
 } from 'lucide-react'
 import { usePlayerStore } from '../features/player/playerStore'
+import { playerShortcut } from '../features/player/shortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
+import { SearchField } from '../features/search/SearchField'
 import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
@@ -52,7 +54,9 @@ import { clearSearchHistory, commandErrorMessage, createPlaylist, getVideoParts,
 import { toTrack } from '../services/collectionTrack'
 import { accountEpoch } from '../services/accountScope'
 import { AccountControl } from '../features/account/AccountControl'
-import { ImportFavorites } from '../features/library/ImportFavorites'
+import { ImportFavorites, ImportPlaylistButton } from '../features/library/ImportFavorites'
+import { usePlaylistImport } from '../services/playlistImport'
+import type { Playlist } from '../services/desktopApi'
 import { PlayingMark } from '../shared/PlayingMark'
 import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
@@ -62,6 +66,9 @@ import { showTrackMenu } from '../features/library/trackActionStore'
 import { isMobile } from '../services/platform'
 import { PlayerProgress } from '../features/player/PlayerProgress'
 import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
+import { MiniPlayer } from '../features/player/MiniPlayer'
+import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
+import { PictureInPicture2 } from 'lucide-react'
 
 const navigation = [
   { label: '此刻', icon: Home },
@@ -76,6 +83,8 @@ export function App() {
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
+  const [collectionSearch,setCollectionSearch]=useState('')
+  useEffect(()=>setCollectionSearch(''),[selectedCollection?.bvid])
   const [hubSection,setHubSection]=useState<'playlists'|'collections'|'creators'>('playlists')
   const contentScroll=useRef<HTMLDivElement>(null)
   const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean }[]>([])
@@ -105,7 +114,7 @@ export function App() {
     scrollCollection(origin?.scroll ?? 0)
   }
   useEffect(() => {
-    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setSleepTimerOpen(false); libraryReturn.current = null }
+    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setRematchPlaylist(undefined); setSleepTimerOpen(false); libraryReturn.current = null }
     window.addEventListener('bilimusic-account-changing', clear)
     return () => window.removeEventListener('bilimusic-account-changing', clear)
   }, [])
@@ -116,11 +125,17 @@ export function App() {
   const searchScroll = useRef<HTMLDivElement>(null)
   useEffect(() => { if (searchScroll.current) searchScroll.current.scrollTop = 0 }, [submittedQuery])
   const [lyricsOpen, setLyricsOpen] = useState(false)
+  const [miniMode,setMiniMode]=useState(false)
+  const [miniBusy,setMiniBusy]=useState(false)
+  const [windowReady,setWindowReady]=useState(!miniPlayerSupported)
+  const miniRestoreLyrics=useRef(false)
+  const miniChanging=useRef(false)
   const [searchFocused, setSearchFocused] = useState(false)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const [playlistName, setPlaylistName] = useState('')
   const [actionError, setActionError] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  const [rematchPlaylist,setRematchPlaylist]=useState<Playlist>()
   const [favoritePending, setFavoritePending] = useState(false)
   const favoriteDesired = useRef<boolean | undefined>(undefined)
   const favoriteRunning = useRef(false)
@@ -132,6 +147,11 @@ export function App() {
   const theme = useThemeStore((state) => state.theme)
   const setTheme = useThemeStore((state) => state.setTheme)
   const queryClient = useQueryClient()
+  useEffect(() => {
+    const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['playlists'] }); void queryClient.invalidateQueries({ queryKey: ['library'] }) }
+    window.addEventListener('bilimusic-import-updated', refresh)
+    return () => window.removeEventListener('bilimusic-import-updated', refresh)
+  }, [queryClient])
   const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
@@ -210,18 +230,45 @@ export function App() {
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
   const clearQueue = usePlayerStore((state) => state.clearQueue)
   const playbackError = usePlayerStore((state) => state.error)
+  useEffect(()=>{
+    if(!miniPlayerSupported)return
+    let cancelled=false
+    void getMiniPlayerMode().then(active=>{if(!cancelled){setMiniMode(active);setWindowReady(true)}})
+      .catch(error=>{if(!cancelled){setActionError(commandErrorMessage(error));setWindowReady(true)}})
+    return()=>{cancelled=true}
+  },[])
+  useEffect(()=>{
+    if(miniMode)document.documentElement.dataset.miniPlayer='true'
+    else delete document.documentElement.dataset.miniPlayer
+    return()=>{delete document.documentElement.dataset.miniPlayer}
+  },[miniMode])
+  const changeMiniMode=async(enabled:boolean,lyrics=false,queue=false)=>{
+    if(miniChanging.current||!windowReady)return
+    miniChanging.current=true;setMiniBusy(true);setActionError('')
+    try{
+      if(enabled){miniRestoreLyrics.current=lyricsOpen;await setImmersiveWindow(false)}
+      const active=await setMiniPlayerMode(enabled)
+      setMiniMode(active)
+      if(active)setLyricsOpen(false)
+      else{
+        setLyricsOpen(lyrics||(!queue&&miniRestoreLyrics.current))
+        if(queue)usePlayerStore.setState({queueOpen:true})
+      }
+    }catch(cause){setActionError(commandErrorMessage(cause));if(enabled)void setImmersiveWindow(lyricsOpen)}
+    finally{miniChanging.current=false;setMiniBusy(false)}
+  }
 
   const openSearch = (value?: string) => {
     resetCollection(); setActiveNav('搜索'); setLyricsOpen(false)
     if (value !== undefined) { setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(false) }
   }
-  const submitSearch = (event: FormEvent) => {
-    event.preventDefault()
-    const normalized = query.trim()
+  const runSearch = (value: string) => {
+    const normalized = value.trim()
     if (!normalized) { openSearch(''); return }
     openSearch(normalized)
     queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
   }
+  const submitSearch = (event: FormEvent) => { event.preventDefault(); if(!selectedCollection || selectedCollection.bvid.startsWith('up:')) runSearch(query) }
   const toggleCurrentFavorite = async () => {
     if (!current) return
     const latest = usePlayerStore.getState().queue.find((track) => track.id === current.id) || current
@@ -264,8 +311,9 @@ export function App() {
   }, [])
   useEffect(connectMediaSession, [])
   useEffect(() => {
+    if(!windowReady||miniMode)return
     void setImmersiveWindow(lyricsOpen).catch((error) => setActionError(commandErrorMessage(error)))
-  }, [lyricsOpen])
+  }, [lyricsOpen,miniMode,windowReady])
   useEffect(() => {
     const refreshRecent = () => {
       void queryClient.invalidateQueries({ queryKey: ['home-recent'] })
@@ -322,11 +370,18 @@ export function App() {
       // Space belongs to playback controls even after a mouse click leaves
       // previous/next focused. Other buttons retain native keyboard activation.
       if (target.isContentEditable) return
-      if (target.closest('button, a') && !target.closest('.dock-controls')) return
-      if (event.code === 'Space' && !event.altKey && !event.metaKey && !event.ctrlKey && !event.defaultPrevented) {
-        event.preventDefault()
-        if (!event.repeat) void usePlayerStore.getState().toggle()
-      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && target.closest('button, a') && !target.closest('.dock-controls,.mini-player-controls')) return
+      if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
+      const shortcut = playerShortcut(event)
+      if (!shortcut) return
+      event.preventDefault()
+      const state = usePlayerStore.getState()
+      if (event.repeat && ['toggle','next','previous'].includes(shortcut)) return
+      if (shortcut === 'toggle') void state.toggle()
+      else if (shortcut === 'next') void state.next()
+      else if (shortcut === 'previous') void state.previous()
+      else if (shortcut === 'seekBack' || shortcut === 'seekForward') state.seek(state.progressSeconds + (shortcut === 'seekBack' ? -10 : 10))
+      else state.setVolume(Math.max(0, Math.min(1, state.volume + (shortcut === 'volumeUp' ? .05 : -.05))))
     }
     window.addEventListener('keydown', handler)
     const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
@@ -338,10 +393,10 @@ export function App() {
     const back = (event: Event) => {
       if (event.defaultPrevented) return
       // Close the foremost dialog first, preserving the screen beneath it.
-      const overlays = [...document.querySelectorAll<HTMLElement>('.dialog-backdrop, .lyric-chooser-backdrop')]
-      const overlay = overlays.at(-1)
+      const overlays = [...document.querySelectorAll<HTMLElement>('.dialog-backdrop, .lyric-chooser-backdrop, .playlist-import-backdrop')]
+      const overlay = document.querySelector<HTMLElement>('.playlist-picker-layer') || overlays.at(-1)
       if (overlay) {
-        const close = overlay.querySelector<HTMLButtonElement>('header button[aria-label], header button:last-child')
+        const close = overlay.querySelector<HTMLButtonElement>('header button[aria-label]:not(:disabled), header button:last-child:not(:disabled)')
         if (close) { event.preventDefault(); close.click(); return }
       }
       if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
@@ -358,7 +413,7 @@ export function App() {
   }, [lyricsOpen, queueOpen, sleepTimerOpen, libraryDetail, selectedCollection, compact, submittedQuery, activeNav, toggleQueue])
 
   return (
-    <div className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
+    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
       {lyricsOpen && <><LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" /><ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} /></>}
       <aside className="rail" aria-label="主导航">
         <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻') }}>
@@ -384,8 +439,8 @@ export function App() {
         <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
           <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions" hidden={!playlistsExpanded}>
-            <button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}>＋</button>
-            <button type="button" aria-label="导入 B 站收藏夹" title="导入 B 站收藏夹" onClick={() => setImportOpen(true)}><Download size={16}/></button>
+            <button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
+            <ImportPlaylistButton sidebar onClick={() => setImportOpen(true)}/>
           </div></div>
 
           <div className="collection-list" hidden={!playlistsExpanded}>
@@ -408,14 +463,14 @@ export function App() {
           </div>
           <div className="history-buttons"><button type="button" aria-label={libraryDetail || selectedCollection ? '返回上一页' : '返回主页'}
             onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
-          <label className="search-field">
-            <Search size={18} />
-            <input value={query} onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onChange={(event) => { const value = event.target.value; setQuery(value); if (!value.trim()) setSubmittedQuery('') }} placeholder="搜索歌曲、歌手或专辑" />
-            {(query || submittedQuery) && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页" onClick={() => openSearch('')}><X size={16} /></button>}
-            {searchFocused && !query && Boolean(searchHistory.data?.length) && <div className="search-history-popover"><header><span>最近搜索</span><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => clearHistory.mutate()}>清除</button></header>{searchHistory.data!.map((item) => <button type="button" key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => { openSearch(item) }}><Clock3 size={14} />{item}</button>)}</div>}
-          </label>
-          <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => openSearch()}><Search size={20} /></button>
-          <div className="topbar-actions"><button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
+          {selectedCollection && !selectedCollection.bvid.startsWith('up:') ? <label className="collection-topbar-search"><Search size={18}/><input type="search" aria-label="搜索当前合集" placeholder="搜索此合集中的内容" value={collectionSearch} onChange={event=>{setCollectionSearch(event.target.value);window.dispatchEvent(new CustomEvent('bilimusic-filter-collection',{detail:event.target.value}))}}/></label> : <>
+          <SearchField value={query} focused={searchFocused} history={searchHistory.data || []}
+            onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => setSearchFocused(false)}
+            onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
+            onSearch={runSearch} onClear={() => openSearch('')} onClearHistory={() => clearHistory.mutate()} /></>}
+
+          <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => { if (selectedCollection && !selectedCollection.bvid.startsWith('up:')) window.dispatchEvent(new Event('bilimusic-search-collection')); else openSearch() }}><Search size={20} /></button>
+          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
@@ -426,7 +481,7 @@ export function App() {
           {activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
-          activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage}/> :
+          activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
           activeNav === '歌单' || libraryDetail ? hub :
           activeNav === '关注' ? <CreatorsView followed onOpen={openCollection}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
           activeNav === '我的' ? <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/> : activeNav === '搜索' ? null : <>
@@ -493,20 +548,22 @@ export function App() {
           <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
           <PlayerProgress />
         </div>
-        <div className="dock-tools"><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
+        <div className="dock-tools"><div id="lyrics-dock-actions" className="lyrics-dock-actions"/><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
       </footer>
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}{playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
       {isMobile && <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>}
-      {lyricsOpen && <LyricsView onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />}
-      {importOpen && <ImportFavorites onImported={(id, mode) => {
+      {lyricsOpen && <LyricsView onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />}
+      {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id, mode) => {
         setImportOpen(false)
+        setRematchPlaylist(undefined)
         setHubSection(mode === 'link' ? 'collections' : 'playlists')
         libraryReturn.current = { nav: compact ? '此刻' : '歌单', scroll: 0 }
         setActiveNav(`playlist:${id}`)
         requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = 0 })
-      }} onClose={() => setImportOpen(false)} />}
+      }} onClose={() => {setImportOpen(false);setRematchPlaylist(undefined)}} />}
       {creatingPlaylist && <div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus maxLength={80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" />{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
-    </div>
+    </div>{miniMode&&<MiniPlayer busy={miniBusy} onRestore={(lyrics,queue)=>void changeMiniMode(false,lyrics,queue)} onFavorite={()=>void toggleCurrentFavorite()} favoritePending={favoritePending} onError={cause=>setActionError(commandErrorMessage(cause))}/>}
+    {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError}</span><button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
   )
 }

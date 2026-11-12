@@ -1,13 +1,11 @@
 import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, FolderPlus, History, RotateCcw, ListMusic, ListVideo, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Download, FolderPlus, ListMusic, ListVideo, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage, downloadTrack, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
-import { readPlaybackPosition, usablePlaybackPosition } from '../player/playbackPosition'
 import { accountEpoch } from '../../services/accountScope'
-import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from '../player/playerStore'
 import { MetadataDialog, PlaylistPicker } from './LibraryView'
 import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActionStore'
@@ -24,20 +22,6 @@ export function TrackActionsHost() {
   const [error, setError] = useState('')
   const element = useRef<HTMLDivElement>(null)
   const client = useQueryClient()
-  const positionQuery = useQuery({
-    queryKey: ['track-resume', accountEpoch(), menu?.track.id],
-    queryFn: () => readPlaybackPosition(menu!.track.id),
-    enabled: Boolean(menu && !menu.play && !menu.track.resolveParts),
-    staleTime: 0,
-    gcTime: 0,
-  })
-  const resumeAt = usablePlaybackPosition(positionQuery.data ?? 0, menu?.track.durationSeconds ?? 0)
-  const playAt = (position: number) => {
-    if (!menu) return
-    const { track, tracks } = menu
-    useTrackActions.setState({ menu: null })
-    void usePlayerStore.getState().playFromList(tracks ?? [track], track.id, undefined, position)
-  }
   useEffect(() => {
     const clear = () => { useTrackActions.setState({ menu: null, adding: null }); setEditing(null) }
     window.addEventListener('bilimusic-account-changing', clear)
@@ -58,13 +42,9 @@ export function TrackActionsHost() {
   }
   return createPortal(<>
     {menu && <div className="track-menu-scrim" onClick={event => { event.stopPropagation(); useTrackActions.setState({ menu: null }) }} />}
-    {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - (resumeAt > 0 ? 320 : 230))) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
+    {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
       <button role="menuitem" onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
-      {!menu.play && resumeAt > 0 && <>
-        <button role="menuitem" onClick={() => playAt(resumeAt)}><History size={15}/>续播 · {formatDuration(Math.floor(resumeAt))}</button>
-        <button role="menuitem" onClick={() => playAt(0)}><RotateCcw size={15}/>从头播放</button>
-      </>}
       {menu.openParts && <button role="menuitem" onClick={() => { useTrackActions.setState({ menu: null }); menu.openParts?.() }}><ListVideo size={15}/>查看选集</button>}
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>

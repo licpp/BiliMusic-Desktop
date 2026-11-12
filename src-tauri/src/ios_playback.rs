@@ -17,6 +17,23 @@ static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 pub fn initialize(app: tauri::AppHandle) {
     let _ = APP.set(app);
 }
+// Called on UIKit lifecycle transitions, independently of a suspended WebView.
+#[unsafe(no_mangle)]
+pub extern "C" fn bilimusic_ios_media_lifecycle(background_idle: bool) {
+    let Some(app) = APP.get() else { return };
+    app.state::<MediaProxy>()
+        .set_background_idle(background_idle);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let proxy = app.state::<MediaProxy>();
+        if background_idle {
+            proxy.park_if_idle().await;
+        }
+        // Foreground reopening is lazy: the next explicit audio/video resolve probes
+        // and repairs the listener. Merely opening the app must not resume playback.
+    });
+}
+
 unsafe extern "C" {
     fn bilimusic_ios_resolved(request: i64, json: *const c_char);
 }
@@ -229,7 +246,15 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
         if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
             if let (Some(scope), Some(id)) = (value["profile"].as_str(), value["id"].as_str()) {
                 if let Some(seconds) = value["seconds"].as_f64() {
-                    let _ = crate::interface::media::record(&app, scope, id, seconds).await;
+                    let _ = crate::interface::media::record(
+                        &app,
+                        scope,
+                        id,
+                        seconds,
+                        value["observedAt"].as_i64(),
+                        value["sessionId"].as_str(),
+                    )
+                    .await;
                 }
                 if let (Some(position), Some(observed_at)) =
                     (value["position"].as_f64(), value["observedAt"].as_i64())

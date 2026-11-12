@@ -8,6 +8,8 @@ pub struct Collection {
     pub title: String,
     pub cover_url: String,
     pub uploader_name: String,
+    #[serde(default)]
+    pub note: String,
 }
 #[derive(Serialize)]
 pub struct Folder {
@@ -103,7 +105,7 @@ pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut q=c.prepare("SELECT bvid,folder_id,title,cover_url,uploader_name FROM collections ORDER BY created_at DESC,rowid DESC")?;
+    let mut q=c.prepare("SELECT c.bvid,c.folder_id,c.title,c.cover_url,c.uploader_name,COALESCE(n.note,'') FROM collections c LEFT JOIN creator_notes n ON n.bvid=c.bvid ORDER BY c.created_at DESC,c.rowid DESC")?;
     let items = q
         .query_map([], |r| {
             Ok(Collection {
@@ -112,6 +114,7 @@ pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
                 title: r.get(2)?,
                 cover_url: r.get(3)?,
                 uploader_name: r.get(4)?,
+                note: r.get(5)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -225,7 +228,28 @@ pub fn change(
                     &[&id, &name],
                 )?;
             }
+            "note" => {
+                if !id.starts_with("up:") || !valid_reference(id) || name.chars().count() > 160 {
+                    return Err("备注最多160个字符".into());
+                }
+                if tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM collections WHERE bvid=?1)",
+                        [id],
+                        |r| r.get::<_, bool>(0),
+                    )
+                    .map_err(|e| e.to_string())?
+                {
+                    execute(
+                        "INSERT INTO creator_notes(bvid,note) VALUES(?1,?2) ON CONFLICT(bvid) DO UPDATE SET note=excluded.note",
+                        &[&id, &name.trim()],
+                    )?;
+                } else {
+                    return Err("请先关注这个 UP 主".into());
+                }
+            }
             "remove" => {
+                execute("DELETE FROM creator_notes WHERE bvid=?1", &[&id])?;
                 execute("DELETE FROM collection_progress WHERE reference=?1", &[&id])?;
                 execute("DELETE FROM collections WHERE bvid=?1", &[&id])?;
             }
@@ -239,6 +263,39 @@ pub fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn creator_notes_survive_cache_refresh_and_group_changes() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        let up = || Collection {
+            bvid: "up:123".into(),
+            folder_id: String::new(),
+            title: "昵称".into(),
+            cover_url: String::new(),
+            uploader_name: String::new(),
+            note: String::new(),
+        };
+        change(&mut c, "save", "", "", Some(up())).unwrap();
+        change(&mut c, "note", "up:123", "声音很好听", None).unwrap();
+        change(&mut c, "cache", "", "", Some(up())).unwrap();
+        change(&mut c, "create", "", "听书", None).unwrap();
+        let folder = list(&c).unwrap().folders.remove(0).id;
+        change(&mut c, "move", "up:123", &folder, None).unwrap();
+        assert_eq!(list(&c).unwrap().items[0].note, "声音很好听");
+        change(&mut c, "delete", &folder, "", None).unwrap();
+        let item = list(&c).unwrap().items.remove(0);
+        assert!(item.folder_id.is_empty());
+        assert_eq!(item.note, "声音很好听");
+        assert!(change(&mut c, "note", "up:123", &"长".repeat(161), None).is_err());
+        change(&mut c, "remove", "up:123", "", None).unwrap();
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM creator_notes", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
     #[test]
     fn folder_delete_moves_bookmarks_without_creating_tracks() {
         let mut c = Connection::open_in_memory().unwrap();
@@ -257,6 +314,7 @@ mod tests {
                 title: "合集".into(),
                 cover_url: "".into(),
                 uploader_name: "".into(),
+                note: String::new(),
             }),
         )
         .unwrap();

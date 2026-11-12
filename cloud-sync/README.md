@@ -10,7 +10,7 @@ DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE npm start
 
 `HOST` defaults to loopback, `PORT` to 3181. Run behind HTTPS. Only enable `TRUST_PROXY=true` with a trusted local reverse proxy and no public direct port. No broad CORS is enabled; native clients perform requests in Rust.
 
-API prefix `/api/sync/v1`: `POST auth`, `GET/PUT/DELETE vault`, `DELETE session`, `GET policy`, `GET health`.
+API prefix `/api/sync/v1`: `POST auth`, `GET/PUT/DELETE vault`, `DELETE session`, `GET policy`, `GET health`，以及 0.3.0 起的 `GET statistics/`、统计索引与 gzip 月包 GET/PUT。
 
 Auth verifies Bilibili login at the upstream HTTPS nav endpoint; never trusts a client UID or persists the supplied Cookie. A random device token (30 days) is returned once; only its SHA-256 digest is saved. Invalid/expired sessions are rejected. Connections and auth are rate limited, with at most ten active device sessions per user.
 
@@ -21,3 +21,7 @@ Deployment: `/opt/bilimusic-sync`, container `bilimusic-sync`, restricted role/d
 Do not log request bodies, Authorization, database URLs, or Bilibili Cookies. Never configure fake auth in production. Unit tests inject a verifier only into their private local HTTP server; production server always uses the real verifier.
 
 See `../docs/CLOUD_SYNC_USAGE.md` for client behavior and current public-access limitation.
+
+## 0.3.0
+
+部署客户端前更新此服务，以支持 QQ 歌词 ID 与独立播放统计。启动时自动建立 `sync_statistics` 表；原有 vault 协议兼容旧客户端。统计每账号 20 MiB、100 个来源，gzip 月包上限 2 MiB、解压上限 8 MiB。删除 vault 同时删除统计并撤销设备令牌。详见 `../docs/PLAYBACK_STATISTICS.md`。

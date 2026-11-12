@@ -1,0 +1,58 @@
+html[data-mini-player],html[data-mini-player] body,html[data-mini-player] #root { width:100%;height:100%;min-width:0;min-height:0;overflow:hidden; }
+html[data-mini-player],html[data-mini-player] body,html[data-mini-player] #root { background:transparent!important; }
+.app-shell[hidden] { display:none!important; }
+.mini-player { position:fixed;inset:0;display:grid;grid-template-columns:14px 42px minmax(50px,1fr) auto;grid-template-rows:44px 8px;align-content:center;align-items:center;gap:0 7px;padding:7px 12px 7px 6px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:16px;isolation:isolate;outline:none;user-select:none;-webkit-user-select:none; }
+.mini-player[data-queue-open] { grid-template-rows:44px 8px minmax(0,1fr);align-content:start; }
+.mini-player-drag { position:absolute;inset:0;z-index:-1; }
+.mini-player button { display:grid;place-items:center;min-width:24px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted);font-family:inherit;cursor:pointer; }
+.mini-player button:hover { color:var(--ink);background:color-mix(in srgb,var(--muted) 10%,transparent); }
+.mini-player button:disabled { opacity:.4;cursor:default; }
+.mini-player button:focus-visible { outline:2px solid var(--cyan);outline-offset:1px; }
+.mini-player-error { position:fixed;inset:auto 22px 6px 100px;display:flex;align-items:center;gap:6px;z-index:10;background:var(--panel);color:var(--coral);font-size:11px;border-radius:6px;padding:4px 8px; }
+.mini-player-error span { flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis; }
+.mini-player-error button { display:grid;place-items:center;border:0;background:none;color:inherit;padding:0;cursor:pointer; }
+.mini-window-actions { display:flex;flex-direction:column;gap:0;align-self:center; }
+.mini-window-actions button { width:14px;min-width:14px;height:20px;color:var(--faint); }
+.mini-player .mini-artwork-button { display:block;width:42px;height:42px;padding:0;overflow:hidden;border-radius:9px; }
+.mini-artwork-button .artwork { width:100%;height:100%; }
+.mini-player-info { display:grid;min-width:0;gap:3px;align-self:center;cursor:grab; }
+.mini-player-info strong,.mini-player-info small { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.mini-player-info strong { font-size:14px;font-weight:650;line-height:1.5; }
+.mini-player-info small { font-size:12px;line-height:1.5;color:var(--muted); }
+.mini-player-controls { display:flex;align-items:center;gap:0; }
+.mini-player-controls > button,.mini-volume-group > button { width:24px; }
+.mini-player-controls>button>svg { max-width:17px;max-height:17px; }
+.mini-player-controls .liked { color:var(--coral); }
+.mini-player-controls .mini-play-toggle { width:30px;height:30px;color:var(--ink); }
+.mini-player-controls .mini-play-toggle svg { max-width:20px;max-height:20px; }
+.mini-player-controls [aria-pressed="true"],.mini-player-controls [aria-expanded="true"] { color:var(--cyan); }
+.mini-player-progress { grid-column:3/5;align-self:end;display:flex;align-items:center;height:12px; }
+.mini-player-progress input { width:100%;height:12px;margin:0;cursor:pointer; }
+.mini-volume-group { position:relative; }
+.mini-volume-panel { position:absolute;z-index:3;right:0;top:24px;display:flex;align-items:center;gap:8px;width:156px;height:25px;padding:2px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 3px 15px #0002; }
+.mini-volume-panel input { min-width:0;width:100%; }
+.mini-volume-panel small { font-size:10px;min-width:28px;color:var(--muted); }
+.mini-marquee { min-width:0;overflow:hidden;white-space:nowrap;font-size:11px;line-height:1.5;color:var(--muted); }
+.mini-marquee.mini-track-title { font-size:13px;font-weight:600;color:var(--ink); }
+.mini-marquee-track { display:flex;width:max-content; }
+.mini-marquee-track>span { flex-shrink:0; }
+.mini-marquee.scrolling .mini-marquee-track>span { padding-right:30px; }
+.mini-marquee.scrolling .mini-marquee-track { animation:mini-marquee var(--marquee-duration) linear infinite; }
+.mini-player:hover .mini-marquee-track { animation-play-state:paused; }
+@keyframes mini-marquee { 0%,12% { transform:translateX(0); } 90%,100% { transform:translateX(-50%); } }
+.mini-queue { grid-column:1/-1;align-self:stretch;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:8px;padding:8px 2px 0;border-top:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent; }
+.mini-queue>header { display:flex;align-items:center;justify-content:space-between;padding:2px 9px 8px;color:var(--muted);font-size:11px; }
+.mini-queue>header small { font-size:10px;color:var(--faint); }
+.mini-player .mini-queue>button { display:grid;grid-template-columns:20px minmax(0,1fr) auto;justify-items:start;gap:7px;min-height:38px;width:100%;height:auto;padding:8px 9px;border-radius:9px;text-align:left; }
+.mini-queue>button>span,.mini-queue>button>small { font-size:10px;font-weight:400; }
+.mini-queue>button>strong { min-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500; }
+.mini-queue>button>small { justify-self:end; }
+.mini-player .mini-queue>button[aria-current="true"] { color:var(--cyan);background:color-mix(in srgb,var(--cyan) 8%,transparent); }
+.mini-queue>p { text-align:center;font-size:12px;color:var(--muted); }
+@media(min-width:1000px) { .mini-player { inset:auto 24px 24px auto;width:480px;height:72px;box-shadow:0 12px 50px #0003; }.mini-player[data-queue-open] { height:304px; } }
+@media(prefers-reduced-motion:reduce) { .mini-marquee.scrolling .mini-marquee-track { animation:none; } }
+/* Header actions share the same plain icon treatment as playback controls. */
+.topbar-actions > button,.app-shell .lyrics-actions > button { display:grid;place-items:center;width:36px;height:36px;min-width:36px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);box-shadow:none; }
+.app-shell .lyrics-actions > .lyrics-subtitle-toggle[aria-pressed] { padding:0;border:0;background:transparent;box-shadow:none; }
+.topbar-actions > button:hover,.lyrics-actions > button:hover { color:var(--ink);background:color-mix(in srgb,var(--muted) 9%,transparent); }
+.lyrics-actions > button[aria-pressed="true"] { color:var(--cyan); }

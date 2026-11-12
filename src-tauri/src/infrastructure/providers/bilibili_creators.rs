@@ -13,6 +13,7 @@ impl BilibiliProvider {
             .await?;
         let page = page.max(1);
         let mut url = match action {
+            "following" => self.api_url("/x/relation/followings"),
             "search" => self.api_url("/x/web-interface/search/type"),
             "profile" => self.api_url("/x/web-interface/card"),
             "videos" => self.api_url("/x/space/wbi/arc/search"),
@@ -24,13 +25,28 @@ impl BilibiliProvider {
                 });
             }
         };
-        if action != "search" && mid <= 0 {
+        if action != "search" && action != "following" && mid <= 0 {
             return Err(ProviderError::Api {
                 code: -1,
                 message: "无效的 UP 主编号".into(),
             });
         }
         match action {
+            "following" => {
+                let nav: Value = self.get_data(self.api_url("/x/web-interface/nav")).await?;
+                let uid =
+                    nav["mid"]
+                        .as_i64()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| ProviderError::Api {
+                            code: -101,
+                            message: "请先登录 B站账号再导入关注".into(),
+                        })?;
+                url.query_pairs_mut()
+                    .append_pair("vmid", &uid.to_string())
+                    .append_pair("pn", &page.to_string())
+                    .append_pair("ps", "50");
+            }
             "search" => {
                 url.query_pairs_mut()
                     .append_pair("search_type", "bili_user")

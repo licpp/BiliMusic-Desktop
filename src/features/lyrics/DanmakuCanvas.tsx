@@ -47,15 +47,28 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
     }
     const tick = () => { frame = 0; if (document.hidden) return; draw(); if (usePlayerStore.getState().status === 'playing') frame = requestAnimationFrame(tick) }
     const schedule = () => { if (!frame && !document.hidden) frame = requestAnimationFrame(tick) }
-    const observer = new ResizeObserver(() => {
-      const rect = canvas.getBoundingClientRect(); width = rect.width; height = rect.height; ratio = Math.min(window.devicePixelRatio || 1, 2)
-      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); context.setTransform(ratio, 0, 0, ratio, 0, 0); sprites.clear(); schedule()
-    })
+    const resize = () => {
+      // Use the CSS layout box, not the transformed viewport bounding rectangle.
+      // Rotation/viewport transitions must not stretch a portrait backing buffer into landscape.
+      const nextWidth = canvas.clientWidth, nextHeight = canvas.clientHeight
+      const nextRatio = Math.min(window.devicePixelRatio || 1, 2)
+      if (!nextWidth || !nextHeight) return
+      if (nextWidth === width && nextHeight === height && nextRatio === ratio) return
+      width = nextWidth; height = nextHeight; ratio = nextRatio
+      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio)
+      context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0)
+      sprites.clear(); schedule()
+    }
+    const observer = new ResizeObserver(resize)
     observer.observe(canvas)
+    window.addEventListener('resize', resize)
+    window.visualViewport?.addEventListener('resize', resize)
+    screen.orientation?.addEventListener('change', resize)
+    resize()
     const unsubscribe = usePlayerStore.subscribe(schedule)
     document.addEventListener('visibilitychange', schedule)
     schedule()
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); unsubscribe(); document.removeEventListener('visibilitychange', schedule); sprites.clear() }
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize', resize); window.visualViewport?.removeEventListener('resize', resize); screen.orientation?.removeEventListener('change', resize); unsubscribe(); document.removeEventListener('visibilitychange', schedule); sprites.clear() }
   }, [items, scale, opacity, density])
   return <canvas ref={ref} className="danmaku-canvas" aria-label="弹幕" />
 })

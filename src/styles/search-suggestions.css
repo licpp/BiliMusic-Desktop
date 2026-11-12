@@ -1,0 +1,5 @@
+.search-suggestions>button { min-height:40px;font-size:13px; }
+.search-suggestions>button>span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.search-suggestions>button>svg { flex-shrink:0;opacity:.65; }
+.search-suggestions>button[aria-selected="true"] { color:var(--ink);background:var(--panel-raised); }
+@media(max-width:680px){.search-suggestions { max-height:min(300px,40dvh); }.search-suggestions>button { min-height:44px;font-size:14px; }}

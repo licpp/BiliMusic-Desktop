@@ -19,7 +19,7 @@
   "bundle": {
     "android": {
       "minSdkVersion": 26,
-      "versionCode": 20800
+      "versionCode": 30000
     }
   }
 }

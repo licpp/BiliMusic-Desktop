@@ -9,6 +9,7 @@ import android.media.*
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.*
+import android.view.KeyEvent
 import app.tauri.plugin.JSObject
 
 /** Audio lives outside the WebView so backgrounding and screen lock do not stop it. */
@@ -42,6 +43,7 @@ class PlaybackService : Service() {
     private var listeningProfile: String? = null
     private var listeningPosition: Double? = null
     private var listeningAt = 0L
+    private var listeningSession = java.util.UUID.randomUUID().toString()
     private var listeningSeconds = 0.0
     private var collectionRef: String? = null
     private var positionSavedAt = 0L
@@ -83,7 +85,7 @@ class PlaybackService : Service() {
         if ((flush || listeningSeconds >= 15.0) && profile != null && id.isNotEmpty() && listeningSeconds > 0.0) {
             val seconds = listeningSeconds
             listeningSeconds = 0.0
-            listeningListener?.invoke(JSObject().put("scope", profile).put("trackId", id).put("seconds", seconds))
+            listeningListener?.invoke(JSObject().put("scope", profile).put("trackId", id).put("seconds", seconds).put("observedAt", System.currentTimeMillis()).put("sessionId", listeningSession))
         }
     }
     private var lastPosition = 0.0
@@ -132,7 +134,16 @@ class PlaybackService : Service() {
                 setSound(null, null); enableVibration(false); lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             })
         session = MediaSession(this, "BiliMusic")
+        session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
         session.setCallback(object : MediaSession.Callback() {
+            override fun onMediaButtonEvent(intent: Intent): Boolean {
+                val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return super.onMediaButtonEvent(intent)
+                if (key.keyCode == KeyEvent.KEYCODE_HEADSETHOOK || key.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                    if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0) control("toggle")
+                    return true
+                }
+                return super.onMediaButtonEvent(intent)
+            }
             override fun onPlay() { control("resume") }
             override fun onPause() { control("pause") }
             override fun onStop() { control("stop") }
@@ -168,6 +179,7 @@ class PlaybackService : Service() {
     private fun load(intent: Intent) {
         savePosition(force = true)
         accountListening(true)
+        if (id != intent.getStringExtra("id") || intent.getDoubleExtra("position", 0.0) < 1.0) listeningSession = java.util.UUID.randomUUID().toString()
         playbackRate = intent.getDoubleExtra("rate", 1.0).coerceIn(0.75, 2.0).toFloat()
         positionSavedAt = SystemClock.elapsedRealtime() - 15_000
         collectionRef = intent.getStringExtra("collectionRef")

@@ -57,6 +57,8 @@ struct ResolvedTrack: Decodable {
 
 @_silgen_name("bilimusic_ios_resolve")
 private func resolveTrack(_ request: Int64, _ json: UnsafePointer<CChar>)
+@_silgen_name("bilimusic_ios_media_lifecycle")
+private func mediaLifecycle(_ backgroundIdle: Bool)
 @_silgen_name("bilimusic_ios_profile")
 private func currentProfile() -> UnsafeMutablePointer<CChar>?
 @_silgen_name("bilimusic_ios_free")
@@ -73,6 +75,7 @@ func didResolve(_ request: Int64, _ json: UnsafePointer<CChar>) {
 }
 
 class PlayerPlugin: Plugin {
+    private var mediaSourceInvalidated = false
     private var sleepWork: DispatchWorkItem?
     private var sleepEndsAt: TimeInterval = 0
     private var sleepDeadline: Double = 0
@@ -83,6 +86,7 @@ class PlayerPlugin: Plugin {
     private var listeningActive = false
     private var listeningID: String?
     private var listeningProfile = ""
+    private var listeningSession = UUID().uuidString
     private var listeningSeconds: Double = 0
     private let player = AVPlayer()
     private var state = PlayerSnapshot()
@@ -164,6 +168,12 @@ class PlayerPlugin: Plugin {
             self.backgroundPlaybackWanted = self.desiredPlaying
             self.accountListening(flush: true); self.savePosition(force: true)
         })
+        notifications.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.desiredPlaying else { return }
+            self.mediaSourceInvalidated = true
+            mediaLifecycle(true)
+            NSLog("BiliMusic media lifecycle: paused in background, parking local listener")
+        })
         bindRemoteCommands()
     }
     deinit {
@@ -219,6 +229,7 @@ class PlayerPlugin: Plugin {
                 recoveryAttempted = false; pausedAt = nil
                 savePosition(force: true)
                 accountListening(flush: true)
+                listeningSession = UUID().uuidString
                 guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
                 profile = String(cString: raw); freeProfile(raw)
                 generation += 1; desiredPlaying = false; itemStatus = nil
@@ -375,6 +386,8 @@ class PlayerPlugin: Plugin {
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
         state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position; initialSeekPending = position > 0
+        mediaSourceInvalidated = false
+        NSLog("BiliMusic audio start: host=%@ port=%ld position=%.3f", url.host ?? "", url.port ?? 0, position)
         let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 2
         itemStatus = nil; player.replaceCurrentItem(with: item)
         let request = generation
@@ -383,7 +396,18 @@ class PlayerPlugin: Plugin {
                 guard let self = self, self.generation == request, item === self.player.currentItem else { return }
                 if item.status == .failed {
                     let error = item.error as NSError?
-                    if let error { NSLog("BiliMusic audio item failed: %@ (%ld)", error.domain, error.code) }
+                    if let error {
+                        NSLog("BiliMusic audio item failed: %@ (%ld)", error.domain, error.code)
+                        var underlying = error
+                        for _ in 0..<4 {
+                            if let failedURL = underlying.userInfo[NSURLErrorFailingURLErrorKey] as? URL {
+                                NSLog("BiliMusic failing endpoint: host=%@ port=%ld", failedURL.host ?? "", failedURL.port ?? 0)
+                            }
+                            guard let next = underlying.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+                            NSLog("BiliMusic underlying audio error: %@ (%ld)", next.domain, next.code)
+                            underlying = next
+                        }
+                    }
                     self.playbackFailed()
                     return
                 }
@@ -444,6 +468,10 @@ class PlayerPlugin: Plugin {
         desiredPlaying = false
         if state.stopped { generation += 1; state.revision = generation }
         player.pause(); state.status = "paused"; endBackgroundTask(); publish()
+        if UIApplication.shared.applicationState == .background {
+            mediaSourceInvalidated = true
+            mediaLifecycle(true)
+        }
     }
     private func resume() {
         if expireSleepIfNeeded() { return }
@@ -452,7 +480,7 @@ class PlayerPlugin: Plugin {
         backgroundPlaybackWanted = false
         let stale = pausedAt.map { Date().timeIntervalSince1970 - $0 >= 120 } ?? false
         pausedAt = nil
-        if player.currentItem?.status == .failed || state.error != nil || stale {
+        if mediaSourceInvalidated || player.currentItem?.status == .failed || state.error != nil || stale {
             if recoverCurrentPlayback() { return }
         }
         guard player.currentItem != nil else {
@@ -551,7 +579,7 @@ class PlayerPlugin: Plugin {
         if listeningActive { listeningSeconds += max(0, min(300, now - listeningAt)) }
         listeningAt = now
         if flush || listeningID != state.id || listeningProfile != profile || listeningSeconds >= 15 {
-            if let id = listeningID, listeningSeconds > 0, let data = try? JSONSerialization.data(withJSONObject: ["profile": listeningProfile, "id": id, "seconds": min(300, listeningSeconds)]), let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
+            if let id = listeningID, listeningSeconds > 0, let data = try? JSONSerialization.data(withJSONObject: ["profile": listeningProfile, "id": id, "seconds": min(300, listeningSeconds), "observedAt": Int64(Date().timeIntervalSince1970 * 1000), "sessionId": listeningSession]), let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
             listeningSeconds = 0
         }
         listeningID = state.id; listeningProfile = profile
@@ -668,6 +696,7 @@ class PlayerPlugin: Plugin {
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
+        if !refresh { listeningSession = UUID().uuidString }
         generation += 1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = position ?? 0; state.duration = track.durationSeconds
@@ -701,6 +730,7 @@ class PlayerPlugin: Plugin {
         do { try start(url, at: result.position ?? 0) } catch { fail(error.localizedDescription) }
     }
     private func returnedToForeground() {
+        mediaLifecycle(false)
         let absence = backgroundedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
         let wasPlaying = backgroundPlaybackWanted
         backgroundedAt = nil
@@ -733,6 +763,7 @@ class PlayerPlugin: Plugin {
         }
     }
     private func bindRemoteCommands() {
+        UIApplication.shared.beginReceivingRemoteControlEvents()
         let center = MPRemoteCommandCenter.shared()
         func bind(_ command: MPRemoteCommand, _ work: @escaping () -> Void) {
             command.isEnabled = true

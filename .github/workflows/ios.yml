@@ -2,7 +2,7 @@ name: ios-self-sign-build
 on:
   workflow_dispatch:
   push:
-    branches: [codex/ios-self-sign]
+    branches: [main, codex/release-0.3.0]
     paths: ['src/**', 'src-tauri/**', 'native/ios-player/**', 'scripts/ios-*', 'package*', 'tests/**', '.github/workflows/ios.yml']
 permissions:
   contents: read

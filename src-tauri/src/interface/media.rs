@@ -2,7 +2,7 @@ use super::error::CommandError;
 use crate::infrastructure::{database::Database, providers::bilibili::*};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tauri::{Manager, State};
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +118,7 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
             scope: String,
             track_id: String,
             seconds: Option<f64>,
+            session_id: Option<String>,
             position: Option<f64>,
             observed_at: Option<i64>,
             collection_ref: Option<String>,
@@ -126,7 +127,15 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
             let handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(seconds) = sample.seconds {
-                    let _ = record(&handle, &sample.scope, &sample.track_id, seconds).await;
+                    let _ = record(
+                        &handle,
+                        &sample.scope,
+                        &sample.track_id,
+                        seconds,
+                        sample.observed_at,
+                        sample.session_id.as_deref(),
+                    )
+                    .await;
                 }
                 if let (Some(position), Some(observed_at)) = (sample.position, sample.observed_at) {
                     save_position(
@@ -192,10 +201,18 @@ pub async fn record(
     expected: &str,
     id: &str,
     seconds: f64,
+    observed_at: Option<i64>,
+    session_id: Option<&str>,
 ) -> Result<(), String> {
     if !seconds.is_finite() || seconds <= 0.0 || seconds > 300.0 {
         return Err("收听时长无效".into());
     }
+    let observed_at = observed_at.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+    });
     let state = app.state::<crate::sync::SyncState>();
     let _gate = state.gate.lock().await;
     let db = app.state::<Database>();
@@ -214,14 +231,15 @@ pub async fn record(
         return Ok(());
     }
     let tx = c.transaction().map_err(|e| e.to_string())?;
-    tx.execute("INSERT INTO listening_daily(day,track_id,seconds) VALUES(date('now','localtime'),?1,?2) ON CONFLICT(day,track_id) DO UPDATE SET seconds=seconds+excluded.seconds",params![id,seconds]).map_err(|e|e.to_string())?;
-    tx.execute("INSERT INTO listening_totals(track_id,seconds) VALUES(?1,?2) ON CONFLICT(track_id) DO UPDATE SET seconds=seconds+excluded.seconds",params![id,seconds]).map_err(|e|e.to_string())?;
-    tx.execute("INSERT INTO listening_days(day,seconds) VALUES(date('now','localtime'),?1) ON CONFLICT(day) DO UPDATE SET seconds=seconds+excluded.seconds",[seconds]).map_err(|e|e.to_string())?;
-    tx.execute(
-        "DELETE FROM listening_daily WHERE day<date('now','localtime','-90 days')",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+    crate::sync::statistics::record(
+        &tx,
+        &db.1,
+        expected,
+        id,
+        seconds,
+        Some(observed_at as f64 / 1000.0),
+        session_id,
+    )?;
     tx.commit().map_err(|e| e.to_string())
 }
 #[tauri::command]
@@ -230,10 +248,19 @@ pub async fn listening_record(
     scope: String,
     track_id: String,
     seconds: f64,
+    observed_at: Option<i64>,
+    session_id: Option<String>,
 ) -> Result<(), CommandError> {
-    record(&app, &scope, &track_id, seconds)
-        .await
-        .map_err(CommandError::database)
+    record(
+        &app,
+        &scope,
+        &track_id,
+        seconds,
+        observed_at,
+        session_id.as_deref(),
+    )
+    .await
+    .map_err(CommandError::database)
 }
 #[tauri::command]
 pub fn listening_statistics(database: State<'_, Database>) -> Result<Value, CommandError> {
@@ -241,28 +268,8 @@ pub fn listening_statistics(database: State<'_, Database>) -> Result<Value, Comm
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    let run = || -> rusqlite::Result<Value> {
-        let week=c.query_row("SELECT COALESCE(SUM(seconds),0),COUNT(DISTINCT track_id),COUNT(DISTINCT day) FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days')",[],|r|Ok(json!({"seconds":r.get::<_,f64>(0)?,"tracks":r.get::<_,i64>(1)?,"days":r.get::<_,i64>(2)?})))?;
-        let total=c.query_row("SELECT COALESCE(SUM(seconds),0),COUNT(*) FROM listening_totals",[],|r|Ok(json!({"seconds":r.get::<_,f64>(0)?,"tracks":r.get::<_,i64>(1)?,"days":c.query_row("SELECT COUNT(*) FROM listening_days",[],|r|r.get::<_,i64>(0))?})))?;
-        let mut q=c.prepare("SELECT day,SUM(seconds) FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days') GROUP BY day ORDER BY day")?;
-        let daily = q
-            .query_map([], |r| {
-                Ok(json!({"day":r.get::<_,String>(0)?,"seconds":r.get::<_,f64>(1)?}))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut tops = Vec::new();
-        for weekly in [true, false] {
-            let table = if weekly {
-                "(SELECT track_id,SUM(seconds) seconds FROM listening_daily WHERE day>=date('now','localtime','weekday 0','-6 days') GROUP BY track_id)"
-            } else {
-                "listening_totals"
-            };
-            let mut q=c.prepare(&format!("SELECT s.track_id,s.seconds,COALESCE(m.title,t.title,'已移除的歌曲'),COALESCE(m.artist,t.artist,''),COALESCE(m.cover_url,t.cover_url,'') FROM {table} s LEFT JOIN tracks t ON t.id=s.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id ORDER BY s.seconds DESC,s.track_id LIMIT 20"))?;
-            tops.push(q.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"seconds":r.get::<_,f64>(1)?,"title":r.get::<_,String>(2)?,"artist":r.get::<_,String>(3)?,"coverUrl":r.get::<_,String>(4)?})))?.collect::<rusqlite::Result<Vec<_>>>()?);
-        }
-        Ok(json!({"week":week,"total":total,"daily":daily,"weekTop":tops[0],"totalTop":tops[1]}))
-    };
-    run().map_err(CommandError::database)
+    crate::sync::statistics::query(&c, &database.1, &profile(&database))
+        .map_err(CommandError::database)
 }
 
 #[tauri::command]

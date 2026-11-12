@@ -25,23 +25,6 @@
   .lyrics-actions > .lyrics-subtitle-toggle,.lyrics-meta-copy .lyrics-season-link { min-height:40px; }
 }
 .statistics-entry { margin:14px 0 20px; }
-.listening-statistics { min-width:0; }
-.listening-period { display:flex;gap:24px;border-bottom:1px solid var(--line); }
-.listening-period button { min-height:44px;padding:6px 2px;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);font-size:15px;cursor:pointer; }
-.listening-period button[aria-selected="true"] { border-bottom-color:var(--cyan);color:var(--ink); }
-.listening-summary { display:grid;gap:12px;margin:32px 0; }.listening-summary strong { font-size:27px;font-weight:650; }.listening-summary span { color:var(--muted);font-size:14px; }
-.listening-statistics h3 { font-size:15px;margin:24px 0 16px; }
-.listening-chart { display:grid;grid-template-columns:repeat(7,minmax(0,1fr));height:156px;padding:0 8px 24px;gap:18px; }
-.listening-chart>div { position:relative;height:100%;display:flex;align-items:flex-end; }
-.listening-chart>div>span { width:100%;border-radius:6px 6px 2px 2px;background:var(--cyan);opacity:.8; }
-.listening-chart small { position:absolute;bottom:-22px;left:0;right:0;text-align:center;font-size:11px;color:var(--muted); }
-.listening-ranking>div { display:flex;align-items:center;gap:10px;min-height:70px;border-bottom:1px solid var(--line); }
-.listening-ranking>div>span:first-child { flex:0 0 18px;font-size:12px;color:var(--muted); }
-.listening-ranking .artwork { flex:0 0 42px;width:42px;height:42px;border-radius:8px;overflow:hidden; }
-.listening-ranking>div>div { flex:1;min-width:0;display:grid;gap:6px; }
-.listening-ranking strong { font-size:14px;white-space:normal;overflow-wrap:anywhere;line-height:1.4; }
-.listening-ranking small { font-size:11px;color:var(--muted); }.listening-ranking>div>small:last-child { max-width:90px;text-align:right;line-height:1.5; }
-.statistics-note { margin:24px 0;font-size:12px;color:var(--muted); }
 
 .action-menu-panel:has(.playback-quality-settings):not(.action-menu-sheet) { width:300px; }
 .action-menu-panel > .lyrics-subtitle-menu-item small { margin-left:auto;color:var(--muted);font-size:12px; }
@@ -158,3 +141,14 @@
 .playback-setting-switch[data-enabled="true"] i { transform:translateX(15px); }
 .mobile-playback-settings .lyrics-subtitle-menu-item small + .playback-setting-switch { margin-inline-start:0; }
 .mobile-playback-settings > button:active,.mobile-playback-settings .touch-option-trigger:active { background:var(--panel-raised); }
+.lyrics-song-actions { display:contents; }
+.action-menu-panel .lyrics-song-actions > button { display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:10px;border:0;border-radius:7px;background:transparent;color:inherit;text-align:left;font:inherit;font-size:12px;cursor:pointer; }
+.action-menu-panel .lyrics-song-actions > button:focus-visible { background:var(--line); }
+@media(hover:hover) {
+  .action-menu-panel .lyrics-song-actions > button:hover { background:var(--line); }
+}
+.mobile-playback-settings .lyrics-song-actions-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px;padding:4px 0; }
+.mobile-playback-settings .lyrics-song-actions-grid > button { min-height:48px;padding:10px 8px;gap:9px;font-size:14px;line-height:1.4;touch-action:manipulation; }
+.mobile-playback-settings .lyrics-song-actions-grid > button > svg { width:19px;height:19px;flex:0 0 19px;color:var(--muted); }
+.mobile-playback-settings .lyrics-song-actions-grid > button:active { background:var(--panel-raised); }
+.action-menu-panel .lyrics-song-actions > button:disabled { opacity:.4;cursor:default; }

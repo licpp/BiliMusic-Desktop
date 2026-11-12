@@ -22,3 +22,10 @@ src-tauri/.ios-icons/
 native/ios-player/.tauri/
 native/ios-player/ios/.build/
 native/ios-player/ios/.swiftpm/
+
+# Local build artifacts and Cargo registry extraction metadata
+/artifacts/
+/src-tauri/vendor/tao/.cargo-ok
+/src-tauri/vendor/tao/.cargo_vcs_info.json
+/src-tauri/vendor/tao/Cargo.toml.orig
+/src-tauri/vendor/tao/Cargo.lock

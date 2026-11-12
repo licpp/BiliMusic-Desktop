@@ -39,10 +39,10 @@ export function SleepTimer({ open, onClose }: { open: boolean; onClose: () => vo
         <header><h3>定时暂停</h3><button className="icon-action" aria-label="关闭" onClick={onClose}><X size={19}/></button></header>
         {sleep.deadline > 0 && <p>剩余 {formatDuration(Math.max(0, Math.ceil((sleep.deadline - now) / 1000)))}</p>}
         <div className="sleep-timer-presets">{durations.map(value => <button key={value} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>{value} 分钟</button>)}</div>
-        <label>自定时长 <input type="number" inputMode="numeric" min={1} max={180} value={minutes || ''} onChange={event => setMinutes(Number(event.target.value))}/> 分钟</label>
+        <div className="sleep-timer-custom"><label>自定时长 <input type="number" inputMode="numeric" min={1} max={180} value={minutes || ''} onChange={event => setMinutes(Number(event.target.value))}/> 分钟</label>
+          <button className="mobile-page-primary" disabled={busy || !Number.isInteger(minutes) || minutes < 1 || minutes > 180} onClick={() => void action('sleepStart', minutes * 60)}>{sleep.deadline > 0 ? '重新计时' : '开始计时'}</button></div>
         {error && <small role="alert">{error}</small>}
-        <footer>{sleep.deadline > 0 && <button disabled={busy} onClick={() => void action('sleepCancel')}>取消定时</button>}
-          <button className="mobile-page-primary" disabled={busy || !Number.isInteger(minutes) || minutes < 1 || minutes > 180} onClick={() => void action('sleepStart', minutes * 60)}>{sleep.deadline > 0 ? '重新计时' : '开始计时'}</button></footer>
+        {sleep.deadline > 0 && <footer><button disabled={busy} onClick={() => void action('sleepCancel')}>取消定时</button></footer>}
       </section>
     </div>, document.body)
 }

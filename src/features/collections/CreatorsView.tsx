@@ -1,3 +1,4 @@
+import { CreatorActions, CreatorManager } from './CreatorTools'
 import { listen } from '@tauri-apps/api/event'
 import { formatAudienceCount } from '../../shared/count'
 import { accountEpoch } from '../../services/accountScope'
@@ -93,7 +94,11 @@ function CreatorEntry({
   item,
   onOpen,
   sidebar = false,
+  folders = [],
+  editable = false,
 }: {
+  editable?: boolean
+  folders?: import('../../services/collections').CollectionFolder[]
   item: Collection
   sidebar?: boolean
   onOpen: (item: Collection) => void
@@ -119,13 +124,15 @@ function CreatorEntry({
       <button className="creator-open" onClick={() => onOpen(display)}>
         <Artwork src={display.coverUrl} />
         <span className="creator-copy">
-          <strong>{display.title}</strong>
+          <strong>{item.note || display.title}</strong>
+          {item.note && <small>{display.title}</small>}
           {display.followers !== undefined && (
             <small>{formatAudienceCount(display.followers)} 粉丝</small>
           )}
         </span>
       </button>
       {!sidebar && <CreatorFollow item={display} />}
+      {editable && <CreatorActions item={item} folders={folders}/>}
     </div>
   )
 }
@@ -141,6 +148,7 @@ export function CreatorsView({
   followed?: boolean
   sidebar?: boolean
 }) {
+  const [group, setGroup] = useState('all')
   const [expanded, setExpanded] = useState(() => localStorage.getItem('creators-expanded') !== 'false')
   const saved = useQuery({
     queryKey: ['collections'],
@@ -163,16 +171,18 @@ export function CreatorsView({
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
       {sidebar && <button className="sidebar-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => { localStorage.setItem('creators-expanded', String(!value)); return !value })}>关注{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}
       <div hidden={sidebar && !expanded}>
-      {followed && !sidebar && <div className="creators-tools"><span className="hub-summary">{items.length} 位 UP 主</span></div>}
+      {followed && !sidebar && <CreatorManager folders={saved.data?.folders || []} items={items} selected={group} onSelect={setGroup}/> }
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
-      {items.map((item) => (
+      {items.filter(item => !followed || sidebar || group === 'all' || item.folderId === group).map((item) => (
         <CreatorEntry
           key={item.bvid}
-          item={item}
+          item={{...item,...saved.data?.items.find(saved=>saved.bvid===item.bvid)}}
+          editable={Boolean(saved.data?.items.some(saved=>saved.bvid===item.bvid))}
           onOpen={onOpen}
           sidebar={sidebar}
+          folders={saved.data?.folders || []}
         />
       ))}
       {result.isLoading && <p>正在搜索 UP 主…</p>}
@@ -365,6 +375,7 @@ export function CreatorPage({
         </div>
         <div className="creator-header-actions">
           <CreatorFollow item={item} />
+          {followed && <CreatorActions item={saved.data!.items.find(value=>value.bvid===item.bvid)!} folders={saved.data?.folders || []}/>}
           {resumeButton}
           <button
             className="collection-icon"

@@ -709,6 +709,33 @@ impl BilibiliProvider {
         Ok(())
     }
 
+    pub async fn search_suggestions(&self, keyword: &str) -> Result<Vec<String>, ProviderError> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() || keyword.chars().count() > 100 {
+            return Ok(vec![]);
+        }
+        let value: serde_json::Value = self
+            .client
+            .get("https://s.search.bilibili.com/main/suggest")
+            .query(&[
+                ("term", keyword),
+                ("main_ver", "v1"),
+                ("func", "suggest"),
+                ("suggest_type", "accurate"),
+                ("sub_type", "tag"),
+                ("tag_num", "8"),
+                ("highlight", ""),
+            ])
+            .header(reqwest::header::REFERER, "https://search.bilibili.com/")
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(suggestion_words(&value))
+    }
+
     pub async fn search(
         &self,
         keyword: &str,
@@ -1322,8 +1349,51 @@ fn clean_html(value: &str) -> String {
         .replace("&#39;", "'")
 }
 
+fn suggestion_words(value: &serde_json::Value) -> Vec<String> {
+    let mut words = Vec::new();
+    if value["code"].as_i64() != Some(0) {
+        return words;
+    }
+    if let Some(tags) = value["result"]["tag"].as_array() {
+        for tag in tags {
+            if let Some(word) = tag["value"].as_str().or_else(|| tag["term"].as_str()) {
+                let word = word.trim();
+                if !word.is_empty()
+                    && word.chars().count() <= 100
+                    && !words.iter().any(|v| v == word)
+                {
+                    words.push(word.to_owned());
+                    if words.len() == 8 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn suggestions_use_plain_values_and_ignore_invalid_or_duplicate_items() {
+        let value = serde_json::json!({"code":0,"result":{"tag":[
+            {"name":"<em>歌曲</em>","value":"歌曲精选"}, {"value":"歌曲精选"},
+            {"term":"演唱会"}, {"value":" "}, {"name":"HTML only"}
+        ]}});
+        assert_eq!(super::suggestion_words(&value), vec!["歌曲精选", "演唱会"]);
+        assert!(super::suggestion_words(&serde_json::json!({"code":-1})).is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili network access"]
+    async fn live_search_suggestions() {
+        let provider = super::BilibiliProvider::new().unwrap();
+        let words = provider.search_suggestions("周杰伦").await.unwrap();
+        assert!(!words.is_empty());
+        assert!(words.len() <= 8);
+        assert!(words.iter().all(|v| !v.contains("<em")));
+    }
     use super::{clean_html, parse_danmaku, parse_duration};
 
     #[test]

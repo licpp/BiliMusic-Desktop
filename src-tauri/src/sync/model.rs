@@ -233,7 +233,7 @@ impl Snapshot {
                 }
                 "lyric" => {
                     key == &format!("lyric:{id}")
-                        && matches!(text(r, "provider"), "lrclib" | "netease" | "local")
+                        && matches!(text(r, "provider"), "lrclib" | "netease" | "qq" | "local")
                         && number(r, "biasMs").unsigned_abs() <= 30_000
                 }
                 _ => false,

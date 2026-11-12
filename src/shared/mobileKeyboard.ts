@@ -22,7 +22,7 @@ export function installMobileKeyboard() {
     }
     root.style.setProperty('--keyboard-overlap', `${overlap}px`)
     root.dataset.keyboardOpen = 'true'
-    const container = input.closest<HTMLElement>('.mobile-page-content,.stage-scroll')
+    const container = input.closest<HTMLElement>('.mobile-page-content,.stage-scroll,.import-body')
     const hiddenBy = input.getBoundingClientRect().bottom - (window.innerHeight - overlap - 16)
     if (container && hiddenBy > 0) {
       if (!adjustment || adjustment.container !== container) adjustment = { container, scrollTop: container.scrollTop }

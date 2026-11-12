@@ -139,7 +139,7 @@ const playerStorage = {
 window.addEventListener('pagehide', () => { flushPosition(); flushPlayerSnapshot() })
 function playerAudio() {
   if (audio) return audio
-  audio = new Audio(); audio.preload = 'auto'; audio.volume = usePlayerStore.getState().volume
+  audio = new Audio(); audio.preload = 'metadata'; audio.volume = usePlayerStore.getState().volume
   let stallTimer: ReturnType<typeof setTimeout> | undefined
   const clearStall = () => { clearTimeout(stallTimer); stallTimer = undefined }
   audio.addEventListener('waiting', () => {

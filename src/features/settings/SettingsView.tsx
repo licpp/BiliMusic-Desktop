@@ -1,4 +1,5 @@
 import { UpdateSettings } from './UpdateSettings'
+import { PlaybackCacheSettings } from './PlaybackCacheSettings'
 import { SyncSettings } from '../sync/SyncSettings'
 import { isMobile } from '../../services/platform'
 import { Download, FolderOpen, History, LoaderCircle, Settings2, Sun } from 'lucide-react'
@@ -35,5 +36,5 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     <div className="settings-icon"><History /></div>
     <div><strong id="auto-resume-label">自动断点续播</strong><small>开启时从上次进度播放，关闭时从头播放。</small></div>
     <button type="button" className="auto-resume-switch" role="switch" aria-checked={autoResume} aria-labelledby="auto-resume-label" onClick={() => setAutoResume(!autoResume)}><span aria-hidden="true"/></button>
-  </div><SyncSettings /><UpdateSettings /></section>
+  </div>{!isMobile && <div className="settings-card keyboard-shortcuts"><div><strong>播放快捷键</strong><small>空格：播放 / 暂停<br/>⌘ / Ctrl + ← / →：上一首 / 下一首<br/>⌘ / Ctrl + ↑ / ↓：调节音量<br/>Alt / Option + ← / →：快退 / 快进 10 秒</small></div></div>}<PlaybackCacheSettings/><SyncSettings /><UpdateSettings /></section>
 }

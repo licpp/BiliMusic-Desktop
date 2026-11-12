@@ -1,8 +1,12 @@
+#[cfg(desktop)]
+mod desktop_media;
 mod domain;
 mod infrastructure;
 mod interface;
 #[cfg(target_os = "ios")]
 mod ios_playback;
+#[cfg(desktop)]
+mod mini_player;
 mod sync;
 
 use infrastructure::database::Database;
@@ -54,7 +58,8 @@ pub fn run() {
     builder
         .setup(|app| {
             let database = Database::open(app.handle())?;
-            let media_proxy = tauri::async_runtime::block_on(MediaProxy::start())?;
+            let media_proxy =
+                tauri::async_runtime::block_on(MediaProxy::start_cached(app.handle().clone()))?;
             let bilibili = BilibiliProvider::new()?;
             let saved_cookie = database.0.lock().ok().and_then(|connection| {
                 AuthRepository::get_cookie(&connection, "bilibili")
@@ -68,6 +73,10 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
+            #[cfg(desktop)]
+            app.manage(mini_player::MiniPlayerState::default());
+            #[cfg(desktop)]
+            desktop_media::initialize(app.handle());
             #[cfg(target_os = "ios")]
             ios_playback::initialize(app.handle().clone());
             #[cfg(target_os = "android")]
@@ -111,6 +120,20 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            interface::playback_cache::playback_cache_status,
+            interface::playback_cache::playback_cache_limit,
+            interface::playback_cache::playback_cache_clear,
+            #[cfg(desktop)]
+            desktop_media::desktop_media_update,
+            #[cfg(desktop)]
+            mini_player::desktop_mini_state,
+            #[cfg(desktop)]
+            mini_player::desktop_mini_set,
+            #[cfg(desktop)]
+            mini_player::desktop_mini_panel,
+            interface::playlist_import::external_playlist_read,
+            interface::playlist_import::playlist_import_scope,
+            interface::playlist_import::playlist_import_commit,
             interface::media::bili_creator_catalog,
             interface::commands::collections_list,
             interface::commands::collections_change,
@@ -141,6 +164,7 @@ pub fn run() {
             interface::commands::library_toggle_favorite,
             interface::commands::library_update_metadata,
             interface::commands::bili_search,
+            interface::commands::bili_search_suggestions,
             interface::commands::search_history_list,
             interface::commands::search_history_clear,
             interface::commands::playlists_list,
@@ -160,6 +184,7 @@ pub fn run() {
             interface::media::listening_scope,
             interface::media::listening_record,
             interface::media::listening_statistics,
+            sync::statistics::listening_sync,
             interface::commands::bili_video_parts,
             interface::commands::bili_video_pagelist,
             interface::commands::bili_playback_source,

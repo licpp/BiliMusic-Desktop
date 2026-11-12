@@ -1,5 +1,6 @@
 mod dav;
 pub mod model;
+pub mod statistics;
 pub mod storage;
 mod transport;
 use crate::infrastructure::{
@@ -13,12 +14,19 @@ use tauri::{AppHandle, State};
 #[derive(Default)]
 pub struct SyncState {
     pub gate: tokio::sync::Mutex<()>,
+    pub statistics_gate: tokio::sync::Mutex<()>,
+    statistics_active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
     // Playback only waits for actual account mutations, never sync HTTP requests.
     pub account_gate: tokio::sync::Mutex<()>,
     active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 impl SyncState {
     pub fn interrupt(&self) {
+        if let Ok(active) = self.statistics_active.lock() {
+            if let Some(token) = active.as_ref() {
+                token.cancel();
+            }
+        }
         if let Ok(active) = self.active.lock() {
             if let Some(token) = active.as_ref() {
                 token.cancel();
@@ -42,6 +50,8 @@ pub struct Config {
     pub url: String,
     pub history: bool,
     #[serde(default)]
+    pub statistics: bool,
+    #[serde(default)]
     pub initialized: bool,
     #[serde(default)]
     pub device_id: String,
@@ -54,6 +64,7 @@ impl Default for Config {
             uid: String::new(),
             url: "https://dav.jianguoyun.com/dav/".into(),
             history: false,
+            statistics: false,
             initialized: false,
             device_id: String::new(),
         }
@@ -188,6 +199,7 @@ pub async fn sync_connect(
     password: String,
     consent: bool,
 ) -> Result<Status, String> {
+    state.interrupt();
     let _gate = state.gate.lock().await;
     if !consent {
         return Err("请先确认同步范围及服务商授权说明".into());

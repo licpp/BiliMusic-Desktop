@@ -11,7 +11,7 @@ export function CollectionDialog({ title, onClose, children, className = '' }: {
     if(root)root.inert=true
     const top=()=>[...document.querySelectorAll('.collection-dialog-layer')].at(-1)===layer.current
     const keyboard=(e:KeyboardEvent)=>{
-      if(!top() || document.querySelector('[data-overflow-panel], .track-context-menu'))return
+      if(!top() || document.querySelector('[data-overflow-panel], .track-context-menu, .playlist-picker-layer'))return
       if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();dismiss.current()}
       if(e.key==='Tab'){
         const buttons=[...layer.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled)')]
@@ -19,7 +19,7 @@ export function CollectionDialog({ title, onClose, children, className = '' }: {
         if((e.shiftKey&&index<=0)||(!e.shiftKey&&index===buttons.length-1)){e.preventDefault();buttons[e.shiftKey?buttons.length-1:0]?.focus()}
       }
     }
-    const back=(e:Event)=>{if(top() && !document.querySelector('[data-overflow-panel], .track-context-menu')){e.preventDefault();e.stopImmediatePropagation();dismiss.current()}}
+    const back=(e:Event)=>{if(top() && !document.querySelector('[data-overflow-panel], .track-context-menu, .playlist-picker-layer')){e.preventDefault();e.stopImmediatePropagation();dismiss.current()}}
     document.addEventListener('keydown',keyboard,true);window.addEventListener('bilimusic-back',back,true)
     layer.current?.querySelector<HTMLElement>('input,button')?.focus()
     return()=>{document.removeEventListener('keydown',keyboard,true);window.removeEventListener('bilimusic-back',back,true);if(root)root.inert=wasInert;if(previous?.isConnected&&!previous.closest('[inert]'))previous.focus()}

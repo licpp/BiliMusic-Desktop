@@ -36,7 +36,7 @@ export function validateSnapshot(value, uid) {
       if(!validCollectionReference(f.reference)||key!==`collectionProgress:${f.reference}`||value.records[`collection:${f.reference}`]?.kind!=='collection'||!match||!Number.isSafeInteger(+match[1])||!validCollectionReference(match[2])||BigInt(match[3])>9223372036854775807n||+match[4]>604800000||(!f.reference.startsWith('season:')&&!f.reference.startsWith('up:')&&f.reference!==match[2]))fail();
     }
     else if(r.kind==='playlist') {if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
-    else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}
+    else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','qq','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}
     else {
       if(typeof f.trackId!=='string') fail();referenced.add(f.trackId);
       if(r.kind==='item'){if(!uuid.test(f.playlistId)||key!==`item:${f.playlistId}|${f.trackId}`||!value.records[`playlist:${f.playlistId}`]||!Number.isSafeInteger(f.position)||f.position<0)fail();}

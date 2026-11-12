@@ -14,6 +14,7 @@ async function texts(directory) {
 }
 const metadata = JSON.parse(execFileSync('cargo', ['metadata','--locked','--manifest-path','src-tauri/Cargo.toml','--filter-platform',target,'--format-version','1'], { maxBuffer:32 * 1024 * 1024 }));
 const packages = [];
+packages.push({ name:'navidrome-lyrics-plugin QRC decoder', version:'4b78b89bd53ddf78dfb15769379347a37cd23e92', ecosystem:'vendored', license:'MIT', repository:'https://github.com/J0R6IT0/navidrome-lyrics-plugin', licenseFiles:[{ name:'qrc-codec-MIT.txt', content:await readFile('licenses/qrc-codec-MIT.txt','utf8') }] });
 for (const item of metadata.packages) packages.push({ name:item.name, version:item.version, ecosystem:'cargo', license:item.license || 'NOASSERTION', repository:item.repository, licenseFiles:await texts(dirname(item.manifest_path)) });
 const lock = JSON.parse(await readFile('package-lock.json','utf8'));
 for (const [path, item] of Object.entries(lock.packages)) {

@@ -1,0 +1,64 @@
+{
+  "retrievedAt": "2026-11-11T09:50:44.430340+00:00",
+  "sources": [
+    "https://music.163.com/api/search/get/web?s=Rick%20Astley%20Never%20Gonna%20Give%20You%20Up&type=1&limit=5&offset=0",
+    "https://api.bilibili.com/x/web-interface/view?bvid=BV1GJ411x7h7"
+  ],
+  "songs": [
+    {
+      "id": 1302924823,
+      "title": "Never Gonna Give You Up",
+      "artists": [
+        "Rick Astley"
+      ],
+      "durationSeconds": 214,
+      "aliases": []
+    },
+    {
+      "id": 18520531,
+      "title": "Never Gonna Give You Up",
+      "artists": [
+        "Rick Astley"
+      ],
+      "durationSeconds": 212,
+      "aliases": []
+    },
+    {
+      "id": 1399616170,
+      "title": "Never Gonna Give You Up",
+      "artists": [
+        "Rick Astley"
+      ],
+      "durationSeconds": 214,
+      "aliases": []
+    },
+    {
+      "id": 2635576212,
+      "title": "Never Gonna Give You Up",
+      "artists": [
+        "Rick Astley"
+      ],
+      "durationSeconds": 214,
+      "aliases": []
+    },
+    {
+      "id": 2635570477,
+      "title": "Never Gonna Give You Up (Remastered 2022)",
+      "artists": [
+        "Rick Astley"
+      ],
+      "durationSeconds": 214,
+      "aliases": []
+    }
+  ],
+  "candidate": {
+    "bvid": "BV1GJ411x7h7",
+    "cid": 137649199,
+    "title": "【官方 MV】Never Gonna Give You Up - Rick Astley",
+    "uploaderName": "索尼音乐中国",
+    "durationSeconds": 213,
+    "partCount": 1,
+    "detailsVerified": true
+  },
+  "limitation": "One video and five catalog records, not five independently sampled songs. Search API returned HTTP 412; no recall measurement."
+}

@@ -135,3 +135,6 @@ CREATE TABLE IF NOT EXISTS playback_positions (track_id TEXT PRIMARY KEY, second
 CREATE TABLE IF NOT EXISTS listening_daily(day TEXT NOT NULL,track_id TEXT NOT NULL,seconds REAL NOT NULL DEFAULT 0,PRIMARY KEY(day,track_id));
 CREATE TABLE IF NOT EXISTS listening_totals(track_id TEXT PRIMARY KEY,seconds REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS listening_days(day TEXT PRIMARY KEY,seconds REAL NOT NULL DEFAULT 0);
+
+-- User notes are separate from refreshable B站 profile caches.
+CREATE TABLE IF NOT EXISTS creator_notes(bvid TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT '');
