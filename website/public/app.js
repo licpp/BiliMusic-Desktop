@@ -51,17 +51,20 @@ function renderReleaseHistory(manifest) {
   const section = $('#changelog');
   if (currentIndex < 0) { section.hidden = true; return; }
   const render = (entry, current = false) => {
-    const card = element('article', null, 'release-history-card');
+    const card = element('article', null, 'release-history-card' + (entry.kind === 'major' ? ' major-release-card' : ''));
     const heading = element('div', null, 'release-history-version');
     heading.append(element('h3', `v${entry.version}`));
     if (current) heading.append(element('span', '当前版本', 'current-release-label'));
+    if (entry.kind === 'major') heading.append(element('span', '大版本更新', 'major-release-label'));
     if (entry.publishedAt) {
       const date = new Date(entry.publishedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
       heading.append(element('small', date));
     }
     const list = element('ul');
     for (const change of entry.changes) list.append(element('li', change));
-    card.append(heading, list);
+    card.append(heading);
+    if (entry.summary) card.append(element('p', entry.summary, 'release-history-summary'));
+    card.append(list);
     return card;
   };
   const previous = entries.slice(currentIndex + 1);

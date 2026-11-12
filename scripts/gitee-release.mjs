@@ -13,6 +13,7 @@ const repo = 'yoaker/BiliMusic-Desktop'
 const endpoint = `https://gitee.com/api/v5/repos/${repo}`
 const token = execFileSync('gitee', ['auth', 'token'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const body = await readFile(notesPath, 'utf8')
+const title = body.split('\n').find(line => line.startsWith('# '))?.slice(2).trim() || `BiliMusic ${tag}`
 const assets = await Promise.all(files.map(async path => {
   const info = await stat(path)
   if (!info.isFile() || !info.size) throw new Error(`Invalid asset: ${path}`)
@@ -42,7 +43,7 @@ if (!release) {
   const commit = execFileSync('git', ['rev-parse', `${tag}^{commit}`], { encoding: 'utf8' }).trim()
   release = await api('/releases', {
     method: 'POST',
-    payload: new URLSearchParams({ tag_name: tag, name: `BiliMusic ${tag}`, body, target_commitish: commit, prerelease: "true" }),
+    payload: new URLSearchParams({ tag_name: tag, name: title, body, target_commitish: commit, prerelease: "true" }),
   })
 }
 const releasePath = `/releases/${release.id}`
@@ -64,10 +65,10 @@ for (const asset of assets) {
     throw new Error(`Attachment was not verified: ${asset.name}`)
   }
 }
-if (release.prerelease) {
+if (release.prerelease || release.name !== title || release.body !== body) {
   await api(releasePath, {
     method: 'PATCH',
-    payload: new URLSearchParams({ tag_name: tag, name: release.name, body, prerelease: 'false' }),
+    payload: new URLSearchParams({ tag_name: tag, name: title, body, prerelease: 'false' }),
   })
   if ((await api(tagRef)).prerelease) throw new Error('Gitee release is still marked as a prerelease')
 }
