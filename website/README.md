@@ -73,9 +73,13 @@ docker exec bilimusic-site node scripts/feedback.mjs status <反馈UUID> resolve
 
 ### 发布安装包
 
-当前 0.2.3 安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon、Windows x64、Android ARM64 和需自行签名的 iOS ARM64 IPA。Gitee 单附件上限100MB，Android 使用精简的 Release APK，两个来源均可直接下载安装。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
+正式安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon、Windows x64、Android ARM64 和需自行签名的 iOS ARM64 IPA。Gitee 单附件上限100MB，Android 使用精简的 Release APK，两个来源均可直接下载安装。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
 
 更新版本时先在两处上传相同安装包、许可与校验清单，验证下载后更新 `releases.json` 并重启网站；镜像未完成时地址设为 null，界面显示准备中并禁用该来源。`releases.json` 是唯一下载配置，按钮及确认 API 共用，避免平台和地址错配。当前 macOS 使用临时签名但未 Apple 公证，Windows 未发布者签名，页面已说明架构、限制及 macOS 按应用单独允许打开的方法。直接文件 URL 仍可被转发，不能把网页勾选当作版权授权或访问控制。
+
+发布结束前，还必须将同一份 `website/releases.json` 同步到 GitHub 和 Gitee 仓库的 **main 分支**。应用内更新检查在官网请求失败或超过 5 秒时，会读取这两个分支上的备用清单；仅更新官网、Release 或发布分支会使旧客户端读到旧版本。只同步已正式发布并验证的安装包信息，本地验收包不进入更新清单。
+
+从仓库根目录执行 `node scripts/verify-release-sources.mjs`，确认官网、Gitee、GitHub 三个公共地址的版本、下载地址、校验值及历史全部一致。检查使用旧客户端实际访问的不带缓存参数的 URL，若 CDN 尚未刷新，应等待缓存过期后再验收。仅发布清单及文档的提交可以使用 `[skip ci]`，避免重新构建安装包。
 
 macOS 发布时不仅要校验 DMG 校验和，还必须挂载最终 DMG，对其中 `.app` 执行 `codesign --verify --deep --strict` 并检查 `_CodeSignature/CodeResources`。该检查仅验证封装完整性，不意味着获得 Developer ID 认证、Apple 公证或 Gatekeeper 自动放行。
 
