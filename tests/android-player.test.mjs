@@ -13,7 +13,7 @@ const output = await build({
       export const recordPlayedTrack = async t => t;
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
-    ` : path === 'platform' ? 'export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
+    ` : path === 'platform' ? 'export const isOHOS = false; export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
       export const setAndroidCollection = async () => {};
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});

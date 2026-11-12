@@ -134,3 +134,20 @@ Android 发行构建使用 Release 模式，Rust 启用符号裁剪、thin LTO �
 ### 检查更新
 
 在「我的 → 应用更新」手动检查官网当前发布版本，支持 Android ARM64、macOS Apple Silicon 和 Windows x64。检查到新版本后可通过系统浏览器前往官网下载页，保留 Gitee / GitHub 双源和下载声明；不会自动下载安装。网络失败可重试，不影响播放。`package.json`、Tauri 配置、Cargo 和官网清单使用相同的数字版本号，Android 还需递增 versionCode。
+
+## HarmonyOS NEXT 实验适配
+
+鸿蒙构建直接使用同一份 `src` 前端和 `src-tauri/src` Rust 后端。页面、样式、SQLite、搜索、歌单、歌词以及账号统计／WebDAV 合并协议均在共享代码中修改；`native/ohos-player` 只负责 AVPlayer、AVSession、后台播放、Asset Store 凭据存储和系统 WebDAV 上传接口。移动端通用样式使用 `data-layout="mobile"`，系统差异仍通过 `src/services/platform.ts` 和统一播放器接口选择。
+
+这是使用社区 Tauri OHOS 实验分支的开发入口，尚未作为第五端正式发行。固定依赖见 `platforms/ohos/toolchain-pins.json` 和专用 `Cargo.lock`；原有四端的 Cargo 依赖、iOS Tao 修复和构建命令保持独立。构建脚本从主 Cargo 清单提取公共依赖，在忽略的 `artifacts/ohos` 中生成配置并链接共享源文件，不维护前端或业务逻辑副本。社区运行时来自 [tauri-harmony 固定版本](https://github.com/LeenHawk/tauri-harmony)，各组件保留上游 MIT／Apache-2.0 等许可证；SDK 需自行安装和同意华为协议，不包含在源码中。
+
+macOS ARM 环境需要 DevEco Studio、Rust、Python 3.12+ 以及 `npm ci`。默认 SDK 位于 `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony`；其他安装位置可用 `DEVECO_HOME`（Studio 的 `Contents` 目录）和 `OHOS_HOME` 指定。
+
+```sh
+npm run ohos:tools    # 安装到项目内，不替换系统 Tauri CLI
+npm run ohos:init     # 创建 DevEco 工程和原生适配入口
+npm run ohos:check    # 共享 Rust 后端交叉编译检查
+npm run ohos:build    # 共用前端构建 + ARM64 HAP
+```
+
+生成工程位于 `artifacts/ohos/workspace/src-tauri/gen/ohos`，HAP 位于其 `entry/build/default/outputs/default`。首次生成的是未签名包，本机官方模拟器可直接安装；真机需在 DevEco 中打开生成工程配置调试签名，脚本会保留有效的签名配置。维护者修改公共 Rust 依赖时，用 `node scripts/ohos.mjs update-lock` 更新专用锁文件，并检查四端回归与鸿蒙构建。模拟器可验证基本功能，后台调度、锁屏、蓝牙和音频焦点仍需真机验收。

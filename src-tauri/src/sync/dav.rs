@@ -483,6 +483,70 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         creator_groups: true,
     })
 }
+async fn put_snapshot(
+    http: &reqwest::Client,
+    url: String,
+    secret: &Secret,
+    payload: Vec<u8>,
+) -> Result<reqwest::StatusCode, String> {
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = http;
+        return crate::ohos_playback::put_webdav(
+            &url,
+            &secret.username,
+            &secret.password,
+            &payload,
+        )
+        .await;
+    }
+    #[cfg(not(target_env = "ohos"))]
+    for attempt in 1..=2 {
+        let result = request(http, "PUT", url.clone(), secret)
+            .header("Content-Type", "application/json")
+            .body(payload.clone())
+            .send()
+            .await;
+        match result {
+            Ok(response) => return Ok(response.status()), // HTTP denials/limits are never retried.
+            Err(error) => {
+                let retryable = error.is_timeout()
+                    || error.is_connect()
+                    || error.is_body()
+                    || error.is_request();
+                let reason = if error.is_timeout() {
+                    "超时"
+                } else if error.is_connect() {
+                    "连接失败"
+                } else if error.is_body() {
+                    "请求体发送失败"
+                } else {
+                    "连接中断"
+                };
+                // Remove the request URL (which includes the account/device path).
+                // Request errors do not include Authorization headers or body data.
+                let diagnostic = format!(
+                    "WebDAV PUT attempt={attempt} bytes={} error={:?}",
+                    payload.len(),
+                    error.without_url()
+                );
+                eprintln!("{diagnostic}");
+                if attempt == 1 && retryable {
+                    // Each device owns this file. Replaying identical bytes is
+                    // safe even if the first PUT committed but its reply was lost.
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    continue;
+                }
+                return Err(format!(
+                    "坚果云上传{reason}，请检查网络后重试（本机数据已保留）"
+                ));
+            }
+        }
+    }
+    #[cfg(not(target_env = "ohos"))]
+    unreachable!()
+}
+
 pub async fn write(
     c: &Config,
     s: &Secret,
@@ -509,23 +573,122 @@ pub async fn write(
             check(r.status())?;
         }
     }
-    let r = request(
+    let r = put_snapshot(
         &http,
-        "PUT",
         format!("{}{}.json", folder(c), c.device_id),
         s,
+        payload,
     )
-    .header("Content-Type", "application/json")
-    .body(payload)
-    .send()
-    .await
-    .map_err(|_| "坚果云上传中断")?;
-    check(r.status())?;
+    .await?;
+    check(r)?;
     Ok(true)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    async fn put_server(
+        attempts: usize,
+        status: Option<u16>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/device.json", listener.local_addr().unwrap());
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = bodies.clone();
+        let task = tokio::spawn(async move {
+            for attempt in 0..attempts {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut data = Vec::new();
+                let mut chunk = [0; 8192];
+                let (header_end, length) = loop {
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    data.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = data.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let header = std::str::from_utf8(&data[..end]).unwrap();
+                        assert!(header.starts_with("PUT /device.json HTTP/1.1"));
+                        let length = header
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        break (end + 4, length);
+                    }
+                };
+                while data.len() < header_end + length {
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    data.extend_from_slice(&chunk[..count]);
+                }
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(data[header_end..header_end + length].to_vec());
+                if attempt + 1 == attempts {
+                    if let Some(status) = status {
+                        socket.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                    }
+                }
+                // A complete upload can commit before the response connection drops.
+                socket.shutdown().await.unwrap();
+            }
+        });
+        (url, bodies, task)
+    }
+
+    #[tokio::test]
+    async fn first_upload_replays_identical_snapshot_after_a_lost_response() {
+        let (url, bodies, server) = put_server(2, Some(201)).await;
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let credentials = Secret {
+            username: "test".into(),
+            password: "test".into(),
+        };
+        let payload = vec![b'x'; 512 * 1024];
+        let result = put_snapshot(&http, url, &credentials, payload.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.as_u16(), 201);
+        server.await.unwrap();
+        assert_eq!(*bodies.lock().unwrap(), vec![payload.clone(), payload]);
+    }
+
+    #[tokio::test]
+    async fn upload_does_not_retry_http_denials_and_bounds_transport_retries() {
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let credentials = Secret {
+            username: "test".into(),
+            password: "private-test-password".into(),
+        };
+        for status in [401, 403, 429, 500] {
+            let (url, bodies, server) = put_server(1, Some(status)).await;
+            let response = put_snapshot(&http, url, &credentials, b"test".to_vec())
+                .await
+                .unwrap();
+            assert_eq!(response.as_u16(), status);
+            server.await.unwrap();
+            assert_eq!(bodies.lock().unwrap().len(), 1);
+        }
+        let (url, bodies, server) = put_server(2, None).await;
+        let error = put_snapshot(&http, url, &credentials, b"test".to_vec())
+            .await
+            .err()
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(bodies.lock().unwrap().len(), 2);
+        assert!(error.contains("连接中断"));
+        assert!(!error.contains("授权失效"));
+        assert!(!error.contains("private-test-password"));
+        assert!(!error.contains("http://"));
+    }
+
     #[test]
     fn permission_denial_is_not_reported_as_expired_credentials() {
         let unauthorized = check(reqwest::StatusCode::UNAUTHORIZED).unwrap_err();

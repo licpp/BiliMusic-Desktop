@@ -1042,7 +1042,7 @@ pub async fn download_track(
     if !directory.is_dir() {
         return Err(CommandError::validation("下载位置不是目录"));
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
     {
         use tauri::Manager;
         let allowed = app
@@ -1056,7 +1056,7 @@ pub async fn download_track(
             return Err(CommandError::validation("移动端下载仅写入应用私有目录"));
         }
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
     let _ = app;
     let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
     let download_id = uuid::Uuid::new_v4().to_string();
@@ -1227,10 +1227,17 @@ pub async fn app_check_update()
 
 #[tauri::command]
 pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), CommandError> {
-    use tauri_plugin_opener::OpenerExt;
-    app.opener()
-        .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
-        .map_err(CommandError::provider)
+    #[cfg(target_env = "ohos")]
+    return tauri_plugin_ohos_player::open_url(&app, crate::infrastructure::updates::DOWNLOAD_PAGE)
+        .await
+        .map_err(CommandError::provider);
+    #[cfg(not(target_env = "ohos"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
+            .map_err(CommandError::provider)
+    }
 }
 
 #[tauri::command]

@@ -108,7 +108,16 @@ pub fn profile(database: &Database) -> String {
     std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default()
 }
 #[cfg(target_os = "android")]
-pub fn observe_android_listening(app: tauri::AppHandle) {
+pub use observe_native_listening as observe_android_listening;
+#[cfg(target_env = "ohos")]
+pub use observe_native_listening as observe_ohos_listening;
+#[cfg(target_os = "android")]
+use tauri_plugin_android_player as native_listening;
+#[cfg(target_env = "ohos")]
+use tauri_plugin_ohos_player as native_listening;
+
+#[cfg(any(target_os = "android", target_env = "ohos"))]
+pub fn observe_native_listening(app: tauri::AppHandle) {
     let profile_path = app.state::<Database>().1.join("active-profile");
     let handle = app.clone();
     let channel = tauri::ipc::Channel::new(move |body| {
@@ -152,15 +161,14 @@ pub fn observe_android_listening(app: tauri::AppHandle) {
         Ok(())
     });
     tauri::async_runtime::spawn(async move {
-        if let Err(error) =
-            tauri_plugin_android_player::observe_listening(&app, &profile_path, channel).await
+        if let Err(error) = native_listening::observe_listening(&app, &profile_path, channel).await
         {
-            eprintln!("Android listening observation failed: {error}");
+            eprintln!("Native listening observation failed: {error}");
         }
     });
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
 pub fn save_position(
     app: &tauri::AppHandle,
     scope: &str,

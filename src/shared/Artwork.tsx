@@ -1,16 +1,17 @@
 import { Music2 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type Ref } from 'react'
 
-export function Artwork({ src, className = '', fallback = <Music2 aria-hidden="true" />, adaptAspect = false, onAspectRatio, imageOverlay }: {
+export function Artwork({ src, className = '', fallback = <Music2 aria-hidden="true" />, adaptAspect = false, onAspectRatio, imageOverlay, elementRef, onError }: {
   src?: string; className?: string; fallback?: ReactNode; adaptAspect?: boolean; onAspectRatio?: (ratio:number) => void; imageOverlay?: ReactNode
+  elementRef?: Ref<HTMLSpanElement>; onError?: () => void
 }) {
   const normalized = src?.replace(/^(?:http:)?\/\//, 'https://')
   const [failed, setFailed] = useState<string | undefined>()
   const [wideImage, setWideImage] = useState<string>()
   const hasImage = Boolean(normalized && failed !== normalized)
-  return <span className={`artwork ${className}`} data-artwork-fit={adaptAspect ? 'natural' : undefined}
+  return <span ref={elementRef} className={`artwork ${className}`} data-artwork-fit={adaptAspect ? 'natural' : undefined}
     data-artwork-wide={adaptAspect && hasImage && wideImage === normalized ? true : undefined}>
-    {hasImage ? <img src={normalized} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(normalized)}
+    {hasImage ? <img src={normalized} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailed(normalized); onError?.() }}
       onLoad={adaptAspect || onAspectRatio ? event => {
         const { naturalWidth, naturalHeight } = event.currentTarget
         if (naturalWidth && naturalHeight) {

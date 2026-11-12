@@ -10,7 +10,7 @@ const capabilities = JSON.parse(await readFile('src-tauri/capabilities/immersive
 const output = await build({ entryPoints: ['src/services/immersiveWindow.ts'], bundle: true, write: false, format: 'cjs', platform: 'node',
   plugins: [{ name: 'platform', setup(b) {
     b.onResolve({ filter: /^\.\/platform$/ }, () => ({ path: 'platform', namespace: 'test' }))
-    b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isAndroid = globalThis.testAndroid; export const isIOS = globalThis.testIOS; export const isMobile = isAndroid || isIOS' }))
+    b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isOHOS = false; export const isAndroid = globalThis.testAndroid; export const isIOS = globalThis.testIOS; export const isMobile = isAndroid || isIOS' }))
   } }],
 })
 function setup(os) {

@@ -21,3 +21,7 @@ Principal UI/runtime dependencies include React (MIT), Zustand (MIT), TanStack Q
 The QRC decoding module at `src-tauri/src/infrastructure/providers/qrc_codec.rs` is adapted from [J0R6IT0/navidrome-lyrics-plugin](https://github.com/J0R6IT0/navidrome-lyrics-plugin/blob/4b78b89bd53ddf78dfb15769379347a37cd23e92/src/providers/qqmusic/qrc.rs), commit `4b78b89bd53ddf78dfb15769379347a37cd23e92`, under the MIT License, Copyright (c) 2026 Jorge Pardo. The complete permission and warranty notice is retained in the source file and in `licenses/qrc-codec-MIT.txt`. BiliMusic retains only the decoder and adds size bounds. Base64 decoding uses the `base64` crate (MIT OR Apache-2.0).
 
 Desktop system media controls use [souvlaki](https://github.com/Sinono3/souvlaki), distributed under the MIT license.
+
+## Experimental Harmony build tooling
+
+The source overlay and SDK compiler setup in `scripts/ohos.py` are adapted from [LeenHawk/tauri-harmony](https://github.com/LeenHawk/tauri-harmony), copyright (c) 2026 LeenHawk, under the MIT License. The complete license is in `licenses/tauri-harmony-MIT.txt`. Experimental runtime revisions are pinned in `platforms/ohos/toolchain-pins.json`; fetched sources retain their upstream licenses.
