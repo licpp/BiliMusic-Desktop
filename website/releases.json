@@ -8,20 +8,20 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+ · 暂不支持 Intel Mac",
-      "file": "BiliMusic_0.3.0_macOS_AppleSilicon.dmg",
-      "size": 5455787,
-      "sha256": "0d26038ea759b3677ac2e7ebd7e05f11f3af517677e1595e0cd2f5c0e7266e0b",
+      "file": "BiliMusic_0.3.0_sync-fix_macOS_AppleSilicon.dmg",
+      "size": 5456137,
+      "sha256": "89a65a7d41577c67928457c20198021f58e330e18c02568a2d8d617fa8081d08",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_macOS_AppleSilicon.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_macOS_AppleSilicon.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_macOS_AppleSilicon.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_macOS_AppleSilicon.dmg"
         }
       ],
       "signature": "adhoc",
@@ -33,20 +33,20 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.3.0_Windows_x64-setup.exe",
-      "size": 4100175,
-      "sha256": "916aac595f022e9e81c7728c0995fe8c2be3ea4f6e6ff974aa1ab2ed4ddff3a7",
+      "file": "BiliMusic_0.3.0_sync-fix_Windows_x64-setup.exe",
+      "size": 4098922,
+      "sha256": "a2cc438f92ea732047f4a2cbac12864346806873b82b5df4ad743ff87a1c67b5",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_Windows_x64-setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_Windows_x64-setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_Windows_x64-setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_Windows_x64-setup.exe"
         }
       ]
     },
@@ -59,17 +59,17 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.3.0_Android_arm64.apk",
+      "file": "BiliMusic_0.3.0_sync-fix_Android_arm64.apk",
       "size": 14551653,
-      "sha256": "dd1c98a72023a156dd389aa2a723c4cc7ba55ab3e3782d5ee9012755b03adc1c",
+      "sha256": "dc1e17995d500b8fdef43e3fe83baab44255d07ec7803be9464ede31ae70c426",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk"
@@ -87,17 +87,17 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_iOS_arm64-unsigned.ipa"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_iOS_arm64-unsigned.ipa"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_iOS_arm64-unsigned.ipa"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_sync-fix_iOS_arm64-unsigned.ipa"
         }
       ],
-      "file": "BiliMusic_0.3.0_iOS_arm64-unsigned.ipa",
-      "size": 5281910,
-      "sha256": "3254e49c78412f7289d2e8e9e331f406991993bb8968bd890de974c839d26c83"
+      "file": "BiliMusic_0.3.0_sync-fix_iOS_arm64-unsigned.ipa",
+      "size": 5282267,
+      "sha256": "a652747d74513442c1bc763c43c0c5da81ac4b59f65f7e8580374eea1b67b1b9"
     }
   ],
   "history": [
@@ -106,6 +106,9 @@
       "kind": "major",
       "summary": "从 0.2.8 到 0.3.0，歌单导入、跨设备听歌统计、歌词与播放体验一起升级。macOS、Windows、Android 和 iOS 四端同步更新。",
       "changes": [
+        "2026-11-12 同步修复重打包：修复导入歌单及其成员被误报“同步记录身份无效”，保留原歌单编号和内容。",
+        "坚果云 HTTP 401 提示使用应用密码重新连接；HTTP 403 单独显示访问被拒绝，避免误报授权失效并暂停同步。",
+        "修复包文件名含 sync-fix，版本仍为 0.3.0；已安装 0.3.0 的用户请重新下载覆盖安装，同版本修复不会触发升级提示。",
         "从网易云、QQ 音乐或文本导入歌单，自动匹配 B 站视频与分 P；支持并发匹配、暂停续导和逐曲重新匹配。",
         "同一 B 站账号通过坚果云汇总各端听歌时长，支持离线补传；新增周、月、年及累计统计、歌曲排行和聆听热力日历。",
         "歌曲资料与歌词支持网易云、QQ 音乐，新增平台筛选、原文／音译／翻译切换；滚动歌词后，可从横线标注的这一句开始播放。",
