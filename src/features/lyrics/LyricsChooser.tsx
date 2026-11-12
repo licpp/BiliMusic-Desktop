@@ -21,8 +21,8 @@ export function LyricsChooser(p: Props) {
   </ActionMenu><button type="button" className="lyrics-paste-action" aria-expanded={p.manualOpen} onClick={() => p.onManualOpen(!p.manualOpen)}><ClipboardPaste size={16}/>{p.manualOpen ? '收起粘贴' : '粘贴歌词'}</button></div>
   const search = <form className={isMobile ? 'mobile-editor mobile-lookup-fields' : 'lyric-search-form manual-search-fields'} onSubmit={event => { event.preventDefault(); if (p.title.trim()) void p.onSearch() }}>
     <div className={isMobile ? 'mobile-field-group lyric-query-fields' : 'lyric-search-fields lyric-query-fields'}>
-      <label className="lyric-query-field"><span className="query-field-icon"><Music2 size={17}/></span><span className="query-field-copy"><span>歌曲名</span><input aria-label="歌词搜索歌曲名" value={p.title} onChange={event => p.onTitle(event.target.value)} placeholder="填写歌曲名"/></span></label>
-      <label className="lyric-query-field"><span className="query-field-icon"><UserRound size={17}/></span><span className="query-field-copy"><span>歌手</span><input aria-label="歌词搜索歌手" value={p.artist} onChange={event => p.onArtist(event.target.value)} placeholder="可选"/></span></label>
+      <label className="lyric-query-field"><span className="query-field-icon"><Music2 size={17}/></span><span className="query-field-copy"><input aria-label="歌词搜索歌曲名" value={p.title} onChange={event => p.onTitle(event.target.value)} placeholder="歌曲名"/></span></label>
+      <label className="lyric-query-field"><span className="query-field-icon"><UserRound size={17}/></span><span className="query-field-copy"><input aria-label="歌词搜索歌手" value={p.artist} onChange={event => p.onArtist(event.target.value)} placeholder="歌手（可选）"/></span></label>
     </div>
     <button className={`lyrics-search-submit${isMobile ? ' mobile-page-primary' : ''}`} disabled={p.loading || !p.title.trim()}>{p.loading ? <LoaderCircle size={16} className="spin"/> : <Search size={16}/>}<span>{p.loading ? '搜索中' : '搜索歌词'}</span></button>
   </form>

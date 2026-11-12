@@ -1,3 +1,4 @@
+import { startAccountStatisticsSync } from './listeningStatisticsSync'
 import { accountEpoch } from './accountScope'
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell, fromStoredTrack } from './desktopApi'
@@ -22,19 +23,11 @@ export async function refreshSyncedLibrary(client: QueryClient) {
 }
 export function startCloudSync(client: QueryClient) {
   if (!inDesktopShell) return () => undefined
-  let statsBusy = false, statsNext = 0
-  const runStatistics = async (force = false) => {
-    if (statsBusy || document.hidden || (!force && Date.now() < statsNext)) return
-    statsBusy = true
-    try { await invoke('listening_sync'); statsNext = Date.now() + 15 * 60_000; await client.invalidateQueries({queryKey:['listening-statistics']}) }
-    catch { statsNext = Date.now() + 5 * 60_000 }
-    finally { statsBusy = false }
-  }
+  const stopStatistics = startAccountStatisticsSync(client)
   let busy = false, stopped = false, failures = 0, blocked = false
   let nextAllowed = 0, timer = 0
   const run = async () => {
     if (stopped || document.hidden) return
-    void runStatistics()
     if (busy || blocked || Date.now() < nextAllowed) return
     busy = true
     try {
@@ -53,7 +46,7 @@ export function startCloudSync(client: QueryClient) {
     } finally { busy = false }
   }
   const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 10_000) }
-  const reconfigure = () => { statsNext = 0; void runStatistics(); blocked = false; nextAllowed = 0; failures = 0; schedule() }
+  const reconfigure = () => { blocked = false; nextAllowed = 0; failures = 0; schedule() }
   const foreground = () => { if (!document.hidden) void run() }
   window.addEventListener('bilimusic-data-changed', schedule)
   window.addEventListener('bilimusic-sync-configured', reconfigure)
@@ -61,7 +54,7 @@ export function startCloudSync(client: QueryClient) {
   document.addEventListener('visibilitychange', foreground)
   const interval = window.setInterval(() => void run(), 180_000)
   schedule()
-  return () => { stopped = true; window.clearTimeout(timer); window.clearInterval(interval); window.removeEventListener('bilimusic-data-changed', schedule); window.removeEventListener('bilimusic-sync-configured', reconfigure); window.removeEventListener('bilimusic-account-changed', reconfigure); document.removeEventListener('visibilitychange', foreground) }
+  return () => { stopStatistics(); stopped = true; window.clearTimeout(timer); window.clearInterval(interval); window.removeEventListener('bilimusic-data-changed', schedule); window.removeEventListener('bilimusic-sync-configured', reconfigure); window.removeEventListener('bilimusic-account-changed', reconfigure); document.removeEventListener('visibilitychange', foreground) }
 }
 
 export async function hydrateVisibleTracks(tracks: import('../domain/track').Track[] | undefined, client: QueryClient) {

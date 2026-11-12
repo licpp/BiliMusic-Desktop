@@ -139,7 +139,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const [browseIndex, setBrowseIndex] = useState(-1)
   const lyricTouchY = useRef<number | null>(null)
   const browseActivity = useRef(0)
-  const browseLyrics = () => { browseActivity.current = Date.now(); setBrowsingLyrics(true) }
+  const browseLyrics = () => { browseActivity.current = Date.now(); setBrowsingLyrics(true); updateBrowseLine() }
   const [hoveredLine, setHoveredLine] = useState<number | null>(null)
   const [biasActivity, setBiasActivity] = useState(0)
   const storedRef = useRef(stored)
@@ -335,7 +335,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     return () => window.clearInterval(timer)
   }, [browsingLyrics])
   const updateBrowseLine = () => {
-    if (!browsingLyrics || !scrollRef.current) return
+    if (!scrollRef.current) return
     browseActivity.current = Date.now()
     const scroll = scrollRef.current, middle = scroll.getBoundingClientRect().top + scroll.clientHeight / 2
     let closest = -1, distance = Infinity
@@ -412,6 +412,14 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     adjustBias(clampBias(target) - storedRef.current.biasMs)
   }
 
+  const seekLine = (index: number) => {
+    const line = displayLines[index]
+    if (!line) return
+    usePlayerStore.getState().seek(Math.max(0, (line.timeMs + (subtitles.lines ? 0 : biasMs)) / 1000))
+    if (usePlayerStore.getState().status === 'paused') void usePlayerStore.getState().toggle()
+    setBrowsingLyrics(false)
+  }
+
   if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
 
   const subtitleLabel = subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'
@@ -439,7 +447,8 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
 
   return (
     <section className="lyrics-view">
-      {!compact&&dockActions&&createPortal(<>
+      {(!isMobile||!compact)&&dockActions&&createPortal(<>
+        {!isMobile && supplementControl}
         <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={()=>setCommentsOpen(value=>!value)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
         {bvid&&<button type="button" className="lyrics-dock-ai" aria-label={subtitles.active?'关闭 AI / B站字幕':'开启 AI / B站字幕'} title={`${subtitleLabel} · ${subtitles.active?'已开启':subtitles.preferred?'歌词优先':'已关闭'}`} aria-pressed={subtitles.active} aria-busy={subtitles.busy} onClick={toggleSubtitles}><AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/></button>}
       </>,dockActions)}
@@ -448,14 +457,14 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
         <span>正在播放</span>
         <div className="lyrics-actions">
           {!isMobile&&onMiniPlayer&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" onClick={onMiniPlayer}><PictureInPicture2 size={19}/></button>}
-          {!compact && supplementControl}
+          {isMobile && !compact && supplementControl}
           {!(isMobile && videoFullscreen) && <ActionMenu label={compact ? "播放设置" : "歌词页面更多操作"} panel panelClassName={compact ? "mobile-playback-settings" : undefined} touchSheet={compact}>{(close) => <>
             {compact && <>
               <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
               {isMobile && <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>}
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
             </>}
-            {compact && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
+            {compact && isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
             {subtitles.active && subtitles.choices.length > 1 && (compact ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
@@ -517,7 +526,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
           </div>
           <div className="lyrics-meta-actions">
             <button className={current.liked ? 'liked' : ''} aria-label={current.liked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={Boolean(current.liked)} aria-busy={favoritePending} onClick={onFavorite}><Heart size={20} fill={current.liked ? 'currentColor' : 'none'} /></button>
-            {compact && supplementControl}
+            {isMobile && compact && supplementControl}
             {current.source.provider === 'bilibili' && <button aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={20}/> : <TvMinimalPlay size={20}/>}</button>}
             <button aria-label="查看评论" disabled={!current.source.aid} onClick={openComments}><MessageCircle size={20}/></button>
           </div>
@@ -525,19 +534,13 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
       </div>
       <div ref={scrollRef} onWheel={browseLyrics} onPointerDown={event => { lyricTouchY.current = event.clientY }} onPointerMove={event => { if (lyricTouchY.current !== null && Math.abs(event.clientY - lyricTouchY.current) > 6) browseLyrics() }} onPointerUp={() => { lyricTouchY.current = null }} onPointerCancel={() => { lyricTouchY.current = null }} onScroll={updateBrowseLine} onPointerLeave={() => setHoveredLine(null)} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
         {loading && !displayLines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : displayLines.length ? displayLines.map((line, index) => (
-          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original">{line.text}</span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}</p>
+          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original">{line.text}</span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
       {biasOpen && !subtitles.lines && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
         onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
       {(subtitles.message || (error && displayLines.length > 0)) && <div className="lyrics-toast" role="status">{subtitles.message || error}</div>}
-      {browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && displayLines[browseIndex] && <button className="lyric-seek-button" onClick={() => {
-        const seconds = Math.max(0, (displayLines[browseIndex].timeMs + (subtitles.lines ? 0 : biasMs)) / 1000)
-        usePlayerStore.getState().seek(seconds)
-        if (usePlayerStore.getState().status === 'paused') void usePlayerStore.getState().toggle()
-        setBrowsingLyrics(false)
-      }}><Play size={15} fill="currentColor"/><span>从这句播放</span><small>{formatDuration(Math.max(0, (displayLines[browseIndex].timeMs + (subtitles.lines ? 0 : biasMs)) / 1000))}</small></button>}
       {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
         onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}

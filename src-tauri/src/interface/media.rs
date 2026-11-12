@@ -214,7 +214,7 @@ pub async fn record(
             .as_millis() as i64
     });
     let state = app.state::<crate::sync::SyncState>();
-    let _gate = state.gate.lock().await;
+    let _gate = state.account_gate.lock().await;
     let db = app.state::<Database>();
     if profile(&db) != expected {
         return Ok(());

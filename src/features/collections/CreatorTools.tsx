@@ -3,7 +3,7 @@ import { FolderEditor } from './CollectionFolderControls'
 import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, ChevronDown, ChevronRight, UserRoundPlus, UserRound, Search, FolderPlus, Folder, Pencil, LoaderCircle } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, UserRoundPlus, UserRoundMinus, UserRound, Search, FolderPlus, Folder, Pencil, LoaderCircle } from 'lucide-react'
 import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { CollectionDialog } from '../../shared/CollectionDialog'
@@ -17,7 +17,7 @@ export function CreatorActions({ item, folders, contextPosition }: { item: Colle
   const client = useQueryClient()
   const [editing, setEditing] = useState(false), [note, setNote] = useState(item.note || ''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [context, setContext] = useState<{left:number;top:number;nonce:number}>()
-  const save = async (action: 'note'|'move', value: string) => {
+  const save = async (action: 'note'|'move'|'remove', value: string) => {
     setBusy(true); setError('')
     try { await changeCollection(action, item.bvid, value); await client.invalidateQueries({queryKey:['collections']}); setEditing(false) }
     catch(cause) { setError(commandErrorMessage(cause)) } finally { setBusy(false) }
@@ -27,6 +27,7 @@ export function CreatorActions({ item, folders, contextPosition }: { item: Colle
       <button onClick={() => { close(); setNote(item.note || ''); setEditing(true) }}><Pencil size={16}/>修改备注</button>
       <small className="creator-menu-label">移动到分组</small>
       {[{id:'',name:'未分组'},...folders].map(group=><button key={group.id} onClick={() => { close(); void save('move',group.id) }}>{group.name}{item.folderId===group.id&&<Check size={16}/>}</button>)}
+      <button className="creator-unfollow-action" disabled={busy} onClick={() => { close(); void save('remove','') }}><UserRoundMinus size={16}/>取消关注</button>
     </>}</ActionMenu>
     {editing&&<CollectionDialog title="UP 主备注" onClose={()=>setEditing(false)}><form className="creator-note-form" onSubmit={event=>{event.preventDefault();void save('note',note)}}><label>{item.title}<input autoFocus aria-label="UP 主备注" maxLength={160} value={note} onChange={event=>setNote(event.target.value)} placeholder="添加备注，原昵称会保留"/></label><button className="collection-primary" disabled={busy}>保存</button>{error&&<p role="alert">{error}</p>}</form></CollectionDialog>}
     {!editing&&error&&<p role="alert">{error}</p>}

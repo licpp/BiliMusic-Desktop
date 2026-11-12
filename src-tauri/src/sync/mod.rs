@@ -49,6 +49,7 @@ pub struct Config {
     pub uid: String,
     pub url: String,
     pub history: bool,
+    // Kept for older saved configurations; account statistics no longer use this opt-in gate.
     #[serde(default)]
     pub statistics: bool,
     #[serde(default)]
@@ -625,7 +626,9 @@ pub async fn sync_delete_cloud(
     database: State<'_, Database>,
     state: State<'_, SyncState>,
 ) -> Result<(), String> {
+    state.interrupt();
     let _gate = state.gate.lock().await;
+    let _statistics = state.statistics_gate.lock().await;
     let mut cfg = config(&database)?;
     active(&database, &cfg.uid)?;
     if cfg.provider != "cloud" {
@@ -635,6 +638,7 @@ pub async fn sync_delete_cloud(
         serde_json::from_str(&secret(&app, &cfg, None, false)?.ok_or("请先连接BiliMusic云")?)
             .map_err(|_| "凭据无效")?;
     transport::cloud_delete(&credentials, "vault").await?;
+    statistics::pause_account_sync(&database, &cfg.uid, true)?;
     cfg.enabled = false;
     cfg.initialized = false;
     save(&database, &cfg)?;

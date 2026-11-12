@@ -122,7 +122,7 @@ function CreatorEntry({
       }
     : { ...item, title: item.title || `UP 主 ${item.bvid.slice(3)}` }
   const subtitle=[item.note?display.title:'',display.followers!==undefined?`${formatAudienceCount(display.followers)} 粉丝`:''].filter(Boolean).join(' · ')
-  return <LibraryEntry className="creator-entry" title={item.note||display.title} subtitle={subtitle||'UP 主'} sidebar={sidebar} coverClassName="creator-avatar-cover" cover={<Artwork src={display.coverUrl} fallback={<UserRound size={22}/>}/>} onOpen={()=>onOpen(display)} menu={position=><>{!sidebar&&<CreatorFollow item={display}/>} {editable&&<CreatorActions item={item} folders={folders} contextPosition={position}/>}</>}/>
+  return <LibraryEntry className="creator-entry" title={item.note||display.title} subtitle={subtitle||'UP 主'} sidebar={sidebar} coverClassName="creator-avatar-cover" cover={<Artwork src={display.coverUrl} fallback={<UserRound size={22}/>}/>} onOpen={()=>onOpen(display)} menu={position=><>{!sidebar&&!editable&&<CreatorFollow item={display}/>} {editable&&<CreatorActions item={item} folders={folders} contextPosition={position}/>}</>}/>
 }
 
 export function CreatorsView({
@@ -369,7 +369,7 @@ export function CreatorPage({
           </div>
         </div>
         <div className="creator-header-actions">
-          <CreatorFollow item={item} />
+          {!followed && <CreatorFollow item={item} />}
           {followed && <CreatorActions item={saved.data!.items.find(value=>value.bvid===item.bvid)!} folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')}/>}
           {resumeButton}
           <button

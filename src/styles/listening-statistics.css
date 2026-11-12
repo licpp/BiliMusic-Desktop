@@ -96,3 +96,6 @@
  .listening-statistics-page .listening-period.segmented-tabs button { min-height:38px;font-size:13px; }
 }
 @media(prefers-reduced-motion:reduce) { .listening-statistics .listening-period::before { transition:none; } }
+
+.listening-sync-preference { padding:6px 0;border:0;background:transparent;color:var(--muted);font-size:12px;cursor:pointer; }
+.listening-sync-preference:hover { color:var(--ink); }

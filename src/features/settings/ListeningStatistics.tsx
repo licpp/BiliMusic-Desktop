@@ -9,7 +9,6 @@ import { CollectionDialog } from '../../shared/CollectionDialog'
 import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { Artwork } from '../../shared/Artwork'
 import { isMobile } from '../../services/platform'
-import { syncStatus } from '../../services/sync'
 import '../../styles/listening-statistics.css'
 import { listeningCalendar } from './listeningCalendar'
 
@@ -54,7 +53,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const [period, setPeriod] = useState<ListeningPeriod>('week'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const client = useQueryClient()
   const query = useQuery({ queryKey: ['listening-statistics'], queryFn: getListeningStatistics, refetchInterval: 15000 })
-  const status = useQuery({ queryKey: ['sync-status'], queryFn: syncStatus })
+  useEffect(() => { window.dispatchEvent(new Event('bilimusic-statistics-sync-requested')) }, [])
   const data = query.data, summary = data?.[period], top = summary?.top
   const today = accountToday(), thisYear = today.getUTCFullYear(), todayKey = dayKey(today)
   const [calendarYear, setCalendarYear] = useState(thisYear)
@@ -71,14 +70,25 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const max = Math.max(1, ...bars.map(d => d.seconds)), calendar = period === 'year' || period === 'total'
   const chartYear = period === 'year' ? thisYear : calendarYear
   const activeCalendarDays = data?.daily.filter(d => d.day.startsWith(String(chartYear)) && d.seconds > 0).length || 0
-  const enabled = !!(status.data?.config.enabled && status.data.config.statistics && status.data.config.initialized)
+  const enabled = !!data?.sync.enabled
+  const uid = data?.sync.uid
   const synchronize = async () => {
     setBusy(true); setError('')
     try { await invoke('listening_sync'); await client.invalidateQueries({ queryKey: ['listening-statistics'] }) }
     catch (e) { setError(commandErrorMessage(e)) }
     finally { setBusy(false) }
   }
-  const syncLabel = enabled ? data?.sync.error ? '同步待重试' : data?.sync.pending ? '有待同步记录' : data?.sync.lastSuccess ? '已同步' : '等待同步' : '仅保存在本机'
+  const configure = async () => {
+    if (!uid) return
+    setBusy(true); setError('')
+    try {
+      await invoke('listening_sync_configure', { uid, enabled: !enabled })
+      await client.invalidateQueries({ queryKey: ['listening-statistics'] })
+      window.dispatchEvent(new Event('bilimusic-statistics-sync-requested'))
+    } catch (e) { setError(commandErrorMessage(e)) }
+    finally { setBusy(false) }
+  }
+  const syncLabel = enabled ? data?.sync.error ? '账号统计 · 同步待重试' : data?.sync.pending ? '账号统计 · 有待上传记录' : data?.sync.lastSuccess ? '账号统计 · 已同步' : '账号统计 · 等待同步' : data?.sync.paused ? '账号统计同步已暂停' : uid ? '尚未连接统计同步服务' : '未登录 · 仅保存在本机'
   const body = <div className="listening-statistics">
     <SegmentedTabs tabs={tabs} value={period} onChange={setPeriod} idPrefix="statistics-period" panelId="statistics-panel" label="统计范围" className="listening-period" />
     {query.isLoading && <div className="listening-loading" role="status"><LoaderCircle className="spin" size={22} />正在整理聆听记录…</div>}
@@ -107,9 +117,9 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
           <span className="listening-song-time">{duration(track.seconds)}</span>
         </li>)}</ol> : <div className="listening-empty"><Headphones size={30} /><strong>让喜欢的歌留下足迹</strong><p>开始播放后，这里会记录你常听的声音。</p></div>}
       </section>
-      <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? '约每 15 分钟自动同步' : '可在云同步设置中开启统计同步'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>
+      <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>
       {enabled && data?.sync.error && <p className="inline-error" role="status">{data.sync.error}</p>}
-      <details className="listening-explanation"><summary><Info size={13} />统计说明</summary><p>按实际播放时长统计，日期统一采用 UTC+8。多端同时播放分别累计。有效播放次数从新版开始记录，暂停恢复不重复计次。旧数据计入累计；历史月榜仅包含可还原的明细。</p>{enabled && <p>成功同步累计上传 {bytes(data?.sync.uploadedBytes || 0)}，下载 {bytes(data?.sync.downloadedBytes || 0)}，不含网络协议开销及失败周期。</p>}</details>
+      <details className="listening-explanation"><summary><Info size={13} />统计说明</summary><p>按实际播放时长统计，日期统一采用 UTC+8。同一 B 站账号的各端连接同一同步服务后，共享一份统计；坚果云还需使用同一坚果云账号和目录。汇总所有设备的聆听时长，多端同时播放分别累计。离线记录在联网后补传，未登录时的本机记录不会自动归入账号。有效播放次数从新版开始记录，暂停恢复不重复计次。旧数据计入累计；历史月榜仅包含可还原的明细。</p>{enabled && <p>成功同步累计上传 {bytes(data?.sync.uploadedBytes || 0)}，下载 {bytes(data?.sync.downloadedBytes || 0)}，不含网络协议开销及失败周期。</p>}{uid && (data?.sync.provider || data?.sync.paused) && <button type="button" className="listening-sync-preference" disabled={busy} onClick={() => void configure()}>{enabled ? '暂停账号统计同步' : '恢复账号统计同步'}</button>}</details>
     </div>}
   </div>
   return isMobile ? <MobilePage className="listening-statistics-page" title="听歌统计" onBack={onClose}>{body}</MobilePage> : <CollectionDialog className="listening-statistics-dialog" title="听歌统计" onClose={onClose}>{body}</CollectionDialog>

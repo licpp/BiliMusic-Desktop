@@ -185,6 +185,7 @@ pub fn run() {
             interface::media::listening_record,
             interface::media::listening_statistics,
             sync::statistics::listening_sync,
+            sync::statistics::listening_sync_configure,
             interface::commands::bili_video_parts,
             interface::commands::bili_video_pagelist,
             interface::commands::bili_playback_source,

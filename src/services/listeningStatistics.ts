@@ -4,7 +4,7 @@ import { inDesktopShell } from './desktopApi'
 import { playbackClock, usePlayerStore } from '../features/player/playerStore'
 export type ListeningPeriod = 'week' | 'month' | 'year' | 'total'
 type ListeningSummary = {seconds:number; tracks:number; days:number; plays:number; top:ListeningRank[]}
-export type ListeningStatistics = Record<ListeningPeriod,ListeningSummary> & {daily:{day:string;seconds:number}[]; timezone:string; sync:{lastSuccess?:string;error?:string;pending:number;uploadedBytes:number;downloadedBytes:number}}
+export type ListeningStatistics = Record<ListeningPeriod,ListeningSummary> & {daily:{day:string;seconds:number}[]; timezone:string; sync:{uid:string;provider:'cloud'|'webdav'|null;paused:boolean;enabled:boolean;lastSuccess?:string;error?:string;pending:number;uploadedBytes:number;downloadedBytes:number}}
 type ListeningRank = {id:string;title:string;artist:string;coverUrl:string;seconds:number}
 export const getListeningStatistics = () => invoke<ListeningStatistics>('listening_statistics')
 export function startListeningStatistics() {

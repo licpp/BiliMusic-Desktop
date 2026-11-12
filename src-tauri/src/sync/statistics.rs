@@ -1,6 +1,7 @@
 //! Independent, single-writer monthly listening contributions. Never re-publish remote totals.
-use super::{SyncState, active, config, secret, transport};
+use super::{SyncState, active, secret, transport};
 use crate::infrastructure::database::Database;
+use crate::infrastructure::repositories::auth::AuthRepository;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -378,7 +379,10 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
             .collect::<Vec<_>>()
     );
     result["timezone"] = json!("Asia/Shanghai");
-    result["sync"] = json!({"lastSuccess":meta(c,"last_success")?,"error":meta(c,"error")?,"uploadedBytes":meta(c,"uploaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"downloadedBytes":meta(c,"downloaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"pending":c.query_row("SELECT COUNT(*) FROM listening_buckets WHERE owned=1 AND dirty=1",[],|r|r.get::<_,i64>(0)).map_err(err)?});
+    let selected = selected_config(c, uid)?;
+    let target = selected.as_ref().map(statistics_endpoint).transpose()?;
+    let current_target = target.is_some() && meta(c, "last_target")? == target;
+    result["sync"] = json!({"uid":uid,"provider":selected.as_ref().map(|cfg|&cfg.provider),"paused":meta(c,"account_sync_paused")?.as_deref()==Some("1"),"enabled":selected.is_some() && meta(c,"account_sync_paused")?.as_deref()!=Some("1"),"lastSuccess":if current_target {meta(c,"last_success")?} else {None},"error":if current_target {meta(c,"error")?} else {None},"uploadedBytes":meta(c,"uploaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"downloadedBytes":meta(c,"downloaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"pending":c.query_row("SELECT COUNT(*) FROM listening_buckets WHERE owned=1 AND dirty=1",[],|r|r.get::<_,i64>(0)).map_err(err)?});
     Ok(result)
 }
 fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -462,33 +466,148 @@ async fn response_bytes(mut r: reqwest::Response) -> Result<Vec<u8>, String> {
     }
     Ok(v)
 }
+// Reuse the account's chosen service, but do not gate statistics on the library merge or legacy
+// opt-in flag. Pausing library synchronization does not stop collecting account contributions.
+fn selected_config(c: &Connection, uid: &str) -> Result<Option<super::Config>, String> {
+    if uid.is_empty() {
+        return Ok(None);
+    }
+    let value: Option<String> = c
+        .query_row("SELECT json FROM sync_settings WHERE id=1", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(err)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let cfg: super::Config = serde_json::from_str(&value).map_err(err)?;
+    Ok((cfg.uid == uid && (cfg.enabled || cfg.initialized)).then_some(cfg))
+}
+fn account_config(db: &Database) -> Result<Option<super::Config>, String> {
+    let uid = std::fs::read_to_string(db.1.join("active-profile")).unwrap_or_default();
+    if uid.is_empty() {
+        return Ok(None);
+    }
+    active(db, &uid)?;
+    let c = db.0.lock().map_err(err)?;
+    let tx = c.unchecked_transaction().map_err(err)?;
+    init(&c, &db.1, &uid)?;
+    tx.commit().map_err(err)?;
+    if meta(&c, "account_sync_paused")?.as_deref() == Some("1") {
+        return Ok(None);
+    }
+    selected_config(&c, &uid)
+}
+
+pub(super) fn pause_account_sync(db: &Database, uid: &str, paused: bool) -> Result<(), String> {
+    let c = db.0.lock().map_err(err)?;
+    active(db, uid)?;
+    init(&c, &db.1, uid)?;
+    put_meta(&c, "account_sync_paused", if paused { "1" } else { "0" })
+}
+
+#[tauri::command]
+pub async fn listening_sync_configure(
+    database: State<'_, Database>,
+    state: State<'_, SyncState>,
+    uid: String,
+    enabled: bool,
+) -> Result<(), String> {
+    // A statistics preference must not cancel or pause library synchronization.
+    if let Some(token) = state.statistics_active.lock().map_err(err)?.as_ref() {
+        token.cancel();
+    }
+    let _guard = state.statistics_gate.lock().await;
+    let _account = state.account_gate.lock().await;
+    pause_account_sync(&database, &uid, !enabled)
+}
+
+async fn account_credentials(
+    app: &AppHandle,
+    db: &Database,
+    state: &SyncState,
+    cfg: &super::Config,
+) -> Result<transport::Secret, String> {
+    // Credentials belong to the selected account/service; never silently change providers.
+    let stored = {
+        let _account = state.account_gate.lock().await;
+        active(db, &cfg.uid)?;
+        secret(app, cfg, None, false)?
+    };
+    if cfg.provider == "webdav" {
+        return serde_json::from_str(&stored.ok_or("请在云同步设置中重新连接坚果云")?).map_err(err);
+    }
+    if let Some(value) = stored {
+        let credentials: transport::Secret = serde_json::from_str(&value).map_err(err)?;
+        let response = transport::client()?
+            .get(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
+            .bearer_auth(&credentials.password)
+            .send()
+            .await
+            .map_err(|_| "无法连接账号统计服务")?;
+        if response.status().is_success() {
+            return Ok(credentials);
+        }
+        if response.status().as_u16() != 401 {
+            return Err(format!(
+                "账号统计服务暂不可用：HTTP {}",
+                response.status().as_u16()
+            ));
+        }
+    }
+    let cookie = {
+        let _account = state.account_gate.lock().await;
+        active(db, &cfg.uid)?;
+        let c = db.0.lock().map_err(err)?;
+        AuthRepository::get_cookie(&c, "bilibili")
+            .map_err(err)?
+            .ok_or("请重新登录B站账号以同步统计")?
+    };
+    let credentials = transport::authenticate(cookie, &cfg.uid).await?;
+    let _account = state.account_gate.lock().await;
+    active(db, &cfg.uid)?;
+    secret(
+        app,
+        cfg,
+        Some(&serde_json::to_string(&credentials).map_err(err)?),
+        false,
+    )?;
+    Ok(credentials)
+}
+
 #[tauri::command]
 pub async fn listening_sync(
     app: AppHandle,
     database: State<'_, Database>,
     state: State<'_, SyncState>,
 ) -> Result<(), String> {
-    // Separate from the library network gate: native recording remains available during HTTP requests.
     let _guard = state.statistics_gate.lock().await;
-    let cfg = config(&database)?;
-    if !cfg.enabled || !cfg.initialized || !cfg.statistics {
-        return Ok(());
-    }
-    active(&database, &cfg.uid)?;
-    let credentials: transport::Secret =
-        serde_json::from_str(&secret(&app, &cfg, None, false)?.ok_or("请重新连接同步服务")?)
-            .map_err(err)?;
-    {
-        let c = database.0.lock().map_err(err)?;
-        let tx = c.unchecked_transaction().map_err(err)?;
-        init(&c, &database.1, &cfg.uid)?;
-        tx.commit().map_err(err)?;
-    }
-    let cancellation = tokio_util::sync::CancellationToken::new();
-    *state.statistics_active.lock().map_err(err)? = Some(cancellation.clone());
-    let result = tokio::select! {_=cancellation.cancelled()=>Err("统计同步已取消".into()),r=exchange(&database,&cfg,&credentials)=>r};
+    let (cfg, cancellation) = {
+        let _account = state.account_gate.lock().await;
+        let Some(cfg) = account_config(&database)? else {
+            return Ok(());
+        };
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        *state.statistics_active.lock().map_err(err)? = Some(cancellation.clone());
+        (cfg, cancellation)
+    };
+    let operation = async {
+        let credentials = account_credentials(&app, &database, &state, &cfg).await?;
+        let base = statistics_endpoint(&cfg)?;
+        exchange(&database, &cfg, &credentials, &base).await
+    };
+    let result =
+        tokio::select! {_=cancellation.cancelled()=>Err("统计同步已取消".into()),r=operation=>r};
+    let _account = state.account_gate.lock().await;
     if let Ok(c) = database.0.lock() {
         if active(&database, &cfg.uid).is_ok() {
+            let target = statistics_endpoint(&cfg)?;
+            if meta(&c, "last_target")?.as_deref() != Some(&target) {
+                c.execute("DELETE FROM listening_meta WHERE key='last_success'", [])
+                    .map_err(err)?;
+            }
+            put_meta(&c, "last_target", &target)?;
             let _ = put_meta(
                 &c,
                 "error",
@@ -496,21 +615,31 @@ pub async fn listening_sync(
             );
         }
     }
+    *state.statistics_active.lock().map_err(err)? = None;
     result
+}
+fn statistics_endpoint(cfg: &super::Config) -> Result<String, String> {
+    let endpoint = transport::endpoint(cfg)?;
+    Ok(if cfg.provider == "webdav" {
+        endpoint.replace("library.json", "statistics-v1/")
+    } else {
+        endpoint.replace("/vault", "/statistics/")
+    })
 }
 async fn exchange(
     db: &Database,
     cfg: &super::Config,
     secret: &transport::Secret,
+    base: &str,
 ) -> Result<(), String> {
     let http = transport::client()?;
-    let base = if cfg.provider == "webdav" {
-        transport::endpoint(cfg)?.replace("library.json", "statistics-v1/")
-    } else {
-        transport::endpoint(cfg)?.replace("/vault", "/statistics/")
-    };
     let request = |method: &str, url: String| {
-        let r = http.request(reqwest::Method::from_bytes(method.as_bytes()).unwrap(), url);
+        let r = http
+            .request(reqwest::Method::from_bytes(method.as_bytes()).unwrap(), url)
+            .header(
+                "User-Agent",
+                concat!("BiliMusic/", env!("CARGO_PKG_VERSION")),
+            );
         if cfg.provider == "webdav" {
             r.basic_auth(&secret.username, Some(&secret.password))
         } else {
@@ -518,13 +647,26 @@ async fn exchange(
         }
     };
     if cfg.provider == "webdav" {
-        let r = request("MKCOL", base.clone()).send().await.map_err(err)?;
-        if !r.status().is_success() && r.status().as_u16() != 405 {
-            return Err(format!("统计目录创建失败：{}", r.status()));
+        // Statistics may run before the first library merge; create our parents as well.
+        let (account, _) = base
+            .trim_end_matches('/')
+            .rsplit_once('/')
+            .ok_or("统计目录无效")?;
+        let (application, _) = account.rsplit_once('/').ok_or("统计目录无效")?;
+        for folder in [
+            format!("{application}/"),
+            format!("{account}/"),
+            base.to_owned(),
+        ] {
+            let r = request("MKCOL", folder).send().await.map_err(err)?;
+            if !r.status().is_success() && r.status().as_u16() != 405 {
+                return Err(format!("统计目录创建失败：HTTP {}", r.status().as_u16()));
+            }
         }
     }
     let (source, local, cutoff) = {
         let c = db.0.lock().map_err(err)?;
+        active(db, &cfg.uid)?;
         let source = meta(&c, "source")?.ok_or("统计来源丢失")?;
         let cutoff: String = c
             .query_row("SELECT date('now','+8 hours','-90 days')", [], |r| r.get(0))
@@ -534,6 +676,7 @@ async fn exchange(
     let published_key = format!("published:{base}:{source}");
     {
         let c = db.0.lock().map_err(err)?;
+        active(db, &cfg.uid)?;
         if meta(&c, &published_key)?.is_none() {
             c.execute("UPDATE listening_buckets SET dirty=1 WHERE owned=1", [])
                 .map_err(err)?;
@@ -627,6 +770,7 @@ async fn exchange(
     // Publish all acknowledged revisions. Failed index publication is retried even if buckets are clean.
     let index = {
         let c = db.0.lock().map_err(err)?;
+        active(db, &cfg.uid)?;
         let mut index = Index::default();
         for b in buckets(&c)?.into_iter().filter(|b| b.source == source) {
             if let Some(ack) = meta(&c, &format!("ack:{base}:{}:{}", source, b.month))? {
@@ -638,6 +782,7 @@ async fn exchange(
     let index_json = serde_json::to_string(&index).map_err(err)?;
     let publish = {
         let c = db.0.lock().map_err(err)?;
+        active(db, &cfg.uid)?;
         meta(&c, &published_key)?.as_deref() != Some(&index_json)
     };
     if publish {
@@ -656,7 +801,7 @@ async fn exchange(
         put_meta(&c, &published_key, &index_json)?;
     }
     let sources: Vec<String> = if cfg.provider == "webdav" {
-        let r = request("PROPFIND", base.clone())
+        let r = request("PROPFIND", base.to_owned())
             .header("Depth", "1")
             .header("Content-Type", "application/xml")
             .body("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
@@ -693,7 +838,7 @@ async fn exchange(
         }
         ids
     } else {
-        let r = request("GET", base.clone()).send().await.map_err(err)?;
+        let r = request("GET", base.to_owned()).send().await.map_err(err)?;
         if !r.status().is_success() {
             return Err("云端统计接口暂不可用，请更新同步服务".into());
         }
@@ -801,6 +946,7 @@ async fn exchange(
             .unwrap_or(0);
         put_meta(&c, key, &(prev + n).to_string())?;
     }
+    put_meta(&c, "last_target", base)?;
     put_meta(
         &c,
         "last_success",
@@ -814,6 +960,293 @@ async fn exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        body::Bytes,
+        extract::{OriginalUri, State as HttpState},
+        http::{HeaderMap, Method, StatusCode},
+        response::{IntoResponse, Response},
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct DavFixture {
+        folders: std::collections::BTreeSet<String>,
+        files: BTreeMap<String, Vec<u8>>,
+        fail_index_once: bool,
+        uploads: usize,
+        hold_month: bool,
+        month_started: Arc<tokio::sync::Notify>,
+        continue_month: Arc<tokio::sync::Notify>,
+    }
+    async fn dav_request(
+        HttpState(state): HttpState<Arc<Mutex<DavFixture>>>,
+        OriginalUri(uri): OriginalUri,
+        method: Method,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Basic dGVzdDpwYXNz")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let path = uri.path().to_owned();
+        let pause = {
+            let mut state = state.lock().unwrap();
+            if method == Method::PUT && path.ends_with(".json.gz") && state.hold_month {
+                state.hold_month = false;
+                Some((state.month_started.clone(), state.continue_month.clone()))
+            } else {
+                None
+            }
+        };
+        if let Some((started, resume)) = pause {
+            started.notify_one();
+            resume.notified().await;
+        }
+        let mut state = state.lock().unwrap();
+        if method.as_str() == "MKCOL" {
+            if state.folders.contains(&path) {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            let parent = format!(
+                "{}/",
+                path.trim_end_matches('/').rsplit_once('/').unwrap().0
+            );
+            if !state.folders.contains(&parent) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            state.folders.insert(path);
+            return StatusCode::CREATED.into_response();
+        }
+        if method.as_str() == "PROPFIND" {
+            if !state.folders.contains(&path) {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            let files: String = state
+                .files
+                .keys()
+                .filter(|key| {
+                    key.strip_prefix(&path)
+                        .is_some_and(|rest| !rest.contains('/'))
+                })
+                .map(|key| format!("<d:response><d:href>{key}</d:href></d:response>"))
+                .collect();
+            return (
+                StatusCode::MULTI_STATUS,
+                format!("<d:multistatus xmlns:d=\"DAV:\">{files}</d:multistatus>"),
+            )
+                .into_response();
+        }
+        if method == Method::PUT {
+            let parent = format!("{}/", path.rsplit_once('/').unwrap().0);
+            if !state.folders.contains(&parent) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            if path.contains("/index-") && state.fail_index_once {
+                state.fail_index_once = false;
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            state.files.insert(path, body.to_vec());
+            state.uploads += 1;
+            return StatusCode::CREATED.into_response();
+        }
+        if method == Method::GET {
+            let Some(body) = state.files.get(&path) else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            let etag = format!("\"{:x}\"", md5::compute(body));
+            if headers.get("if-none-match").and_then(|v| v.to_str().ok()) == Some(&etag) {
+                return StatusCode::NOT_MODIFIED.into_response();
+            }
+            return ([("etag", etag)], body.clone()).into_response();
+        }
+        StatusCode::METHOD_NOT_ALLOWED.into_response()
+    }
+    async fn dav_server() -> (String, Arc<Mutex<DavFixture>>, tokio::task::JoinHandle<()>) {
+        let state = Arc::new(Mutex::new(DavFixture::default()));
+        state.lock().unwrap().folders.insert("/dav/".into());
+        let router = Router::new()
+            .fallback(dav_request)
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let root = format!("http://{}/dav", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (root, state, task)
+    }
+    fn device(uid: &str) -> Database {
+        let (c, dir) = setup();
+        std::fs::write(dir.join("active-profile"), uid).unwrap();
+        let db = Database(Mutex::new(c), dir);
+        // A connected account before the library's first merge, with the old flag still false.
+        let cfg = super::super::Config {
+            uid: uid.into(),
+            enabled: true,
+            ..Default::default()
+        };
+        super::super::save(&db, &cfg).unwrap();
+        db
+    }
+    fn sample(db: &Database, uid: &str, seconds: f64) {
+        let c = db.0.lock().unwrap();
+        record(&c, &db.1, uid, "song", seconds, None, None).unwrap();
+    }
+    fn total(db: &Database, uid: &str) -> f64 {
+        query(&db.0.lock().unwrap(), &db.1, uid).unwrap()["total"]["seconds"]
+            .as_f64()
+            .unwrap()
+    }
+    async fn sync_device(db: &Database, root: &str, uid: &str) -> Result<(), String> {
+        let cfg = account_config(db)?.ok_or("account statistics unavailable")?;
+        let base = format!("{root}/BiliMusic-sync-v1/{uid}/statistics-v1/");
+        exchange(
+            db,
+            &cfg,
+            &transport::Secret {
+                username: "test".into(),
+                password: "pass".into(),
+            },
+            &base,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn four_devices_share_account_totals_with_offline_catchup_and_no_duplicate_uploads() {
+        let (root, server, task) = dav_server().await;
+        let devices: Vec<_> = (0..4).map(|_| device("42")).collect();
+        for (i, db) in devices.iter().enumerate() {
+            sample(db, "42", (i + 1) as f64 * 60.0);
+        }
+        // Empty WebDAV has no library parents yet. Statistics must still initialize and sync.
+        for db in &devices {
+            sync_device(db, &root, "42").await.unwrap();
+        }
+        for db in &devices {
+            sync_device(db, &root, "42").await.unwrap();
+            assert!((total(db, "42") - 600.0).abs() < 0.001);
+            let v = query(&db.0.lock().unwrap(), &db.1, "42").unwrap();
+            assert_eq!(v["total"]["tracks"], 1);
+            assert_eq!(v["total"]["days"], 1);
+        }
+        let uploads = server.lock().unwrap().uploads;
+        for db in &devices {
+            sync_device(db, &root, "42").await.unwrap();
+        }
+        assert_eq!(
+            server.lock().unwrap().uploads,
+            uploads,
+            "unchanged statistics must not re-upload monthly files"
+        );
+        sample(&devices[0], "42", 30.0);
+        assert!((total(&devices[1], "42") - 600.0).abs() < 0.001);
+        sync_device(&devices[0], &root, "42").await.unwrap();
+        for db in &devices {
+            sync_device(db, &root, "42").await.unwrap();
+            assert!((total(db, "42") - 630.0).abs() < 0.001);
+        }
+        // Another Bilibili account in the same WebDAV account is isolated.
+        let other = device("43");
+        sample(&other, "43", 300.0);
+        sync_device(&other, &root, "43").await.unwrap();
+        sync_device(&devices[0], &root, "42").await.unwrap();
+        assert!((total(&devices[0], "42") - 630.0).abs() < 0.001);
+        assert!((total(&other, "43") - 300.0).abs() < 0.001);
+        for db in devices.iter().chain([&other]) {
+            std::fs::remove_dir_all(&db.1).unwrap();
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_index_retries_without_readding_month_and_library_pause_does_not_block_statistics()
+     {
+        let (root, server, task) = dav_server().await;
+        let a = device("42");
+        let b = device("42");
+        sample(&a, "42", 60.0);
+        server.lock().unwrap().fail_index_once = true;
+        assert!(sync_device(&a, &root, "42").await.is_err());
+        sample(&a, "42", 15.0);
+        let mut library = super::super::config(&a).unwrap();
+        library.enabled = false;
+        library.initialized = true;
+        super::super::save(&a, &library).unwrap();
+        sync_device(&a, &root, "42").await.unwrap();
+        sync_device(&b, &root, "42").await.unwrap();
+        assert!((total(&b, "42") - 75.0).abs() < 0.001);
+        pause_account_sync(&a, "42", true).unwrap();
+        assert!(account_config(&a).unwrap().is_none());
+        assert!(
+            pause_account_sync(&a, "43", false).is_err(),
+            "stale account UI cannot change this account's statistics"
+        );
+        pause_account_sync(&a, "42", false).unwrap();
+        assert!(account_config(&a).unwrap().is_some());
+        for db in [&a, &b] {
+            std::fs::remove_dir_all(&db.1).unwrap();
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn listening_during_upload_stays_pending_until_its_revision_is_published() {
+        let (root, server, task) = dav_server().await;
+        let a = Arc::new(device("42"));
+        let b = device("42");
+        sample(&a, "42", 60.0);
+        let (started, resume) = {
+            let mut state = server.lock().unwrap();
+            state.hold_month = true;
+            (state.month_started.clone(), state.continue_month.clone())
+        };
+        let upload = {
+            let a = a.clone();
+            let root = root.clone();
+            tokio::spawn(async move { sync_device(&a, &root, "42").await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        sample(&a, "42", 15.0);
+        resume.notify_one();
+        upload.await.unwrap().unwrap();
+        let pending: i64 =
+            a.0.lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM listening_buckets WHERE dirty=1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+        assert_eq!(pending, 1);
+        sync_device(&b, &root, "42").await.unwrap();
+        assert!((total(&b, "42") - 60.0).abs() < 0.001);
+        sync_device(&a, &root, "42").await.unwrap();
+        sync_device(&b, &root, "42").await.unwrap();
+        assert!((total(&b, "42") - 75.0).abs() < 0.001);
+        for db in [&*a, &b] {
+            std::fs::remove_dir_all(&db.1).unwrap();
+        }
+        task.abort();
+    }
+
+    #[test]
+    fn no_connection_or_guest_never_silently_selects_another_provider() {
+        let db = device("42");
+        let cfg = account_config(&db).unwrap().unwrap();
+        assert_eq!(cfg.provider, "webdav");
+        assert!(!cfg.initialized);
+        assert!(!cfg.statistics);
+        let mut library = super::super::config(&db).unwrap();
+        library.enabled = false;
+        super::super::save(&db, &library).unwrap();
+        assert!(account_config(&db).unwrap().is_none());
+        std::fs::write(db.1.join("active-profile"), "").unwrap();
+        assert!(account_config(&db).unwrap().is_none());
+        std::fs::remove_dir_all(db.1).unwrap();
+    }
     #[test]
     fn codec_checks_identity_and_limit() {
         let b = Bucket {
@@ -833,6 +1266,7 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
             .unwrap();
+        crate::sync::storage::init(&c).unwrap();
         c.execute("INSERT INTO listening_totals VALUES('song',120)", [])
             .unwrap();
         c.execute("INSERT INTO listening_days VALUES('2025-01-01',120)", [])
@@ -850,6 +1284,7 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
             .unwrap();
+        crate::sync::storage::init(&c).unwrap();
         let dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir(&dir).unwrap();
         init(&c, &dir, "42").unwrap();
