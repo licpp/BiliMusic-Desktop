@@ -9,3 +9,4 @@ test('reject missing consent, stale policy, oversized input and honeypot', () =>
 test('rights feedback requires a reply channel', () => { assert.throws(() => validateFeedback({...input,category:'copyright'},input.policyVersion)); assert.ok(validateFeedback({...input,category:'copyright',contact:'rights@example.com'},input.policyVersion)); });
 
 test('Android users can submit platform-specific feedback', () => { assert.equal(validateFeedback({...input,platform:'Android'},input.policyVersion).platform,'Android'); });
+test('HarmonyOS testers can submit platform-specific feedback', () => { assert.equal(validateFeedback({...input,platform:'HarmonyOS'},input.policyVersion).platform,'HarmonyOS'); });

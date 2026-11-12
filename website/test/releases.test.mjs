@@ -14,11 +14,12 @@ test('reject unavailable mirror and external redirect configuration', () => {
 });
 
 test('all platforms provide both declared download channels', () => {
-  for (const platform of ['mac','windows','android','ios']) for (const source of ['gitee','github']) {
+  for (const platform of ['mac','windows','android','ios','ohos']) for (const source of ['gitee','github']) {
     const result=resolveDownload({...request,platform,source},'current');
     assert.ok(result.url.endsWith(result.file));
     assert.match(result.sha256,/^[a-f0-9]{64}$/);
     if(platform==='android') assert.ok(result.file.endsWith('.apk'));
     if(platform==='ios') assert.ok(result.file.endsWith('.ipa'));
+    if(platform==='ohos') assert.ok(result.file.endsWith('-unsigned.hap'));
   }
 });

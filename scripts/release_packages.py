@@ -162,7 +162,12 @@ def validate_bundle(bundle, native_verifier=verify_native):
     require(len(source) == 40 and all(c in '0123456789abcdef' for c in source), 'Invalid source commit')
     ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows'}
     require(len(build['platforms']) == 4 and {p['platform'] for p in build['platforms']} == set(ids), 'Expected exactly four built platforms')
-    require(len(manifest['platforms']) == 4 and {p['id'] for p in manifest['platforms']} == set(ids.values()), 'Expected exactly four manifest platforms')
+    manifest_ids = [p['id'] for p in manifest['platforms']]
+    require(len(manifest_ids) == len(set(manifest_ids)) and set(manifest_ids) in (set(ids.values()), set(ids.values()) | {'ohos'}), 'Expected four release platforms with optional retained Harmony test package')
+    if 'ohos' in manifest_ids:
+        harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
+        require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Four-platform publication must preserve the existing Harmony package')
+        require(harmony.get('version') and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
     certificate = build['validation'].get('androidCertificateSha256')
     assets = []
     for package in build['platforms']:

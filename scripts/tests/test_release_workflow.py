@@ -70,6 +70,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(len(urls), 8)
             self.assertTrue(all('/v0.3.1/BiliMusic_0.3.1_fix-1_' in u for u in urls))
             self.assertNotIn('file', template['platforms'][0])
+            # A later four-platform update must retain the separately versioned
+            # Harmony preview, and verify it without rebuilding or relabeling it.
+            harmony = {'id': 'ohos', 'version': '0.3.0', 'signature': 'unsigned', 'releaseStatus': 'experimental',
+                       'file': 'harmony-unsigned.hap', 'size': 7, 'sha256': 'c' * 64,
+                       'channels': [{'id': 'github', 'url': 'https://github.com/harmony'}, {'id': 'gitee', 'url': 'https://gitee.com/harmony'}]}
+            retained = json.loads((output / 'candidate-releases.json').read_text())
+            retained['platforms'].append(harmony)
+            (output / 'candidate-releases.json').write_text(json.dumps(retained))
+            (output / 'previous-releases.json').write_text(json.dumps({'version': '0.3.0', 'platforms': [harmony]}))
+            self.assertEqual(validate_bundle(output, Mock())['manifest']['platforms'][-1], harmony)
+            retained['platforms'][-1] = dict(harmony, sha256='d' * 64)
+            (output / 'candidate-releases.json').write_text(json.dumps(retained))
+            with self.assertRaisesRegex(ValueError, 'preserve the existing Harmony'):
+                validate_bundle(output, Mock())
 
     def test_new_release_is_a_prerelease_until_packages_are_verified(self):
         with tempfile.TemporaryDirectory() as directory:

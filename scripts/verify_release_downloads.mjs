@@ -7,7 +7,8 @@ const [planPath, reportPath, planDigest] = process.argv.slice(2)
 if (!planPath || !reportPath || !/^[a-f0-9]{64}$/.test(planDigest || '')) throw new Error('Usage: node verify_release_downloads.mjs plan.json report.json plan-sha256')
 const plan = JSON.parse(await readFile(planPath, 'utf8'))
 const work = plan.manifest.platforms.flatMap(platform => platform.channels.map(channel => ({ platform, channel })))
-if (work.length !== 8 || new Set(work.map(x => x.channel.url)).size !== 8) throw new Error('Expected eight distinct public download URLs')
+const ids = plan.manifest.platforms.map(p => p.id)
+if (![8,10].includes(work.length) || new Set(ids).size !== ids.length || !['mac','windows','android','ios'].every(id => ids.includes(id)) || ids.some(id => !['mac','windows','android','ios','ohos'].includes(id)) || plan.manifest.platforms.some(p => p.channels.length !== 2 || new Set(p.channels.map(c => c.id)).size !== 2 || p.channels.some(c => !['github','gitee'].includes(c.id))) || new Set(work.map(x => x.channel.url)).size !== work.length) throw new Error('Expected both public downloads for four release platforms and optional Harmony test package')
 const results = []
 async function worker() {
   while (work.length) {

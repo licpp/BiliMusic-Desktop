@@ -22,6 +22,7 @@ function platformIcon(platform) {
     windows: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
     android: 'M6 9a6 6 0 0 1 12 0ZM8 3 6 1M16 3l2-2M6 12h12v7H6ZM8 19v3M16 19v3M3 12v6M21 12v6',
     ios: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM10 5h4M11 19h2',
+    ohos: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM9 9h6M9 13h6M11 19h2',
   };
   const path = document.createElementNS(svg.namespaceURI,'path'); path.setAttribute('d', paths[platform] || paths.ios); svg.append(path); icon.append(svg);
   return icon;
@@ -88,6 +89,7 @@ async function loadDownloads() {
       const heading = element('div', null, 'download-heading');
       const title = element('div', null, 'download-title'); title.append(element('h3',item.name));
       if (item.id === 'ios') title.append(element('span','自签版','download-badge'));
+      if (item.id === 'ohos') title.append(element('span','测试版 · 未签名','download-badge'));
       heading.append(title,element('p',item.architecture,'download-architecture'));
       header.append(platformIcon(item.id),heading); article.append(header);
       if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
@@ -96,7 +98,7 @@ async function loadDownloads() {
         const version = element('div',null,'download-build');
         const count = element('span','累计下载 —','platform-download-count');
         count.dataset.downloadCount = item.id;
-        version.append(element('strong',`v${releaseManifest.version}`),element('span',`${(item.size / 1048576).toFixed(1)} MB`),count);
+        version.append(element('strong',`v${item.version || releaseManifest.version}`),element('span',`${(item.size / 1048576).toFixed(1)} MB`),count);
         body.append(version,element('p',item.requirements,'download-requirements')); article.append(body);
         const channels = element('div', null, 'channel-buttons');
         for (const channel of item.channels) {
@@ -112,6 +114,9 @@ async function loadDownloads() {
         utilities.append(checksum);
         if (item.id === 'ios') {
           const guide=element('a','自签安装说明 ↗','download-guide'); guide.href='/ios.html'; utilities.append(guide);
+        }
+        if (item.id === 'ohos') {
+          const guide=element('a','签名与安装说明 ↗','download-guide'); guide.href='/harmony.html'; utilities.append(guide);
         }
         article.append(utilities);
       }
@@ -143,7 +148,7 @@ async function openPolicy(downloadPlatform) {
   $('#confirm-download').disabled = true;
   $('#confirm-download').dataset.loaded = 'false';
   $('#confirm-download').textContent = '同意并下载';
-  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'ios' ? 'iOS 下载的是未签名 IPA，必须使用自己的 Apple ID 自行签名后安装，不是 App Store 版本。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
+  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'ios' ? 'iOS 下载的是未签名 IPA，必须使用自己的 Apple ID 自行签名后安装，不是 App Store 版本。' : platform.item.id === 'ohos' ? '鸿蒙下载的是未签名 HAP 测试包，真机需使用自己的华为开发者账号和包含本机 UDID 的 Profile 签名后安装，不能直接点击安装，也不是华为应用市场版本。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
   dialog.showModal(); dialog.scrollTop = 0; content.scrollTop = 0;
