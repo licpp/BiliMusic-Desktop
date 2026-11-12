@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -218,6 +219,25 @@ def sdk_env(target):
     return env, triple
 
 
+def elf_loadable_sections(binary):
+    """Compare runtime contents while allowing Hvigor to strip non-runtime metadata."""
+    if binary[:6] != b'\x7fELF\x02\x01':
+        raise RuntimeError('Expected a little-endian ELF64 native library')
+    offset = struct.unpack_from('<Q', binary, 40)[0]
+    stride, count, strings_index = struct.unpack_from('<HHH', binary, 58)
+    sections = [struct.unpack_from('<IIQQQQIIQQ', binary, offset + i * stride) for i in range(count)]
+    strings = sections[strings_index]
+    names = binary[strings[4]:strings[4] + strings[5]]
+    result = {}
+    for name, kind, flags, address, start, size, *_ in sections:
+        if flags & 2:  # SHF_ALLOC; SHT_NOBITS has no file-backed contents.
+            key = names[name:names.index(0, name)].decode()
+            result[key] = (kind, flags, address, size, binary[start:start + size] if kind != 8 else b'')
+    if '.text' not in result:
+        raise RuntimeError('Native library has no executable text section')
+    return result
+
+
 def verify_hap(target):
     abi = {'aarch64': 'arm64-v8a', 'x86_64': 'x86_64'}[target]
     machine = {'aarch64': 183, 'x86_64': 62}[target]
@@ -237,8 +257,10 @@ def verify_hap(target):
         binary = package.read(library)
         if binary[:4] != b'\x7fELF' or int.from_bytes(binary[18:20], 'little') != machine:
             raise RuntimeError('HAP contains the wrong native architecture')
-        if binary != (APP / f'gen/ohos/entry/libs/{abi}/libbilimusic_lib.so').read_bytes():
-            raise RuntimeError('Packaged native library differs from the build output')
+        source = (APP / f'gen/ohos/entry/libs/{abi}/libbilimusic_lib.so').read_bytes()
+        stripped = APP / f'gen/ohos/entry/build/default/intermediates/stripped_native_libs/default/{abi}/libbilimusic_lib.so'
+        if binary != stripped.read_bytes() or elf_loadable_sections(binary) != elf_loadable_sections(source):
+            raise RuntimeError('Packaged native runtime contents differ from the build output')
         for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
             if symbol.encode() not in binary:
                 raise RuntimeError(f'Native bridge export missing: {symbol}')
