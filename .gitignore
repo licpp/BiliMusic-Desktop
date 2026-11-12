@@ -22,3 +22,7 @@ src-tauri/.ios-icons/
 native/ios-player/.tauri/
 native/ios-player/ios/.build/
 native/ios-player/ios/.swiftpm/
+
+__pycache__/
+
+*.pyc
