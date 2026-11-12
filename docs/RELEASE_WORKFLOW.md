@@ -23,7 +23,7 @@ uv run --no-project --python 3.12 python scripts/prepare_release.py \
   --revision sync-fix-1 --output artifacts/BiliMusic-0.3.0-publish
 ```
 
-执行发布（将 `YOUR_SSH_HOST` 换成现有服务器地址或 SSH 配置中的主机名）：
+执行发布（将 `YOUR_SSH_HOST` 换成服务器的实际主机名或 IP 地址）：
 
 ```sh
 uv run --script scripts/publish_release.py \
@@ -32,6 +32,8 @@ uv run --script scripts/publish_release.py \
 ```
 
 同一命令加 `--plan-only` 可仅做本机验证，不使用发布凭据、不写外部服务。输出目录内 `release-plan.json` 是不含凭据的完整计划。失败后直接重复发布命令，读取同一计划和远端进度继续；不要重新运行 prepare 覆盖回退基准。
+
+续跑会校验并复用远端已暂存的文件及已完成的 8 次下载证明。旧校验清单、许可和构建报告也由工作站备份：优先复用 `--previous-bundle` 指定的原发行目录（默认寻找相邻的 `BiliMusic-旧版本-release`），不匹配时自动从公开入口下载验证，再通过 SSH 传回服务器。该设计避免服务器直连 GitHub 的低速链路反复拖慢发布。
 
 服务器使用发布锁，同一计划可恢复执行；未完成的计划会阻止另一份计划开始，防止相互覆盖。取消一份未完成发布后，先检查其报告与线上状态，再决定恢复或人工释放 `.release-workflow-owner.json` 中的占用，不能直接并行发布另一版本。
 

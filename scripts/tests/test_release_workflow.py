@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -14,6 +15,16 @@ from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_attachment_redirect_does_not_forward_api_credentials_to_cdn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.0', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'github': 'owner/repo'}}, {'github': 'PRIVATE-API-TOKEN'}, directory)
+            publisher.opener = Mock()
+            publisher.opener.open.side_effect = urllib.error.HTTPError('https://api.github.com/asset', 302, 'redirect', {'Location': 'https://cdn.example.test/asset'}, None)
+            with patch('publish_release.public_download', return_value={'size': 3, 'sha256': 'a' * 64}) as download:
+                publisher.download_attachment('github', {'id': 1}, {'id': 2, 'size': 3, 'digest': 'sha256:' + 'a' * 64})
+                self.assertEqual(download.call_args.args[0], 'https://cdn.example.test/asset')
+                self.assertNotIn('PRIVATE-API-TOKEN', str(download.call_args))
+
     def test_an_unfinished_plan_blocks_a_different_publication_but_can_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             with publication_lock(directory, 'first', directory):

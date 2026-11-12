@@ -69,6 +69,7 @@ def public_download(url, expected=None, destination=None):
     for attempt in range(3):
         try:
             hasher, size = hashlib.sha256(), 0
+            deadline = time.monotonic() + 180
             request = urllib.request.Request(url, headers={'User-Agent': 'BiliMusic-release-verification'})
             with urllib.request.urlopen(request, timeout=120) as response:
                 require(response.url.startswith('https://'), 'Unsafe download redirect')
@@ -76,6 +77,7 @@ def public_download(url, expected=None, destination=None):
                 output = temporary.open('wb') if temporary else None
                 try:
                     while chunk := response.read(128 * 1024):
+                        require(time.monotonic() < deadline, 'Download exceeded time limit')
                         size += len(chunk)
                         require(size <= (expected['size'] if expected else 64 * 1024 * 1024), 'Unexpected download size')
                         hasher.update(chunk)
@@ -86,7 +88,7 @@ def public_download(url, expected=None, destination=None):
                         output.close()
             result = {'url': url, 'size': size, 'sha256': hasher.hexdigest()}
             if expected:
-                require(size == expected['size'] and result['sha256'] == expected['sha256'], 'Download SHA-256 mismatch')
+                require(size == expected['size'] and (not expected.get('sha256') or result['sha256'] == expected['sha256']), 'Download SHA-256 mismatch')
             if destination:
                 temporary.replace(destination)
             return result
@@ -94,7 +96,8 @@ def public_download(url, expected=None, destination=None):
             if destination:
                 Path(str(destination) + '.download-tmp').unlink(missing_ok=True)
             if attempt == 2:
-                raise RuntimeError('Could not verify public download: ' + url) from None
+                safe_url = urllib.parse.urlsplit(url)._replace(query='', fragment='').geturl()
+                raise RuntimeError('Could not verify public download: ' + safe_url) from None
             time.sleep(2)
 
 
@@ -224,20 +227,30 @@ class Publisher:
             return False
         if channel == 'github' and existing.get('digest'):
             return existing['digest'] == 'sha256:' + asset['sha256'] and existing.get('state') == 'uploaded'
-        # An attachment ID is immutable; the filename URL can still cache the
-        # superseded checksum/notice file immediately after a replacement.
-        url = self.base(channel) + f'/releases/{release["id"]}/attach_files/{existing["id"]}/download'
-        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + self.secrets[channel], 'User-Agent': 'BiliMusic-release-workflow'})
+        result = self.download_attachment(channel, release, existing)
+        return result['size'] == asset['size'] and result['sha256'] == asset['sha256']
+
+    def download_attachment(self, channel, release, existing, destination=None):
+        # Immutable API IDs avoid cached filename redirects and bypass the
+        # server's unreliable connection to the github.com web frontend.
+        path = f'/releases/assets/{existing["id"]}' if channel == 'github' else f'/releases/{release["id"]}/attach_files/{existing["id"]}/download'
+        url = self.base(channel) + path
+        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + self.secrets[channel], 'User-Agent': 'BiliMusic-release-workflow', 'Accept': 'application/octet-stream'})
+        expected = {'size': existing['size'], 'sha256': existing.get('digest', '').removeprefix('sha256:') or None}
         try:
-            with self.opener.open(request, timeout=120) as response:
-                data = response.read(64 * 1024 * 1024 + 1)
-                require(len(data) <= 64 * 1024 * 1024, 'Attachment exceeded size limit')
-                return len(data) == asset['size'] and hashlib.sha256(data).hexdigest() == asset['sha256']
+            with self.opener.open(request, timeout=60) as response:
+                data = response.read(expected['size'] + 1)
+                sha256 = hashlib.sha256(data).hexdigest()
+                require(len(data) == expected['size'] and (not expected['sha256'] or sha256 == expected['sha256']), 'Attachment data mismatch')
+                if destination:
+                    temporary = Path(str(destination) + '.download-tmp')
+                    temporary.write_bytes(data)
+                    temporary.replace(destination)
+                return {'size': len(data), 'sha256': sha256}
         except urllib.error.HTTPError as error:
             if error.code not in (301, 302, 303, 307, 308):
-                raise RuntimeError('Gitee attachment download HTTP ' + str(error.code)) from None
-            result = public_download(error.headers['Location'])
-            return result['size'] == asset['size'] and result['sha256'] == asset['sha256']
+                raise RuntimeError(channel + ' attachment download HTTP ' + str(error.code)) from None
+            return public_download(error.headers['Location'], expected, destination)
 
     def stage_asset(self, channel, release, asset):
         data = (self.work / 'assets' / asset['name']).read_bytes()
@@ -251,8 +264,12 @@ class Publisher:
                     require(not asset['binary'], 'Binary name is already used; choose a revision-specific filename')
                     backup = self.work / 'original-assets' / channel
                     backup.mkdir(parents=True, exist_ok=True)
-                    if not (backup / asset['name']).exists():
-                        public_download(self.public_url(channel, asset['name']), destination=backup / asset['name'])
+                    proof = json.loads((self.work / 'metadata-backup-proof.json').read_text())
+                    require(proof['planDigest'] == fingerprint(self.plan), 'Metadata backup belongs to another plan')
+                    original = next((x for x in proof['results'] if x['channel'] == channel and x['name'] == asset['name']), None)
+                    require(original and (original['id'] == existing['id'] or existing.get('state') not in ('uploaded', None)), 'Metadata attachment changed concurrently')
+                    saved = (backup / asset['name']).read_bytes()
+                    require(len(saved) == original['size'] and hashlib.sha256(saved).hexdigest() == original['sha256'], 'Original metadata backup missing or corrupted')
                     self.delete_asset(channel, release, existing)
                 if channel == 'github':
                     url = f'https://uploads.github.com/repos/{self.plan["repos"][channel]}/releases/{release["id"]}/assets?name=' + urllib.parse.quote(asset['name'])
@@ -283,6 +300,17 @@ class Publisher:
                 if asset['binary']:
                     self.stage_asset(channel, release, asset)
         self.record('staged', {'binaryAssets': 8})
+        if 'originalMetadata' not in self.report:
+            originals = []
+            for channel, release in releases.items():
+                for existing in self.list_assets(channel, release):
+                    asset = next((a for a in self.plan['assets'] if a['name'] == existing['name'] and not a['binary']), None)
+                    if not asset:
+                        continue
+                    if channel == 'github' and existing.get('digest') == 'sha256:' + asset['sha256']:
+                        continue
+                    originals.append({'channel': channel, 'name': existing['name'], 'id': existing['id'], 'size': existing['size'], 'sha256': existing.get('digest', '').removeprefix('sha256:') or None, 'url': self.public_url(channel, existing['name'])})
+            self.record('originalMetadata', originals)
 
     def finish_release(self):
         verification = json.loads((self.work / 'download-verification.json').read_text())
@@ -402,11 +430,19 @@ def local_main(args):
     work = args.site_root + '/.release-' + plan['version'] + '-' + fingerprint(plan)[:12]
     try:
         require(ssh.exec_command('mkdir -m 700 -p ' + shlex.quote(work + '/assets'))[1].channel.recv_exit_status() == 0, 'Cannot stage release directory')
+        inspect = "from pathlib import Path\nimport hashlib,json\nroot=Path(" + repr(work + '/assets') + ")\nresult={}\nfor path in root.iterdir():\n if path.is_file():\n  h=hashlib.sha256()\n  with path.open('rb') as f:\n   for chunk in iter(lambda:f.read(131072),b''):h.update(chunk)\n  result[path.name]={'size':path.stat().st_size,'sha256':h.hexdigest()}\nprint(json.dumps(result))\n"
+        _, index_out, index_error = ssh.exec_command("python3 - <<'PY'\n" + inspect + 'PY', timeout=60)
+        staged = json.loads(index_out.read().decode())
+        require(index_out.channel.recv_exit_status() == 0, 'Cannot inspect existing staged files')
+        uploaded = 0
         with ssh.open_sftp() as sftp:
             for asset in plan['assets']:
-                sftp.put(str(bundle / asset['name']), work + '/assets/' + asset['name'])
+                if staged.get(asset['name']) != {'size': asset['size'], 'sha256': asset['sha256']}:
+                    sftp.put(str(bundle / asset['name']), work + '/assets/' + asset['name'])
+                    uploaded += 1
             sftp.put(str(bundle / 'release-plan.json'), work + '/plan.json')
             sftp.put(str(Path(__file__).resolve()), work + '/publish_release.py')
+        print(json.dumps({'stagedInputs': len(plan['assets']), 'uploaded': uploaded, 'reused': len(plan['assets']) - uploaded}), flush=True)
         def run_phase(phase):
             secrets = {name: subprocess.check_output([cli, 'auth', 'token'], text=True, stderr=subprocess.DEVNULL).strip() for name, cli in [('github', 'gh'), ('gitee', 'gitee')]}
             cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase
@@ -425,8 +461,26 @@ def local_main(args):
                 report = json.loads((bundle / 'release-report.json').read_text())
                 raise RuntimeError(report.get('lastFailure', {}).get('message', 'Remote workflow failed; rerun to resume'))
         run_phase('stage')
+        previous_bundle = Path(args.previous_bundle).resolve() if args.previous_bundle else bundle.parent / ('BiliMusic-' + plan['previous']['version'] + '-release')
+        subprocess.run(['node', str(Path(__file__).with_name('backup_release_metadata.mjs')), str(bundle / 'release-report.json'), str(bundle), str(previous_bundle)], check=True)
+        metadata_proof = json.loads((bundle / 'metadata-backup-proof.json').read_text())
+        with ssh.open_sftp() as sftp:
+            for channel in ('github', 'gitee'):
+                directory = work + '/original-assets/' + channel
+                ssh.exec_command('mkdir -p ' + shlex.quote(directory))[1].channel.recv_exit_status()
+                for item in metadata_proof['results']:
+                    if item['channel'] == channel:
+                        sftp.put(str(bundle / 'original-assets' / channel / item['name']), directory + '/' + item['name'])
+            sftp.put(str(bundle / 'metadata-backup-proof.json'), work + '/metadata-backup-proof.json')
         verification = bundle / 'download-verification.json'
-        subprocess.run(['node', str(Path(__file__).with_name('verify_release_downloads.mjs')), str(bundle / 'release-plan.json'), str(verification), fingerprint(plan)], check=True)
+        cached = json.loads(verification.read_text()) if verification.exists() else {}
+        expected = {c['url']: (p['size'], p['sha256']) for p in plan['manifest']['platforms'] for c in p['channels']}
+        verified = cached.get('results', [])
+        valid = cached.get('planDigest') == fingerprint(plan) and len(verified) == 8 and {v['url'] for v in verified} == set(expected) and all((v['size'], v['sha256']) == expected[v['url']] for v in verified)
+        if not valid:
+            subprocess.run(['node', str(Path(__file__).with_name('verify_release_downloads.mjs')), str(bundle / 'release-plan.json'), str(verification), fingerprint(plan)], check=True)
+        else:
+            print(json.dumps({'stage': 'publicDownloads', 'status': 'reused verified proof'}), flush=True)
         with ssh.open_sftp() as sftp:
             sftp.put(str(verification), work + '/download-verification.json')
         run_phase('activate')
@@ -444,6 +498,7 @@ if __name__ == '__main__':
     parser.add_argument('--ssh-user', default='root')
     parser.add_argument('--site-root', default='/opt/bilimusic-site')
     parser.add_argument('--plan-only', action='store_true')
+    parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')
     parser.add_argument('--remote-work', help=argparse.SUPPRESS)
     parser.add_argument('--remote-phase', choices=['stage', 'activate'], help=argparse.SUPPRESS)
     args = parser.parse_args()

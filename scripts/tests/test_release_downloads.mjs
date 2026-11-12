@@ -33,3 +33,17 @@ test('a same-size corrupted download prevents the activation proof', async t => 
   await assert.rejects(run(process.execPath, ['--import', preload, resolve('scripts/verify_release_downloads.mjs'), plan, report, 'a'.repeat(64)]), /SHA-256 mismatch/)
   await assert.rejects(access(report))
 })
+
+test('metadata backups reuse locally verified originals without network requests', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'bilimusic-metadata-test-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const original = join(root, 'build-info.json'), report = join(root, 'release-report.json'), preload = join(root, 'offline.mjs')
+  const sha256 = createHash('sha256').update('package').digest('hex')
+  await writeFile(original, 'package')
+  await writeFile(preload, 'globalThis.fetch=()=>{throw new Error("Network must not be used") }')
+  await writeFile(report, JSON.stringify({ planDigest: 'a'.repeat(64), originalMetadata: [{ channel: 'github', name: 'build-info.json', size: 7, sha256, id: 123, url: 'https://example.test/build-info.json' }] }))
+  await run(process.execPath, ['--import', preload, resolve('scripts/backup_release_metadata.mjs'), report, root, root])
+  const proof = JSON.parse(await readFile(join(root, 'metadata-backup-proof.json'), 'utf8'))
+  assert.equal(proof.results[0].sha256, sha256)
+  assert.equal(await readFile(join(root, 'original-assets/github/build-info.json'), 'utf8'), 'package')
+})

@@ -2,9 +2,9 @@ name: release-workflow-validation
 on:
   workflow_dispatch:
   push:
-    paths: ['scripts/publish_release.py', 'scripts/prepare_release.py', 'scripts/release_packages.py', 'scripts/verify_release_downloads.mjs', 'scripts/tests/**', '.github/workflows/release-validation.yml']
+    paths: ['scripts/publish_release.py', 'scripts/prepare_release.py', 'scripts/release_packages.py', 'scripts/verify_release_downloads.mjs', 'scripts/backup_release_metadata.mjs', 'scripts/tests/**', '.github/workflows/release-validation.yml']
   pull_request:
-    paths: ['scripts/publish_release.py', 'scripts/prepare_release.py', 'scripts/release_packages.py', 'scripts/verify_release_downloads.mjs', 'scripts/tests/**', '.github/workflows/release-validation.yml']
+    paths: ['scripts/publish_release.py', 'scripts/prepare_release.py', 'scripts/release_packages.py', 'scripts/verify_release_downloads.mjs', 'scripts/backup_release_metadata.mjs', 'scripts/tests/**', '.github/workflows/release-validation.yml']
 permissions:
   contents: read
 jobs:
