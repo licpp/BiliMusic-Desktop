@@ -7,6 +7,7 @@ const fields = {
   favorite:['trackId'], history:['trackId','playedAt','resume'], lyric:['id','provider','providerLyricId','biasMs','manual'],
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const validPlaylistId = id => typeof id === 'string' && uuid.test(id.startsWith('import:') ? id.slice(7) : id);
 function validCollectionReference(value) {
   if (typeof value !== 'string') return false;
   if (/^up:[1-9][0-9]{0,18}$/.test(value)) return BigInt(value.slice(3)) <= 9223372036854775807n;
@@ -35,11 +36,11 @@ export function validateSnapshot(value, uid) {
       const match=typeof f.checkpoint==='string' && /^([1-9]\d*):(BV[a-zA-Z0-9]+):([1-9]\d*):(\d+)$/.exec(f.checkpoint);
       if(!validCollectionReference(f.reference)||key!==`collectionProgress:${f.reference}`||value.records[`collection:${f.reference}`]?.kind!=='collection'||!match||!Number.isSafeInteger(+match[1])||!validCollectionReference(match[2])||BigInt(match[3])>9223372036854775807n||+match[4]>604800000||(!f.reference.startsWith('season:')&&!f.reference.startsWith('up:')&&f.reference!==match[2]))fail();
     }
-    else if(r.kind==='playlist') {if(!uuid.test(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
+    else if(r.kind==='playlist') {if(!validPlaylistId(f.id)||typeof f.name!=='string'||!f.name.trim()||key!==`playlist:${f.id}`) fail();}
     else if(r.kind==='lyric') {if(key!==`lyric:${f.id}`||!['lrclib','netease','qq','local'].includes(f.provider)||!Number.isSafeInteger(f.biasMs)||Math.abs(f.biasMs)>30000) fail();}
     else {
       if(typeof f.trackId!=='string') fail();referenced.add(f.trackId);
-      if(r.kind==='item'){if(!uuid.test(f.playlistId)||key!==`item:${f.playlistId}|${f.trackId}`||!value.records[`playlist:${f.playlistId}`]||!Number.isSafeInteger(f.position)||f.position<0)fail();}
+      if(r.kind==='item'){if(!validPlaylistId(f.playlistId)||key!==`item:${f.playlistId}|${f.trackId}`||!value.records[`playlist:${f.playlistId}`]||!Number.isSafeInteger(f.position)||f.position<0)fail();}
       else if(key!==`${r.kind}:${f.trackId}`) fail();
       if(r.kind==='history'&&Object.hasOwn(f,'resume')){
         const resume=typeof f.resume==='string'&&/^([1-9]\d*):(\d+)$/.exec(f.resume);

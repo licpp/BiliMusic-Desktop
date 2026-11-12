@@ -358,8 +358,10 @@ fn request(c: &reqwest::Client, method: &str, url: String, s: &Secret) -> reqwes
 fn check(status: reqwest::StatusCode) -> Result<(), String> {
     if status.is_success() {
         Ok(())
-    } else if matches!(status.as_u16(), 401 | 403) {
-        Err("同步授权失效，请重新连接（已停止自动重试）".into())
+    } else if status.as_u16() == 401 {
+        Err("同步授权失效（HTTP 401），请使用坚果云应用密码重新连接（已停止自动重试）".into())
+    } else if status.as_u16() == 403 {
+        Err("坚果云拒绝访问（HTTP 403），请检查账号权限、服务器目录及服务限制".into())
     } else if status.as_u16() == 409 {
         Err("坚果云目录冲突（HTTP 409），请检查服务器地址是否指向已存在的文件夹".into())
     } else if status.as_u16() == 429 {
@@ -524,6 +526,15 @@ pub async fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn permission_denial_is_not_reported_as_expired_credentials() {
+        let unauthorized = check(reqwest::StatusCode::UNAUTHORIZED).unwrap_err();
+        let forbidden = check(reqwest::StatusCode::FORBIDDEN).unwrap_err();
+        assert!(unauthorized.contains("授权失效"));
+        assert!(unauthorized.contains("401"));
+        assert!(forbidden.contains("403"));
+        assert!(!forbidden.contains("授权失效"));
+    }
     #[tokio::test]
     async fn first_connect_handles_missing_parents_without_writing_or_hiding_errors() {
         for (vault_status, error, base_status, succeeds, requests) in [

@@ -234,7 +234,7 @@ impl Snapshot {
                 }
                 "playlist" => {
                     key == &format!("playlist:{id}")
-                        && uuid::Uuid::parse_str(id).is_ok()
+                        && valid_playlist_id(id)
                         && !text(r, "name").trim().is_empty()
                 }
                 "favorite" => key == &format!("favorite:{track}"),
@@ -247,7 +247,7 @@ impl Snapshot {
                 }
                 "item" => {
                     key == &format!("item:{}|{track}", text(r, "playlistId"))
-                        && uuid::Uuid::parse_str(text(r, "playlistId")).is_ok()
+                        && valid_playlist_id(text(r, "playlistId"))
                         && number(r, "position") >= 0
                 }
                 "lyric" => {
@@ -258,7 +258,7 @@ impl Snapshot {
                 _ => false,
             };
             if !valid {
-                return Err("同步记录身份无效".into());
+                return Err(format!("同步记录身份无效（{}）", r.kind));
             }
             if matches!(r.kind.as_str(), "favorite" | "history" | "item")
                 && !self.records.contains_key(&format!("track:{track}"))
@@ -288,6 +288,10 @@ impl Snapshot {
         }
         Ok(())
     }
+}
+fn valid_playlist_id(id: &str) -> bool {
+    // Imported playlists retain this identity when matching is resumed or reviewed.
+    uuid::Uuid::parse_str(id.strip_prefix("import:").unwrap_or(id)).is_ok()
 }
 fn valid_history_time(time: &str) -> bool {
     matches!(time.len(), 19 | 23)

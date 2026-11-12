@@ -12,6 +12,15 @@ class Store {
  async revoke(hash){this.sessions.delete(hash);}async remove(uid){this.vaults.delete(uid);for(const[h,u]of this.sessions)if(u===uid)this.sessions.delete(h);}
 }
 const sample=uid=>({schema:1,uid,records:{'track:bilibili:BV1:1':{kind:'track',fields:{id:'bilibili:BV1:1',bvid:'BV1',cid:1,overrideTitle:'My edit'}},'favorite:bilibili:BV1:1':{kind:'favorite',fields:{trackId:'bilibili:BV1:1'}}}});
+test('imported playlists and memberships accept import UUIDs and reject malformed identities',()=>{
+  for (const [id,valid] of [['8076ad4b-2861-4be1-8b08-a6a0fb0b0579',true],['import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579',true],['import:',false],['import:bad',false],['import:import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579',false],['system:favorites',false]]) {
+    const snapshot=sample('42');
+    snapshot.records[`playlist:${id}`]={kind:'playlist',fields:{id,name:'Imported'}};
+    snapshot.records[`item:${id}|bilibili:BV1:1`]={kind:'item',fields:{playlistId:id,trackId:'bilibili:BV1:1',position:0}};
+    if (valid) assert.equal(validateSnapshot(snapshot,'42'),snapshot);
+    else assert.throws(()=>validateSnapshot(snapshot,'42'));
+  }
+});
 test('QQ lyric selections sync as an ID and bias, without lyric bodies',()=>{
   const snapshot=sample('42');
   snapshot.records['lyric:bilibili:BV1:1']={kind:'lyric',fields:{id:'bilibili:BV1:1',provider:'qq',providerLyricId:'213086592',biasMs:500,manual:true}};

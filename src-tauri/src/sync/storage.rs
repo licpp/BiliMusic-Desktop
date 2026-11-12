@@ -163,7 +163,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
         }
     }
     s.compact(history);
-    s.validate(uid)?;
+    s.validate(uid).map_err(|e| format!("本机同步资料校验失败：{e}"))?;
     Ok(s)
 }
 fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
@@ -361,6 +361,30 @@ pub fn prune(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imported_playlists_and_members_round_trip_without_changing_identity() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        let id = "import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579";
+        c.execute("INSERT INTO playlists(id,name) VALUES(?1,'Imported')", [id]).unwrap();
+        c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1);
+            INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track');
+            INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579','bilibili:BV123:1',0);").unwrap();
+        let snapshot = export(&c, "42", false).unwrap();
+        let destination = Connection::open_in_memory().unwrap();
+        destination.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        apply(&destination, &snapshot, false).unwrap();
+        assert_eq!(snapshot, export(&destination, "42", false).unwrap());
+        assert_eq!(destination.query_row("SELECT playlist_id FROM playlist_items", [], |r| r.get::<_, String>(0)).unwrap(), id);
+        for invalid in ["import:", "import:bad", "import:import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579", "system:favorites"] {
+            let mut bad = snapshot.clone();
+            let mut playlist = bad.records.remove(&format!("playlist:{id}")).unwrap();
+            playlist.fields.insert("id".into(), json!(invalid));
+            bad.records.insert(format!("playlist:{invalid}"), playlist);
+            bad.records.retain(|_, r| r.kind != "item");
+            assert!(bad.validate("42").is_err(), "{invalid}");
+        }
+    }
     #[test]
     fn sync_preserves_local_playlist_and_folder_creation_order() {
         use crate::infrastructure::repositories::{collections, playlists::PlaylistRepository};
