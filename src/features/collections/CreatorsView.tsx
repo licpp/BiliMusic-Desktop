@@ -169,20 +169,19 @@ export function CreatorsView({
       ) || []
   return (
     <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
-      {sidebar && <button className="sidebar-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => { localStorage.setItem('creators-expanded', String(!value)); return !value })}>关注{expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}
+      {followed && <CreatorManager sidebar={sidebar} expanded={expanded} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')} items={items} selected={group} onSelect={setGroup}/>}
       <div hidden={sidebar && !expanded}>
-      {followed && !sidebar && <CreatorManager folders={saved.data?.folders || []} items={items} selected={group} onSelect={setGroup}/> }
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
-      {items.filter(item => !followed || sidebar || group === 'all' || item.folderId === group).map((item) => (
+      {items.filter(item => !followed || group === 'all' || item.folderId === group).map((item) => (
         <CreatorEntry
           key={item.bvid}
           item={{...item,...saved.data?.items.find(saved=>saved.bvid===item.bvid)}}
           editable={Boolean(saved.data?.items.some(saved=>saved.bvid===item.bvid))}
           onOpen={onOpen}
           sidebar={sidebar}
-          folders={saved.data?.folders || []}
+          folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')}
         />
       ))}
       {result.isLoading && <p>正在搜索 UP 主…</p>}
@@ -375,7 +374,7 @@ export function CreatorPage({
         </div>
         <div className="creator-header-actions">
           <CreatorFollow item={item} />
-          {followed && <CreatorActions item={saved.data!.items.find(value=>value.bvid===item.bvid)!} folders={saved.data?.folders || []}/>}
+          {followed && <CreatorActions item={saved.data!.items.find(value=>value.bvid===item.bvid)!} folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')}/>}
           {resumeButton}
           <button
             className="collection-icon"

@@ -6,6 +6,8 @@ pub fn init(c: &Connection) -> Result<(), String> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS sync_settings(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_base(provider TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_info(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|e|e.to_string())
 }
 pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, String> {
+    crate::infrastructure::repositories::collections::separate_legacy_folders(c)
+        .map_err(|e| e.to_string())?;
     let mut s = Snapshot::empty(uid);
     let mut add = |key: String, kind: &str, value: Value| {
         s.records.insert(
@@ -17,13 +19,23 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
         );
     };
     let result = (|| -> rusqlite::Result<()> {
-        let mut q = c.prepare("SELECT id,name FROM collection_folders LIMIT 101")?;
-        for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
-            let (id, name) = row?;
+        let mut q = c.prepare("SELECT id,name,scope FROM collection_folders LIMIT 101")?;
+        for row in q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })? {
+            let (id, name, scope) = row?;
             add(
                 format!("collectionFolder:{id}"),
                 "collectionFolder",
-                json!({"id":id,"name":name}),
+                if scope == "creators" {
+                    json!({"id":id,"name":name,"scope":scope})
+                } else {
+                    json!({"id":id,"name":name})
+                },
             );
         }
         let mut q = c.prepare("SELECT bvid,folder_id FROM collections LIMIT 2001")?;
@@ -158,6 +170,7 @@ fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
     r.fields.get(k).and_then(Value::as_str)
 }
 pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> {
+    crate::infrastructure::repositories::collections::init_folders(c).map_err(|e| e.to_string())?;
     s.validate(&s.uid)?;
     c.execute_batch("SAVEPOINT sync_apply")
         .map_err(|e| e.to_string())?;
@@ -186,8 +199,8 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         }
         for r in s.records.values().filter(|r| r.kind == "collectionFolder") {
             tx.execute(
-                "INSERT INTO collection_folders(id,name) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
-                params![text(r, "id"), text(r, "name")],
+                "INSERT INTO collection_folders(id,name,scope) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET name=excluded.name,scope=CASE WHEN ?4 THEN excluded.scope ELSE collection_folders.scope END",
+                params![text(r, "id"), text(r, "name"),if text(r,"scope")=="creators" {"creators"}else{"collections"},r.fields.contains_key("scope")],
             )?;
         }
         let keep: std::collections::BTreeSet<_> = s
@@ -208,6 +221,7 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         for r in s.records.values().filter(|r| r.kind == "collection") {
             tx.execute("INSERT INTO collections(bvid,folder_id) VALUES(?1,?2) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id",params![text(r,"bvid"),text(r,"folderId")])?;
         }
+        crate::infrastructure::repositories::collections::separate_legacy_folders(tx)?;
         tx.execute(
             "DELETE FROM creator_notes WHERE bvid NOT IN (SELECT bvid FROM collections)",
             [],
@@ -620,5 +634,22 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+    #[test]
+    fn scoped_creator_folders_round_trip_including_empty_folders() {
+        use crate::infrastructure::repositories::collections;
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        collections::change(&mut c, "createCreator", "", "独立UP文件夹", None).unwrap();
+        let source = export(&c, "42", true).unwrap();
+        source.validate("42").unwrap();
+        let d = Connection::open_in_memory().unwrap();
+        d.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        apply(&d, &source, true).unwrap();
+        let data = collections::list(&d).unwrap();
+        assert_eq!(data.folders.len(), 1);
+        assert_eq!(data.folders[0].scope, "creators");
     }
 }

@@ -416,6 +416,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             legacy_cloud: false,
             track_positions: true,
             creators: true,
+            creator_groups: true,
         });
     }
     check(status)?;
@@ -477,6 +478,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         legacy_cloud: false,
         track_positions: true,
         creators: true,
+        creator_groups: true,
     })
 }
 pub async fn write(

@@ -33,6 +33,15 @@ impl Snapshot {
             records: BTreeMap::new(),
         }
     }
+    pub fn omit_folder_scopes(&mut self) {
+        for r in self
+            .records
+            .values_mut()
+            .filter(|r| r.kind == "collectionFolder")
+        {
+            r.fields.remove("scope");
+        }
+    }
     pub fn omit_creators(&mut self) {
         self.records.retain(|_, r| {
             !((r.kind == "collection" && text(r, "bvid").starts_with("up:"))
@@ -149,7 +158,7 @@ impl Snapshot {
                     "overrideCover",
                 ],
                 "playlist" => &["id", "name", "description", "coverUrl"],
-                "collectionFolder" => &["id", "name"],
+                "collectionFolder" => &["id", "name", "scope"],
                 "collection" => &["bvid", "folderId"],
                 "item" => &["playlistId", "trackId", "position"],
                 "collectionProgress" => &["reference", "checkpoint"],
@@ -188,6 +197,7 @@ impl Snapshot {
                         && uuid::Uuid::parse_str(id).is_ok()
                         && !text(r, "name").trim().is_empty()
                         && text(r, "name").chars().count() <= 80
+                        && matches!(text(r, "scope"), "" | "collections" | "creators")
                 }
                 "collection" => {
                     key == &format!("collection:{}", text(r, "bvid"))
@@ -198,7 +208,16 @@ impl Snapshot {
                             || self
                                 .records
                                 .get(&format!("collectionFolder:{}", text(r, "folderId")))
-                                .is_some_and(|r| r.kind == "collectionFolder"))
+                                .is_some_and(|folder| {
+                                    folder.kind == "collectionFolder"
+                                        && (text(folder, "scope").is_empty()
+                                            || text(folder, "scope")
+                                                == if text(r, "bvid").starts_with("up:") {
+                                                    "creators"
+                                                } else {
+                                                    "collections"
+                                                })
+                                }))
                 }
                 "collectionProgress" => {
                     let reference = text(r, "reference");

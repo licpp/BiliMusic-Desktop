@@ -106,3 +106,13 @@ test('creator subscriptions are projected out for old clients and survive their 
   assert.deepEqual(records['collection:up:42'],snapshot.records['collection:up:42']);
   assert.deepEqual(records['collectionProgress:up:42'],snapshot.records['collectionProgress:up:42']);
 });
+
+test('creator folder scopes roundtrip and survive legacy creator-progress edits',async t=>{
+ const {url,auth}=await setup(t);const token=await auth('SESSDATA=one');const id=randomUUID();const s=sample('42');s.records[`collectionFolder:${id}`]={kind:'collectionFolder',fields:{id,name:'UP分组',scope:'creators'}};
+ const headers={Authorization:`Bearer ${token}`,'x-bilimusic-sync-format':'creator-groups'};
+ assert.equal((await fetch(url+'/vault',{method:'PUT',headers:{...headers,'If-None-Match':'*'},body:JSON.stringify(s)})).status,200);
+ const modern=await fetch(url+'/vault',{headers});assert.equal(modern.headers.get('x-bilimusic-sync-format'),'creator-groups');assert.equal((await modern.json()).records[`collectionFolder:${id}`].fields.scope,'creators');
+ const oldHeaders={...headers,'x-bilimusic-sync-format':'creator-progress'};const old=await fetch(url+'/vault',{headers:oldHeaders});const oldData=await old.json();assert.equal(oldData.records[`collectionFolder:${id}`].fields.scope,undefined);oldData.records[`collectionFolder:${id}`].fields.name='重命名';
+ assert.equal((await fetch(url+'/vault',{method:'PUT',headers:{...oldHeaders,'If-Match':old.headers.get('etag')},body:JSON.stringify(oldData)})).status,200);
+ const next=await(await fetch(url+'/vault',{headers})).json();assert.equal(next.records[`collectionFolder:${id}`].fields.scope,'creators');assert.equal(next.records[`collectionFolder:${id}`].fields.name,'重命名');
+});

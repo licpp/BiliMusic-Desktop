@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 const CLOUD_FORMAT_HEADER: &str = "x-bilimusic-sync-format";
 const CLOUD_FORMAT_CREATORS: &str = "creator-progress";
+const CLOUD_FORMAT_GROUPS: &str = "creator-groups";
 const CLOUD_FORMAT_TRACKS: &str = "track-checkpoints";
 const CLOUD_FORMAT_CHECKPOINTS: &str = "checkpoints";
 pub const CLOUD: &str = "https://bilimusic.cn/api/sync/v1";
@@ -30,6 +31,7 @@ pub struct Remote {
     pub legacy_cloud: bool,
     pub track_positions: bool,
     pub creators: bool,
+    pub creator_groups: bool,
 }
 pub fn client() -> Result<Client, String> {
     let builder = Client::builder();
@@ -96,10 +98,19 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         return super::dav::read(c, s).await;
     }
     let mut response = auth(client()?.get(endpoint(c)?), c, s)
-        .header(CLOUD_FORMAT_HEADER, CLOUD_FORMAT_CREATORS)
+        .header(CLOUD_FORMAT_HEADER, CLOUD_FORMAT_GROUPS)
         .send()
         .await
         .map_err(|_| "无法连接同步服务，请检查网络")?;
+    if matches!(response.status(), StatusCode::OK | StatusCode::NOT_FOUND)
+        && !response.headers().contains_key(CLOUD_FORMAT_HEADER)
+    {
+        response = auth(client()?.get(endpoint(c)?), c, s)
+            .header(CLOUD_FORMAT_HEADER, CLOUD_FORMAT_CREATORS)
+            .send()
+            .await
+            .map_err(|_| "无法连接同步服务")?;
+    }
     if matches!(response.status(), StatusCode::OK | StatusCode::NOT_FOUND)
         && !response.headers().contains_key(CLOUD_FORMAT_HEADER)
     {
@@ -119,7 +130,8 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             .map_err(|_| "无法连接同步服务，请检查网络")?;
     }
     let format = response.headers().get(CLOUD_FORMAT_HEADER);
-    let creators = format.is_some_and(|value| value == CLOUD_FORMAT_CREATORS);
+    let creator_groups = format.is_some_and(|value| value == CLOUD_FORMAT_GROUPS);
+    let creators = creator_groups || format.is_some_and(|value| value == CLOUD_FORMAT_CREATORS);
     let track_positions = creators || format.is_some_and(|value| value == CLOUD_FORMAT_TRACKS);
     let legacy_cloud =
         !track_positions && format.is_none_or(|value| value != CLOUD_FORMAT_CHECKPOINTS);
@@ -132,6 +144,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             legacy_cloud,
             track_positions,
             creators,
+            creator_groups,
         });
     }
     if response.status() != StatusCode::OK {
@@ -155,6 +168,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         legacy_cloud,
         track_positions,
         creators,
+        creator_groups,
     })
 }
 pub async fn write(
@@ -195,7 +209,9 @@ pub async fn write(
     if !remote.legacy_cloud {
         request = request.header(
             CLOUD_FORMAT_HEADER,
-            if remote.creators {
+            if remote.creator_groups {
+                CLOUD_FORMAT_GROUPS
+            } else if remote.creators {
                 CLOUD_FORMAT_CREATORS
             } else if remote.track_positions {
                 CLOUD_FORMAT_TRACKS

@@ -402,6 +402,10 @@ pub async fn sync_now(
             initial.omit_creators();
             baseline.omit_creators();
         }
+        if !remote.creator_groups {
+            initial.omit_folder_scopes();
+            baseline.omit_folder_scopes();
+        }
         let mut local = initial.clone();
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
@@ -462,6 +466,15 @@ pub async fn sync_now(
         if !remote.track_positions {
             current.omit_track_positions();
         }
+        let local_scopes: Vec<_> = current
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "collectionFolder")
+            .filter_map(|(k, r)| r.fields.get("scope").map(|v| (k.clone(), v.clone())))
+            .collect();
+        if !remote.creator_groups {
+            current.omit_folder_scopes();
+        }
         let local_creators: Vec<_> = current
             .records
             .iter()
@@ -478,6 +491,13 @@ pub async fn sync_now(
         let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));
         if !remote.creators {
             final_local.records.extend(local_creators);
+        }
+        if !remote.creator_groups {
+            for (k, scope) in local_scopes {
+                if let Some(r) = final_local.records.get_mut(&k) {
+                    r.fields.insert("scope".into(), scope);
+                }
+            }
         }
         final_local.compact(true);
         if !post_conflicts.is_empty() {

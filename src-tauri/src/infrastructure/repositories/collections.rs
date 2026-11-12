@@ -15,6 +15,7 @@ pub struct Collection {
 pub struct Folder {
     pub id: String,
     pub name: String,
+    pub scope: String,
 }
 #[derive(Serialize)]
 pub struct Collections {
@@ -95,13 +96,60 @@ pub fn save_progress(
         params![reference, bvid, cid, (seconds * 1000.0).round() as i64, observed_at],
     ).map(|changed| changed > 0)
 }
+pub fn init_folders(c: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('collection_folders') WHERE name='scope')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        c.execute_batch(
+            "ALTER TABLE collection_folders ADD COLUMN scope TEXT NOT NULL DEFAULT 'collections';",
+        )?;
+    }
+    Ok(())
+}
+/// Split legacy mixed folders deterministically, so independent devices converge on the same new folder ID.
+pub fn separate_legacy_folders(c: &Connection) -> rusqlite::Result<()> {
+    init_folders(c)?;
+    let mut q=c.prepare("SELECT f.id,f.name FROM collection_folders f WHERE f.scope='collections' AND EXISTS(SELECT 1 FROM collections WHERE folder_id=f.id AND bvid LIKE 'up:%')")?;
+    let rows = q
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, name) in rows {
+        let mixed: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collections WHERE folder_id=?1 AND bvid NOT LIKE 'up:%')",
+            [&id],
+            |r| r.get(0),
+        )?;
+        if mixed {
+            let mut bytes = md5::compute(format!("BiliMusic creator folder:{id}")).0;
+            bytes[6] = (bytes[6] & 15) | 128;
+            bytes[8] = (bytes[8] & 63) | 128;
+            let creator_id = uuid::Uuid::from_bytes(bytes).to_string();
+            c.execute("INSERT INTO collection_folders(id,name,scope) VALUES(?1,?2,'creators') ON CONFLICT(id) DO NOTHING",params![creator_id,name])?;
+            c.execute(
+                "UPDATE collections SET folder_id=?2 WHERE folder_id=?1 AND bvid LIKE 'up:%'",
+                params![id, creator_id],
+            )?;
+        } else {
+            c.execute(
+                "UPDATE collection_folders SET scope='creators' WHERE id=?1",
+                [id],
+            )?;
+        }
+    }
+    Ok(())
+}
 pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
-    let mut q = c.prepare("SELECT id,name FROM collection_folders ORDER BY rowid DESC")?;
+    separate_legacy_folders(c)?;
+    let mut q = c.prepare("SELECT id,name,scope FROM collection_folders ORDER BY rowid DESC")?;
     let folders = q
         .query_map([], |r| {
             Ok(Folder {
                 id: r.get(0)?,
                 name: r.get(1)?,
+                scope: r.get(2)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -127,15 +175,16 @@ pub fn change(
     name: &str,
     item: Option<Collection>,
 ) -> Result<(), String> {
+    init_folders(c).map_err(|e| e.to_string())?;
     let tx = c.transaction().map_err(|e| e.to_string())?;
     let run = || -> Result<(), String> {
-        let folder_exists = |id: &str| -> Result<bool, String> {
+        let folder_exists = |id: &str, creator: bool| -> Result<bool, String> {
             if id.is_empty() {
                 return Ok(true);
             }
             tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM collection_folders WHERE id=?1)",
-                [id],
+                "SELECT EXISTS(SELECT 1 FROM collection_folders WHERE id=?1 AND scope=?2)",
+                params![id, if creator { "creators" } else { "collections" }],
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())
@@ -144,11 +193,11 @@ pub fn change(
             tx.execute(sql, args).map_err(|e| e.to_string())
         };
         match action {
-            "create" | "rename" => {
+            "create" | "createCreator" | "rename" => {
                 if name.trim().is_empty() || name.chars().count() > 80 {
-                    return Err("收藏夹名称需要1至80个字符".into());
+                    return Err("文件夹名称需要1至80个字符".into());
                 }
-                if action == "create" {
+                if action == "create" || action == "createCreator" {
                     if tx
                         .query_row("SELECT COUNT(*) FROM collection_folders", [], |r| {
                             r.get::<_, i64>(0)
@@ -156,11 +205,19 @@ pub fn change(
                         .map_err(|e| e.to_string())?
                         >= 100
                     {
-                        return Err("最多创建100个收藏夹".into());
+                        return Err("最多创建100个文件夹".into());
                     }
                     execute(
-                        "INSERT INTO collection_folders(id,name) VALUES(?1,?2)",
-                        &[&uuid::Uuid::new_v4().to_string(), &name.trim()],
+                        "INSERT INTO collection_folders(id,name,scope) VALUES(?1,?2,?3)",
+                        &[
+                            &uuid::Uuid::new_v4().to_string(),
+                            &name.trim(),
+                            &if action == "createCreator" {
+                                "creators"
+                            } else {
+                                "collections"
+                            },
+                        ],
                     )?;
                 } else {
                     if id.is_empty() {
@@ -187,8 +244,8 @@ pub fn change(
                 if !valid_reference(&i.bvid) {
                     return Err("收藏标识无效".into());
                 }
-                if !folder_exists(&i.folder_id)? {
-                    return Err("收藏夹不存在".into());
+                if !folder_exists(&i.folder_id, i.bvid.starts_with("up:"))? {
+                    return Err("文件夹不存在或类型不匹配".into());
                 }
                 if i.title.len() > 4096 || i.cover_url.len() > 4096 || i.uploader_name.len() > 4096
                 {
@@ -220,8 +277,8 @@ pub fn change(
                 .map_err(|e| e.to_string())?;
             }
             "move" => {
-                if !folder_exists(name)? {
-                    return Err("收藏夹不存在".into());
+                if !folder_exists(name, id.starts_with("up:"))? {
+                    return Err("文件夹不存在或类型不匹配".into());
                 }
                 execute(
                     "UPDATE collections SET folder_id=?2,created_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE bvid=?1 AND folder_id<>?2",
@@ -279,7 +336,7 @@ mod tests {
         change(&mut c, "save", "", "", Some(up())).unwrap();
         change(&mut c, "note", "up:123", "声音很好听", None).unwrap();
         change(&mut c, "cache", "", "", Some(up())).unwrap();
-        change(&mut c, "create", "", "听书", None).unwrap();
+        change(&mut c, "createCreator", "", "听书", None).unwrap();
         let folder = list(&c).unwrap().folders.remove(0).id;
         change(&mut c, "move", "up:123", &folder, None).unwrap();
         assert_eq!(list(&c).unwrap().items[0].note, "声音很好听");
@@ -326,5 +383,81 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+    #[test]
+    fn creator_and_collection_folders_are_independent_and_reject_cross_moves() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        change(&mut c, "create", "", "收藏组", None).unwrap();
+        change(&mut c, "createCreator", "", "UP组", None).unwrap();
+        let folders = list(&c).unwrap().folders;
+        let creator = folders
+            .iter()
+            .find(|f| f.scope == "creators")
+            .unwrap()
+            .id
+            .clone();
+        let collection = folders
+            .iter()
+            .find(|f| f.scope == "collections")
+            .unwrap()
+            .id
+            .clone();
+        change(
+            &mut c,
+            "save",
+            "",
+            "",
+            Some(Collection {
+                bvid: "up:123".into(),
+                folder_id: creator.clone(),
+                title: "UP".into(),
+                cover_url: String::new(),
+                uploader_name: String::new(),
+                note: String::new(),
+            }),
+        )
+        .unwrap();
+        assert!(change(&mut c, "move", "up:123", &collection, None).is_err());
+        change(&mut c, "delete", &creator, "", None).unwrap();
+        let data = list(&c).unwrap();
+        assert_eq!(data.folders.len(), 1);
+        assert_eq!(data.folders[0].id, collection);
+        assert!(data.items[0].folder_id.is_empty());
+    }
+    #[test]
+    fn legacy_mixed_folder_splits_once_without_losing_members() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
+            .unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        c.execute(
+            "INSERT INTO collection_folders(id,name) VALUES(?1,'旧文件夹')",
+            [&id],
+        )
+        .unwrap();
+        for reference in ["up:123", "BV1test"] {
+            c.execute(
+                "INSERT INTO collections(bvid,folder_id) VALUES(?1,?2)",
+                params![reference, id],
+            )
+            .unwrap();
+        }
+        let data = list(&c).unwrap();
+        assert_eq!(data.folders.len(), 2);
+        let up = data.items.iter().find(|i| i.bvid == "up:123").unwrap();
+        let group = data.folders.iter().find(|f| f.scope == "creators").unwrap();
+        assert_eq!(up.folder_id, group.id);
+        assert_ne!(group.id, id);
+        assert_eq!(
+            data.items
+                .iter()
+                .find(|i| i.bvid == "BV1test")
+                .unwrap()
+                .folder_id,
+            id
+        );
+        assert_eq!(list(&c).unwrap().folders.len(), 2);
     }
 }

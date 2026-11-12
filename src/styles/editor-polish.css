@@ -309,3 +309,22 @@
 .shortcuts-list b { font-size:10px;font-weight:400;color:var(--muted); }
 @media(max-width:760px) { .shortcuts-list { margin-left:16px; }.shortcuts-list>div { gap:8px; } }
 @media(prefers-reduced-motion:reduce) { .shortcuts-chevron { transition:none; } }
+
+/* Overlay actions inside a fixed full-width toggle row: the disclosure never moves. */
+.library-panel .section-heading,.library-panel .collections-sidebar>.collections-heading { position:relative;display:block;min-height:32px; }
+.library-panel .section-heading>.sidebar-collapse,.library-panel .collections-sidebar>.collections-heading>.collections-collapse { display:flex;justify-content:space-between;width:100%;min-height:32px;flex:none;margin:0;padding:0; }
+.library-panel .section-heading>.sidebar-heading-actions { position:absolute;right:30px;top:50%;transform:translateY(-50%);z-index:1; }
+.library-panel .collections-sidebar>.collections-heading>.collection-flat-button { position:absolute;right:30px;top:50%;transform:translateY(-50%);z-index:1; }
+.library-panel .creator-sidebar-heading { margin-bottom:6px; }
+.library-panel .creator-groups { margin:3px 6px 8px;gap:4px; }
+.library-panel .creator-groups[hidden] { display:none; }
+.settings-statistics-entry { display:flex;align-items:center;gap:13px;width:100%;margin:14px 0 18px;padding:16px;border:1px solid var(--line);border-radius:13px;background:var(--panel-raised);color:var(--ink);text-align:left;font:inherit;cursor:pointer; }
+.settings-statistics-entry:hover { border-color:color-mix(in srgb,var(--cyan) 35%,var(--line)); }
+.statistics-entry-copy { display:grid;gap:5px;flex:1;min-width:0; }
+.statistics-entry-copy strong { font-size:13px;font-weight:600; }
+.statistics-entry-copy small { color:var(--muted);font-size:11px;line-height:1.5; }
+.settings-statistics-entry>svg { flex:none;color:var(--muted); }
+
+.library-panel .sidebar-collapse>svg,.library-panel .collections-collapse>svg { width:16px;height:16px;flex:0 0 16px; }
+
+.library-panel .sidebar-heading-actions .creator-import-entry,.creators-tools .creator-import-entry { display:flex;align-items:center;justify-content:center;gap:4px;width:auto;padding:0 5px;white-space:nowrap;font-size:11px; }
