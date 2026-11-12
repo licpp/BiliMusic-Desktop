@@ -218,9 +218,10 @@ class Publisher:
         path = f'/releases/assets/{asset["id"]}' if channel == 'github' else f'/releases/{release["id"]}/attach_files/{asset["id"]}'
         self.api(channel, path, 'DELETE')
 
-    def public_url(self, channel, name):
+    def public_url(self, channel, name, version=None):
         host = 'https://github.com/' if channel == 'github' else 'https://gitee.com/'
-        return host + self.plan['repos'][channel] + '/releases/download/' + self.plan['tag'] + '/' + urllib.parse.quote(name)
+        tag = 'v' + version if version else self.plan['tag']
+        return host + self.plan['repos'][channel] + '/releases/download/' + tag + '/' + urllib.parse.quote(name)
 
     def asset_matches(self, channel, release, existing, asset):
         if existing['size'] != asset['size']:
@@ -316,10 +317,11 @@ class Publisher:
         verification = json.loads((self.work / 'download-verification.json').read_text())
         require(verification['planDigest'] == fingerprint(self.plan), 'Download verification belongs to another plan')
         downloads = verification['results']
-        require(len(downloads) == 8 and len({d['url'] for d in downloads}) == 8, 'Expected eight verified downloads')
+        expected_count = sum(len(p['channels']) for p in self.plan['manifest']['platforms'])
+        require(len(downloads) == expected_count and len({d['url'] for d in downloads}) == expected_count, 'Expected every manifest download to be verified')
         for package in self.plan['manifest']['platforms']:
             for channel in package['channels']:
-                require(channel['url'] == self.public_url(channel['id'], package['file']), 'Unexpected public download URL')
+                require(channel['url'] == self.public_url(channel['id'], package['file'], package.get('version', self.plan['version'])), 'Unexpected public download URL')
                 match = next((d for d in downloads if d['url'] == channel['url']), None)
                 require(match and match['size'] == package['size'] and match['sha256'] == package['sha256'], 'Public download proof mismatch')
         self.record('downloads', downloads)
@@ -347,7 +349,8 @@ class Publisher:
         return json.loads(raw)
 
     def activate(self):
-        require(len(self.report.get('downloads', [])) == 8, 'Cannot activate before eight downloads are verified')
+        require(len(self.report.get('downloads', [])) >= 8, 'Cannot activate before eight downloads are verified')
+        require(len(self.report['downloads']) == sum(len(p['channels']) for p in self.plan['manifest']['platforms']), 'Cannot activate before every manifest download is verified')
         run = lambda args: subprocess.check_output(args, stderr=subprocess.PIPE, timeout=60)
         result = deploy_site(self.plan['siteRoot'], self.work, self.plan['manifest'], self.plan['previous'], run, self.get_site)
         self.record('website', result)
@@ -375,7 +378,7 @@ class Publisher:
 
     def prune(self):
         require('publicManifests' in self.report, 'Cannot remove old assets before all update sources are verified')
-        new = {a['name'] for a in self.plan['assets']}
+        new = {a['name'] for a in self.plan['assets']} | {p['file'] for p in self.plan['manifest']['platforms']}
         old = {p['file'] for p in self.plan['previous']['platforms']} - new
         removed = []
         for channel in ('github', 'gitee'):
@@ -386,7 +389,7 @@ class Publisher:
                     removed.append({'channel': channel, 'file': asset['name']})
         self.record('removedSupersededBinaries', removed)
         self.report.pop('lastFailure', None)
-        self.record('complete', {'version': self.plan['version'], 'source': self.plan['source'], 'verifiedDownloadCount': 8, 'downloadCountPreserved': True})
+        self.record('complete', {'version': self.plan['version'], 'source': self.plan['source'], 'verifiedDownloadCount': len(self.report['downloads']), 'downloadCountPreserved': True})
 
 
 def remote_main(work, phase):
@@ -476,7 +479,7 @@ def local_main(args):
         cached = json.loads(verification.read_text()) if verification.exists() else {}
         expected = {c['url']: (p['size'], p['sha256']) for p in plan['manifest']['platforms'] for c in p['channels']}
         verified = cached.get('results', [])
-        valid = cached.get('planDigest') == fingerprint(plan) and len(verified) == 8 and {v['url'] for v in verified} == set(expected) and all((v['size'], v['sha256']) == expected[v['url']] for v in verified)
+        valid = cached.get('planDigest') == fingerprint(plan) and len(verified) == len(expected) and {v['url'] for v in verified} == set(expected) and all((v['size'], v['sha256']) == expected[v['url']] for v in verified)
         if not valid:
             subprocess.run(['node', str(Path(__file__).with_name('verify_release_downloads.mjs')), str(bundle / 'release-plan.json'), str(verification), fingerprint(plan)], check=True)
         else:
@@ -485,7 +488,7 @@ def local_main(args):
             sftp.put(str(verification), work + '/download-verification.json')
         run_phase('activate')
         report = json.loads((bundle / 'release-report.json').read_text())
-        require(report.get('complete', {}).get('verifiedDownloadCount') == 8, 'Incomplete release report')
+        require(report.get('complete', {}).get('verifiedDownloadCount') == len(expected), 'Incomplete release report')
         print(json.dumps({'report': str(bundle / 'release-report.json'), 'status': 'complete'}), flush=True)
     finally:
         ssh.close()

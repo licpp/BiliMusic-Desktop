@@ -1,32 +1,45 @@
-/* Each platform has the same reading order; optional links live in the footer. */
-.download-grid .download-card { display:flex;flex-direction:column;min-width:0;padding:26px;gap:0;border-radius:16px; }
-.download-card-header { display:flex;align-items:center;gap:16px;min-height:48px; }
-.download-icon { display:grid;place-items:center;flex:0 0 48px;width:48px;height:48px;border-radius:13px;background:#b7d6c70d;color:var(--mint); }
-.download-icon svg { width:27px;height:27px; }
+/* A compact platform directory, with the same reading order on every device. */
+.download-grid { display:grid;grid-template-columns:minmax(0,1fr);gap:0;border:1px solid #3b4740;border-radius:14px;background:#202824; }
+.download-grid .download-card { display:grid;grid-template-columns:minmax(280px,1fr) minmax(210px,1fr) 232px;grid-template-rows:auto auto;align-items:center;gap:6px 24px;min-width:0;padding:16px 20px;border:0;border-bottom:1px solid #35433a;border-radius:0;background:none; }
+.download-grid .download-card:last-child { border-bottom:0; }
+.download-card-header { display:flex;align-items:center;gap:12px;min-width:0;grid-column:1;grid-row:1 / 3; }
+.download-icon { display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;border-radius:10px;background:#b7d6c70d;color:var(--mint); }
+.download-icon svg { width:23px;height:23px; }
 .download-heading { min-width:0; }
-.download-title { display:flex;align-items:center;flex-wrap:wrap;gap:10px; }
-.download-card h3 { margin:0;font-size:21px;letter-spacing:-.02em; }
-.download-badge { padding:2px 8px;border-radius:5px;background:#b7d6c716;color:var(--mint);font-size:11px;white-space:nowrap; }
-.download-card .download-architecture { margin:5px 0 0;font-size:12px;line-height:1.5; }
-.download-body { flex:1;margin-top:22px; }
-.download-build { display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;font-size:12px;color:#a6b7aa;line-height:1.6; }
+.download-title { display:flex;align-items:center;flex-wrap:wrap;gap:5px 9px; }
+.download-card h3 { margin:0;font-size:17px;letter-spacing:-.02em; }
+.download-badge { padding:2px 7px;border-radius:4px;background:#b7d6c716;color:var(--mint);font-size:10px;white-space:nowrap; }
+.download-card .download-architecture { margin:4px 0 0;font-size:11px;line-height:1.5; }
+.download-body { min-width:0;grid-column:2;grid-row:1 / 3; }
+.download-build { display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:#a6b7aa;line-height:1.6; }
 .download-build strong { font-weight:500;color:#dce7df; }
-.download-card .platform-download-count { margin-left:auto;font-size:11px;color:#8fa497; }
-.download-card .download-requirements { margin:8px 0 0;min-height:36px;font-size:12px;line-height:1.6;color:#a6b7aa; }
-.download-card .channel-buttons { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:18px; }
-.download-card .channel-buttons .button { min-height:44px;height:44px;padding:0 12px;font-size:12px;border-radius:8px;white-space:nowrap; }
-.download-utilities { display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px 18px;min-height:20px;margin-top:16px; }
-.download-card .checksum { min-width:0;max-width:100%;margin:0;font-size:11px;line-height:20px;color:#8fa497; }
-.download-card .checksum code { max-width:100%;font-size:10px;line-height:1.6; }
-.download-guide { flex:none;font-size:11px;line-height:20px;color:var(--mint);white-space:nowrap; }
+.download-card .platform-download-count { font-size:10px;color:#8fa497; }
+.download-card .download-requirements { margin:4px 0 0;font-size:11px;line-height:1.6;color:#a6b7aa; }
+.download-card .channel-buttons { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;grid-column:3;grid-row:1;margin:0; }
+.download-card .channel-buttons .button { min-height:36px;height:36px;padding:0 10px;font-size:11px;border-radius:7px;white-space:nowrap; }
+.download-utilities { display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;min-width:0;grid-column:3;grid-row:2; }
+.download-card .checksum { min-width:0;max-width:100%;margin:0;font-size:10px;line-height:18px;color:#8fa497; }
+.download-card .checksum code { max-width:100%;font-size:10px;line-height:1.6;overflow-wrap:anywhere; }
+.download-guide { flex:none;font-size:10px;line-height:18px;color:var(--mint);white-space:nowrap; }
 .download-guide:hover { text-decoration:underline;text-underline-offset:4px; }
-@media(max-width:600px) {
-  .download-grid .download-card { padding:22px; }
-  .download-card .platform-download-count { margin-left:0;flex-basis:100%; }
-  .download-card .download-requirements { min-height:0; }
-  .download-card .channel-buttons { margin-top:20px; }
+@media(max-width:1000px) {
+  .download-grid .download-card { grid-template-columns:minmax(0,1fr) 232px;gap:8px 22px;padding:16px 18px; }
+  .download-card-header { grid-column:1;grid-row:1; }
+  .download-body { grid-column:1;grid-row:2; }
+  .download-card .channel-buttons { grid-column:2;grid-row:1; }
+  .download-utilities { grid-column:2;grid-row:2; }
 }
-@media(max-width:360px) {
-  .download-grid .download-card { padding:18px; }
-  .download-card .channel-buttons { grid-template-columns:minmax(0,1fr); }
+@media(max-width:620px) {
+  .download-grid .download-card { grid-template-columns:minmax(0,1fr);gap:10px;padding:16px; }
+  .download-card-header { grid-column:1;grid-row:1; }
+  .download-body { grid-column:1;grid-row:2; }
+  .download-card .channel-buttons { grid-column:1;grid-row:3; }
+  .download-utilities { grid-column:1;grid-row:4; }
+  .download-card .channel-buttons .button { min-height:40px;height:40px; }
+  .download-card .platform-download-count { margin-left:auto; }
 }
+.major-release-label { display:inline-flex;align-items:center;justify-content:center;width:fit-content;padding:4px 10px;border:1px solid var(--mint);border-radius:6px;color:var(--mint);font-size:12px;font-weight:600;white-space:nowrap; }
+.release-history-card.major-release-card { border-color:var(--mint); }
+.release-history-summary { margin:14px 0 0;color:var(--muted);font-size:14px;line-height:1.8; }
+.platform-note { flex-wrap:wrap;row-gap:8px; }
+.installation-guide code { overflow-wrap:anywhere; }

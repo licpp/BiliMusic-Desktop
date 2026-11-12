@@ -98,6 +98,34 @@
       "file": "BiliMusic_0.3.0_sync-fix_iOS_arm64-unsigned.ipa",
       "size": 5282267,
       "sha256": "a652747d74513442c1bc763c43c0c5da81ac4b59f65f7e8580374eea1b67b1b9"
+    },
+    {
+      "id": "ohos",
+      "name": "HarmonyOS NEXT",
+      "version": "0.3.0",
+      "status": "available",
+      "architecture": "ARM64 · 手机 / 平板",
+      "requirements": "HarmonyOS 6.0+ · 未签名 HAP 测试包，真机需自行签名",
+      "packageFormat": "hap",
+      "signature": "unsigned",
+      "releaseStatus": "experimental",
+      "file": "BiliMusic_0.3.0_HarmonyOS_NEXT_arm64-v8a-unsigned.hap",
+      "size": 11754857,
+      "sha256": "e91ab956ba83f9e7a06b3c3a15ba4b89130646174ce56346b138c094644dfae2",
+      "sourceCommit": "dd22978b82699f7cd2b6a5c57a4a05238711742b",
+      "channels": [
+        {
+          "id": "gitee",
+          "name": "Gitee",
+          "recommended": true,
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_HarmonyOS_NEXT_arm64-v8a-unsigned.hap"
+        },
+        {
+          "id": "github",
+          "name": "GitHub",
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.0/BiliMusic_0.3.0_HarmonyOS_NEXT_arm64-v8a-unsigned.hap"
+        }
+      ]
     }
   ],
   "history": [
@@ -106,6 +134,7 @@
       "kind": "major",
       "summary": "从 0.2.8 到 0.3.0，歌单导入、跨设备听歌统计、歌词与播放体验一起升级。macOS、Windows、Android 和 iOS 四端同步更新。",
       "changes": [
+        "2026-11-13 新增鸿蒙 NEXT ARM64 测试版：提供未签名 HAP，真机需使用自己的华为开发者账号签名安装。",
         "2026-11-12 同步修复重打包：修复导入歌单及其成员被误报“同步记录身份无效”，保留原歌单编号和内容。",
         "坚果云 HTTP 401 提示使用应用密码重新连接；HTTP 403 单独显示访问被拒绝，避免误报授权失效并暂停同步。",
         "修复包文件名含 sync-fix，版本仍为 0.3.0；已安装 0.3.0 的用户请重新下载覆盖安装，同版本修复不会触发升级提示。",

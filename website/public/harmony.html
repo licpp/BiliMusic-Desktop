@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>BiliMusic · 鸿蒙测试版签名与安装</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/ios.css"></head>
+<body><main class="wrap installation-guide"><a href="/#download">← 返回下载页</a><h1>鸿蒙 NEXT 测试版</h1>
+<p>提供 ARM64 未签名 HAP，包内最低系统要求为 HarmonyOS 6.0（API 20）。目前已在官方模拟器验证，尚未完成真机验收。它不是华为应用市场版本，真机不能直接点击安装；需要使用自己的华为开发者账号完成签名。</p>
+<h2>真机安装准备</h2>
+<ol><li>在官网下载名称以 <code>-unsigned.hap</code> 结尾的安装包，并核对下载卡片中的 SHA-256。macOS 可运行 <code>shasum -a 256 文件名.hap</code>，Windows PowerShell 可运行 <code>Get-FileHash 文件名.hap -Algorithm SHA256</code>。</li>
+<li>安装 <a href="https://developer.huawei.com/consumer/cn/deveco-studio/" target="_blank" rel="noopener noreferrer">DevEco Studio</a>，登录自己的华为开发者账号。在测试手机上开启开发者模式和 USB 调试，连接电脑并确认设备授权。</li>
+<li>按照华为的<a href="https://developer.huawei.com/consumer/cn/doc/App/agc-help-add-device-0000001946142249/" target="_blank" rel="noopener noreferrer">注册调试设备说明</a>获取手机 UDID 并登记。准备自己的密钥库（.p12）、调试证书（.cer）和包含该设备 UDID 的调试 Profile（.p7b）。</li>
+<li>按照华为的<a href="https://developer.huawei.com/consumer/cn/doc/doccenter-deveco-studio/ide-command-line-building-app/" target="_blank" rel="noopener noreferrer">未签名 HAP 签名与安装说明</a>，使用 SDK 自带的 <code>hap-sign-tool.jar</code> 对下载的 HAP 签名，并开启代码签名（<code>signCode=1</code>），然后通过 <code>hdc</code> 安装生成的签名包。</li></ol>
+<p>本测试包的包名为 <code>app.bilimusic.harmony</code>。证书、私钥、Profile、包名及设备授权必须相互匹配；如果自己的账号无法取得匹配包名的 Profile，需要使用<a href="https://github.com/licpp/BiliMusic-Desktop/tree/codex/fix-webdav-validation" target="_blank" rel="noopener noreferrer">项目源码</a>以自有包名构建，不能仅凭任意证书给此包签名。</p>
+<h2>有效期与设备限制</h2>
+<p>已实名认证开发者的调试证书有效期通常为一年，未实名账号通常为十四天；实际使用期限取决于签名证书和 Profile 的有效状态。只有 Profile 授权的设备才能安装。到期或失效后需要重新签名，不能保证自安装日起使用一年。详见<a href="https://developer.huawei.com/consumer/cn/doc/app/agc-help-add-debugcert-0000001914263178/" target="_blank" rel="noopener noreferrer">华为证书说明</a>。</p>
+<p>BiliMusic 网站不索取华为账号密码、验证码、签名私钥或证书，也不代签或收集设备 UDID。</p>
+<h2>更新与数据保留</h2>
+<p>继续使用相同包名和兼容的签名身份覆盖安装。不同包名通常会被视为另一款应用，签名不兼容时可能无法覆盖。更新前请确认坚果云同步已完成；请勿为解决安装问题直接卸载，卸载会删除本地歌单、统计和下载文件。</p>
+<p>后台播放、锁屏控制、蓝牙及不同真机系统版本仍需测试反馈。暂不建议作为唯一的音乐库副本。</p><p class="guide-feedback"><a href="/#feedback">安装遇到问题？提交反馈 →</a></p></main></body></html>

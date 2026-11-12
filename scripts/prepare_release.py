@@ -32,7 +32,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
         shutil.copy2(path, output / name)
         package['file'] = name
         platform = next(p for p in candidate['platforms'] if p['id'] == ids[package['platform']])
-        platform.update(file=name, size=package['bytes'], sha256=package['sha256'], status='available')
+        platform.update(version=version, file=name, size=package['bytes'], sha256=package['sha256'], status='available')
         for channel in platform['channels']:
             root = {'github': 'https://github.com/licpp/BiliMusic-Desktop', 'gitee': 'https://gitee.com/yoaker/BiliMusic-Desktop'}[channel['id']]
             channel['url'] = root + '/releases/download/v' + version + '/' + name
