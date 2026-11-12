@@ -25,6 +25,8 @@ native/ios-player/ios/.swiftpm/
 
 # Local build artifacts and Cargo registry extraction metadata
 /artifacts/
+__pycache__/
+*.pyc
 /src-tauri/vendor/tao/.cargo-ok
 /src-tauri/vendor/tao/.cargo_vcs_info.json
 /src-tauri/vendor/tao/Cargo.toml.orig
