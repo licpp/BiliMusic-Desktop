@@ -79,6 +79,17 @@ pub async fn open_url<R: Runtime>(app: &tauri::AppHandle<R>, url: &str) -> Resul
         .map_err(|e| e.to_string())
 }
 
+pub async fn put_webdav<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+    authorization: String,
+    body_base64: String,
+) -> Result<Value, String> {
+    app.state::<Native<R>>().0.run_mobile_plugin_async::<Value>(
+        "webdav_put", serde_json::json!({ "url": url, "authorization": authorization, "bodyBase64": body_base64 }),
+    ).await.map_err(|_| "鸿蒙同步上传接口暂不可用，请重新打开应用后重试".into())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("ohos-player")
         .invoke_handler(tauri::generate_handler![observe])

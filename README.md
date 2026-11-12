@@ -137,7 +137,7 @@ Android 发行构建使用 Release 模式，Rust 启用符号裁剪、thin LTO �
 
 ## HarmonyOS NEXT 实验适配
 
-鸿蒙构建直接使用同一份 `src` 前端和 `src-tauri/src` Rust 后端。页面、样式、SQLite、搜索、歌单、歌词以及账号统计／WebDAV 合并协议均在共享代码中修改；`native/ohos-player` 只负责 AVPlayer、AVSession、后台播放和 Asset Store 凭据存储。移动端通用样式使用 `data-layout="mobile"`，系统差异仍通过 `src/services/platform.ts` 和统一播放器接口选择。
+鸿蒙构建直接使用同一份 `src` 前端和 `src-tauri/src` Rust 后端。页面、样式、SQLite、搜索、歌单、歌词以及账号统计／WebDAV 合并协议均在共享代码中修改；`native/ohos-player` 只负责 AVPlayer、AVSession、后台播放、Asset Store 凭据存储和系统 WebDAV 上传接口。移动端通用样式使用 `data-layout="mobile"`，系统差异仍通过 `src/services/platform.ts` 和统一播放器接口选择。
 
 这是使用社区 Tauri OHOS 实验分支的开发入口，尚未作为第五端正式发行。固定依赖见 `platforms/ohos/toolchain-pins.json` 和专用 `Cargo.lock`；原有四端的 Cargo 依赖、iOS Tao 修复和构建命令保持独立。构建脚本从主 Cargo 清单提取公共依赖，在忽略的 `artifacts/ohos` 中生成配置并链接共享源文件，不维护前端或业务逻辑副本。社区运行时来自 [tauri-harmony 固定版本](https://github.com/LeenHawk/tauri-harmony)，各组件保留上游 MIT／Apache-2.0 等许可证；SDK 需自行安装和同意华为协议，不包含在源码中。
 

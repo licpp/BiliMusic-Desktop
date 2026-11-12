@@ -4,12 +4,15 @@ import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 
 const output = await build({
-  entryPoints: ['native/ohos-player/ohos/PlayerPlugin.ets'], loader: { '.ets': 'ts' }, bundle: true, write: false, format: 'cjs', platform: 'node',
+  entryPoints: ['native/ohos-player/ohos/PlayerPlugin.ets'], loader: { '.ets': 'ts' }, resolveExtensions: ['.ets', '.ts', '.js'], bundle: true, write: false, format: 'cjs', platform: 'node',
   plugins: [{ name: 'harmony-system', setup(b) {
     b.onResolve({ filter: /^(@kit\.|libbilimusic_lib)/ }, args => ({ path: args.path, namespace: 'harmony' }))
     b.onLoad({ filter: /.*/, namespace: 'harmony' }, args => ({ contents: args.path === 'libbilimusic_lib.so' ? 'export default globalThis.ohosTest.native' : `
       export const wantAgent = globalThis.ohosTest.wantAgent;
-      export const hilog = { info() {}, error() {} };
+      export const hilog = { info() {}, error() {}, warn() {} };
+      export const http = globalThis.ohosTest.http;
+      export const image = globalThis.ohosTest.image;
+      export const rcp = globalThis.ohosTest.rcp;
       export const media = globalThis.ohosTest.media;
       export const avSession = globalThis.ohosTest.avSession;
       export const backgroundTaskManager = globalThis.ohosTest.background;
@@ -21,7 +24,7 @@ const output = await build({
 })
 
 function setup() {
-  const events = [], samples = [], replies = [], background = [], secrets = new Map()
+  const events = [], samples = [], replies = [], background = [], secrets = new Map(), metadata = [], pixels = [], artworkRequests = [], uploads = []
   let player
   class FakePlayer {
     constructor() { this.callbacks = {}; this.currentTime = 0; this.duration = 180_000; this.state = 'idle' }
@@ -47,15 +50,27 @@ function setup() {
     scope: '123',
     native: { tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
     media: { createAVPlayer: async () => (player = new FakePlayer()) },
-    avSession: { PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata() {}, async setAVPlaybackState() {}, async destroy() {} }) },
+    avSession: { PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { metadata.push(value) }, async setAVPlaybackState() {}, async destroy() {} }) },
     background: { BackgroundMode: { AUDIO_PLAYBACK: 2 }, async startBackgroundRunning() { background.push('start') }, async stopBackgroundRunning() { background.push('stop') } },
     asset: { Tag: tags, Accessibility: { DEVICE_FIRST_UNLOCKED: 1 }, ReturnType: { ALL: 1 }, ErrorCode: { NOT_FOUND: 24000002 },
       async update(q, attrs) { if (!secrets.has(key(q))) throw missing(); secrets.set(key(q), attrs.get(tags.SECRET)) },
       async add(q) { secrets.set(key(q), q.get(tags.SECRET)) }, async query(q) { if (!secrets.has(key(q))) throw missing(); return [new Map([[tags.SECRET, secrets.get(key(q))]])] }, async remove(q) { if (!secrets.delete(key(q))) throw missing() },
     },
   }
+  h.artworkReply = async () => ({ responseCode: 200, result: new ArrayBuffer(4) })
+  h.http = { RequestMethod: { GET: 'GET' }, HttpDataType: { ARRAY_BUFFER: 2 }, createHttp() {
+    const request = { destroyed: false, destroy() { this.destroyed = true }, request(url, options) { artworkRequests.push({ url, options, request }); return h.artworkReply(url) } }
+    return request
+  } }
+  h.image = { createImageSource() { return { async getImageInfo() { return { size: { width: 1600, height: 900 } } }, async createPixelMap(options) {
+    const value = { size: options.desiredSize, released: false, async release() { this.released = true } }; pixels.push(value); return value
+  }, async release() {} } } }
+  h.uploadReply = async () => ({ statusCode: 201 })
+  h.rcp = { Request: class { constructor(url, method, headers, content, cookies, range, configuration) { Object.assign(this, { url, method, headers, content, configuration }) } }, createSession() {
+    return { async fetch(request) { uploads.push(request); return h.uploadReply(request) }, close() {} }
+  } }
   const finalCode = output.outputFiles[0].text
-  h.util = { generateRandomUUID: () => 'session', TextEncoder: Encoder, TextDecoder: { create: () => ({ decodeWithStream: b => new TextDecoder().decode(b) }) } }
+  h.util = { generateRandomUUID: () => 'session', TextEncoder: Encoder, TextDecoder: { create: () => ({ decodeWithStream: b => new TextDecoder().decode(b) }) }, Base64Helper: class { decodeSync(value) { return new Uint8Array(Buffer.from(value, 'base64')) } } }
   // wantAgent is a separate named export in AbilityKit.
   h.wantAgent = { OperationType: { START_ABILITY: 1 }, WantAgentFlags: { UPDATE_PRESENT_FLAG: 1 }, async getWantAgent() { return {} } }
   const module = { exports: {} }
@@ -66,9 +81,10 @@ function setup() {
     const current = ++id
     plugin.dispatch(JSON.stringify({ id: current, plugin: 'ohos-player', command: name, payload: JSON.stringify(args) }))
     await plugin.tasks
+    for (let i = 0; i < 8 && !replies.some(r => r.id === current); i++) await new Promise(setImmediate)
     return replies.find(r => r.id === current)
   }
-  return { plugin, command, events, samples, background, secrets, get player() { return player } }
+  return { plugin, command, events, samples, replies, background, secrets, metadata, pixels, artworkRequests, uploads, mock: h, get player() { return player } }
 }
 
 test('Harmony player prepares real native transport, preserves position/rate, and stops its background task on pause', async () => {
@@ -126,4 +142,73 @@ test('listening samples count elapsed playback, exclude seeks and pauses, and re
     assert.equal(h.samples.filter(s => s.seconds).reduce((sum, s) => sum + s.seconds, 0), counted)
     assert.ok(h.samples.every(s => s.scope === '123' && s.trackId === 'song'))
   } finally { await h.plugin.destroy(); Date.now = originalNow }
+})
+
+test('media session receives decoded cover pixels with Bilibili headers and preserves the cover aspect ratio', async () => {
+  const h = setup()
+  try {
+    await h.command('play', { id: 'song', title: '歌曲', artist: '歌手', url: 'http://127.0.0.1:1234/media', coverUrl: '//i0.hdslb.com/cover.jpg' })
+    await h.plugin.artworkReady
+    assert.equal(h.artworkRequests[0].url, 'https://i0.hdslb.com/cover.jpg')
+    assert.equal(h.artworkRequests[0].options.header.Referer, 'https://www.bilibili.com/')
+    assert.deepEqual(h.metadata.at(-1), { assetId: 'song', title: '歌曲', artist: '歌手', duration: 180_000, mediaImage: h.pixels[0] })
+    assert.deepEqual(h.pixels[0].size, { width: 800, height: 450 })
+    assert.equal(h.artworkRequests[0].request.destroyed, true)
+  } finally { await h.plugin.destroy() }
+  assert.equal(h.pixels[0].released, true)
+})
+
+test('a late old cover cannot overwrite the next song and failed covers do not interrupt playback', async () => {
+  const h = setup(); let resolveOld
+  h.mock.artworkReply = url => url.endsWith('old.jpg') ? new Promise(resolve => { resolveOld = resolve }) : Promise.resolve({ responseCode: 200, result: new ArrayBuffer(4) })
+  try {
+    await h.command('play', { id: 'old', url: 'http://127.0.0.1:1234/old', coverUrl: 'https://i0.hdslb.com/old.jpg' })
+    const old = h.plugin.artworkReady
+    await h.command('play', { id: 'new', url: 'http://127.0.0.1:1234/new', coverUrl: 'https://i0.hdslb.com/new.jpg' })
+    await h.plugin.artworkReady
+    const current = h.metadata.at(-1)
+    resolveOld({ responseCode: 200, result: new ArrayBuffer(4) }); await old
+    assert.equal(h.metadata.at(-1), current)
+    assert.equal(current.assetId, 'new')
+    assert.equal(h.pixels.length, 1)
+    h.mock.artworkReply = async () => { throw new Error('offline') }
+    assert.equal((await h.command('play', { id: 'offline', url: 'http://127.0.0.1:1234/offline', coverUrl: 'https://i0.hdslb.com/offline.jpg' })).ok, true)
+    await h.plugin.artworkReady
+    assert.equal((await h.command('snapshot')).value.status, 'playing')
+    assert.equal(h.metadata.at(-1).assetId, 'offline')
+    assert.equal(h.metadata.at(-1).mediaImage, undefined)
+  } finally { await h.plugin.destroy() }
+})
+
+const upload = body => ({ url: 'https://dav.jianguoyun.com/dav/BiliMusic-sync-v1/42/12345678-1234-4234-8234-123456789abc.json', authorization: 'Basic dGVzdDp0ZXN0', bodyBase64: body.toString('base64') })
+test('native WebDAV uploads exact snapshot bytes, disables redirects, and returns HTTP denials unchanged', async () => {
+  const h = setup()
+  try {
+    const body = Buffer.from(JSON.stringify({ text: '歌曲信息'.repeat(100_000) }))
+    assert.equal((await h.command('webdav_put', upload(body))).value.status, 201)
+    const request = h.uploads[0]
+    assert.equal(request.method, 'PUT')
+    assert.deepEqual(Buffer.from(request.content), body)
+    assert.equal(request.headers['Content-Length'], String(body.length))
+    assert.equal(request.configuration.transfer.autoRedirect, false)
+    assert.equal(request.configuration.security, undefined) // System certificate validation stays enabled.
+    h.mock.uploadReply = async () => ({ statusCode: 401 })
+    assert.equal((await h.command('webdav_put', upload(body))).value.status, 401)
+    assert.equal((await h.command('webdav_put', { ...upload(body), url: 'https://evil.example/dav/BiliMusic-sync-v1/42/12345678-1234-4234-8234-123456789abc.json' })).ok, false)
+    assert.equal(h.uploads.length, 2)
+  } finally { await h.plugin.destroy() }
+})
+
+test('a pending WebDAV upload does not block native pause or snapshot commands', async () => {
+  const h = setup(); let finish
+  h.mock.uploadReply = () => new Promise(resolve => { finish = resolve })
+  try {
+    await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/media' })
+    h.plugin.dispatch(JSON.stringify({ id: 999, plugin: 'ohos-player', command: 'webdav_put', payload: JSON.stringify(upload(Buffer.from('{}'))) }))
+    await h.command('control', { action: 'pause' })
+    assert.equal((await h.command('snapshot')).value.status, 'paused')
+    assert.ok(!h.replies.some(r => r.id === 999))
+    finish({ statusCode: 201 }); await new Promise(setImmediate)
+    assert.equal(h.replies.find(r => r.id === 999).value.status, 201)
+  } finally { await h.plugin.destroy() }
 })

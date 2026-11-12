@@ -85,7 +85,10 @@ pub fn run() {
             #[cfg(target_os = "android")]
             interface::media::observe_android_listening(app.handle().clone());
             #[cfg(target_env = "ohos")]
-            interface::media::observe_ohos_listening(app.handle().clone());
+            {
+                ohos_playback::initialize(app.handle().clone());
+                interface::media::observe_ohos_listening(app.handle().clone());
+            }
             #[cfg(desktop)]
             {
                 let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;

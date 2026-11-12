@@ -155,6 +155,8 @@ def prepare_hap():
     ets = entry / 'src/main/ets/entryability'
     shutil.copy2(ROOT / 'platforms/ohos/EntryAbility.ets', ets / 'EntryAbility.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/PlayerPlugin.ets', ets / 'PlayerPlugin.ets')
+    shutil.copy2(ROOT / 'native/ohos-player/ohos/Artwork.ets', ets / 'Artwork.ets')
+    shutil.copy2(ROOT / 'native/ohos-player/ohos/WebDAV.ets', ets / 'WebDAV.ets')
     native_types = entry / 'src/main/cpp/types/libbilimusic_lib'
     native_types.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'platforms/ohos/native.d.ts', native_types / 'Index.d.ts')

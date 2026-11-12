@@ -8,6 +8,8 @@ import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { Artwork } from './Artwork';
+import { putWebDAV, WebDAVUpload } from './WebDAV';
 import native from 'libbilimusic_lib.so';
 
 interface Request { id: number; plugin: string; command: string; payload: string }
@@ -60,6 +62,10 @@ export class PlayerPlugin {
   private background: boolean = false;
   private destroyed: boolean = false;
   private error: string = '';
+  private artwork: Artwork = new Artwork();
+  private artworkReady: Promise<void> = Promise.resolve();
+  private mediaRevision: number = 0;
+  private metadataTasks: Promise<void> = Promise.resolve();
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -77,6 +83,11 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
+    if (request.plugin === 'ohos-player' && request.command === 'webdav_put') {
+      // Uploads must not queue playback controls behind a slow connection.
+      this.upload(request);
+      return;
+    }
     this.tasks = this.tasks.catch(() => {}).then(async () => {
       try {
         if (this.destroyed) throw new Error('Ability is closed');
@@ -87,6 +98,16 @@ export class PlayerPlugin {
         native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: String(error) } as BridgeError));
       }
     });
+  }
+
+  private async upload(request: Request): Promise<void> {
+    try {
+      if (this.destroyed) throw new Error('Ability is closed');
+      const result = await putWebDAV(JSON.parse(request.payload) as WebDAVUpload);
+      native.tauriOhosPluginResponse(request.id, true, JSON.stringify(result));
+    } catch (_) {
+      native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: 'Invalid WebDAV upload' } as BridgeError));
+    }
   }
 
   private async command(command: string, args: Args): Promise<Object> {
@@ -155,8 +176,17 @@ export class PlayerPlugin {
     this.background = false;
   }
 
+  private setMetadata(revision: number, metadata: avSession.AVMetadata): Promise<void> {
+    this.metadataTasks = this.metadataTasks.catch(() => {}).then(async () => {
+      if (revision === this.mediaRevision && !this.destroyed) await this.session?.setAVMetadata(metadata);
+    });
+    return this.metadataTasks;
+  }
+
   private async play(args: Args): Promise<void> {
     if (!args.url || !args.id || !/^http:\/\/127\.0\.0\.1:\d+\//.test(args.url)) throw new Error('Invalid playback source');
+    const revision = ++this.mediaRevision;
+    this.artwork.clear();
     this.accountListening(true);
     if (this.player) { await this.player.release(); this.player = null; }
     await this.ensureSession();
@@ -201,7 +231,13 @@ export class PlayerPlugin {
     });
     player.setVolume(this.volume); this.applyRate(this.rate);
     if ((args.position ?? 0) > 0) player.seek((args.position ?? 0) * 1000);
-    await this.session?.setAVMetadata({ assetId: this.id, title: this.title, artist: this.artist, duration: player.duration });
+    const metadata: avSession.AVMetadata = { assetId: this.id, title: this.title, artist: this.artist, duration: player.duration };
+    await this.setMetadata(revision, metadata);
+    this.artworkReady = this.artwork.load(args.coverUrl, async pixels => {
+      const covered: avSession.AVMetadata = { assetId: metadata.assetId, title: metadata.title, artist: metadata.artist,
+        duration: metadata.duration, mediaImage: pixels };
+      await this.setMetadata(revision, covered);
+    });
     if (args.playing !== false) { await this.startBackground(); await player.play(); }
     else { this.status = 'paused'; this.emit(); }
   }
@@ -223,6 +259,7 @@ export class PlayerPlugin {
         if (this.player?.state === 'playing') await this.player.pause();
         await this.stopBackground(); break;
       case 'stop':
+        this.mediaRevision += 1; this.artwork.clear();
         this.accountListening(true); await this.player?.release(); this.player = null;
         this.id = ''; this.status = 'paused'; await this.stopBackground(); break;
       case 'seek': this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
@@ -314,7 +351,9 @@ export class PlayerPlugin {
   }
 
   async destroy(): Promise<void> {
+    this.mediaRevision += 1; this.artwork.clear();
     this.accountListening(true); this.destroyed = true; clearInterval(this.timer);
+    await this.metadataTasks.catch(() => {});
     await this.player?.release(); await this.stopBackground(); await this.session?.destroy();
   }
 }
