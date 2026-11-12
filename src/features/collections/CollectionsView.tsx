@@ -155,7 +155,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
   </section>
 }
 
-function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false }: {
+function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false, searchQuery }: {
   item: Collection
   onBack: () => void
   onOpenCollection?: (item: Collection) => void
@@ -163,6 +163,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   embedded?: boolean
   locateCurrent?: boolean
   hideBack?: boolean
+  searchQuery?: string
 }) {
   const reference=parseSeasonReference(item.bvid)
   const bookmarks = useCollections()
@@ -194,13 +195,6 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
     const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),catalog:undefined,unavailable:0}
   }})
   const [filter,setFilter]=useState(''),[searchOpen,setSearchOpen]=useState(false),[seasonOpen,setSeasonOpen]=useState(false),[copying,setCopying]=useState(false),[message,setMessage]=useState(''),[context,setContext]=useState<{left:number;top:number;nonce:number}>()
-  useEffect(() => {
-    const open = () => { setSearchOpen(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.collection-detail .detail-search input')?.focus()) }
-    const filter = (event:Event) => setFilter((event as CustomEvent<string>).detail)
-    window.addEventListener('bilimusic-search-collection', open)
-    window.addEventListener('bilimusic-filter-collection', filter)
-    return () => { window.removeEventListener('bilimusic-search-collection', open); window.removeEventListener('bilimusic-filter-collection', filter) }
-  }, [])
   const [openedVideo, setOpenedVideo] = useState<Track>()
   const nested = useQuery({
     queryKey: ['collection-video-parts', accountEpoch(), openedVideo?.source.bvid],
@@ -228,7 +222,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   }, [detail?.catalog, reversed, tracks])
   const queueSource = { kind: reference ? 'season' as const : 'video' as const, title: detail?.title || item.title, collectionRef: item.bvid }
   const unit=reference?'个视频':'个分 P'
-  const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes(filter.toLowerCase()))
+  const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes((searchQuery ?? filter).toLowerCase()))
   const checkpoint = saved ? progress.data : undefined
   const canResume = checkpoint && playbackTracks.some(track => track.source.bvid === checkpoint.bvid &&
     (track.source.cid === checkpoint.cid || track.resolveParts))
@@ -298,7 +292,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       </div>
       <div className="collection-list-actions">
         <button className="collection-icon collection-order" aria-label={reversed ? '恢复原顺序' : '倒序排列'} aria-pressed={reversed} title={reversed ? '恢复原顺序' : '倒序排列'} disabled={tracks.length < 2} onClick={() => setReversedCollection(reversed ? undefined : item.bvid)}><ArrowDownUp size={16}/><span>{reversed ? '倒序' : '原序'}</span></button>
-        <button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button>
+        {searchQuery === undefined && <button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button>}
         <CollectionMenu item={item} contextPosition={context} additionalActions={close => <>
           <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(playbackTracks);close()}}><ListPlus size={16}/>全部加入队列</button>
           <button role="menuitem" disabled={!tracks.length||copying} onClick={()=>{close();void copy()}}><Plus size={16}/>{copying?'正在复制…':'复制为本地歌单'}</button>
@@ -306,7 +300,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
         </>}/>
       </div>
     </div>
-    {searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索此合集中的内容" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
+    {searchQuery === undefined && searchOpen&&<label className="collections-search detail-search"><Search size={16}/><input aria-label="搜索列表" placeholder="搜索此合集中的内容" value={filter} onChange={e=>setFilter(e.target.value)}/><button aria-label="关闭搜索" onClick={()=>{setSearchOpen(false);setFilter('')}}><X size={16}/></button></label>}
     {copying&&<p className="batch-message" role="status">正在复制到我的歌单…</p>}
     {message&&<p className="batch-message" role="status">{message}</p>}
     {q.isLoading&&<p>正在读取列表…</p>}{q.error&&<p className="inline-error">{commandErrorMessage(q.error)}<button className="collection-flat-button" onClick={()=>void q.refetch()}>重试</button></p>}
@@ -331,5 +325,5 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
 }
 
 export function CollectionDetail(props: Parameters<typeof StandardCollectionDetail>[0]) {
-  return props.item.bvid.startsWith('up:') ? <CreatorPage item={props.item} onOpen={props.onOpenCollection}/> : <StandardCollectionDetail {...props}/>
+  return props.item.bvid.startsWith('up:') ? <CreatorPage item={props.item} onOpen={props.onOpenCollection} searchQuery={props.searchQuery}/> : <StandardCollectionDetail {...props}/>
 }

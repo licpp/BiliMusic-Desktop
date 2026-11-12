@@ -46,6 +46,7 @@ import { usePlayerStore } from '../features/player/playerStore'
 import { playerShortcut } from '../features/player/shortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
+import { ScopedSearchField } from '../features/search/ScopedSearchField'
 import { SearchField } from '../features/search/SearchField'
 import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
@@ -270,7 +271,7 @@ export function App() {
     openSearch(normalized)
     queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
   }
-  const submitSearch = (event: FormEvent) => { event.preventDefault(); if(!selectedCollection || selectedCollection.bvid.startsWith('up:')) runSearch(query) }
+  const submitSearch = (event: FormEvent) => { event.preventDefault(); if (!selectedCollection) runSearch(query) }
   const toggleCurrentFavorite = async () => {
     if (!current) return
     const latest = usePlayerStore.getState().queue.find((track) => track.id === current.id) || current
@@ -458,27 +459,27 @@ export function App() {
       {!isMobile && <SidebarResizeHandle/>}
 
       <main className="content-stage">
-        <form className={`topbar ${searchActive ? 'searching' : ''}`} onSubmit={submitSearch}>
+        <form className={`topbar ${searchActive ? 'searching' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
             {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
-            <strong>{selectedCollection ? '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
+            <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
           <div className="history-buttons"><button type="button" aria-label={libraryDetail || selectedCollection ? '返回上一页' : '返回主页'}
             onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
-          {selectedCollection && !selectedCollection.bvid.startsWith('up:') ? <label className="collection-topbar-search"><Search size={18}/><input type="search" aria-label="搜索当前合集" placeholder="搜索此合集中的内容" value={collectionSearch} onChange={event=>{setCollectionSearch(event.target.value);window.dispatchEvent(new CustomEvent('bilimusic-filter-collection',{detail:event.target.value}))}}/></label> : <>
+          {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
           <SearchField value={query} focused={searchFocused} history={searchHistory.data || []}
             onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => setSearchFocused(false)}
             onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
             onSearch={runSearch} onClear={() => openSearch('')} onClearHistory={() => clearHistory.mutate()} /></>}
 
-          <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => { if (selectedCollection && !selectedCollection.bvid.startsWith('up:')) window.dispatchEvent(new Event('bilimusic-search-collection')); else openSearch() }}><Search size={20} /></button>
+          {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => openSearch()}><Search size={20} /></button>}
           <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
         <div className="stage-scroll" ref={contentScroll} hidden={searchActive}>
           {selectedCollection && <CollectionDetail key={selectedCollection.bvid} item={selectedCollection} onBack={closeCollection}
-            hideBack onOpenCollection={item => openCollection(item, 'collection')}/>}
+            hideBack searchQuery={collectionSearch} onOpenCollection={item => openCollection(item, 'collection')}/>}
           <div hidden={Boolean(selectedCollection)}>
           {activeCreatorFolder!==undefined ? <CreatorsView key={activeCreatorFolder} followed folderId={activeCreatorFolder} onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={closeLibraryPage}/> : activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :

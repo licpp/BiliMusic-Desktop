@@ -1,3 +1,4 @@
+import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { CreatorActions, CreatorManager } from './CreatorTools'
@@ -11,7 +12,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   readCollectionProgress,
@@ -203,9 +204,11 @@ export function CreatorsView({
 export function CreatorPage({
   item,
   onOpen,
+  searchQuery,
 }: {
   item: Collection
   onOpen?: (item: Collection) => void
+  searchQuery?: string
 }) {
   const mid = Number(item.bvid.slice(3))
   const profile = useQuery({
@@ -241,14 +244,25 @@ export function CreatorPage({
   }, [followed, item.bvid, checkpoint.refetch])
   const [resuming, setResuming] = useState(false)
 
+  const [localSearch, setLocalSearch] = useState('')
+  const inputQuery = (searchQuery ?? localSearch).trim()
+  const [keyword, setKeyword] = useState(inputQuery)
+  const settling = inputQuery !== keyword
+  useEffect(() => {
+    const timer = window.setTimeout(() => setKeyword(inputQuery), inputQuery ? 300 : 0)
+    return () => window.clearTimeout(timer)
+  }, [inputQuery])
   const [tab, setTab] = useState<'videos' | 'seasons'>('videos')
+  const activeTab = inputQuery ? 'videos' : tab
   const [parts, setParts] =
     useState<Awaited<ReturnType<typeof getVideoParts>>>()
   const [error, setError] = useState('')
+  const partsRequest = useRef(0)
   const videoResult = useInfiniteQuery({
-    queryKey: ['creator-catalog', mid, 'videos'],
+    queryKey: ['creator-catalog', accountEpoch(), mid, 'videos', keyword],
     initialPageParam: 1,
-    queryFn: ({ pageParam }) => catalog('videos', mid, pageParam),
+    queryFn: ({ pageParam }) => catalog('videos', mid, pageParam, keyword),
+    enabled: activeTab === 'videos' && !settling,
     getNextPageParam: (last) =>
       last.page * 30 < last.data.page?.count ? last.page + 1 : undefined,
   })
@@ -256,13 +270,13 @@ export function CreatorPage({
     queryKey: ['creator-catalog', mid, 'seasons'],
     initialPageParam: 1,
     queryFn: ({ pageParam }) => catalog('seasons', mid, pageParam),
-    enabled: tab === 'seasons',
+    enabled: activeTab === 'seasons',
     getNextPageParam: (last) =>
       last.page * 20 < last.data.items_lists?.page?.total
         ? last.page + 1
         : undefined,
   })
-  const result = tab === 'videos' ? videoResult : seasonResult
+  const result = activeTab === 'videos' ? videoResult : seasonResult
   const videos =
     videoResult.data?.pages.flatMap((page) => page.data.list?.vlist || []) || []
   const seasons =
@@ -282,6 +296,7 @@ export function CreatorPage({
     },
     tracks: videos.map(creatorVideoRow),
   })
+  useEffect(() => { partsRequest.current++; setParts(undefined); setError('') }, [keyword, mid])
   const resumeButton = followed && checkpoint.data && (
     <button
       className="creator-resume"
@@ -293,9 +308,9 @@ export function CreatorPage({
           intent = playbackIntent()
         const point = checkpoint.data!
         try {
-          let entries = [...videos],
-            page = videoResult.data?.pages.length || 0
-          let total = totalVideos ?? Infinity
+          let entries = keyword ? [] : [...videos],
+            page = keyword ? 0 : videoResult.data?.pages.length || 0
+          let total = keyword ? Infinity : totalVideos ?? Infinity
           while (
             !entries.some((video) => video.bvid === point.bvid) &&
             entries.length < total
@@ -381,7 +396,8 @@ export function CreatorPage({
           </button>
         </div>
       </header>
-      <SegmentedTabs
+      {searchQuery === undefined && <ScopedSearchField creator value={localSearch} onChange={setLocalSearch} className="creator-content-search"/>}
+      {inputQuery ? <p className="creator-search-summary" role="status">在这位 UP 主的投稿中搜索“{inputQuery}”{!settling && totalVideos !== undefined ? ` · ${totalVideos} 个结果` : ''}</p> : <SegmentedTabs
         className="listening-tabs"
         tabs={[
           { id: 'videos', label: '全部投稿' },
@@ -395,13 +411,14 @@ export function CreatorPage({
         idPrefix="creator"
         panelId="creator-content"
         label="UP 主内容"
-      />
+      />}
       <div id="creator-content">
-        {result.isLoading && <p>正在读取投稿…</p>}
+        {(result.isLoading || settling) && <p role="status">{inputQuery ? '正在搜索这位 UP 主的投稿…' : '正在读取投稿…'}</p>}
+        {!settling && !result.isPending && !result.error && inputQuery && !videos.length && <p className="collection-empty">这位 UP 主暂无匹配的投稿，试试其他关键词。</p>}
         {(result.error || error) && (
           <p role="alert">{commandErrorMessage(result.error || error)}</p>
         )}
-        {tab === 'videos' ? (
+        {!settling && (activeTab === 'videos' ? (
           <VideoPartsList
             videoCollection
             totalCount={totalVideos}
@@ -414,11 +431,13 @@ export function CreatorPage({
               creatorMid: mid,
               creatorPage: videoResult.data?.pages.length || 1,
               creatorTotal: totalVideos || 0,
+              creatorKeyword: keyword,
             }}
             onOpenParts={(track) => {
+              const request = ++partsRequest.current
               void getVideoParts(track.source.bvid)
-                .then(setParts)
-                .catch((cause) => setError(commandErrorMessage(cause)))
+                .then(detail => { if (request === partsRequest.current) setParts(detail) })
+                .catch(cause => { if (request === partsRequest.current) setError(commandErrorMessage(cause)) })
             }}
           />
         ) : (
@@ -441,7 +460,7 @@ export function CreatorPage({
               <small>{season.meta.total} 个视频</small>
             </button>
           ))
-        )}
+        ))}
         {parts && parts.parts.length > 0 && (
           <div>
             <button
@@ -464,11 +483,12 @@ export function CreatorPage({
                 creatorMid: mid,
                 creatorPage: videoResult.data?.pages.length || 1,
                 creatorTotal: totalVideos || 0,
+              creatorKeyword: keyword,
               }}
             />
           </div>
         )}
-        {result.hasNextPage && (
+        {!settling && result.hasNextPage && (
           <LoadMore
             label="加载更多"
             busy={result.isFetchingNextPage}

@@ -239,7 +239,18 @@
 }
 .collection-topbar-search { display:flex;align-items:center;gap:10px;min-width:0;flex:1;padding:0 14px;border:1px solid var(--line);border-radius:13px;background:var(--panel-raised);color:var(--muted); }
 .collection-topbar-search input { width:100%;min-width:0;min-height:40px;border:0;outline:0;background:transparent;color:var(--ink);font-size:14px; }
-@media(max-width:960px) { .collection-topbar-search { display:none; } }
+.scoped-search-field input { width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:inherit; }
+.scoped-search-field>svg,.scoped-search-field>button { flex-shrink:0; }
+.scoped-search-field>button { display:grid;place-items:center;width:28px;height:32px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer; }
+.creator-content-search { display:flex;align-items:center;gap:10px;margin:14px 0;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--muted); }
+.creator-search-summary { margin:18px 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere; }
+@media(max-width:960px) {
+ .topbar.scoped-content-search { grid-template-columns:40px minmax(0,1fr);gap:8px; }
+ .topbar.scoped-content-search .mobile-page-heading { padding:0; }
+ .topbar.scoped-content-search .mobile-page-heading>strong { display:none; }
+ .topbar.scoped-content-search .collection-topbar-search { display:flex;min-width:0; }
+ .collection-topbar-search input { font-size:16px; }
+}
 :root .dialog-backdrop.playlist-picker-layer,:root .dialog-backdrop:has(>.metadata-dialog) { z-index:300; }
 /* A contact picker, rather than a browser form. */
 .creator-import-dialog { width:min(520px,100%);padding:20px;gap:0;border-radius:22px; }

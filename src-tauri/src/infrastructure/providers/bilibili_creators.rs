@@ -1,6 +1,43 @@
 use super::*;
 use serde_json::{Value, json};
 
+// WBI hashes the sorted RFC 3986 query, including the creator-specific keyword.
+fn creator_video_query(mid: i64, keyword: &str, page: u32, timestamp: u64, salt: &str) -> String {
+    fn encode(value: &str) -> String {
+        let mut result = String::new();
+        for byte in value.bytes() {
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                result.push(byte as char);
+            } else {
+                result.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        result
+    }
+    let mut fields = std::collections::BTreeMap::from([
+        ("mid", mid.to_string()),
+        ("order", "pubdate".into()),
+        ("pn", page.to_string()),
+        ("ps", "30".into()),
+        ("wts", timestamp.to_string()),
+    ]);
+    let keyword: String = keyword
+        .trim()
+        .chars()
+        .filter(|ch| !"!'()*".contains(*ch))
+        .collect();
+    if !keyword.is_empty() {
+        fields.insert("keyword", keyword);
+    }
+    let query = fields
+        .iter()
+        .map(|(key, value)| format!("{key}={}", encode(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let hash = format!("{:x}", md5::compute(format!("{query}{salt}")));
+    format!("{query}&w_rid={hash}")
+}
+
 impl BilibiliProvider {
     pub async fn creator_catalog(
         &self,
@@ -108,20 +145,9 @@ impl BilibiliProvider {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let params = [
-                    ("mid", mid.to_string()),
-                    ("order", "pubdate".into()),
-                    ("pn", page.to_string()),
-                    ("ps", "30".into()),
-                    ("wts", timestamp.to_string()),
-                ];
-                url.query_pairs_mut()
-                    .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())));
-                let hash = format!(
-                    "{:x}",
-                    md5::compute(format!("{}{}", url.query().unwrap_or(""), salt))
-                );
-                url.query_pairs_mut().append_pair("w_rid", &hash);
+                url.set_query(Some(&creator_video_query(
+                    mid, keyword, page, timestamp, &salt,
+                )));
             }
         }
         let data: Value = match self.get_data(url.clone()).await {
@@ -141,6 +167,17 @@ impl BilibiliProvider {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn creator_video_search_signs_unicode_spaces_and_scope_in_sorted_order() {
+        let query = super::creator_video_query(42, "  星 + piano!'()*  ", 2, 1700000000, "salt");
+        assert_eq!(
+            query,
+            "keyword=%E6%98%9F%20%2B%20piano&mid=42&order=pubdate&pn=2&ps=30&wts=1700000000&w_rid=287e4393232ce6133b99b3817eeaae15"
+        );
+        let empty = super::creator_video_query(42, "", 1, 1700000000, "salt");
+        assert!(empty.starts_with("mid=42&order=pubdate&pn=1&ps=30&wts=1700000000&w_rid="));
+    }
+
     use super::*;
     #[tokio::test]
     #[ignore = "uses live Bilibili endpoints"]

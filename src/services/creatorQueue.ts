@@ -44,12 +44,14 @@ export function startCreatorQueue() {
         action: 'videos',
         mid: source.creatorMid,
         page: next,
+        keyword: source.creatorKeyword || '',
       })
       const current = usePlayerStore.getState()
       if (
         scope !== accountEpoch() ||
         current.queueSource?.creatorMid !== source.creatorMid ||
-        current.queueSource.creatorPage !== source.creatorPage
+        current.queueSource.creatorPage !== source.creatorPage ||
+        (current.queueSource.creatorKeyword || '') !== (source.creatorKeyword || '')
       )
         return
       const known = new Set(current.queue.map((track) => track.source.bvid))
