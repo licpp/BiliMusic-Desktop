@@ -7,7 +7,7 @@ import { commandErrorMessage } from '../../services/desktopApi'
 import { MobilePage } from '../../shared/MobilePage'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { SegmentedTabs } from '../../shared/SegmentedTabs'
-import { Artwork } from '../../shared/Artwork'
+import { ListeningArtwork } from './ListeningArtwork'
 import { isMobile } from '../../services/platform'
 import '../../styles/listening-statistics.css'
 import { listeningCalendar } from './listeningCalendar'
@@ -112,7 +112,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       </section>
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
         {top?.length ? <ol className="listening-ranking">{top.map((track, i) => <li key={track.id}>
-          <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><Artwork src={track.coverUrl} />
+          <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />
           <div className="listening-song"><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div></div>
           <span className="listening-song-time">{duration(track.seconds)}</span>
         </li>)}</ol> : <div className="listening-empty"><Headphones size={30} /><strong>让喜欢的歌留下足迹</strong><p>开始播放后，这里会记录你常听的声音。</p></div>}
