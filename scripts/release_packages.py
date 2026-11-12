@@ -2,6 +2,7 @@
 import hashlib
 import json
 import plistlib
+import re
 import struct
 import subprocess
 import tempfile
@@ -167,7 +168,7 @@ def validate_bundle(bundle, native_verifier=verify_native):
     if 'ohos' in manifest_ids:
         harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
         require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Four-platform publication must preserve the existing Harmony package')
-        require(harmony.get('version') and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
+        require(re.fullmatch(r'\d+\.\d+\.\d+', harmony.get('version', '')) and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
     certificate = build['validation'].get('androidCertificateSha256')
     assets = []
     for package in build['platforms']:

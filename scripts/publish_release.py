@@ -218,9 +218,10 @@ class Publisher:
         path = f'/releases/assets/{asset["id"]}' if channel == 'github' else f'/releases/{release["id"]}/attach_files/{asset["id"]}'
         self.api(channel, path, 'DELETE')
 
-    def public_url(self, channel, name):
+    def public_url(self, channel, name, version=None):
         host = 'https://github.com/' if channel == 'github' else 'https://gitee.com/'
-        return host + self.plan['repos'][channel] + '/releases/download/' + self.plan['tag'] + '/' + urllib.parse.quote(name)
+        tag = 'v' + version if version else self.plan['tag']
+        return host + self.plan['repos'][channel] + '/releases/download/' + tag + '/' + urllib.parse.quote(name)
 
     def asset_matches(self, channel, release, existing, asset):
         if existing['size'] != asset['size']:
@@ -320,7 +321,7 @@ class Publisher:
         require(len(downloads) == expected_count and len({d['url'] for d in downloads}) == expected_count, 'Expected every manifest download to be verified')
         for package in self.plan['manifest']['platforms']:
             for channel in package['channels']:
-                require(channel['url'] == self.public_url(channel['id'], package['file']), 'Unexpected public download URL')
+                require(channel['url'] == self.public_url(channel['id'], package['file'], package.get('version', self.plan['version'])), 'Unexpected public download URL')
                 match = next((d for d in downloads if d['url'] == channel['url']), None)
                 require(match and match['size'] == package['size'] and match['sha256'] == package['sha256'], 'Public download proof mismatch')
         self.record('downloads', downloads)
@@ -377,7 +378,7 @@ class Publisher:
 
     def prune(self):
         require('publicManifests' in self.report, 'Cannot remove old assets before all update sources are verified')
-        new = {a['name'] for a in self.plan['assets']}
+        new = {a['name'] for a in self.plan['assets']} | {p['file'] for p in self.plan['manifest']['platforms']}
         old = {p['file'] for p in self.plan['previous']['platforms']} - new
         removed = []
         for channel in ('github', 'gitee'):

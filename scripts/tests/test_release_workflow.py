@@ -15,6 +15,26 @@ from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_later_four_platform_release_keeps_harmony_original_download_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.1', 'tag': 'v0.3.1', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'github': 'owner/repo'}}, {}, directory)
+            self.assertEqual(publisher.public_url('github', 'harmony.hap', '0.3.0'), 'https://github.com/owner/repo/releases/download/v0.3.0/harmony.hap')
+            self.assertEqual(publisher.public_url('github', 'mac.dmg'), 'https://github.com/owner/repo/releases/download/v0.3.1/mac.dmg')
+
+    def test_same_version_repack_does_not_prune_retained_harmony_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = {'version': '0.3.0', 'source': 'a' * 40, 'revision': 'fix', 'assets': [{'name': 'new.apk'}],
+                    'manifest': {'platforms': [{'file': 'new.apk'}, {'file': 'harmony.hap'}]},
+                    'previous': {'platforms': [{'file': 'old.apk'}, {'file': 'harmony.hap'}]}}
+            publisher = Publisher(plan, {}, directory)
+            publisher.report.update(publicManifests={}, downloads=[])
+            publisher.release = Mock(return_value={'id': 1})
+            publisher.list_assets = Mock(return_value=[{'name': 'old.apk'}, {'name': 'harmony.hap'}])
+            publisher.delete_asset = Mock()
+            publisher.prune()
+            self.assertEqual(publisher.delete_asset.call_count, 2)
+            self.assertTrue(all(c.args[2]['name'] == 'old.apk' for c in publisher.delete_asset.call_args_list))
+
     def test_attachment_redirect_does_not_forward_api_credentials_to_cdn(self):
         with tempfile.TemporaryDirectory() as directory:
             publisher = Publisher({'version': '0.3.0', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'github': 'owner/repo'}}, {'github': 'PRIVATE-API-TOKEN'}, directory)
