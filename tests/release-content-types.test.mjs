@@ -19,5 +19,6 @@ test('public download checks catch APK renamed or advertised as a ZIP even when 
  for(const name of ['BiliMusic.apk.zip','BiliMusic.zip','BiliMusic.apk.zip.exe'])assert.throws(()=>inspectDownloadHeaders('BiliMusic.apk',new Headers({'content-disposition':`attachment; filename="${name}"`})),/filename/)
  assert.throws(()=>inspectDownloadHeaders('BiliMusic.apk',new Headers({'content-disposition':"attachment; filename*=UTF-8''BiliMusic.apk.zip"})),/filename/)
  assert.throws(()=>inspectDownloadHeaders('BiliMusic.apk',new Headers({'content-type':'application/zip; charset=binary'})),/ZIP/)
+ assert.match(inspectDownloadHeaders('BiliMusic.apk',new Headers({'content-type':'application/zip','content-disposition':'attachment; filename="BiliMusic.apk"'})).warning,/Provider/)
  assert.doesNotThrow(()=>inspectDownloadHeaders('archive.zip',new Headers({'content-type':'application/zip'})))
 })

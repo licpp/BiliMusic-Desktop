@@ -149,6 +149,7 @@ async function openPolicy(downloadPlatform) {
   $('#confirm-download').dataset.loaded = 'false';
   $('#confirm-download').textContent = '同意并下载';
   $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'ios' ? 'iOS 下载的是未签名 IPA，必须使用自己的 Apple ID 自行签名后安装，不是 App Store 版本。' : platform.item.id === 'ohos' ? '鸿蒙下载的是未签名 HAP 测试包，真机需使用自己的华为开发者账号和包含本机 UDID 的 Profile 签名后安装，不能直接点击安装，也不是华为应用市场版本。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
+  if(platform?.item.id==='android' && platform.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
   dialog.showModal(); dialog.scrollTop = 0; content.scrollTop = 0;
@@ -178,6 +179,7 @@ $('#confirm-download').addEventListener('click', async () => {
     if (result.downloadStats) renderDownloadStats(result.downloadStats);
     if (platform !== selection || !$('#policy-dialog').open) return;
     $('#download-availability').textContent=`正在前往 ${selection.channel.name} 下载 ${result.file}。若未开始下载，可重试或选择另一个下载源。`;
+    if(selection.item.id==='android' && selection.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
     window.location.assign(result.url);
   } catch (error) { if (platform===selection) $('#download-availability').textContent=error.message || '网络请求失败，请稍后重试。'; }
   finally { if (platform===selection) { button.textContent='重新下载'; button.disabled=!$('#download-accepted').checked; } }
