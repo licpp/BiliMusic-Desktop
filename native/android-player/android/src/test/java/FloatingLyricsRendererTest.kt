@@ -64,15 +64,21 @@ class FloatingLyricsRendererTest {
         tools.visibility=View.VISIBLE;arrange(rows)
         assertEquals(y,second.top);assertEquals(height,rows.height)
     }
-    @Test fun notificationPublishesARealUnlockCommandWithoutChangingPlaybackActions() {
-        val action=LyricsNotificationAction.customAction(true,true)!!
-        assertEquals("lyrics-unlock",action.action);assertEquals("解锁歌词",action.name.toString())
-        assertEquals(R.drawable.ic_lyrics_unlock,action.icon)
-        val state=android.media.session.PlaybackState.Builder().setActions(android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT or android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS).addCustomAction(action).build()
-        assertEquals(1,state.customActions.size)
-        assertTrue(state.actions and android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT != 0L)
-        assertTrue(state.actions and android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS != 0L)
-        assertNull(LyricsNotificationAction.customAction(true,false));assertNull(LyricsNotificationAction.customAction(false,true))
+    @Test fun translucentUnlockButtonHasSmallVisibleBoundsAndUsableTapTarget() {
+        var clicks=0
+        val button=FloatingLyricsUnlockButton(context){clicks++}
+        val density=context.resources.displayMetrics.density
+        val size=(44*density).toInt()
+        button.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY))
+        button.layout(0,0,size,size)
+        val bitmap=pixels(button)
+        assertEquals(0,Color.alpha(bitmap.getPixel(0,0)))
+        assertTrue(Color.alpha(bitmap.getPixel(size/2,(12*density).toInt())) in 1..200)
+        assertEquals((44*density).toInt(),button.width)
+        assertEquals("解锁悬浮歌词",button.contentDescription.toString())
+        button.performClick();assertEquals(1,clicks)
+        val path=File("build/reports/lyric-previews/android-lyrics-unlock.png");path.parentFile.mkdirs()
+        path.outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
     }
     @Test fun renderActualRowsAndToolbarInBothBackgrounds() {
         val actions=mutableListOf<FloatingLyricsToolbar.Action>()

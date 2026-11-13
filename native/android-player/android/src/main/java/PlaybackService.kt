@@ -160,9 +160,6 @@ class PlaybackService : Service() {
                 }
                 return super.onMediaButtonEvent(intent)
             }
-            override fun onCustomAction(action: String,extras: Bundle?) {
-                if(action==LyricsNotificationAction.UNLOCK)FloatingLyricsOverlay.unlockFromNotification()
-            }
             override fun onPlay() { control("resume") }
             override fun onPause() { control("pause") }
             override fun onStop() { control("stop") }
@@ -191,7 +188,6 @@ class PlaybackService : Service() {
             "next", "previous" -> control(intent.action!!)
             "toggle" -> control(if (status == "playing" || status == "buffering") "pause" else "resume")
             "stop" -> control("stop")
-            LyricsNotificationAction.UNLOCK -> FloatingLyricsOverlay.unlockFromNotification()
         }
         // Never restart silently after Android kills the process: saved URLs are temporary.
         return START_NOT_STICKY
@@ -435,7 +431,6 @@ class PlaybackService : Service() {
         val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
         val playback=PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
             .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f)
-        LyricsNotificationAction.customAction(FloatingLyricsOverlay.enabled,FloatingLyricsOverlay.locked)?.let{playback.addCustomAction(it)}
         session.setPlaybackState(playback.build())
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification())
     }
@@ -500,7 +495,6 @@ class PlaybackService : Service() {
             .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "下一首", pending("next", 3)).build())
             .setDeleteIntent(pending("stop", 4))
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2))
-        if(LyricsNotificationAction.available(FloatingLyricsOverlay.enabled,FloatingLyricsOverlay.locked))builder.addAction(Notification.Action.Builder(R.drawable.ic_lyrics_unlock,"解锁歌词",pending(LyricsNotificationAction.UNLOCK,5)).build())
         return builder.build()
     }
     override fun onDestroy() {

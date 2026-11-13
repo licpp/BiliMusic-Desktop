@@ -40,12 +40,14 @@ object FloatingLyricsOverlay {
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
+    private var unlock: FloatingLyricsUnlockButton? = null
+    private var unlockLayout: WindowManager.LayoutParams? = null
     private var controls: LinearLayout? = null
     private val controlVisibility = FloatingLyricsControls()
     private var data = JSONObject()
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
-        override fun run() { if (enabled) { render(); syncControls();handler.postDelayed(this,33) } }
+        override fun run() { if (enabled) { render(); syncControls();syncUnlock();handler.postDelayed(this,33) } }
     }
     fun attach(service: PlaybackService) { owner=service; if(enabled) show() }
     fun detach() { hide(); owner=null; enabled=false }
@@ -78,6 +80,7 @@ object FloatingLyricsOverlay {
         handler.removeCallbacks(tick)
         val context=owner
         controlVisibility.hide()
+        hideUnlock()
         if(view!=null && context!=null) runCatching { (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(view) }
         view=null; text=null;nextText=null;controls=null;layout=null
     }
@@ -123,13 +126,14 @@ object FloatingLyricsOverlay {
             val x=params.x.coerceIn(0,(metrics.widthPixels-row.width).coerceAtLeast(0))
             val y=params.y.coerceIn(0,(metrics.heightPixels-row.height).coerceAtLeast(0))
             if(params.x!=x || params.y!=y){params.x=x;params.y=y;runCatching{window.updateViewLayout(row,params)}}
+            syncUnlock()
         }
-        runCatching { window.addView(row,params);view=row;controlVisibility.hide();render();handler.removeCallbacks(tick);handler.post(tick) }.onFailure { enabled=false;hide() }
+        runCatching { window.addView(row,params);view=row;controlVisibility.hide();syncUnlock();render();handler.removeCallbacks(tick);handler.post(tick) }.onFailure { enabled=false;hide() }
     }
     private fun syncControls() {
         controls?.visibility=if(controlVisibility.visible(android.os.SystemClock.uptimeMillis(),locked))View.VISIBLE else View.INVISIBLE
     }
-    fun unlockFromNotification() {
+    private fun unlockLyrics() {
         val context=owner ?: return
         if(!enabled || !locked)return
         locked=false;controlVisibility.reveal(android.os.SystemClock.uptimeMillis());applyLock(context);saveStyle(context)
@@ -151,6 +155,29 @@ object FloatingLyricsOverlay {
         view?.let{runCatching{(context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).updateViewLayout(it,params)}}
         if(locked)controlVisibility.hide()
         syncControls()
+        syncUnlock()
+    }
+    private fun hideUnlock() {
+        unlock?.let{button->owner?.let{context->runCatching{(context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(button)}}}
+        unlock=null;unlockLayout=null
+    }
+    private fun syncUnlock() {
+        val context=owner ?: return
+        val row=view
+        if(!enabled || !locked || row==null){hideUnlock();return}
+        val params=layout ?: return
+        val window=context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val density=context.resources.displayMetrics.density
+        val size=(44*density).toInt();val gap=(2*density).toInt();val metrics=context.resources.displayMetrics
+        val (x,y)=FloatingLyricsWindowPolicy.unlockPosition(params.x,params.y,row.width.takeIf{it>0} ?: params.width,row.height,metrics.widthPixels,metrics.heightPixels,size,gap)
+        val existing=unlock
+        if(existing!=null){unlockLayout?.let{if(it.x!=x || it.y!=y){it.x=x;it.y=y;runCatching{window.updateViewLayout(existing,it)}}};return}
+        val button=FloatingLyricsUnlockButton(context){unlockLyrics()}
+        val buttonParams=WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;this.x=x;this.y=y}
+        runCatching{window.addView(button,buttonParams);unlock=button;unlockLayout=buttonParams}.onFailure {
+            // Do not leave a locked overlay without a usable unlock target.
+            locked=false;applyLock(context);saveStyle(context)
+        }
     }
     private fun render() {
         val service=owner ?: return

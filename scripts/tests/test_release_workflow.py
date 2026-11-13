@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type
@@ -22,6 +22,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             publisher = Publisher({'version': '0.3.1', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'gitee': 'owner/repo'}}, {'gitee': 'TEST-TOKEN'}, directory)
             publisher.opener = Mock()
+            publisher.opener.open.return_value = MagicMock()
             publisher.opener.open.return_value.__enter__.return_value.read.return_value = b'{}'
             publisher.api('gitee', '/releases/1/attach_files', 'POST', multipart=('BiliMusic.apk', b'APK-BYTES'))
             request = publisher.opener.open.call_args.args[0]

@@ -56,8 +56,11 @@ class PlaybackInteractionTest {
         controls.reveal(4000);assertTrue(controls.visible(4100,false))
         controls.hide();assertFalse(controls.visible(4200,false))
     }
-    @Test fun notificationUnlockIsAvailableOnlyForEnabledLockedLyrics() {
-        assertTrue(LyricsNotificationAction.available(true,true))
-        for((enabled,locked)in listOf(false to false,false to true,true to false))assertFalse(LyricsNotificationAction.available(enabled,locked))
+    @Test fun unlockButtonIsBoundedAndOutsideThePassThroughLyrics() {
+        for((width,height)in listOf(1080 to 2400,2400 to 1080))for(y in listOf(0,height/2,height-160)) {
+            val (x,top)=FloatingLyricsWindowPolicy.unlockPosition(30,y,width-60,160,width,height,44,2)
+            assertTrue(x>=0 && x+44<=width);assertTrue(top>=0 && top+44<=height)
+            assertTrue(top+44<=y || top>=y+160)
+        }
     }
 }
