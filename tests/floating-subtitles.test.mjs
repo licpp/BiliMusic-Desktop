@@ -2,7 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const built=await build({entryPoints:['src/features/lyrics/lyricTimeline.ts'],bundle:true,write:false,format:'esm',platform:'node'})
-const {floatingTimeline,floatingLinePair,floatingLineSlots,lyricScrollProgress,lyricScrollPosition}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
+const {floatingTimeline,floatingLinePair,floatingLineSlots,lyricScrollProgress,lyricScrollPosition,lyricAt}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 const lyrics=[{timeMs:1000,text:'保存的歌词',words:[{text:'保存的歌词',startTimeMs:1000,endTimeMs:2000}]}]
 const captions=[{timeMs:3000,endTimeMs:4500,text:'AI 字幕'},{timeMs:6000,endTimeMs:7000,text:'下一句'}]
 const scope='1:BVtest:123'
@@ -102,4 +102,15 @@ test('reading holds adapt to viewport width, very short lines and silent edge ca
  assert.equal(short(36),0);assert.ok(short(100)>0&&short(100)<1);assert.equal(short(156),1)
  const gap={timeMs:0,text:'ab',words:[{text:'a',startTimeMs:0,endTimeMs:10},{text:'b',startTimeMs:9990,endTimeMs:10000}]}
  for(let t=0,previous=0;t<=10000;t+=100){const value=lyricScrollPosition(gap,t,10000,300,600);assert.ok(Number.isFinite(value)&&value>=previous&&value<=1);previous=value}
+})
+
+test('the full lyric page holds AI subtitle emphasis until the following sentence starts',()=>{
+ assert.equal(lyricAt(captions,2999),-1)
+ assert.equal(lyricAt(captions,3000),0)
+ assert.equal(lyricAt(captions,4500),0,'retain emphasis after the subtitle ends')
+ assert.equal(lyricAt(captions,5999),0,'retain emphasis throughout the silent gap')
+ assert.equal(lyricAt(captions,6000),1,'switch only when the next sentence starts')
+ assert.equal(lyricAt(captions,10000),1,'retain the last sentence')
+ assert.equal(lyricAt(captions,5000),0,'a backward seek restores the correct sentence')
+ assert.equal(lyricAt(captions,5000,false),-1,'system captions still honor their actual end timestamps')
 })

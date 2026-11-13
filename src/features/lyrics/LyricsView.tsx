@@ -338,7 +338,9 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const activeIndex = useMemo(() => {
     if (!subtitles.lines && !syncedLyrics) return -1
     const currentMs = progressSeconds * 1_000 - biasMs
-    return lyricAt(displayLines, currentMs, !subtitles.lines)
+    // Keep the displayed sentence enlarged through subtitle gaps. Its
+    // end timestamp still controls word progress and system captions.
+    return lyricAt(displayLines, currentMs)
   }, [displayLines, progressSeconds, biasMs, syncedLyrics, subtitles.lines])
 
   useEffect(() => { setBrowsingLyrics(false); setBrowseIndex(-1) }, [current?.id, displayLines])
