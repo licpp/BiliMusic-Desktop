@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -17,12 +16,10 @@ import android.text.style.ReplacementSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
-import android.widget.ImageButton
 import android.view.View
 import android.os.Build
 import android.hardware.input.InputManager
 import android.widget.LinearLayout
-import android.widget.TextView
 import org.json.JSONObject
 
 // The service owns the renderer and reads the same MediaPlayer clock. No
@@ -43,14 +40,12 @@ object FloatingLyricsOverlay {
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
-    private var unlock: ImageButton? = null
-    private var unlockLayout: WindowManager.LayoutParams? = null
     private var controls: LinearLayout? = null
-    private var controlsUntil = 0L
+    private val controlVisibility = FloatingLyricsControls()
     private var data = JSONObject()
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
-        override fun run() { if (enabled) { render(); controls?.visibility=if(!locked && android.os.SystemClock.uptimeMillis()<controlsUntil) android.view.View.VISIBLE else android.view.View.GONE; handler.postDelayed(this,33) } }
+        override fun run() { if (enabled) { render(); syncControls();handler.postDelayed(this,33) } }
     }
     fun attach(service: PlaybackService) { owner=service; if(enabled) show() }
     fun detach() { hide(); owner=null; enabled=false }
@@ -63,7 +58,7 @@ object FloatingLyricsOverlay {
                 fun color(key:String,fallback:Int)=args.optString(key).takeIf{it.matches(Regex("#[0-9a-fA-F]{6}"))}?.let{Color.parseColor(it)} ?: fallback
                 activeColor=color("activeColor",activeColor);inactiveColor=color("inactiveColor",inactiveColor)
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
-                applyLock(context)
+                applyLock(context);owner?.notifyLyricsChanged()
             }
             "update" -> { data=args; render() }
             "enable" -> {
@@ -73,6 +68,7 @@ object FloatingLyricsOverlay {
                 }
                 enabled=args.optBoolean("enabled")
                 if(enabled) show() else hide()
+                owner?.notifyLyricsChanged()
             }
         }
         return status(context)
@@ -81,7 +77,7 @@ object FloatingLyricsOverlay {
     private fun hide() {
         handler.removeCallbacks(tick)
         val context=owner
-        hideUnlock()
+        controlVisibility.hide()
         if(view!=null && context!=null) runCatching { (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(view) }
         view=null; text=null;nextText=null;controls=null;layout=null
     }
@@ -95,15 +91,18 @@ object FloatingLyricsOverlay {
             setPadding((12*density).toInt(),(8*density).toInt(),(4*density).toInt(),(8*density).toInt())
             setBackgroundColor(Color.TRANSPARENT)
         }
-        fun lyricLabel(size:Float)=ScrollingLyricView(context).apply { textSize=size;gravity=Gravity.START;setTextColor(activeColor);includeFontPadding=false;setLineSpacing(0f,1f);typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);setSingleLine(true);ellipsize=null;setShadowLayer(2*density,0f,1f,0x66000000) }
+        fun lyricLabel(size:Float)=ScrollingLyricView(context).apply { textSize=size;gravity=Gravity.START;setTextColor(activeColor);typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);setShadowLayer(2*density,0f,1f,0x66000000) }
         val label=lyricLabel(fontSize);text=label;row.addView(label,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
         val next=lyricLabel(fontSize).apply {gravity=Gravity.END;setTextColor(inactiveColor)};nextText=next;row.addView(next,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
-        val tools=LinearLayout(context).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.END;visibility=android.view.View.GONE;background=GradientDrawable().apply{setColor(0x99516A80.toInt());cornerRadius=8*density}};controls=tools
-        fun button(icon:FloatingControlIcon.Kind,description:String,action:()->Unit){tools.addView(controlButton(context,icon,description){controlsUntil=android.os.SystemClock.uptimeMillis()+4000;action()},LinearLayout.LayoutParams((44*density).toInt(),(44*density).toInt()))}
-        button(FloatingControlIcon.Kind.MINUS,"减小歌词字号"){fontSize=(fontSize-2).coerceAtLeast(18f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
-        button(FloatingControlIcon.Kind.PLUS,"增大歌词字号"){fontSize=(fontSize+2).coerceAtMost(48f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
-        button(FloatingControlIcon.Kind.LOCK,"锁定悬浮歌词"){locked=true;applyLock(context);saveStyle(context)}
-        button(FloatingControlIcon.Kind.CLOSE,"关闭悬浮歌词"){enabled=false;hide();owner?.notifyLyricsChanged()}
+        val tools=FloatingLyricsToolbar(context){action->
+            controlVisibility.reveal(android.os.SystemClock.uptimeMillis())
+            when(action) {
+                FloatingLyricsToolbar.Action.SMALLER->{fontSize=(fontSize-2).coerceAtLeast(18f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
+                FloatingLyricsToolbar.Action.LARGER->{fontSize=(fontSize+2).coerceAtMost(48f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
+                FloatingLyricsToolbar.Action.LOCK->{locked=true;controlVisibility.hide();applyLock(context);saveStyle(context)}
+                FloatingLyricsToolbar.Action.CLOSE->{enabled=false;hide();owner?.notifyLyricsChanged()}
+            }
+        }.apply{visibility=View.INVISIBLE};controls=tools
         row.addView(tools,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
         val metrics=context.resources.displayMetrics
         val params=WindowManager.LayoutParams((metrics.widthPixels*.9).toInt(),WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START;x=(metrics.widthPixels*.05).toInt();y=(metrics.heightPixels*.65).toInt() }
@@ -116,14 +115,26 @@ object FloatingLyricsOverlay {
             when(event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { moved=false;initialX=params.x;initialY=params.y;downX=event.rawX;downY=event.rawY }
                 MotionEvent.ACTION_MOVE -> { if(kotlin.math.abs(event.rawX-downX)+kotlin.math.abs(event.rawY-downY)>8*density)moved=true;params.x=(initialX+event.rawX-downX).toInt().coerceIn(0,(metrics.widthPixels-row.width).coerceAtLeast(0));params.y=(initialY+event.rawY-downY).toInt().coerceIn(0,(metrics.heightPixels-row.height).coerceAtLeast(0));runCatching {window.updateViewLayout(row,params)} }
-                MotionEvent.ACTION_UP -> { if(!moved && !locked)controlsUntil=android.os.SystemClock.uptimeMillis()+4000 }
+                MotionEvent.ACTION_UP -> { if(!moved && !locked)controlVisibility.reveal(android.os.SystemClock.uptimeMillis()) }
             };true
         }
         label.setOnTouchListener(touch);next.setOnTouchListener(touch)
-        row.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->syncUnlock()}
-        row.setOnHoverListener{_,event->if(!locked)controlsUntil=if(event.actionMasked==MotionEvent.ACTION_HOVER_EXIT)0 else android.os.SystemClock.uptimeMillis()+4000;false}
-        runCatching { window.addView(row,params);view=row;syncUnlock();render();handler.removeCallbacks(tick);handler.post(tick) }.onFailure { enabled=false;hide() }
+        row.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->
+            val x=params.x.coerceIn(0,(metrics.widthPixels-row.width).coerceAtLeast(0))
+            val y=params.y.coerceIn(0,(metrics.heightPixels-row.height).coerceAtLeast(0))
+            if(params.x!=x || params.y!=y){params.x=x;params.y=y;runCatching{window.updateViewLayout(row,params)}}
+        }
+        runCatching { window.addView(row,params);view=row;controlVisibility.hide();render();handler.removeCallbacks(tick);handler.post(tick) }.onFailure { enabled=false;hide() }
     }
+    private fun syncControls() {
+        controls?.visibility=if(controlVisibility.visible(android.os.SystemClock.uptimeMillis(),locked))View.VISIBLE else View.INVISIBLE
+    }
+    fun unlockFromNotification() {
+        val context=owner ?: return
+        if(!enabled || !locked)return
+        locked=false;controlVisibility.reveal(android.os.SystemClock.uptimeMillis());applyLock(context);saveStyle(context)
+    }
+
     private fun saveStyle(context: Context) {
         styleRevision=maxOf(styleRevision+1,android.os.SystemClock.elapsedRealtime())
         context.getSharedPreferences("bilimusic-lyrics-style",Context.MODE_PRIVATE).edit().putFloat("fontSize",fontSize).putBoolean("locked",locked).apply()
@@ -138,41 +149,8 @@ object FloatingLyricsOverlay {
         params.flags=if(locked)params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         params.alpha=windowAlpha(context)
         view?.let{runCatching{(context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).updateViewLayout(it,params)}}
-        if(locked)controls?.visibility=View.GONE
-        syncUnlock()
-    }
-    private fun controlButton(context: Context,icon: FloatingControlIcon.Kind,description: String,action:()->Unit)=ImageButton(context).apply {
-        val padding=(11*context.resources.displayMetrics.density).toInt()
-        setImageDrawable(FloatingControlIcon(icon));setPadding(padding,padding,padding,padding)
-        background=android.graphics.drawable.StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed),GradientDrawable().apply{setColor(0x33FFFFFF);cornerRadius=8*context.resources.displayMetrics.density})
-            addState(intArrayOf(),android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-        }
-        contentDescription=description;setOnClickListener{action()}
-    }
-    private fun hideUnlock() {
-        unlock?.let{button->owner?.let{context->runCatching{(context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(button)}}}
-        unlock=null;unlockLayout=null
-    }
-    private fun syncUnlock() {
-        val context=owner ?: return
-        val row=view
-        if(!enabled || !locked || row==null){hideUnlock();return}
-        val params=layout ?: return
-        val window=context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val density=context.resources.displayMetrics.density
-        val size=(44*density).toInt();val gap=(6*density).toInt();val metrics=context.resources.displayMetrics
-        val (x,y)=FloatingLyricsWindowPolicy.unlockPosition(params.x,params.y,row.width.takeIf{it>0} ?: params.width,row.height,metrics.widthPixels,metrics.heightPixels,size,gap)
-        val existing=unlock
-        if(existing!=null){unlockLayout?.let{if(it.x!=x || it.y!=y){it.x=x;it.y=y;runCatching{window.updateViewLayout(existing,it)}}};return}
-        val button=controlButton(context,FloatingControlIcon.Kind.UNLOCK,"解锁悬浮歌词") {
-            locked=false;controlsUntil=android.os.SystemClock.uptimeMillis()+4000;applyLock(context);saveStyle(context)
-        }.apply{background=GradientDrawable().apply{setColor(0xAA516A80.toInt());cornerRadius=12*density}}
-        val buttonParams=WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;this.x=x;this.y=y}
-        runCatching{window.addView(button,buttonParams);unlock=button;unlockLayout=buttonParams}.onFailure {
-            // Never leave the user in a lock state with no usable unlock target.
-            locked=false;applyLock(context);saveStyle(context)
-        }
+        if(locked)controlVisibility.hide()
+        syncControls()
     }
     private fun render() {
         val service=owner ?: return

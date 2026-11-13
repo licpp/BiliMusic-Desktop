@@ -160,6 +160,9 @@ class PlaybackService : Service() {
                 }
                 return super.onMediaButtonEvent(intent)
             }
+            override fun onCustomAction(action: String,extras: Bundle?) {
+                if(action==LyricsNotificationAction.UNLOCK)FloatingLyricsOverlay.unlockFromNotification()
+            }
             override fun onPlay() { control("resume") }
             override fun onPause() { control("pause") }
             override fun onStop() { control("stop") }
@@ -188,6 +191,7 @@ class PlaybackService : Service() {
             "next", "previous" -> control(intent.action!!)
             "toggle" -> control(if (status == "playing" || status == "buffering") "pause" else "resume")
             "stop" -> control("stop")
+            LyricsNotificationAction.UNLOCK -> FloatingLyricsOverlay.unlockFromNotification()
         }
         // Never restart silently after Android kills the process: saved URLs are temporary.
         return START_NOT_STICKY
@@ -412,7 +416,7 @@ class PlaybackService : Service() {
     }
     fun lyricPosition(): Pair<String,Double> = Pair(id,if(prepared && !seeking) runCatching { (player?.currentPosition ?: 0)/1000.0 }.getOrDefault(lastPosition) else lastPosition)
     fun lyricTitle(): String = title
-    fun notifyLyricsChanged() { publish(false) }
+    fun notifyLyricsChanged() { publish() }
     private fun publish(notify: Boolean = true) {
         accountListening()
         // The app receives state first; OS presentation is coalesced separately.
@@ -429,8 +433,10 @@ class PlaybackService : Service() {
     private fun updateSystemPlayback() {
         lastSystemStatus = status; lastSystemPosition = lastPosition
         val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
-        session.setPlaybackState(PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
-            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f).build())
+        val playback=PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
+            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f)
+        LyricsNotificationAction.customAction(FloatingLyricsOverlay.enabled,FloatingLyricsOverlay.locked)?.let{playback.addCustomAction(it)}
+        session.setPlaybackState(playback.build())
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification())
     }
     private fun updateMetadata() {
@@ -485,7 +491,7 @@ class PlaybackService : Service() {
         Intent(this, PlaybackService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun notification(): Notification {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        return Notification.Builder(this, CHANNEL).setContentTitle(title).setContentText(artist).setLargeIcon(artwork)
+        val builder=Notification.Builder(this, CHANNEL).setContentTitle(title).setContentText(artist).setLargeIcon(artwork)
             .setSmallIcon(app.bilimusic.player.R.drawable.ic_music_notification).setColor(Color.rgb(255,115,88))
             .setContentIntent(open).setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true)
             .setOngoing(status == "playing" || status == "buffering")
@@ -493,7 +499,9 @@ class PlaybackService : Service() {
             .addAction(Notification.Action.Builder(if (status == "playing" || status == "buffering") android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, "播放 / 暂停", pending("toggle", 2)).build())
             .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "下一首", pending("next", 3)).build())
             .setDeleteIntent(pending("stop", 4))
-            .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2)).build()
+            .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0,1,2))
+        if(LyricsNotificationAction.available(FloatingLyricsOverlay.enabled,FloatingLyricsOverlay.locked))builder.addAction(Notification.Action.Builder(R.drawable.ic_lyrics_unlock,"解锁歌词",pending(LyricsNotificationAction.UNLOCK,5)).build())
+        return builder.build()
     }
     override fun onDestroy() {
         cancelSourceSwitch()

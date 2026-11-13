@@ -21,17 +21,6 @@ class PlaybackInteractionTest {
         assertEquals(1f,FloatingLyricsWindowPolicy.alpha(false,36,.8f),.0001f)
         assertEquals(1f,FloatingLyricsWindowPolicy.alpha(true,30,.8f),.0001f)
     }
-    @Test fun unlockStaysVisibleAboveOrBelowLyricsAndInsideScreenEdges() {
-        for((w,h) in listOf(1080 to 2400,2400 to 1080,320 to 240)) {
-            val size=44;val gap=6;val height=90;val width=(w*.9).toInt()
-            for(y in listOf(0,h/2,(h-height).coerceAtLeast(0))) {
-                val(x,top)=FloatingLyricsWindowPolicy.unlockPosition(20,y,width,height,w,h,size,gap)
-                assertTrue(x>=0&&x+size<=w);assertTrue(top>=0&&top+size<=h)
-                assertTrue(top+size<=y || top>=y+height)
-            }
-        }
-        assertEquals(0 to 0,FloatingLyricsWindowPolicy.unlockPosition(-100,-100,20,20,30,30,44,6))
-    }
     @Test fun scrollingLeavesTimeToReadBothEdgesAndScalesForShortLines() {
         val window=LyricScrollTiming.window(1000.0,5000.0,400.0,800.0)!!
         assertEquals(1240.0,window.startAt,.0001);assertEquals(4680.0,window.endAt,.0001)
@@ -57,5 +46,18 @@ class PlaybackInteractionTest {
         assertEquals(.5f,window.position(halfway,.5,.5,.5),.0001f)
         assertEquals(0f,window.position(0.0,0.0,.5,.5),.0001f)
         assertEquals(1f,window.position(6000.0,1.0,.5,.5),.0001f)
+    }
+    @Test fun lyricControlsAppearOnlyAfterTappingAndExpireWithoutMovingRows() {
+        val controls=FloatingLyricsControls()
+        assertFalse(controls.visible(0,false))
+        controls.reveal(100)
+        assertTrue(controls.visible(100,false));assertTrue(controls.visible(4099,false))
+        assertFalse(controls.visible(4100,false));assertFalse(controls.visible(200,true))
+        controls.reveal(4000);assertTrue(controls.visible(4100,false))
+        controls.hide();assertFalse(controls.visible(4200,false))
+    }
+    @Test fun notificationUnlockIsAvailableOnlyForEnabledLockedLyrics() {
+        assertTrue(LyricsNotificationAction.available(true,true))
+        for((enabled,locked)in listOf(false to false,false to true,true to false))assertFalse(LyricsNotificationAction.available(enabled,locked))
     }
 }
