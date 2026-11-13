@@ -32,4 +32,30 @@ class PlaybackInteractionTest {
         }
         assertEquals(0 to 0,FloatingLyricsWindowPolicy.unlockPosition(-100,-100,20,20,30,30,44,6))
     }
+    @Test fun scrollingLeavesTimeToReadBothEdgesAndScalesForShortLines() {
+        val window=LyricScrollTiming.window(1000.0,5000.0,400.0,800.0)!!
+        assertEquals(1240.0,window.startAt,.0001);assertEquals(4680.0,window.endAt,.0001)
+        assertEquals(0f,window.position(1200.0,.05,.06,.92),.0001f)
+        assertEquals(.5f,window.position(3000.0,.49,.06,.92),.0001f)
+        assertEquals(1f,window.position(4900.0,.975,.06,.92),.0001f)
+        val short=LyricScrollTiming.window(0.0,200.0,300.0,600.0)!!
+        assertEquals(36.0,short.startAt,.0001);assertEquals(156.0,short.endAt,.0001)
+        assertNull(LyricScrollTiming.window(0.0,2000.0,600.0,600.0))
+        assertNull(LyricScrollTiming.window(0.0,2000.0,0.0,600.0))
+    }
+    @Test fun scrollingReadingHoldsUseViewportAndEdgeWordDuration() {
+        val narrow=LyricScrollTiming.window(0.0,4000.0,200.0,1000.0)!!
+        val wide=LyricScrollTiming.window(0.0,4000.0,800.0,1000.0)!!
+        assertTrue(wide.startAt>narrow.startAt);assertTrue(wide.endAt<narrow.endAt)
+        val words=LyricScrollTiming.window(0.0,4000.0,200.0,1000.0,1500.0,1500.0)!!
+        assertTrue(words.startAt>narrow.startAt);assertTrue(words.endAt<narrow.endAt)
+    }
+    @Test fun scrollingHoldsTimedGapsAndInterpolatesIfBothEdgesFallInOneGap() {
+        val window=LyricScrollTiming.window(0.0,6000.0,300.0,600.0)!!
+        assertEquals(window.position(2500.0,.5,.06,.94),window.position(3500.0,.5,.06,.94),.0001f)
+        val halfway=(window.startAt+window.endAt)/2
+        assertEquals(.5f,window.position(halfway,.5,.5,.5),.0001f)
+        assertEquals(0f,window.position(0.0,0.0,.5,.5),.0001f)
+        assertEquals(1f,window.position(6000.0,1.0,.5,.5),.0001f)
+    }
 }

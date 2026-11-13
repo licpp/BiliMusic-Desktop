@@ -194,7 +194,7 @@ object FloatingLyricsOverlay {
             val key="${position.first}:$index:${line?.optDouble("timeMs")}"
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
-            val scroll=lyricScrollProgress(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"))
+            val scroll=lyricScrollPosition(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"),target)
             if(!active || words==null || words.length()==0){target.showLyric(line.optString("text"),key,active,scroll);continue}
             val body=SpannableStringBuilder()
             for(i in 0 until words.length()) {
@@ -206,6 +206,22 @@ object FloatingLyricsOverlay {
             }
             target.showLyric(body,key,active,scroll)
         }
+    }
+
+    private fun lyricScrollPosition(line: org.json.JSONObject,time: Double,next: Double?,target: ScrollingLyricView): Float {
+        val value=line.optString("text")
+        val width=target.paint.measureText(value).toDouble()
+        val available=(target.width-target.paddingLeft-target.paddingRight).toDouble()
+        if(width<=available || available<=0)return 0f
+        val words=line.optJSONArray("words")
+        val first=words?.optJSONObject(0);val last=words?.let{it.optJSONObject(it.length()-1)}
+        val start=line.optDouble("timeMs")
+        val naturalEnd=if(line.has("endTimeMs"))line.optDouble("endTimeMs") else next ?: last?.optDouble("endTimeMs") ?: (start+maxOf(3000,value.codePointCount(0,value.length)*250))
+        val end=if(next==null)naturalEnd else minOf(naturalEnd,next)
+        val firstDuration=if(first==null)0.0 else first.optDouble("endTimeMs")-first.optDouble("startTimeMs")
+        val lastDuration=if(last==null)0.0 else last.optDouble("endTimeMs")-last.optDouble("startTimeMs")
+        val window=LyricScrollTiming.window(start,end,available,width,firstDuration,lastDuration) ?: return 0f
+        return window.position(time,lyricScrollProgress(line,time,end).toDouble(),lyricScrollProgress(line,window.startAt,end).toDouble(),lyricScrollProgress(line,window.endAt,end).toDouble())
     }
 
     private fun lyricScrollProgress(line: org.json.JSONObject,time: Double,next: Double?): Float {

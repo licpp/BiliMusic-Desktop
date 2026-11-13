@@ -67,3 +67,28 @@ export function lyricScrollProgress(line: LyricLine, timeMs: number, nextTimeMs?
   const end=line.endTimeMs??nextTimeMs??(line.timeMs+Math.max(3000,Array.from(line.text).length*250))
   return clamp((timeMs-line.timeMs)/Math.max(1,end-line.timeMs))
 }
+
+// Reserve reading time at both edges. A wider visible portion needs less
+// movement and can spend longer at rest; short lines scale the holds down.
+export function lyricScrollPosition(line: LyricLine, timeMs: number, nextTimeMs: number|undefined, viewportWidth: number, textWidth: number) {
+  if(textWidth<=viewportWidth||viewportWidth<=0)return 0
+  const words=line.words
+  const last=words?.[words.length-1]
+  const naturalEnd=line.endTimeMs??nextTimeMs??last?.endTimeMs??(line.timeMs+Math.max(3000,Array.from(line.text).length*250))
+  const end=nextTimeMs===undefined?naturalEnd:Math.min(naturalEnd,nextTimeMs)
+  const duration=Math.max(1,end-line.timeMs)
+  const visibleDuration=duration*Math.min(1,viewportWidth/textWidth)
+  const firstWord=words?.[0]
+  const firstDuration=firstWord?Math.max(0,firstWord.endTimeMs-firstWord.startTimeMs):0
+  const lastDuration=last?Math.max(0,last.endTimeMs-last.startTimeMs):0
+  const lead=Math.min(duration*.18,Math.max(180,Math.min(650,Math.max(visibleDuration*.12,firstDuration*.35))))
+  const tail=Math.min(duration*.22,Math.max(240,Math.min(850,Math.max(visibleDuration*.16,lastDuration*.45))))
+  const startAt=line.timeMs+lead,endAt=end-tail
+  if(timeMs<=startAt)return 0
+  if(timeMs>=endAt)return 1
+  const from=lyricScrollProgress(line,startAt,end),to=lyricScrollProgress(line,endAt,end)
+  // A long silent gap can put both anchors at the same word boundary. In
+  // that case interpolate across the available interval instead of jumping.
+  const progress=to-from>1e-6?(lyricScrollProgress(line,timeMs,end)-from)/(to-from):(timeMs-startAt)/(endAt-startAt)
+  return Math.max(0,Math.min(1,progress))
+}
