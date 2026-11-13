@@ -140,6 +140,15 @@ def verify_native(path, platform, version, certificate):
             dex = b''.join(archive.read(x.filename) for x in archive.infolist() if x.filename.endswith('.dex'))
             for name in ['PlayerPlugin', 'PlayArgs', 'ControlArgs', 'SecretArgs']:
                 require(('Lapp/bilimusic/player/' + name + ';').encode() in dex, 'Android bridge removed: ' + name)
+    elif platform == 'HarmonyOS NEXT':
+        with zipfile.ZipFile(path) as archive:
+            require(archive.testzip() is None, 'Corrupt HAP')
+            app = json.loads(archive.read('module.json'))['app']
+            major, minor, patch = map(int, version.split('.'))
+            require(app['bundleName'] == 'app.bilimusic.harmony' and app['versionName'] == version and app['versionCode'] == major * 1000000 + minor * 10000 + patch * 100, 'Harmony identity/version mismatch')
+            binary = archive.read('libs/arm64-v8a/libbilimusic_lib.so')
+            require(binary[:4] == b'\x7fELF' and int.from_bytes(binary[18:20], 'little') == 183, 'Expected ARM64 Harmony binary')
+            require(len(archive.read('ets/modules.abc')) > 1000, 'Harmony bytecode missing')
     elif platform == 'Windows':
         raw = path.read_bytes()
         require(raw[:2] == b'MZ', 'Expected Windows executable')
@@ -162,10 +171,12 @@ def validate_bundle(bundle, native_verifier=verify_native):
     require(manifest['version'] == version, 'Build and manifest versions differ')
     require(len(source) == 40 and all(c in '0123456789abcdef' for c in source), 'Invalid source commit')
     ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows'}
-    require(len(build['platforms']) == 4 and {p['platform'] for p in build['platforms']} == set(ids), 'Expected exactly four built platforms')
+    if any(p['platform'] == 'HarmonyOS NEXT' for p in build['platforms']):
+        ids['HarmonyOS NEXT'] = 'ohos'
+    require(len(build['platforms']) == len(ids) and {p['platform'] for p in build['platforms']} == set(ids), 'Expected four or five distinct built platforms')
     manifest_ids = [p['id'] for p in manifest['platforms']]
     require(len(manifest_ids) == len(set(manifest_ids)) and set(manifest_ids) in (set(ids.values()), set(ids.values()) | {'ohos'}), 'Expected four release platforms with optional retained Harmony test package')
-    if 'ohos' in manifest_ids:
+    if 'ohos' in manifest_ids and 'HarmonyOS NEXT' not in ids:
         harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
         require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Four-platform publication must preserve the existing Harmony package')
         require(re.fullmatch(r'\d+\.\d+\.\d+', harmony.get('version', '')) and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
@@ -175,7 +186,13 @@ def validate_bundle(bundle, native_verifier=verify_native):
         name = package['file']
         require(Path(name).name == name and name not in ('.', '..'), 'Unsafe asset name')
         path = bundle / name
-        require(package['source'] == source and package['version'] == version, 'Mixed build sources or versions')
+        require(package['version'] == version, 'Mixed build sources or versions')
+        if package['source'] != source:
+            # An Android-only follow-up can reuse other accepted packages if
+            # every changed path is irrelevant to those native app sources.
+            require(package['platform'] != 'Android' and re.fullmatch(r'[a-f0-9]{40}', package['source']), 'Mixed build sources or versions')
+            changed = command(['git', 'diff', '--name-only', package['source'], source]).splitlines()
+            require(changed and all(n.startswith(('native/android-player/', 'scripts/', 'tests/')) for n in changed), 'Mixed build sources or versions')
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Package digest mismatch: ' + name)
         entry = next(p for p in manifest['platforms'] if p['id'] == ids[package['platform']])
         require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
@@ -185,12 +202,12 @@ def validate_bundle(bundle, native_verifier=verify_native):
     sums = ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
     require((bundle / 'SHA256SUMS.txt').read_text() == sums, 'SHA256SUMS does not match packages')
     for platform in ids:
-        data = json.loads((bundle / f'THIRD_PARTY_LICENSES-{platform}.json').read_text())
-        require(data['version'] == version and data['sourceCommit'] == source, 'Dependency notices source mismatch')
-    for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + [f'THIRD_PARTY_LICENSES-{p}.json' for p in ids]:
+        data = json.loads((bundle / ('THIRD_PARTY_LICENSES-' + platform.replace(' ', '-') + '.json')).read_text())
+        require(data['version'] == version and data['sourceCommit'] == next(p['source'] for p in build['platforms'] if p['platform'] == platform), 'Dependency notices source mismatch')
+    for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + ['THIRD_PARTY_LICENSES-' + p.replace(' ', '-') + '.json' for p in ids]:
         path = bundle / name
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': False})
     notes = (bundle / 'RELEASE_NOTES.md').read_text()
     require(source in notes, 'Release notes must pin the package source commit')
     return {'version': version, 'source': source, 'tag': 'v' + version, 'manifest': manifest, 'previous': previous,
-            'assets': assets, 'notes': notes, 'ciRuns': build.get('ciRuns', {}), 'revision': build.get('packageRevision', source[:7])}
+            'assets': assets, 'notes': notes, 'ciRuns': build.get('ciRuns', {}), 'platformSources': {p['platform']: p['source'] for p in build['platforms']}, 'revision': build.get('packageRevision', source[:7])}

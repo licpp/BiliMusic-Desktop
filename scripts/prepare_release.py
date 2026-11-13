@@ -23,6 +23,8 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
     require(any(h['version'] == version for h in candidate['history']), 'Release history entry missing')
     output.mkdir(parents=True, exist_ok=True)
     ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows'}
+    if any(p['platform'] == 'HarmonyOS NEXT' for p in build['platforms']):
+        ids['HarmonyOS NEXT'] = 'ohos'
     for package in build['platforms']:
         path = build_dir / package['file']
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Build output changed: ' + path.name)
@@ -39,7 +41,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
     build.pop('releasePublished', None)
     build.pop('websiteChanged', None)
     build.update(purpose='release publication', packageRevision=revision, packagedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
-    for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + [f'THIRD_PARTY_LICENSES-{p}.json' for p in ids]:
+    for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + ['THIRD_PARTY_LICENSES-' + p.replace(' ', '-') + '.json' for p in ids]:
         shutil.copy2(build_dir / name, output / name)
     for name in ['android-bridge-acl.json', 'ios-bridge-acl.json']:
         if (build_dir / name).exists():

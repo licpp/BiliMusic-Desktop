@@ -91,7 +91,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 (root / name).write_bytes(data)
                 packages.append({'platform': platform, 'file': name, 'source': source, 'version': version, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
                 entries.append({'id': id, 'channels': [{'id': 'github'}, {'id': 'gitee'}]})
-                (root / f'THIRD_PARTY_LICENSES-{platform}.json').write_text(json.dumps({'sourceCommit': source, 'version': version}))
+                (root / ('THIRD_PARTY_LICENSES-' + platform.replace(' ', '-') + '.json')).write_text(json.dumps({'sourceCommit': source, 'version': version}))
             (root / 'build-info.json').write_text(json.dumps({'version': version, 'source': source, 'platforms': packages, 'validation': {}}))
             for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
                 (root / name).write_text('# BiliMusic 0.3.1\n')
@@ -119,6 +119,37 @@ class ReleaseWorkflowTests(unittest.TestCase):
             (output / 'candidate-releases.json').write_text(json.dumps(retained))
             with self.assertRaisesRegex(ValueError, 'preserve the existing Harmony'):
                 validate_bundle(output, Mock())
+
+    def test_five_platform_release_replaces_harmony_and_keeps_exact_per_platform_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, prior = 'a' * 40, 'b' * 40
+            ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows', 'HarmonyOS NEXT': 'ohos'}
+            packages, entries = [], []
+            for platform, id in ids.items():
+                name = 'BiliMusic_0.3.1_' + id + '.bin'
+                data = platform.encode()
+                (root / name).write_bytes(data)
+                built = source if platform == 'Android' else prior
+                packages.append({'platform': platform, 'file': name, 'source': built, 'version': '0.3.1', 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+                entries.append({'id': id, 'channels': [{'id': 'github'}, {'id': 'gitee'}]})
+                (root / ('THIRD_PARTY_LICENSES-' + platform.replace(' ', '-') + '.json')).write_text(json.dumps({'sourceCommit': built, 'version': '0.3.1'}))
+            (root / 'build-info.json').write_text(json.dumps({'version': '0.3.1', 'source': source, 'platforms': packages, 'validation': {}, 'ciRuns': {'Android': 1, 'Windows': 2}}))
+            for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
+                (root / name).write_text('# BiliMusic 0.3.1\n')
+            output = prepare(root, {'version': '0.3.1', 'platforms': entries, 'history': [{'version': '0.3.1'}]}, root / 'notes.md', root / 'publish', 'first', {'version': '0.3.0', 'platforms': [{'id': 'ohos', 'version': '0.3.0'}]})
+            with patch('release_packages.command', return_value='native/android-player/Player.kt\nscripts/publish_release.py'):
+                plan = validate_bundle(output, Mock())
+            self.assertEqual(len([a for a in plan['assets'] if a['binary']]), 5)
+            self.assertEqual(len([c for p in plan['manifest']['platforms'] for c in p['channels']]), 10)
+            self.assertEqual(plan['platformSources']['Android'], source)
+            self.assertEqual(plan['platformSources']['Windows'], prior)
+            with patch('release_packages.command', return_value='src/features/lyrics/LyricsView.tsx'):
+                with self.assertRaisesRegex(ValueError, 'Mixed build sources'):
+                    validate_bundle(output, Mock())
+            publisher = Publisher(plan | {'repos': {'github': 'owner/repo'}}, {}, root / 'worker')
+            publisher.api = Mock(side_effect=[{'conclusion': 'success', 'head_sha': source}, {'conclusion': 'success', 'head_sha': prior}])
+            publisher.check_ci()
 
     def test_new_release_is_a_prerelease_until_packages_are_verified(self):
         with tempfile.TemporaryDirectory() as directory:

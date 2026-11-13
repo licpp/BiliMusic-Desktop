@@ -294,7 +294,7 @@ class Publisher:
     def check_ci(self):
         for platform, run in self.plan['ciRuns'].items():
             data = self.api('github', f'/actions/runs/{run}')
-            require(data['conclusion'] == 'success' and data['head_sha'] == self.plan['source'], 'Build provenance mismatch: ' + platform)
+            require(data['conclusion'] == 'success' and data['head_sha'] == self.plan.get('platformSources', {}).get(platform, self.plan['source']), 'Build provenance mismatch: ' + platform)
         self.record('ci', self.plan['ciRuns'])
 
     def stage(self):
@@ -304,7 +304,7 @@ class Publisher:
             for asset in self.plan['assets']:
                 if asset['binary']:
                     self.stage_asset(channel, release, asset)
-        self.record('staged', {'binaryAssets': 8})
+        self.record('staged', {'binaryAssets': sum(a['binary'] for a in self.plan['assets']) * len(releases)})
         if 'originalMetadata' not in self.report:
             originals = []
             for channel, release in releases.items():
