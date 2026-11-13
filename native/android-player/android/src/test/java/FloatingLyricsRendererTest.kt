@@ -54,7 +54,7 @@ class FloatingLyricsRendererTest {
         }
     }
     @Test fun bothRowsHaveHeightBeforeLyricsArriveAndControlsDoNotShiftThem() {
-        val first=label(""),second=label("",true)
+        val first=label("");val second=label("",true)
         val tools=FloatingLyricsToolbar(context){}.apply{visibility=View.INVISIBLE}
         val rows=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;addView(first,LinearLayout.LayoutParams(-1,-2));addView(second,LinearLayout.LayoutParams(-1,-2));addView(tools,LinearLayout.LayoutParams(-1,-2))}
         arrange(rows)
