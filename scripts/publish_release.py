@@ -191,6 +191,8 @@ class Publisher:
     def release(self, channel):
         try:
             release = self.api(channel, '/releases/tags/' + self.plan['tag'])
+            if release is None:
+                raise ApiError(channel, 'GET', '/releases/tags/' + self.plan['tag'], 404)
         except ApiError as error:
             if error.status != 404:
                 raise
@@ -199,6 +201,8 @@ class Publisher:
             self.api(channel, '/commits/' + self.plan['source'])
             try:
                 tag = self.api(channel, '/commits/' + self.plan['tag'])
+                if tag is None:
+                    raise ApiError(channel, 'GET', '/commits/' + self.plan['tag'], 404)
                 require(tag['sha'] == self.plan['source'], 'Existing tag points at a different source')
             except ApiError as tag_error:
                 if tag_error.status != 404 and not (channel == 'github' and tag_error.status == 422):

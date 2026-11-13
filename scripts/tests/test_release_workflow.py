@@ -168,6 +168,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertTrue(release['prerelease'])
             self.assertTrue(next(c[2] for c in calls if c[1] == 'POST')['prerelease'])
 
+    def test_gitee_missing_release_can_return_json_null_with_http_200(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = 'a' * 40
+            publisher = Publisher({'version': '0.3.1', 'source': source, 'revision': 'first', 'tag': 'v0.3.1'}, {}, directory)
+            def api(channel, path, method='GET', payload=None):
+                if path.startswith('/releases/tags/') or path == '/commits/v0.3.1':
+                    return None
+                if path == '/releases':
+                    return {'id': 1, 'tag_name': 'v0.3.1', 'prerelease': False}
+                return {'sha': source}
+            publisher.api = Mock(side_effect=api)
+            self.assertEqual(publisher.release('gitee')['id'], 1)
+
     def test_github_missing_tag_can_return_422_before_creating_a_release(self):
         with tempfile.TemporaryDirectory() as directory:
             source = 'a' * 40
