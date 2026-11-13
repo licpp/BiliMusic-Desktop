@@ -46,3 +46,24 @@ export function floatingLineSlots(lines: LyricLine[], timeMs: number, subtitles 
     return {line:at>=0?lines[at]:undefined,index:at,active:at===active&&at>=0}
   })
 }
+
+// Text position follows the same media clock as highlighting, including pauses,
+// seeks and gaps between timed words. Untimed lines interpolate until the next.
+export function lyricScrollProgress(line: LyricLine, timeMs: number, nextTimeMs?: number) {
+  const clamp=(value:number)=>Math.max(0,Math.min(1,value))
+  const words=line.words
+  if(words?.length) {
+    const total=words.reduce((size,word)=>size+Array.from(word.text).length,0)
+    if(!total)return 0
+    let completed=0
+    for(const word of words) {
+      const length=Array.from(word.text).length
+      if(timeMs<word.startTimeMs)return completed/total
+      if(timeMs<word.endTimeMs)return (completed+length*clamp((timeMs-word.startTimeMs)/(word.endTimeMs-word.startTimeMs)))/total
+      completed+=length
+    }
+    return 1
+  }
+  const end=line.endTimeMs??nextTimeMs??(line.timeMs+Math.max(3000,Array.from(line.text).length*250))
+  return clamp((timeMs-line.timeMs)/Math.max(1,end-line.timeMs))
+}

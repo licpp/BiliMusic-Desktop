@@ -234,13 +234,27 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
     let state = app.state::<FloatingLyrics>();
     if !enabled {
         state.watcher.fetch_add(1, Ordering::AcqRel);
-        state.ready.store(false, Ordering::Release);
-        *state.frame.lock().unwrap() = Value::Null;
-        if let Some(button) = app.get_webview_window(UNLOCK) {
-            let _ = button.close();
+        // Reuse macOS WebKit views between uses to avoid tearing down a
+        // scrolling tree while display-link callbacks may still be pending.
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(button) = app.get_webview_window(UNLOCK) {
+                button.hide().map_err(|e| e.to_string())?;
+            }
+            if let Some(floating) = app.get_webview_window(LYRICS) {
+                floating.hide().map_err(|e| e.to_string())?;
+            }
         }
-        if let Some(floating) = app.get_webview_window(LYRICS) {
-            floating.close().map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            state.ready.store(false, Ordering::Release);
+            *state.frame.lock().unwrap() = Value::Null;
+            if let Some(button) = app.get_webview_window(UNLOCK) {
+                let _ = button.close();
+            }
+            if let Some(floating) = app.get_webview_window(LYRICS) {
+                floating.close().map_err(|e| e.to_string())?;
+            }
         }
         let _ = app.emit_to("main", "floating-lyrics-closed", ());
         return Ok(());
@@ -249,7 +263,10 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
         return Err("请从主窗口开启悬浮歌词".into());
     }
     if let Some(floating) = app.get_webview_window(LYRICS) {
-        return floating.show().map_err(|e| e.to_string());
+        floating.show().map_err(|e| e.to_string())?;
+        let generation = state.watcher.fetch_add(1, Ordering::AcqRel) + 1;
+        watch_unlock(app.clone(), generation);
+        return Ok(());
     }
     state.ready.store(false, Ordering::Release);
     let floating = WebviewWindowBuilder::new(
@@ -312,15 +329,7 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
     floating.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             let state = handle.state::<FloatingLyrics>();
-            if state
-                .watcher
-                .compare_exchange(
-                    generation,
-                    generation + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
+            let destroyed_generation = state.watcher.fetch_add(1, Ordering::AcqRel) + 1;
             {
                 state.ready.store(false, Ordering::Release);
                 let app = handle.clone();
@@ -331,7 +340,7 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
                         .state::<FloatingLyrics>()
                         .watcher
                         .load(Ordering::Acquire)
-                        != generation + 1
+                        != destroyed_generation
                     {
                         return;
                     }

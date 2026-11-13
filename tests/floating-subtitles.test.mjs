@@ -2,7 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const built=await build({entryPoints:['src/features/lyrics/lyricTimeline.ts'],bundle:true,write:false,format:'esm',platform:'node'})
-const {floatingTimeline,floatingLinePair,floatingLineSlots}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
+const {floatingTimeline,floatingLinePair,floatingLineSlots,lyricScrollProgress}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 const lyrics=[{timeMs:1000,text:'保存的歌词',words:[{text:'保存的歌词',startTimeMs:1000,endTimeMs:2000}]}]
 const captions=[{timeMs:3000,endTimeMs:4500,text:'AI 字幕'},{timeMs:6000,endTimeMs:7000,text:'下一句'}]
 const scope='1:BVtest:123'
@@ -49,4 +49,26 @@ test('two lyric rows alternate without moving the upcoming sentence to another r
  assert.deepEqual(floatingLineSlots(lines,500).map(s=>s.index),[0,1],'seeking uses the same physical row mapping')
  const gap=floatingLineSlots([{timeMs:0,endTimeMs:100,text:'A'},{timeMs:500,endTimeMs:600,text:'B'}],300,true)
  assert.equal(gap[0].line.text,'A');assert.equal(gap[1].line.text,'B');assert.ok(gap.every(s=>!s.active))
+})
+
+test('overflow scrolling follows timed words and holds during the gap between words',()=>{
+ const line={timeMs:1000,text:'你好世界',words:[{text:'你好',startTimeMs:1000,endTimeMs:2000},{text:'世界',startTimeMs:4000,endTimeMs:6000}]}
+ assert.equal(lyricScrollProgress(line,500),0)
+ assert.equal(lyricScrollProgress(line,1500),.25)
+ assert.equal(lyricScrollProgress(line,2000),.5)
+ assert.equal(lyricScrollProgress(line,3500),.5)
+ assert.equal(lyricScrollProgress(line,5000),.75)
+ assert.equal(lyricScrollProgress(line,7000),1)
+ assert.equal(lyricScrollProgress(line,1500),.25,'backward seeks return to the earlier text position')
+ assert.equal(lyricScrollProgress(line,5000),lyricScrollProgress(line,5000),'a paused media clock does not move text')
+})
+test('untimed lines interpolate across line duration and clamp at both ends',()=>{
+ const line={timeMs:1000,text:'一句没有逐词时间的歌词'}
+ assert.equal(lyricScrollProgress(line,0,5000),0)
+ assert.equal(lyricScrollProgress(line,3000,5000),.5)
+ assert.equal(lyricScrollProgress(line,6000,5000),1)
+ assert.equal(lyricScrollProgress({...line,endTimeMs:3000},2000,5000),.5)
+ assert.equal(lyricScrollProgress(line,100000),1,'the final line has a finite fallback duration')
+ const emoji={timeMs:0,text:'你🎵',words:[{text:'你',startTimeMs:0,endTimeMs:1000},{text:'🎵',startTimeMs:1000,endTimeMs:2000}]}
+ assert.equal(lyricScrollProgress(emoji,1000),.5,'supplementary characters count once')
 })

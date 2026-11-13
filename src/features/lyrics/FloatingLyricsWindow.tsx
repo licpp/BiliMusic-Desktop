@@ -37,7 +37,7 @@ export function FloatingLyricsSurface({frame,timeMs,clock,fontSize,locked,active
   {locked&&!externalUnlock&&<button className="floating-unlock" aria-label="解锁悬浮歌词" onClick={()=>update({locked:false})}><LockKeyholeOpen size={15}/><span>解锁</span></button>}
   <div className="floating-lyric-lines" onPointerDown={event=>{if(!locked&&event.button===0)onDrag()}}>
    {slots.map(({line,index,active},slot)=><div key={slot} data-slot={slot} className={`floating-lyric-line ${active?'current':'upcoming'}`}>
-    <FloatingLyricMarquee identity={`${frame?.id}:${index}:${line?.timeMs}:${line?.text}`}>
+    <FloatingLyricMarquee identity={`${frame?.id}:${index}:${line?.timeMs}:${line?.text}`} line={line} active={active} timeMs={timeMs} clock={clock} nextTimeMs={lines[index+1]?.timeMs}>
       {line?<WordLyric line={line} timeMs={timeMs} active={active} clock={active?clock:undefined}/>:<span>{lines.length?'\u00a0':slot===0?frame?.title||'开始播放，让歌词陪着你':frame?.artist||'\u00a0'}</span>}
     </FloatingLyricMarquee>
    </div>)}

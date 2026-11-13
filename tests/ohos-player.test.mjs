@@ -59,6 +59,7 @@ function setup() {
     },
   }
   h.artworkReply = async () => ({ responseCode: 200, result: new ArrayBuffer(4) })
+
   h.http = { RequestMethod: { GET: 'GET' }, HttpDataType: { ARRAY_BUFFER: 2 }, createHttp() {
     const request = { destroyed: false, destroy() { this.destroyed = true }, request(url, options) { artworkRequests.push({ url, options, request }); return h.artworkReply(url) } }
     return request
@@ -68,7 +69,7 @@ function setup() {
   }, async release() {} } } }
   h.uploadReply = async () => ({ statusCode: 201 })
   h.rcp = { Request: class { constructor(url, method, headers, content, cookies, range, configuration) { Object.assign(this, { url, method, headers, content, configuration }) } }, createSession() {
-    return { async fetch(request) { uploads.push(request); return h.uploadReply(request) }, close() {} }
+    const session={destroyed:false,async fetch(request) { if(request.method==='GET'){artworkRequests.push({url:request.url,options:request,request:session});const reply=await h.artworkReply(request.url);return {statusCode:reply.responseCode,body:reply.result}} uploads.push(request);return h.uploadReply(request) },close(){this.destroyed=true}};return session
   } }
   const finalCode = output.outputFiles[0].text
   h.util = { generateRandomUUID: () => 'session', TextEncoder: Encoder, TextDecoder: { create: () => ({ decodeWithStream: b => new TextDecoder().decode(b) }) }, Base64Helper: class { decodeSync(value) { return new Uint8Array(Buffer.from(value, 'base64')) } } }
@@ -151,7 +152,7 @@ test('media session receives decoded cover pixels with Bilibili headers and pres
     await h.command('play', { id: 'song', title: '歌曲', artist: '歌手', url: 'http://127.0.0.1:1234/media', coverUrl: '//i0.hdslb.com/cover.jpg' })
     await h.plugin.artworkReady
     assert.equal(h.artworkRequests[0].url, 'https://i0.hdslb.com/cover.jpg')
-    assert.equal(h.artworkRequests[0].options.header.Referer, 'https://www.bilibili.com/')
+    assert.equal(h.artworkRequests[0].options.headers.Referer, 'https://www.bilibili.com/')
     assert.deepEqual(h.metadata.at(-1), { assetId: 'song', title: '歌曲', artist: '歌手', duration: 180_000, mediaImage: h.pixels[0], lyric: '' })
     assert.deepEqual(h.pixels[0].size, { width: 384, height: 216 })
     assert.equal(h.artworkRequests[0].request.destroyed, true)

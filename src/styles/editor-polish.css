@@ -515,7 +515,7 @@
 .word-lyric { white-space:pre-wrap; }
 .lyric-word { background:linear-gradient(to right,var(--cyan) var(--word-progress),var(--muted) var(--word-progress));background-clip:text;-webkit-background-clip:text;color:transparent; }
 :root[data-layout="mobile"] .lyrics-scroll p { font-weight:600; }
-html[data-window=lyrics],html[data-window=lyrics] body,html[data-window=lyrics] #root { height:100%;min-height:0;overflow:hidden;background:transparent; }
+html[data-window=lyrics],html[data-window=lyrics] body,html[data-window=lyrics] #root { height:100%;min-height:0;overflow:clip;background:transparent; }
 
 
 .comments-panel .comment-compose > .comment-emote-toggle svg{width:21px;height:21px}.comments-panel .comment-compose > .comment-send{font-size:13px}.comments-panel .comment-compose > .comment-send svg{width:16px;height:16px}
@@ -571,7 +571,7 @@ html[data-window="lyrics"][data-theme],html[data-window="lyrics"] body,html[data
 .floating-font-controls output { min-width:22px;text-align:center;font-variant-numeric:tabular-nums; }
 .floating-lyric-lines { display:flex;flex-direction:column;justify-content:center;gap:1px;width:100%;min-width:0;min-height:0;cursor:move;filter:drop-shadow(0 1px 2px #0007); }
 .floating-lyrics-window[data-locked="true"] .floating-lyric-lines { cursor:default; }
-.floating-lyric-line { flex:0 0 auto;display:block;min-width:0;min-height:0;margin:0;padding:0;overflow:hidden;white-space:nowrap;line-height:1.06;font-size:var(--floating-font-size,28px);font-weight:650; }
+.floating-lyric-line { flex:0 0 auto;display:block;min-width:0;min-height:0;margin:0;padding:0;overflow:clip;white-space:nowrap;line-height:1.06;font-size:var(--floating-font-size,28px);font-weight:650; }
 .floating-lyric-line.current {color:var(--floating-active,#b4f3e9); }
 .floating-lyric-line.upcoming {color:var(--floating-inactive,#91a6b5); }
 .floating-lyric-line .word-lyric { white-space:nowrap; }
@@ -642,7 +642,7 @@ html[data-window="lyrics"][data-theme],html[data-window="lyrics"] body,html[data
 .lyrics-scroll p.active,:root[data-theme="light"] .lyrics-scroll p.active { color:var(--lyric-active); }
 .lyric-word { background-image:linear-gradient(to right,var(--lyric-active) var(--word-progress),var(--lyric-unsung) var(--word-progress)); }
 
-html[data-window="lyrics-unlock"],html[data-window="lyrics-unlock"] body,html[data-window="lyrics-unlock"] #root { margin:0;min-width:0;width:100%;height:100%;overflow:hidden;background:transparent!important; }
+html[data-window="lyrics-unlock"],html[data-window="lyrics-unlock"] body,html[data-window="lyrics-unlock"] #root { margin:0;min-width:0;width:100%;height:100%;overflow:clip;background:transparent!important; }
 .floating-unlock-window { width:100%;height:100%; }
 .floating-unlock-window > button { display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;width:100%;height:100%;padding:0;border:0;border-radius:7px;background:rgb(75 98 118 / .58);color:#f3f8fc;font:inherit;font-size:11px;cursor:pointer; }
 :root[data-theme="light"] .floating-unlock-window > button { background:rgb(237 244 250 / .84);color:#304b60; }
@@ -659,10 +659,8 @@ html[data-window="lyrics-unlock"],html[data-window="lyrics-unlock"] body,html[da
 
 .floating-lyric-line[data-slot="0"] { text-align:left; }
 .floating-lyric-line[data-slot="1"] { text-align:right; }
-.floating-lyric-viewport { width:100%;overflow:hidden; }
+.floating-lyric-viewport { width:100%;overflow:clip; }
 .floating-lyric-marquee { display:inline-block;width:max-content;max-width:none;vertical-align:top; }
 .floating-lyric-viewport[data-overflow="true"] { text-align:left; }
-.floating-lyric-viewport[data-overflow="true"] > .floating-lyric-marquee { animation:floating-lyric-scroll var(--lyric-scroll-duration) linear infinite alternate; }
-@keyframes floating-lyric-scroll { 0%,15% { transform:translateX(0); } 85%,100% { transform:translateX(calc(-1 * var(--lyric-travel))); } }
 /* Leave a clear gap below the system capsule/cutout, including tall lists. */
 .collection-dialog.creator-import-dialog.collection-dialog-mobile-sheet { max-height:min(80dvh,calc(var(--visible-height,100dvh) - max(72px,var(--native-safe-top,env(safe-area-inset-top,0px))) - 16px)); }

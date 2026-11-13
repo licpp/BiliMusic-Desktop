@@ -194,7 +194,8 @@ object FloatingLyricsOverlay {
             val key="${position.first}:$index:${line?.optDouble("timeMs")}"
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
-            if(!active || words==null || words.length()==0){target.showLyric(line.optString("text"),key);continue}
+            val scroll=lyricScrollProgress(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"))
+            if(!active || words==null || words.length()==0){target.showLyric(line.optString("text"),key,active,scroll);continue}
             val body=SpannableStringBuilder()
             for(i in 0 until words.length()) {
                 val word=words.optJSONObject(i) ?: continue
@@ -203,8 +204,31 @@ object FloatingLyricsOverlay {
                 val progress=if(duration>0)((time-word.optDouble("startTimeMs"))/duration).coerceIn(0.0,1.0).toFloat() else 0f
                 if(body.length>start)body.setSpan(WordProgress(progress,activeColor,inactiveColor),start,body.length,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-            target.showLyric(body,key)
+            target.showLyric(body,key,active,scroll)
         }
+    }
+
+    private fun lyricScrollProgress(line: org.json.JSONObject,time: Double,next: Double?): Float {
+        val words=line.optJSONArray("words")
+        if(words!=null && words.length()>0) {
+            var total=0
+            for(i in 0 until words.length())total+=words.optJSONObject(i)?.optString("text")?.let{it.codePointCount(0,it.length)} ?: 0
+            if(total==0)return 0f
+            var completed=0.0
+            for(i in 0 until words.length()) {
+                val word=words.optJSONObject(i) ?: continue
+                val value=word.optString("text");val size=value.codePointCount(0,value.length)
+                val start=word.optDouble("startTimeMs");val end=word.optDouble("endTimeMs")
+                if(time<start)return (completed/total).toFloat()
+                if(time<end)return ((completed+size*((time-start)/(end-start).coerceAtLeast(1.0)).coerceIn(0.0,1.0))/total).toFloat()
+                completed+=size
+            }
+            return 1f
+        }
+        val start=line.optDouble("timeMs")
+        val value=line.optString("text")
+        val end=if(line.has("endTimeMs"))line.optDouble("endTimeMs") else next ?: (start+maxOf(3000,value.codePointCount(0,value.length)*250))
+        return ((time-start)/(end-start).coerceAtLeast(1.0)).coerceIn(0.0,1.0).toFloat()
     }
 
     private class WordProgress(val progress: Float,val active:Int,val inactive:Int): ReplacementSpan() {
