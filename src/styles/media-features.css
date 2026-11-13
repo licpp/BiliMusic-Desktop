@@ -43,7 +43,7 @@
 .action-menu-sheet .danmaku-settings input { height:32px; }
 .action-menu-sheet .playback-quality-settings select { font-size:16px; }
 
-.settings-card > .auto-resume-switch {
+.settings-card > .auto-resume-switch,.floating-enable-setting > .auto-resume-switch {
   display: grid; place-items: center; flex: 0 0 52px; width: 52px; height: 44px;
   padding: 0; border: 0; border-radius: 12px; background: transparent;
 }
@@ -82,7 +82,7 @@
 }
 .touch-option-trigger > small { margin-inline-start: auto; color: var(--muted); text-align: end; }
 .touch-option-trigger > svg { flex-shrink: 0; color: var(--muted); }
-.touch-option-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.touch-option-trigger[aria-expanded="true"] > .touch-option-chevron { transform: rotate(180deg); }
 .touch-option-trigger:disabled { opacity: .55; }
 .touch-option-list { display: grid; gap: 4px; padding: 0 8px 8px; }
 .touch-option-list button { justify-content: space-between; text-align: start; }

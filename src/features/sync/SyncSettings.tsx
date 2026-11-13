@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { Cloud, LoaderCircle, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, Cloud, LoaderCircle, RefreshCw } from 'lucide-react'
+import { ActionMenu } from '../../shared/ActionMenu'
 import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
 import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome } from '../../services/sync'
 
@@ -11,7 +12,7 @@ function syncTime(value?: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export function SyncSettings() {
+export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   const client = useQueryClient()
   const status = useQuery({ queryKey: ['sync-status'], queryFn: syncStatus, enabled: inDesktopShell, retry: false })
   const [config, setConfig] = useState<SyncConfig>(defaultSyncConfig)
@@ -45,20 +46,27 @@ export function SyncSettings() {
     void invoke<number>('sync_hydrate_sources').then(() => refreshSyncedLibrary(client)).catch(() => undefined)
   })
   const preview = () => action(async () => { setOutcome(await syncNow(true)) })
-  return <section className="sync-settings" aria-label="云同步设置">
-    <div className="sync-heading">
-      <div className="settings-icon"><Cloud /></div>
-      <div className="sync-heading-copy"><h3>云同步</h3><p>{connected ? `${saved?.provider === 'cloud' ? 'BiliMusic 云' : '坚果云'} · ${saved?.enabled ? saved.initialized ? '已开启' : '待首次同步' : '已暂停'}` : '在不同设备间同步你的音乐资料，默认关闭'}</p></div>
+  return <section className={`sync-settings${embedded?' sync-settings-embedded':''}`} aria-label="云同步设置">
+    {(!embedded||connected)&&<div className="sync-heading">
+      {!embedded&&<><div className="settings-icon"><Cloud /></div>
+      <div className="sync-heading-copy"><h3>云同步</h3><p>{connected ? `${saved?.provider === 'cloud' ? 'BiliMusic 云' : '坚果云'} · ${saved?.enabled ? saved.initialized ? '已开启' : '待首次同步' : '已暂停'}` : '在不同设备间同步你的音乐资料，默认关闭'}</p></div></>}
       {inDesktopShell && <div className="sync-toolbar">
         {connected ? <><button className="sync-primary" disabled={busy || !saved?.enabled} onClick={() => void (saved?.initialized ? merge() : preview())}>{busy ? <LoaderCircle className="spin" /> : <RefreshCw />}{saved?.initialized ? '立即同步' : '首次同步'}</button><button disabled={busy || !saved?.initialized} onClick={() => void action(async () => { await invoke('sync_pause', { paused: saved!.enabled }); notify() })}>{saved?.enabled ? '暂停' : '继续'}</button></> : <button className="sync-primary" disabled={busy || status.isPending} aria-expanded={editing} onClick={() => setEditing(!editing)}>{editing ? '收起' : '设置同步'}</button>}
       </div>}
-    </div>
+    </div>}
     {!inDesktopShell ? <p className="sync-note">请在 BiliMusic 客户端中配置同步。</p> : <>
-      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放和合集续播进度' : ''}</span></div>}
+      {connected && <div className="sync-info"><span>最近同步</span><span>{syncTime(status.data?.lastSuccess)}</span><span>同步内容</span><span>歌单、B 站关联收藏夹、合集收藏、歌曲信息、歌词设置{saved?.history ? '、最近播放和合集续播进度' : ''}</span></div>}
       {connected && <button className="sync-link" disabled={busy} aria-expanded={editing} onClick={() => { setEditing(!editing); setConsent(false) }}>{editing ? '收起连接设置' : '更改连接与同步内容'}</button>}
-      {editing && <form className="sync-connection" onSubmit={(e) => { e.preventDefault(); if (consent && !busy && config.provider === 'webdav') void connect() }}>
-        <fieldset disabled={busy}>
-          <label>同步服务<select value={config.provider} onChange={(e) => { setConfig({ ...config, provider: e.target.value as SyncConfig['provider'] }); setConsent(false) }}><option value="webdav">坚果云</option><option value="cloud" disabled>BiliMusic 云（暂不可用）</option></select></label>
+      {(editing||embedded&&!connected) && <form className="sync-connection" onSubmit={(e) => { e.preventDefault(); if (consent && !busy && config.provider === 'webdav') void connect() }}>
+        <fieldset disabled={busy||status.isPending}>
+          <div className="sync-provider-field"><span id="sync-provider-label">同步服务</span><div className="sync-provider-picker" role="group" aria-labelledby="sync-provider-label">
+            <ActionMenu label={`同步服务：${config.provider==='cloud'?'BiliMusic 云':'坚果云'}`} panelClassName="sync-provider-menu" icon={<><Cloud size={16}/><span>{config.provider==='cloud'?'BiliMusic 云':'坚果云'}</span><ChevronDown size={16}/></>}>
+              {close=><>
+                <button type="button" role="menuitemradio" aria-checked={config.provider==='webdav'} disabled={busy} onClick={()=>{setConfig({...config,provider:'webdav'});setConsent(false);close()}}><span>坚果云<small>WebDAV 同步</small></span>{config.provider==='webdav'&&<Check size={16}/>}</button>
+                <button type="button" role="menuitemradio" aria-checked={config.provider==='cloud'} disabled><span>BiliMusic 云<small>暂不可用</small></span>{config.provider==='cloud'&&<Check size={16}/>}</button>
+              </>}
+            </ActionMenu>
+          </div></div>
           {config.provider === 'webdav' ? <>
             <div className="sync-credentials"><label>坚果云账号<input type="text" inputMode="email" required value={username} autoComplete="off" placeholder="邮箱或手机号" onChange={(e) => setUsername(e.target.value)} /></label><label>应用密码<input type="password" required value={password} autoComplete="new-password" placeholder="坚果云中生成的应用密码" onChange={(e) => setPassword(e.target.value)} /></label></div>
             <details className="sync-address"><summary>服务器地址</summary><label><input aria-label="服务器地址" value={config.url} required type="url" onChange={(e) => setConfig({ ...config, url: e.target.value })} spellCheck={false} /></label></details>
@@ -66,8 +74,8 @@ export function SyncSettings() {
           </> : <p className="sync-note">BiliMusic 云暂不可用，请选择坚果云连接。</p>}
           <label className="sync-check"><input type="checkbox" checked={config.history} onChange={(e) => setConfig({ ...config, history: e.target.checked })} /><span>同步播放记录<small>最近 200 首的记录和断点、收藏合集续播，默认关闭</small></span></label>
           <p className="sync-note">听歌统计通过所选服务，按 B 站账号自动汇总所有设备，无需先完成资料库合并。可在听歌统计页查看、暂停或恢复。</p>
-          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、合集收藏、歌曲修改和歌词设置，以及听歌统计和所选的播放记录，并同意上述身份核验方式。</span></label>
-          <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent || config.provider === 'cloud'}>{busy && <LoaderCircle className="spin" />}连接并预览</button><button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button></div>
+          <label className="sync-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>同意向所选服务同步歌单、B 站关联收藏夹、合集收藏、歌曲修改和歌词设置，以及听歌统计和所选的播放记录，并同意上述身份核验方式。</span></label>
+          <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent || config.provider === 'cloud'}>{busy && <LoaderCircle className="spin" />}连接并预览</button>{(!embedded||connected)&&<button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button>}</div>
         </fieldset>
       </form>}
       {outcome && <div className="sync-preview"><strong>{outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改需要确认` : '资料已准备好合并'}</strong><p>{outcome.records} 条资料 · 首次同步前自动保留本机备份</p>{outcome.conflicts.length ? <><details><summary>查看不同的修改</summary><ul>{outcome.conflicts.map((c, i) => <li key={i}><code>{c.key} / {c.field}</code><small>本机：{JSON.stringify(c.local)}<br />云端：{JSON.stringify(c.remote)}</small></li>)}</ul></details><div className="sync-actions"><button disabled={busy} onClick={() => void merge('local')}>冲突保留本机</button><button disabled={busy} onClick={() => void merge('remote')}>冲突保留云端</button></div><small>其余资料正常合并。</small></> : <button className="sync-primary" disabled={busy || !saved?.enabled} onClick={() => void merge()}>确认合并并同步</button>}</div>}
@@ -77,7 +85,7 @@ export function SyncSettings() {
           <div className="sync-setting-row"><div><strong>本机资料</strong><small>导入保留原资料；备份导出到本机。</small></div><div className="sync-actions"><button disabled={busy} onClick={() => void action(async () => { await invoke('sync_import_guest'); await refreshSyncedLibrary(client); setMessage('已导入本机原有资料'); setOutcome(null) })}>导入原有资料</button><button disabled={busy} onClick={() => void action(async () => { const path = await invoke<string>('sync_export'); setMessage(`备份已保存：${path}`) })}>导出备份</button></div></div>
           {connected && <div className="sync-setting-row"><div><strong>连接管理</strong><small>断开后保留本机和云端资料。</small></div><div className="sync-actions"><button disabled={busy || !saved.enabled} onClick={() => void preview()}>预览同步</button><button disabled={busy} onClick={() => void action(async () => { await invoke('sync_disconnect'); setOutcome(null); setEditing(false); notify(); window.dispatchEvent(new Event('bilimusic-statistics-sync-requested')); setMessage('已断开连接') })}>断开连接</button>{saved.provider === 'cloud' && <button className="sync-danger" disabled={busy} onClick={() => setConfirmDelete(true)}>删除云端资料</button>}</div></div>}
         </>}
-        <details><summary>隐私与存储说明</summary><p>只同步个人资料，不上传音视频、B站原始信息或登录会话缓存。失去所有同步列表引用的歌曲修改不再上传。每个收藏合集只保留一条续播进度。关闭播放记录同步后，已上传的播放记录仍会保留在云端。</p><p>BiliMusic 云保存B站UID和设备令牌摘要，令牌30天到期；身份核验会话不落库。删除云端资料会撤销全部设备令牌，加密备份最多保留两个日版本，删除内容随轮换清除。坚果云凭据不发送到BiliMusic。传输使用HTTPS，不是端到端加密。</p><p>每个账号最多500个歌单、5000首歌曲、10000个歌单成员；BiliMusic云同步包上限3MB，坚果云最多10台设备，每台快照上限12MB。</p></details>
+        <details><summary>隐私与存储说明</summary><p>只同步个人资料，不上传音视频或登录会话缓存。关联收藏夹只同步导入清单和名称，内容从 B 站重新读取。失去所有同步列表引用的歌曲修改不再上传。每个收藏合集只保留一条续播进度。关闭播放记录同步后，已上传的播放记录仍会保留在云端。</p><p>BiliMusic 云保存B站UID和设备令牌摘要，令牌30天到期；身份核验会话不落库。删除云端资料会撤销全部设备令牌，加密备份最多保留两个日版本，删除内容随轮换清除。坚果云凭据不发送到BiliMusic。传输使用HTTPS，不是端到端加密。</p><p>每个账号最多500个歌单、5000首歌曲、10000个歌单成员；BiliMusic云同步包上限3MB，坚果云最多10台设备，每台快照上限12MB。</p></details>
       </div></details>
       {confirmDelete && <div className="sync-preview" role="alert"><strong>删除全部云端资料？</strong><p>将删除云端歌单、合集收藏、修改和历史，并撤销所有设备令牌。本机资料保留。</p><div className="sync-actions"><button className="sync-danger" disabled={busy} onClick={() => void action(async () => { await invoke('sync_delete_cloud'); setConfirmDelete(false); setOutcome(null); notify(); setMessage('已删除云端资料并暂停同步') })}>确认删除</button><button disabled={busy} onClick={() => setConfirmDelete(false)}>取消</button></div></div>}
     </>}

@@ -317,23 +317,54 @@ fn normalize_qq_lyric(raw: &str) -> Option<String> {
         if duration.parse::<u64>().is_err() {
             continue;
         }
-        let mut tail = body;
+        // QRC word timestamps are absolute media milliseconds. Preserve them
+        // in Enhanced LRC so storage and source restoration use one format.
         let mut text = String::new();
-        while let Some(begin) = tail.find('(') {
-            text.push_str(&tail[..begin]);
-            tail = &tail[begin + 1..];
-            if let Some(end) = tail.find(')') {
-                let values: Vec<_> = tail[..end].split(',').collect();
-                if (2..=3).contains(&values.len())
-                    && values.iter().all(|v| v.parse::<u64>().is_ok())
-                {
-                    tail = &tail[end + 1..];
+        let mut pending = 0;
+        let mut scan = 0;
+        while let Some(begin) = body[scan..].find('(').map(|v| scan + v) {
+            let Some(end) = body[begin + 1..].find(')').map(|v| begin + 1 + v) else {
+                break;
+            };
+            let values = body[begin + 1..end]
+                .split(',')
+                .map(str::parse::<u64>)
+                .collect::<Result<Vec<_>, _>>();
+            if let Ok(values) = values {
+                if (2..=3).contains(&values.len()) {
+                    let word = &body[pending..begin];
+                    if !word.is_empty() {
+                        let start = values[0];
+                        let stop = start.saturating_add(values[1]);
+                        if start >= ms
+                            && stop
+                                <= ms
+                                    .saturating_add(duration.parse::<u64>().unwrap())
+                                    .saturating_add(500)
+                            && stop > start
+                        {
+                            text.push_str(&format!(
+                                "<{:02}:{:02}.{:03}>{}<{:02}:{:02}.{:03}>",
+                                start / 60000,
+                                (start / 1000) % 60,
+                                start % 1000,
+                                word,
+                                stop / 60000,
+                                (stop / 1000) % 60,
+                                stop % 1000
+                            ));
+                        } else {
+                            text.push_str(word);
+                        }
+                    }
+                    pending = end + 1;
+                    scan = pending;
                     continue;
                 }
             }
-            text.push('(');
+            scan = begin + 1;
         }
-        text.push_str(tail);
+        text.push_str(&body[pending..]);
         if !text.trim().is_empty() {
             lines.push(format!(
                 "[{:02}:{:02}.{:03}]{}",
@@ -348,7 +379,7 @@ fn normalize_qq_lyric(raw: &str) -> Option<String> {
 }
 pub async fn qq_lyrics(client: &Client, origin: &str, id: i64) -> Result<MusicLyrics, MusicError> {
     let request = json!({"comm":{"ct":19,"cv":1859,"uin":0},"req":{"module":"music.musichallSong.PlayLyricInfo","method":"GetPlayLyricInfo",
-        "param":{"songID":id,"crypt":0,"qrc":0,"roma":1,"trans":1,"type":-1,"ct":19,"cv":1873}}});
+        "param":{"songID":id,"crypt":0,"qrc":1,"roma":1,"trans":1,"type":-1,"ct":19,"cv":1873}}});
     let data: Value = client
         .get(format!("{origin}/cgi-bin/musicu.fcg"))
         .query(&[("data", request.to_string())])
@@ -390,7 +421,7 @@ mod tests {
             normalize_qq_lyric(
                 "<Lyric_1 LyricContent=\"[1000,2000]hello(1000,500) (live)(1500,500)\"/>"
             ),
-            Some("[00:01.000]hello (live)".into())
+            Some("[00:01.000]<00:01.000>hello<00:01.500><00:01.500> (live)<00:02.000>".into())
         );
     }
 }

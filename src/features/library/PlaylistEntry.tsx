@@ -25,7 +25,7 @@ export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const folderId = playlist.biliFolderId
-  const label = folderId ? '关联收藏夹' : '歌单'
+  const label = '歌单'
   const title = action === 'rename' ? '重命名歌单' : action === 'unlink' ? '解除关联' : '删除歌单'
   const prepare = (next: typeof action) => {
     setName(playlist.name)
@@ -103,7 +103,7 @@ export function PlaylistEntry({ playlist, sidebar = false, active = false, onOpe
     fallback={playlist.isSystem?<Heart size={17} fill="currentColor"/>:playlist.biliFolderId?<Link2 aria-hidden="true"/>:<Album size={17}/>}
     imageOverlay={playlist.isSystem?<span className="favorites-heart-overlay" aria-hidden="true"><Heart fill="none" strokeWidth={2.2}/></span>:undefined}/>
   const subtitle = `${playlist.trackCount}${playlist.biliFolderId ? ' 个视频 · B 站同步' : playlist.isSystem ? ' 首 · 默认歌单' : ' 首'}`
-  return <LibraryEntry title={playlist.name} subtitle={subtitle} cover={cover} sidebar={sidebar} active={active} onOpen={onOpen}
+  return <LibraryEntry title={playlist.name} titleAdornment={playlist.biliFolderId ? <Link2 size={13} className="playlist-link-mark" aria-label="与 B 站同步"/> : undefined} subtitle={subtitle} cover={cover} sidebar={sidebar} active={active} onOpen={onOpen}
     coverClassName={playlist.isSystem ? 'favorites-cover' : undefined}
     menu={position => <PlaylistMenu playlist={playlist} contextPosition={position} onOpen={onOpen} onRemoved={onRemoved}/>}/>
 }

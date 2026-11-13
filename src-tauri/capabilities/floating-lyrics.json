@@ -1,0 +1,8 @@
+{
+  "$schema":"../gen/schemas/desktop-schema.json",
+  "identifier":"floating-lyrics-window",
+  "description":"Display and move the floating lyric window",
+  "windows":["floating-lyrics"],
+  "platforms":["macOS","windows","linux"],
+  "permissions":["core:event:default","core:window:allow-start-dragging","core:window:allow-set-always-on-top"]
+}

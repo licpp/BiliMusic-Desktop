@@ -1,5 +1,8 @@
+#[path = "bilibili_audio.rs"]
+mod audio;
 #[path = "bilibili_creators.rs"]
 mod creators;
+use audio::*;
 #[path = "bilibili_extras.rs"]
 mod extras;
 pub use extras::*;
@@ -53,6 +56,7 @@ pub struct SearchPage {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchItem {
+    pub published_at: Option<u64>,
     pub bvid: String,
     pub title: String,
     pub uploader_name: String,
@@ -66,6 +70,7 @@ pub struct SearchItem {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoParts {
+    pub published_at: Option<u64>,
     pub bvid: String,
     pub aid: i64,
     pub title: String,
@@ -90,6 +95,7 @@ pub struct VideoPart {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackSource {
+    pub quality_id: u32,
     pub audio_url: String,
     pub backup_urls: Vec<String>,
     pub mime_type: String,
@@ -328,6 +334,8 @@ struct SearchData {
 #[derive(Deserialize)]
 struct SearchVideo {
     #[serde(default)]
+    pubdate: Option<u64>,
+    #[serde(default)]
     bvid: String,
     #[serde(default)]
     title: String,
@@ -347,6 +355,8 @@ struct SearchVideo {
 
 #[derive(Deserialize)]
 struct DetailData {
+    #[serde(default)]
+    pubdate: Option<u64>,
     bvid: String,
     aid: i64,
     title: String,
@@ -382,9 +392,16 @@ struct PlayData {
 #[derive(Deserialize)]
 struct DashData {
     #[serde(default)]
+    flac: Option<FlacData>,
+    #[serde(default)]
     audio: Vec<DashStream>,
     #[serde(default)]
     video: Vec<DashStream>,
+}
+
+#[derive(Deserialize)]
+struct FlacData {
+    audio: Option<DashStream>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -409,6 +426,28 @@ struct DashStream {
     codecs: String,
     #[serde(default)]
     bandwidth: u64,
+}
+
+fn dash_cache_ttl(dash: &DashData) -> Duration {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    dash.audio
+        .iter()
+        .chain(dash.flac.as_ref().and_then(|flac| flac.audio.as_ref()))
+        .chain(&dash.video)
+        .flat_map(|stream| [&stream.base_url, &stream.base_url_camel])
+        .filter_map(|raw| Url::parse(raw).ok())
+        .filter_map(|url| {
+            url.query_pairs()
+                .find(|(key, _)| key == "deadline")
+                .and_then(|(_, value)| value.parse::<u64>().ok())
+        })
+        .map(|deadline| Duration::from_secs(deadline.saturating_sub(now + 30)))
+        .min()
+        .unwrap_or(DASH_TTL)
+        .min(DASH_TTL)
 }
 
 type DashKey = (String, i64, bool);
@@ -683,6 +722,68 @@ impl BilibiliProvider {
         Ok(())
     }
 
+    pub async fn comment_emotes(&self) -> Result<serde_json::Value, ProviderError> {
+        let mut url = self.api_url("/x/emote/user/panel/web");
+        url.query_pairs_mut().append_pair("business", "reply");
+        let mut defaults = self.api_url("/x/emote/package");
+        defaults
+            .query_pairs_mut()
+            .append_pair("business", "reply")
+            .append_pair("ids", "1,2");
+        let (personal, standard) = tokio::join!(
+            self.get_data::<serde_json::Value>(url),
+            self.get_data::<serde_json::Value>(defaults)
+        );
+        let mut packages = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut success = false;
+        for data in [standard.as_ref(), personal.as_ref()].into_iter().flatten() {
+            success = true;
+            for pack in data["packages"].as_array().into_iter().flatten() {
+                if pack["emote"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+                    && seen.insert(pack["id"].clone())
+                {
+                    packages.push(pack.clone());
+                }
+            }
+        }
+        if !success {
+            return Err(personal.err().or_else(|| standard.err()).unwrap());
+        }
+        Ok(serde_json::json!({"packages": packages}))
+    }
+
+    pub async fn create_favorite_folder(
+        &self,
+        title: &str,
+    ) -> Result<FavoriteFolder, ProviderError> {
+        let csrf = self.csrf_token().await?;
+        let form = [
+            ("title", title.to_owned()),
+            ("intro", String::new()),
+            ("privacy", "1".into()),
+            ("cover", String::new()),
+            ("csrf", csrf),
+        ];
+        let data: serde_json::Value = self
+            .post_data(self.api_url("/x/v3/fav/folder/add"), &form)
+            .await?;
+        let id = data["id"]
+            .as_i64()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| ProviderError::Api {
+                code: -1,
+                message: "新建收藏夹响应无效，请在 B 站检查是否已创建".into(),
+            })?;
+        Ok(FavoriteFolder {
+            id,
+            title: title.to_owned(),
+            media_count: 0,
+        })
+    }
+
     pub async fn comment_reply(
         &self,
         aid: i64,
@@ -759,6 +860,7 @@ impl BilibiliProvider {
                 .result
                 .into_iter()
                 .map(|item| SearchItem {
+                    published_at: item.pubdate.filter(|date| *date > 0),
                     bvid: item.bvid,
                     title: clean_html(&item.title),
                     uploader_name: item.author,
@@ -828,6 +930,7 @@ impl BilibiliProvider {
             }
         }
         Ok(VideoParts {
+            published_at: detail.pubdate.filter(|date| *date > 0),
             bvid: detail.bvid,
             aid: detail.aid,
             title,
@@ -853,17 +956,7 @@ impl BilibiliProvider {
         audio_id: u32,
     ) -> Result<PlaybackSource, ProviderError> {
         let dash = self.play_dash(bvid, cid, false).await?;
-        let stream = dash
-            .audio
-            .iter()
-            .filter(|s| s.codecs.starts_with("mp4a"))
-            .find(|s| s.id == audio_id)
-            .or_else(|| {
-                dash.audio
-                    .iter()
-                    .filter(|s| s.codecs.starts_with("mp4a"))
-                    .max_by_key(|s| s.bandwidth)
-            })
+        let stream = select_audio(&dash, audio_id)
             .cloned()
             .ok_or(ProviderError::NoAudio)?;
         let audio_url = if stream.base_url_camel.is_empty() {
@@ -882,6 +975,7 @@ impl BilibiliProvider {
             stream.mime_type_camel
         };
         Ok(PlaybackSource {
+            quality_id: stream.id,
             audio_url,
             backup_urls,
             mime_type,
@@ -962,7 +1056,8 @@ impl BilibiliProvider {
         let (_, dash) = entry
             .get_or_try_init(|| async {
                 let dash = self.fetch_dash(bvid, cid, expanded).await?;
-                Ok::<_, ProviderError>((Instant::now() + DASH_TTL, Arc::new(dash)))
+                let ttl = dash_cache_ttl(&dash);
+                Ok::<_, ProviderError>((Instant::now() + ttl, Arc::new(dash)))
             })
             .await?;
         Ok(dash.clone())
@@ -980,7 +1075,7 @@ impl BilibiliProvider {
             .append_pair("cid", &cid.to_string())
             .append_pair("qn", if expanded { "120" } else { "80" })
             .append_pair("fnver", "0")
-            .append_pair("fnval", if expanded { "4048" } else { "16" })
+            .append_pair("fnval", if expanded { "4048" } else { "1040" })
             .append_pair("fourk", if expanded { "1" } else { "0" });
         let play: PlayData = self.get_data(url).await?;
         play.dash.ok_or(ProviderError::NoAudio)
@@ -1375,6 +1470,23 @@ fn suggestion_words(value: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dash_cache_never_outlives_a_signed_source_deadline() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let dash = |deadline| {
+            serde_json::from_value::<super::DashData>(serde_json::json!({"audio":[{"baseUrl":format!("https://cdn.test/audio?deadline={deadline}")}]})).unwrap()
+        };
+        assert!(super::dash_cache_ttl(&dash(now + 45)) <= std::time::Duration::from_secs(15));
+        assert_eq!(super::dash_cache_ttl(&dash(now + 600)), super::DASH_TTL);
+        assert_eq!(
+            super::dash_cache_ttl(&dash(now - 1)),
+            std::time::Duration::ZERO
+        );
+    }
+
     #[test]
     fn suggestions_use_plain_values_and_ignore_invalid_or_duplicate_items() {
         let value = serde_json::json!({"code":0,"result":{"tag":[

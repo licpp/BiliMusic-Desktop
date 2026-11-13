@@ -396,6 +396,10 @@ pub async fn sync_now(
         };
         let mut initial = initial.clone();
         let mut baseline = base.clone();
+        if cfg.provider != "webdav" {
+            initial.omit_linked_folders();
+            baseline.omit_linked_folders();
+        }
         if remote.legacy_cloud {
             initial.use_legacy_cloud_format();
             baseline.use_legacy_cloud_format();
@@ -417,12 +421,24 @@ pub async fn sync_now(
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
         }
         let effective_remote = if !remote.conflicts.is_empty() && resolution.is_some() {
-            remote
-                .dav
-                .as_ref()
-                .ok_or("并发状态缺失")?
+            let state = remote.dav.as_ref().ok_or("并发状态缺失")?;
+            let mut main = initial.clone();
+            main.omit_linked_folders();
+            let mut resolved = state
                 .doc
-                .resolved(&initial, resolution.as_deref() == Some("local"))?
+                .resolved(&main, resolution.as_deref() == Some("local"))?;
+            if let Some(linked) = state.linked.as_ref() {
+                resolved.records.extend(
+                    linked
+                        .doc
+                        .resolved(
+                            &initial.linked_folders(),
+                            resolution.as_deref() == Some("local"),
+                        )?
+                        .records,
+                );
+            }
+            resolved
         } else {
             remote.snapshot.clone()
         };
@@ -466,6 +482,10 @@ pub async fn sync_now(
         }
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
+        let local_linked = current.linked_folders();
+        if cfg.provider != "webdav" {
+            current.omit_linked_folders();
+        }
         if remote.legacy_cloud {
             current.use_legacy_cloud_format();
         }
@@ -495,6 +515,9 @@ pub async fn sync_now(
         }
         // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
         let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));
+        if cfg.provider != "webdav" {
+            final_local.records.extend(local_linked.records);
+        }
         if !remote.creators {
             final_local.records.extend(local_creators);
         }
@@ -572,7 +595,13 @@ pub async fn sync_hydrate_sources(
             .take(10)
             .collect()
     };
-    let mut count = 0;
+    let mut count = if track_ids.is_none() {
+        crate::interface::linked_folders::hydrate_synced_links(&database)
+            .await
+            .unwrap_or(0)
+    } else {
+        0
+    };
     for bvid in videos {
         if let Ok(video) = provider.video_parts(&bvid).await {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;

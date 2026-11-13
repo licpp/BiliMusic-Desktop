@@ -1,3 +1,6 @@
+import { chooseDownload } from '../downloads/downloadRequest'
+import { CoverCount } from '../../shared/CoverCount'
+import { PublishedDate } from '../../shared/PublishedDate'
 import { CreatorsView } from '../collections/CreatorsView'
 import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { isMobile } from '../../services/platform'
@@ -6,7 +9,7 @@ import { toTrack } from '../../services/collectionTrack'
 import type { Collection } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, CircleAlert, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
+import { ChevronDown, CircleAlert, Download, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
@@ -19,19 +22,19 @@ import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { LoadMore } from '../../shared/LoadMore'
 import { PlayingMark } from '../../shared/PlayingMark'
 import { Artwork } from '../../shared/Artwork'
-import { LinkedFolderPicker } from '../library/LinkedFolderView'
 import { VideoPartsList } from '../library/VideoPartsList'
-import { chooseTrackPlaylist } from '../library/trackActionStore'
+import { chooseVideoPlaylist } from '../library/trackActionStore'
 
 type ExpandedState = { open?: boolean; loading?: boolean; detail?: BiliVideoParts; error?: string }
 
 function VideoSearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
   const [partsPage, setPartsPage] = useState<BiliVideoParts | null>(null)
   const [context,setContext]=useState<{bvid:string;left:number;top:number;nonce:number}>()
-  const [linking, setLinking] = useState<string>()
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({})
   const [favoriteState, setFavoriteState] = useState<Record<string, boolean>>({})
   const [actionError, setActionError] = useState('')
+  const [downloadResolving,setDownloadResolving]=useState<string>()
+  const downloadIntent=useRef(0)
   const client = useQueryClient()
   const play = usePlayerStore((state) => state.playFromList)
   const enqueue = usePlayerStore((state) => state.enqueue)
@@ -39,7 +42,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const browsing = useRef(0)
   const activeRef = useRef(active)
   activeRef.current = active
-  useEffect(() => () => { selection.current++; browsing.current++ }, [])
+  useEffect(() => () => { selection.current++; browsing.current++; downloadIntent.current++ }, [])
   const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
   const items = [...new Map(result.data?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const add = async (track: Track, favorite = false) => {
@@ -76,8 +79,10 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       setExpanded(state => ({ ...state, [item.bvid]: { error: commandErrorMessage(cause) } }))
     }
   }
-  const resultAction = async (item: BiliSearchItem, action: 'playlist' | 'queue' | 'play', useSeason = true) => {
+  const resultAction = async (item: BiliSearchItem, action: 'playlist' | 'queue' | 'play' | 'download', useSeason = true) => {
     const request = action === 'play' ? ++selection.current : selection.current
+    const downloadRequest=action==='download'?++downloadIntent.current:0
+    if(action==='download')setDownloadResolving(item.bvid)
     const epoch = accountEpoch()
     const before = playbackIntent()
     try {
@@ -85,7 +90,8 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       if (epoch !== accountEpoch()) return
       setExpanded(state => ({ ...state, [item.bvid]: { ...state[item.bvid], detail } }))
       const tracks = detail.parts.map(part => toTrack(detail, part))
-      if (action === 'playlist') chooseTrackPlaylist(tracks)
+      if(action==='download'){if(downloadRequest!==downloadIntent.current)return;if(!tracks.length){setActionError('暂无可下载的音频');return}chooseDownload(tracks)}
+      else if (action === 'playlist') chooseVideoPlaylist(detail)
       else if (action === 'queue') { enqueue(tracks); setActionError('已加入播放队列') }
       else {
         if (request !== selection.current || before !== playbackIntent()) return
@@ -101,7 +107,8 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
           }).catch(() => undefined)
         }
       }
-    } catch (cause) { setActionError(commandErrorMessage(cause)) }
+    } catch (cause) { if(action!=='download'||downloadRequest===downloadIntent.current)setActionError(commandErrorMessage(cause)) }
+    finally{if(action==='download'&&downloadRequest===downloadIntent.current)setDownloadResolving(undefined)}
   }
 
   if (!inDesktopShell) return <EmptyState icon={Waves} title="桌面搜索已准备好" detail="请使用 npm run tauri dev 启动原生窗口，浏览器预览不会直接访问平台接口。" />
@@ -117,12 +124,12 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       const open = Boolean(state?.open)
       return <SearchResultCard key={item.bvid} bvid={item.bvid} active={active} count={state?.detail?.parts.length} open={open} onContextMenu={e=>{e.preventDefault(); if (!isMobile) setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>{(partCount, current) => <>
         <div className="search-result-heading playing-row" data-current-row={current ? item.bvid : undefined}><button type="button" className="result-main" aria-current={current ? 'true' : undefined} onContextMenu={event => { if (isMobile) { event.preventDefault(); void selectResult(item, partCount) } }} onClick={() => void resultAction(item, 'play')}>
-          <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i>{current && <PlayingMark/>}</span>
-          <span className="result-copy"><strong>{item.title}</strong><small>{item.uploaderName} · {formatPlayCount(item.playCount)} 次播放</small><em>{item.description || '暂无简介'}</em></span>
+          <span className="result-cover"><Artwork src={item.coverUrl} /><i><Play size={17} fill="currentColor" /></i>{current && <PlayingMark/>}<CoverCount count={partCount}/></span>
+          <span className="result-copy"><strong>{item.title}</strong><small className="result-byline"><span>{item.uploaderName}</span><span>{formatPlayCount(item.playCount)} 次播放</span><PublishedDate value={item.publishedAt}/></small><em>{item.description || '暂无简介'}</em></span>
           <span className="result-duration">{formatDuration(item.durationSeconds)}</span>
         </button>{!isMobile && (partCount ?? 0) > 1 && <button type="button" className="icon-action result-expand" aria-label={open ? '收起分 P' : '查看分 P'} title={open ? '收起分 P' : '查看分 P'} aria-expanded={isMobile ? undefined : open} disabled={state?.loading} onClick={() => void selectResult(item, partCount)}>{state?.loading ? <LoaderCircle className="spin" size={17}/> : <ChevronDown size={17} className={open ? 'rotated' : undefined}/>}</button>}<CollectionBookmark item={item}/><CollectionMenu item={item} onOpen={onCollectionOpen ? () => onCollectionOpen({ ...item, folderId: '' }) : undefined} contextPosition={context?.bvid===item.bvid?context:undefined} additionalActions={(close)=><>
-          <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />{open ? '全部加入歌单…' : '加入歌单…'}</button>
-          <button role="menuitem" onClick={() => { close(); setLinking(item.bvid) }}><Link2 size={16} />添加到关联收藏夹…</button>
+          <button role="menuitem" disabled={downloadResolving===item.bvid} onClick={() => { close(); void resultAction(item, 'download') }}>{downloadResolving===item.bvid?<LoaderCircle size={16} className="spin"/>:<Download size={16}/>}{(partCount??0)>1?'下载全部分 P…':'下载音频…'}</button>
+          <button role="menuitem" onClick={() => { close(); void resultAction(item, 'playlist') }}><ListPlus size={16} />收藏到歌单…</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>
           <button role="menuitem" onClick={() => { close(); void resultAction(item, 'play') }}><Play size={16} />{open ? '播放全部分 P' : '播放'}</button>
         </>}/></div>
@@ -135,7 +142,6 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       </>}</SearchResultCard>
     })}</div>
     {active && partsPage && <MobilePartsPage key={partsPage.bvid} detail={partsPage} onBack={() => setPartsPage(null)}/>}
-    {active && linking && <LinkedFolderPicker bvid={linking} onClose={() => setLinking(undefined)} />}
     {result.hasNextPage && <LoadMore busy={result.isFetchingNextPage} automatic={active && !result.isFetchNextPageError} onLoad={() => void result.fetchNextPage()} label={result.isFetchNextPageError ? '重试加载' : '加载更多结果'}/>}
     {result.isFetchNextPageError && <p className="inline-error">{commandErrorMessage(result.error)}</p>}
   </section>
@@ -147,7 +153,7 @@ function SearchResultCard({ bvid, active, count, open, onContextMenu, children }
   children: (partCount: number | undefined, current: boolean) => ReactNode
 }) {
   const current = usePlayerStore(state => !open && state.current?.source.bvid === bvid)
-  const { ref, pages } = useVisibleVideoPages(bvid, active && count === undefined && !isMobile)
+  const { ref, pages } = useVisibleVideoPages(bvid, active && count === undefined)
   return <div ref={ref} className={open ? 'result-card expanded' : 'result-card'} onContextMenu={onContextMenu}>{children(count ?? pages?.length, current)}</div>
 }
 

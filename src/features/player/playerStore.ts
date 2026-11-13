@@ -1,3 +1,4 @@
+import { prepareAudioSource } from './sourceSwitch'
 import { advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS } from '../../services/platform'
 import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
@@ -26,6 +27,7 @@ type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number
 
 let audio: HTMLAudioElement | null = null
 let playRequest = 0
+let desktopSeekRevision=0
 let loadedTrackId: string | null = null
 let queueIntent = 0
 let loadedCollectionRef: string | undefined
@@ -57,7 +59,9 @@ function switchCollectionContext(reference?: string) {
 
 function recoverPlayback(error: unknown) {
   const state = usePlayerStore.getState()
-  if (!isConnectionError(error) || recoveryAttempted || !state.current || state.current.source.provider !== 'bilibili') return false
+  const message=typeof error === 'string' ? error : String((error as { message?: string })?.message || '')
+  const transportFailure=isConnectionError(error) || /timed?\s*out|timeout|缓冲超时|缓冲停滞|音频准备超时|音源已更新|请联网|音频(?:加载|播放|流加载).*失败|音频无法播放|片段.*(?:变化|更新|中断|不完整)|\b(?:403|410)\b/i.test(message)
+  if (!transportFailure || recoveryAttempted || !state.current || state.current.source.provider !== 'bilibili') return false
   recoveryAttempted = true
   const position = state.status === 'resolving' && state.progressSeconds === 0 ? undefined :
     usablePlaybackPosition(state.progressSeconds, state.durationSeconds)
@@ -137,12 +141,11 @@ const playerStorage = {
   removeItem: (key: string) => localStorage.removeItem(key),
 }
 window.addEventListener('pagehide', () => { flushPosition(); flushPlayerSnapshot() })
-function playerAudio() {
-  if (audio) return audio
-  audio = new Audio(); audio.preload = 'metadata'; audio.volume = usePlayerStore.getState().volume
+function bindAudioEvents(element:HTMLAudioElement) {
+  const on = (event:string,handler:()=>void) => element.addEventListener(event,()=>{if(audio===element)handler()})
   let stallTimer: ReturnType<typeof setTimeout> | undefined
   const clearStall = () => { clearTimeout(stallTimer); stallTimer = undefined }
-  audio.addEventListener('waiting', () => {
+  on('waiting', () => {
     if (stallTimer) return
     const id = loadedTrackId, position = audio?.currentTime || 0
     stallTimer = setTimeout(() => {
@@ -153,19 +156,22 @@ function playerAudio() {
       }
     }, 12000)
   })
-  for (const event of ['playing', 'pause', 'emptied', 'error', 'ended']) audio.addEventListener(event, clearStall)
-  audio.addEventListener('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
-  audio.addEventListener('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
-  audio.addEventListener('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
-  audio.addEventListener('timeupdate', () => usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }))
-  audio.addEventListener('seeked', () => flushPosition(true))
-  audio.addEventListener('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
-  audio.addEventListener('ended', () => void usePlayerStore.getState().next(true))
-  audio.addEventListener('error', () => {
+  for (const event of ['playing', 'pause', 'emptied', 'error', 'ended']) element.addEventListener(event, clearStall)
+  on('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
+  on('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
+  on('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
+  on('timeupdate', () => usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }))
+  on('seeked', () => flushPosition(true))
+  on('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
+  on('ended', () => void usePlayerStore.getState().next(true))
+  on('error', () => {
     if (loadedTrackId !== usePlayerStore.getState().current?.id) return
     if (audio?.error?.code === 2 && recoverPlayback('Network error')) return
     usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重试' })
   })
+}
+function playerAudio() {
+  if(!audio){audio=new Audio();audio.preload='metadata';audio.volume=usePlayerStore.getState().volume;bindAudioEvents(audio)}
   return audio
 }
 
@@ -315,7 +321,8 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
   next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null } if (fromEnded && repeatMode === 'one' && current) { await get().play(current, 0); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex], fromEnded && queue[nextIndex].id === current?.id ? 0 : undefined) },
   previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
-  seek: (seconds) => { const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(nativeError); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
+  seek: (seconds) => {
+    desktopSeekRevision+=1; const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(nativeError); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
   setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(nativeError); else playerAudio().volume = normalized; set({ volume: normalized }) },
   setRate: async rate => {
     if (!playbackRates.some(option => option === rate) || rate === get().rate) return
@@ -361,8 +368,11 @@ function randomOtherIndex(length: number, current: number) {
 
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
 let nativeHistoryId: string | undefined
+let floatingStyleRevision=0
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
   if (accountResetting) return
+  if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
+  if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
   if (state.sleepDeadline !== undefined) {
     const sleep = usePlayerStore.getState().sleep
     const next = { deadline: state.sleepDeadline, duration: state.sleepDuration ?? 0, expired: Boolean(state.sleepExpired) }
@@ -413,7 +423,9 @@ function ensureNativeReady() {
 }
 void ensureNativeReady().catch(nativeError)
 let reconciliationPending = false
-async function reconcileMobilePlayback(rebind = false) {
+let foregroundPending = false
+async function reconcileMobilePlayback(rebind = false, foreground = false) {
+  foregroundPending ||= foreground
   if (reconciliationPending) return
   reconciliationPending = true
   try {
@@ -425,16 +437,16 @@ async function reconcileMobilePlayback(rebind = false) {
       try { await restartIOSAudioObservation(); onNativeState(await snapshotMobileAudio()); return } catch { /* report the original failure */ }
     }
     nativeError(error)
-  } finally { reconciliationPending = false }
+  } finally { reconciliationPending = false; if (foregroundPending) { foregroundPending = false; window.dispatchEvent(new Event('bilimusic-playback-reconciled')) } }
 }
 if (isMobile) {
-  const resume = () => { if (!document.hidden) void reconcileMobilePlayback(isIOS && iosListenerAge() > 2_000) }
+  const resume = () => { if (!document.hidden) void reconcileMobilePlayback(isIOS && iosListenerAge() > 2_000, true) }
   document.addEventListener('visibilitychange', resume)
   window.addEventListener('pageshow', resume)
   window.addEventListener('focus', resume)
 }
 let lastNativePollAt = 0
-if (isIOS) window.setInterval(() => {
+if (isMobile) window.setInterval(() => {
   if (document.hidden) return
   const state = usePlayerStore.getState()
   if (state.status === 'playing') {
@@ -459,14 +471,27 @@ if (isIOS) usePlayerStore.subscribe((state, previous) => {
 })
 
 // Resolve first; leave the current audio playing if a new quality is unavailable.
+let sourceSwitchRequest=0
 export async function reloadCurrentAudioSource() {
   const track=usePlayerStore.getState().current
   if (!track || loadedTrackId!==track.id) return
-  const request=playRequest
-  const url=await getTrackPlaybackUrl(track)
-  if(request!==playRequest || usePlayerStore.getState().current?.id!==track.id)return
-  const state=usePlayerStore.getState(),position=playbackClock(),playing=state.status==='playing'||state.status==='buffering'
-  if(isIOS) await playIOSAudio(track,url,position,state.volume,playing,loadedCollectionRef,state.rate)
-  else if(isMobile) await playMobileAudio(track,url,position,state.volume,playing,loadedCollectionRef,state.rate)
-  else {const element=playerAudio();element.src=url;element.playbackRate=state.rate;element.currentTime=position;if(playing)await element.play();else element.pause()}
+  const request=playRequest,switchRequest=++sourceSwitchRequest,seekRevision=desktopSeekRevision
+  const valid=()=>request===playRequest&&seekRevision===desktopSeekRevision&&switchRequest===sourceSwitchRequest&&usePlayerStore.getState().current?.id===track.id
+  const url=await getTrackPlaybackUrl(track,true,true)
+  if(!valid())return
+  if(isMobile){const state=usePlayerStore.getState();await playMobileAudio(track,url,playbackClock(),state.volume,state.status==='playing'||state.status==='buffering',loadedCollectionRef,state.rate,true);return}
+  const candidate=await prepareAudioSource(url,playbackClock,valid,usePlayerStore.getState().rate)
+  try{
+    if(!valid())return
+    const state=usePlayerStore.getState(),playing=state.status==='playing'||state.status==='buffering'
+    candidate.playbackRate=state.rate
+    if(playing)await candidate.play()
+    if(!valid())return
+    // A user's pause during preparation always wins over the captured state.
+    const latest=usePlayerStore.getState();if(latest.status!=='playing'&&latest.status!=='buffering')candidate.pause()
+    const previous=audio;bindAudioEvents(candidate);audio=candidate
+    previous?.pause();previous?.removeAttribute('src');previous?.load()
+    candidate.volume=latest.volume;candidate.muted=false
+    usePlayerStore.setState({status:candidate.paused?'paused':'playing',progressSeconds:candidate.currentTime,error:null})
+  }finally{if(audio!==candidate){candidate.pause();candidate.removeAttribute('src');candidate.load()}}
 }

@@ -4,3 +4,5 @@ pub mod playback_cache;
 pub mod providers;
 pub mod repositories;
 pub mod updates;
+
+pub mod flac_export;

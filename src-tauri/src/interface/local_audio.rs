@@ -10,6 +10,8 @@ pub(crate) fn audio_mime(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "mp3" => Some("audio/mpeg"),
         "m4a" => Some("audio/mp4"),
+        "flac" => Some("audio/flac"),
+        "aac" => Some("audio/aac"),
         "wav" => Some("audio/wav"),
         _ => None,
     }
@@ -59,9 +61,9 @@ pub fn local_audio_import(
                 .metadata()
                 .is_ok_and(|m| m.is_file() && m.len() > 0)
         {
-            result
-                .failed
-                .push(format!("{filename}：请选择可读取的 MP3、M4A 或 WAV 文件"));
+            result.failed.push(format!(
+                "{filename}：请选择可读取的 MP3、M4A、FLAC、AAC 或 WAV 文件"
+            ));
             continue;
         }
         let Some(canonical_path) = canonical.to_str() else {

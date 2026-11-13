@@ -254,6 +254,11 @@ pub fn playlists_list(database: State<'_, Database>) -> Result<Vec<PlaylistRecor
         .map_err(|_| CommandError::database("数据库正忙"))?;
     let mut playlists = PlaylistRepository::list(&connection).map_err(CommandError::database)?;
     playlists.extend(super::linked_folders::list_as_playlists(&connection)?);
+    playlists.sort_by(|a, b| {
+        b.is_system
+            .cmp(&a.is_system)
+            .then_with(|| b.added_at.total_cmp(&a.added_at))
+    });
     Ok(playlists)
 }
 
@@ -589,6 +594,16 @@ pub async fn bili_logout(
 }
 
 #[tauri::command]
+pub async fn bili_comment_emotes(
+    provider: State<'_, BilibiliProvider>,
+) -> Result<serde_json::Value, CommandError> {
+    provider
+        .comment_emotes()
+        .await
+        .map_err(CommandError::provider)
+}
+
+#[tauri::command]
 pub async fn bili_comments(
     provider: State<'_, BilibiliProvider>,
     aid: i64,
@@ -847,6 +862,7 @@ pub async fn track_playback_url(
     media_proxy: State<'_, MediaProxy>,
     track_id: String,
     refresh: Option<bool>,
+    prefer_online: Option<bool>,
 ) -> Result<String, CommandError> {
     media_proxy
         .ensure_running()
@@ -886,7 +902,10 @@ pub async fn track_playback_url(
         }
         return Ok(media_proxy.register_local(path).await);
     }
-    for path in paths {
+    for path in paths
+        .into_iter()
+        .filter(|_| !prefer_online.unwrap_or(false))
+    {
         let path = std::path::PathBuf::from(path);
         if tokio::fs::metadata(&path)
             .await
@@ -920,6 +939,9 @@ pub async fn track_playback_url(
     {
         Ok(source) => source,
         Err(error) => {
+            if prefer_online.unwrap_or(false) {
+                return Err(CommandError::provider(error));
+            }
             if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
                 return Ok(url);
             }
@@ -1032,6 +1054,8 @@ pub async fn download_track(
     title: String,
     target_directory: String,
     skip_existing: Option<bool>,
+    audio_id: Option<u32>,
+    export_format: Option<String>,
 ) -> Result<bool, CommandError> {
     if !valid_bvid(&bvid) || cid <= 0 || track_id != format!("bilibili:{bvid}:{cid}") {
         return Err(CommandError::validation("无效的下载歌曲标识"));
@@ -1058,9 +1082,15 @@ pub async fn download_track(
     }
     #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
     let _ = app;
-    let target = directory.join(format!("{}-{}-{}.m4a", safe_filename(&title), bvid, cid));
-    let download_id = uuid::Uuid::new_v4().to_string();
-    let temporary = target.with_extension(format!("{download_id}.part"));
+    let expected_profile = crate::interface::media::profile(&database);
+    let requested_audio = audio_id.unwrap_or(0);
+    if requested_audio > 40000 {
+        return Err(CommandError::validation("不支持的下载音质"));
+    }
+    let export_format = export_format.as_deref().unwrap_or("auto");
+    if !["auto", "original", "flac"].contains(&export_format) {
+        return Err(CommandError::validation("不支持的下载格式"));
+    }
     {
         let connection = database
             .0
@@ -1093,6 +1123,58 @@ pub async fn download_track(
         if active {
             return Err(CommandError::validation("这首歌曲正在下载中"));
         }
+    }
+    let source = provider
+        .playback_source_with_quality(&bvid, cid, requested_audio)
+        .await
+        .map_err(CommandError::provider)?;
+    if requested_audio != 0 && source.quality_id != requested_audio {
+        return Err(CommandError::validation(
+            "当前视频或账号无法获取所选音质，请重新选择",
+        ));
+    }
+    let lossless = source.codecs.eq_ignore_ascii_case("flac");
+    if export_format == "flac" && !lossless {
+        return Err(CommandError::validation(
+            "当前音源没有可用的无损音轨，请选择 AAC 或其他视频",
+        ));
+    }
+    let original_extension = audio_download_extension(&source.mime_type, &source.codecs)
+        .ok_or_else(|| CommandError::validation("这个音频格式暂不支持下载"))?;
+    let extract_flac = lossless && original_extension == "m4a" && export_format != "original";
+    let extension = if extract_flac {
+        "flac"
+    } else {
+        original_extension
+    };
+    let quality_tag = if lossless {
+        "HiRes".to_owned()
+    } else {
+        format!("AAC-{}k", (source.bandwidth + 500) / 1000)
+    };
+    let target = directory.join(format!(
+        "{}-{}-{}-{}.{}",
+        safe_filename(&title),
+        bvid,
+        cid,
+        quality_tag,
+        extension
+    ));
+    let download_id = uuid::Uuid::new_v4().to_string();
+    let temporary = target.with_extension(format!("{download_id}.part"));
+    let converted = target.with_extension(format!("{download_id}.flac.part"));
+    {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        if expected_profile != crate::interface::media::profile(&database) {
+            return Err(CommandError::validation("账号已切换，请重新下载"));
+        }
+        let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM downloads WHERE track_id=?1 AND status IN ('queued','downloading'))", [&track_id], |row| row.get(0)).map_err(CommandError::database)?;
+        if active {
+            return Err(CommandError::validation("这首歌曲正在下载中"));
+        }
         DownloadRepository::create(
             &connection,
             &download_id,
@@ -1102,7 +1184,6 @@ pub async fn download_track(
         .map_err(CommandError::database)?;
     }
     let result: Result<i64, Box<dyn std::error::Error + Send + Sync>> = async {
-        let source = provider.playback_source(&bvid, cid).await?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(600))
             .user_agent("Mozilla/5.0 Resonance/0.1")
@@ -1132,9 +1213,23 @@ pub async fn download_track(
                 last_reported = received;
             }
         }
+        if received == 0 || total.is_some_and(|total| received != total) {
+            return Err(std::io::Error::other("音频下载不完整，请重新下载").into());
+        }
         file.flush().await?;
         drop(file);
-        tokio::fs::rename(&temporary, &target).await?;
+        if extract_flac {
+            let input = temporary.clone();
+            let output = converted.clone();
+            received = tokio::task::spawn_blocking(move || {
+                crate::infrastructure::flac_export::export(&input, &output)
+            })
+            .await?? as i64;
+            tokio::fs::rename(&converted, &target).await?;
+            let _ = tokio::fs::remove_file(&temporary).await;
+        } else {
+            tokio::fs::rename(&temporary, &target).await?;
+        }
         Ok(received)
     }
     .await;
@@ -1150,11 +1245,32 @@ pub async fn download_track(
         }
         Err(error) => {
             let _ = tokio::fs::remove_file(&temporary).await;
+            let _ = tokio::fs::remove_file(&converted).await;
             if let Ok(connection) = database.0.lock() {
                 let _ = DownloadRepository::fail(&connection, &download_id, &error.to_string());
             }
             Err(CommandError::provider(format!("下载失败: {error}")))
         }
+    }
+}
+
+// Preserve the source container. Bilibili Hi-Res is usually FLAC inside MP4:
+// renaming those bytes to .flac or .mp3 does not convert the audio.
+fn audio_download_extension(mime: &str, codecs: &str) -> Option<&'static str> {
+    match mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "audio/mp4" | "video/mp4" | "application/mp4" => Some("m4a"),
+        "audio/flac" | "audio/x-flac" => Some("flac"),
+        "audio/aac" | "audio/x-aac" => Some("aac"),
+        "audio/mpeg" => Some("mp3"),
+        "" if codecs.starts_with("mp4a") || codecs.eq_ignore_ascii_case("flac") => Some("m4a"),
+        _ => None,
     }
 }
 
@@ -1210,6 +1326,29 @@ fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn download_extension_preserves_the_container_even_for_lossless_audio() {
+        assert_eq!(
+            super::audio_download_extension("audio/mp4", "fLaC"),
+            Some("m4a")
+        );
+        assert_eq!(
+            super::audio_download_extension("audio/mp4; codecs=mp4a.40.2", "mp4a.40.2"),
+            Some("m4a")
+        );
+        assert_eq!(
+            super::audio_download_extension("audio/flac", "flac"),
+            Some("flac")
+        );
+        assert_eq!(
+            super::audio_download_extension("audio/aac", "mp4a.40.2"),
+            Some("aac")
+        );
+        assert_eq!(
+            super::audio_download_extension("text/html", "mp4a.40.2"),
+            None
+        );
+    }
     #[test]
     fn filename_removes_cross_platform_reserved_characters() {
         assert_eq!(super::safe_filename("a/b:c*?\"<>|"), "abc");

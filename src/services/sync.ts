@@ -13,7 +13,7 @@ export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export const syncNow = (preview = false, resolution?: 'local' | 'remote', automatic = false) => invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
 export async function refreshSyncedLibrary(client: QueryClient) {
   const epoch = accountEpoch()
-  await Promise.all(['library', 'playlists', 'home-recent', 'collections', 'collection-progress'].map((key) => client.invalidateQueries({ queryKey: [key] })))
+  await Promise.all(['library', 'playlists', 'home-recent', 'collections', 'collection-progress', 'linked-bili-folder'].map((key) => client.invalidateQueries({ queryKey: [key] })))
   if (epoch !== accountEpoch()) return
   const current = usePlayerStore.getState().current
   if (current) {

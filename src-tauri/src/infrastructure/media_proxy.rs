@@ -6,7 +6,13 @@ use axum::{
     http::{HeaderMap, HeaderValue, Response, StatusCode, header},
     routing::get,
 };
+use futures_util::StreamExt;
 use reqwest::Client;
+use std::pin::Pin;
+type BlockProgress = (Arc<Vec<u8>>, bool, Option<String>);
+type BlockReceiver = tokio::sync::watch::Receiver<BlockProgress>;
+type BlockStream =
+    Pin<Box<dyn futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> + Send>>;
 use std::{
     collections::HashMap,
     sync::{
@@ -307,12 +313,14 @@ impl MediaProxy {
         let cache = self.state.cache.as_ref().unwrap().clone();
         variant.total = cache.total(&variant.key).unwrap_or(variant.total);
         let audio = CachedAudio {
+            preferred: std::sync::atomic::AtomicUsize::new(usize::MAX),
             total: std::sync::atomic::AtomicU64::new(variant.total),
             variant,
             generation: cache.generation.load(std::sync::atomic::Ordering::Acquire),
             cache,
             urls: tokio::sync::Mutex::new(urls),
             locks: tokio::sync::Mutex::new(HashMap::new()),
+            active: tokio::sync::Mutex::new(HashMap::new()),
         };
         let id = Uuid::new_v4().simple().to_string();
         let mut entries = self.state.entries.write().await;
@@ -358,17 +366,39 @@ async fn proxy_health(State(state): State<ProxyState>, Path(token): Path<String>
 }
 
 struct CachedAudio {
+    preferred: std::sync::atomic::AtomicUsize,
     variant: Variant,
     total: std::sync::atomic::AtomicU64,
     cache: Arc<PlaybackCache>,
     generation: u64,
     urls: tokio::sync::Mutex<Vec<String>>,
     locks: tokio::sync::Mutex<HashMap<u64, std::sync::Weak<tokio::sync::Mutex<()>>>>,
+    active: tokio::sync::Mutex<HashMap<u64, BlockReceiver>>,
 }
 impl CachedAudio {
-    async fn block(&self, state: &ProxyState, index: u64) -> Result<Vec<u8>, std::io::Error> {
+    async fn block(
+        self: &Arc<Self>,
+        state: &ProxyState,
+        index: u64,
+    ) -> Result<Vec<u8>, std::io::Error> {
+        let stream = self.stream_block(state, index).await?;
+        axum::body::to_bytes(Body::from_stream(stream), CHUNK_SIZE as usize)
+            .await
+            .map(|v| v.to_vec())
+            .map_err(std::io::Error::other)
+    }
+    async fn stream_block(
+        self: &Arc<Self>,
+        state: &ProxyState,
+        index: u64,
+    ) -> Result<BlockStream, std::io::Error> {
         if let Some(bytes) = self.cache.read(&self.variant.key, index) {
-            return Ok(bytes);
+            return Ok(Box::pin(futures_util::stream::once(async move {
+                Ok(bytes.into())
+            })));
+        }
+        if let Some(receiver) = self.active.lock().await.get(&index).cloned() {
+            return Ok(block_progress_stream(receiver));
         }
         let gate = {
             let mut locks = self.locks.lock().await;
@@ -380,9 +410,14 @@ impl CachedAudio {
             locks.insert(index, Arc::downgrade(&gate));
             gate
         };
-        let _guard = gate.lock().await;
+        let guard = gate.lock_owned().await;
         if let Some(bytes) = self.cache.read(&self.variant.key, index) {
-            return Ok(bytes);
+            return Ok(Box::pin(futures_util::stream::once(async move {
+                Ok(bytes.into())
+            })));
+        }
+        if let Some(receiver) = self.active.lock().await.get(&index).cloned() {
+            return Ok(block_progress_stream(receiver));
         }
         let urls = {
             let mut urls = self.urls.lock().await;
@@ -431,9 +466,19 @@ impl CachedAudio {
         }
         let range = HeaderValue::from_str(&format!("bytes={start}-{end}")).unwrap();
         let client = state.client.read().await.clone();
-        let (response, selected, prefix) = fetch_playback_range(&client, &urls, Some(&range))
-            .await
-            .ok_or_else(|| std::io::Error::other("当前片段尚未缓存，请联网后播放"))?;
+        let began = Instant::now();
+        let preferred = self.preferred.load(Ordering::Relaxed);
+        let (response, selected, prefix) =
+            fetch_playback_range_preferred(&client, &urls, Some(&range), Some(preferred))
+                .await
+                .ok_or_else(|| std::io::Error::other("当前片段尚未缓存，请联网后播放"))?;
+        self.preferred.store(selected, Ordering::Relaxed);
+        eprintln!(
+            "[playback] stage=first_packet elapsed_ms={} route={} bytes={}",
+            began.elapsed().as_millis(),
+            selected,
+            prefix.len()
+        );
         let span = response_span(response.headers())
             .ok_or_else(|| std::io::Error::other("音频服务器未返回有效片段"))?;
         if span.0 != start
@@ -453,7 +498,7 @@ impl CachedAudio {
             prefix: Arc::new(RwLock::new((vec![], 0))),
             cached: None,
         };
-        let body = Body::from_stream(resumable_media(
+        let stream = resumable_media(
             response,
             prefix,
             client,
@@ -461,19 +506,76 @@ impl CachedAudio {
             selected,
             Some(span),
             Duration::from_secs(6),
-        ));
-        let bytes = axum::body::to_bytes(body, CHUNK_SIZE as usize)
-            .await
-            .map_err(|_| std::io::Error::other("音频片段下载中断，可重新播放继续"))?;
-        if bytes.len() as u64 != span.1 - span.0 + 1 {
-            return Err(std::io::Error::other("音频片段尚未完整缓存"));
-        }
-        // Full chunks are atomic; failed/cleared cache writes never interrupt audio playback.
-        let _ = self
-            .cache
-            .write(&self.variant, span.2, index, &bytes, self.generation);
-        Ok(bytes.to_vec())
+        );
+        // Fetch at most one cache block ahead. The first packet reaches the
+        // decoder immediately, including Safari's tiny format probe; finishing
+        // this bounded block also coalesces overlapping probes/seeks.
+        let (sender, receiver) =
+            tokio::sync::watch::channel((Arc::new(Vec::<u8>::new()), false, None::<String>));
+        self.active.lock().await.insert(index, receiver.clone());
+        // Readers join the live block as soon as its headers are validated.
+        // In particular, a second AVPlayer request after its 2-byte probe must
+        // not wait for the first request's entire cache block to complete.
+        drop(guard);
+        let audio = self.clone();
+        tokio::spawn(async move {
+            futures_util::pin_mut!(stream);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(chunk) if bytes.len() + chunk.len() <= CHUNK_SIZE as usize => {
+                        bytes.extend_from_slice(&chunk);
+                        sender.send_replace((Arc::new(bytes.clone()), false, None));
+                    }
+                    _ => {
+                        sender.send_replace((
+                            Arc::new(bytes),
+                            true,
+                            Some("音频片段下载中断，可重新播放继续".into()),
+                        ));
+                        audio.active.lock().await.remove(&index);
+                        return;
+                    }
+                }
+            }
+            if bytes.len() as u64 != span.1 - span.0 + 1 {
+                sender.send_replace((Arc::new(bytes), true, Some("音频片段尚未完整缓存".into())));
+                audio.active.lock().await.remove(&index);
+                return;
+            }
+            // Persist only complete blocks and respect clear-cache generations.
+            let _ = audio
+                .cache
+                .write(&audio.variant, span.2, index, &bytes, audio.generation);
+            sender.send_replace((Arc::new(bytes), true, None));
+            audio.active.lock().await.remove(&index);
+        });
+        Ok(block_progress_stream(receiver))
     }
+}
+
+fn block_progress_stream(receiver: BlockReceiver) -> BlockStream {
+    Box::pin(futures_util::stream::unfold(
+        (receiver, 0usize),
+        |(mut receiver, cursor)| async move {
+            loop {
+                if cursor == usize::MAX {
+                    return None;
+                }
+                let (bytes, done, error) = receiver.borrow_and_update().clone();
+                if cursor < bytes.len() {
+                    let chunk = axum::body::Bytes::copy_from_slice(&bytes[cursor..]);
+                    return Some((Ok(chunk), (receiver, bytes.len())));
+                }
+                if let Some(error) = error {
+                    return Some((Err(std::io::Error::other(error)), (receiver, usize::MAX)));
+                }
+                if done || cursor == usize::MAX || receiver.changed().await.is_err() {
+                    return None;
+                }
+            }
+        },
+    ))
 }
 
 async fn serve_cached_audio(
@@ -481,11 +583,16 @@ async fn serve_cached_audio(
     audio: Arc<CachedAudio>,
     headers: &HeaderMap,
 ) -> Response<Body> {
-    if audio.total.load(std::sync::atomic::Ordering::Acquire) == 0
-        && audio.block(state, 0).await.is_err()
-    {
-        return status_response(StatusCode::BAD_GATEWAY);
-    }
+    // Resolve the response size from headers/first packet, never the entire
+    // initial block. Keep the stream for the first requested block.
+    let mut initial = if audio.total.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        match audio.stream_block(state, 0).await {
+            Ok(stream) => Some(stream),
+            Err(_) => return status_response(StatusCode::BAD_GATEWAY),
+        }
+    } else {
+        None
+    };
     let total = audio.total.load(std::sync::atomic::Ordering::Acquire);
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
     let Some((start, end)) = byte_range(range, total) else {
@@ -497,37 +604,68 @@ async fn serve_cached_audio(
     };
     // AVFoundation rejects shortened ranges, even with a valid smaller Content-Range.
     // Honor the requested range; body backpressure still fetches each chunk on demand.
-    let first = match audio.block(state, start / CHUNK_SIZE).await {
-        Ok(bytes) => bytes,
-        Err(_) => return status_response(StatusCode::GATEWAY_TIMEOUT),
+    let first = if start / CHUNK_SIZE == 0 && initial.is_some() {
+        initial.take().unwrap()
+    } else {
+        match audio.stream_block(state, start / CHUNK_SIZE).await {
+            Ok(stream) => stream,
+            Err(_) => return status_response(StatusCode::GATEWAY_TIMEOUT),
+        }
     };
     let mime = audio.variant.mime.clone();
     let state = state.clone();
     let body = futures_util::stream::unfold(
-        (start, Some(first), audio, state),
-        move |(cursor, pending, audio, state)| async move {
+        (
+            start,
+            Some(first),
+            start / CHUNK_SIZE * CHUNK_SIZE,
+            audio,
+            state,
+        ),
+        move |(cursor, pending, mut offset, audio, state)| async move {
             if cursor > end {
                 return None;
             }
-            let bytes = match pending {
-                Some(bytes) => Ok(bytes),
-                None => audio.block(&state, cursor / CHUNK_SIZE).await,
+            let mut stream = match pending {
+                Some(stream) => stream,
+                None => match audio.stream_block(&state, cursor / CHUNK_SIZE).await {
+                    Ok(stream) => {
+                        offset = cursor / CHUNK_SIZE * CHUNK_SIZE;
+                        stream
+                    }
+                    Err(error) => return Some((Err(error), (end + 1, None, offset, audio, state))),
+                },
             };
-            match bytes {
-                Ok(bytes) => {
-                    let offset = (cursor % CHUNK_SIZE) as usize;
-                    let count =
-                        (end - cursor + 1).min(bytes.len().saturating_sub(offset) as u64) as usize;
-                    if count == 0 {
+            loop {
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        let from = cursor.saturating_sub(offset) as usize;
+                        offset += bytes.len() as u64;
+                        if from >= bytes.len() {
+                            continue;
+                        }
+                        let count = (end - cursor + 1).min((bytes.len() - from) as u64) as usize;
                         return Some((
-                            Err(std::io::Error::other("缓存片段不完整")),
-                            (end + 1, None, audio, state),
+                            Ok(bytes.slice(from..from + count)),
+                            (cursor + count as u64, Some(stream), offset, audio, state),
                         ));
                     }
-                    let chunk = axum::body::Bytes::copy_from_slice(&bytes[offset..offset + count]);
-                    Some((Ok(chunk), (cursor + count as u64, None, audio, state)))
+                    Some(Err(error)) => {
+                        return Some((Err(error), (end + 1, None, offset, audio, state)));
+                    }
+                    None if cursor % CHUNK_SIZE == 0 => {
+                        return Some((
+                            Ok(axum::body::Bytes::new()),
+                            (cursor, None, offset, audio, state),
+                        ));
+                    }
+                    None => {
+                        return Some((
+                            Err(std::io::Error::other("缓存片段不完整")),
+                            (end + 1, None, offset, audio, state),
+                        ));
+                    }
                 }
-                Err(error) => Some((Err(error), (end + 1, None, audio, state))),
             }
         },
     );
@@ -796,14 +934,30 @@ async fn fetch_playback_range(
     urls: &[String],
     range: Option<&HeaderValue>,
 ) -> Option<(reqwest::Response, usize, axum::body::Bytes)> {
+    fetch_playback_range_preferred(client, urls, range, None).await
+}
+
+async fn fetch_playback_range_preferred(
+    client: &Client,
+    urls: &[String],
+    range: Option<&HeaderValue>,
+    preferred: Option<usize>,
+) -> Option<(reqwest::Response, usize, axum::body::Bytes)> {
     let mut attempts = tokio::task::JoinSet::new();
-    for (index, url) in urls.iter().take(3).enumerate() {
+    let mut candidates = playback_candidates(urls);
+    if let Some(position) =
+        preferred.and_then(|index| candidates.iter().position(|value| *value == index))
+    {
+        let index = candidates.remove(position);
+        candidates.insert(0, index);
+    }
+    for (order, index) in candidates.into_iter().take(4).enumerate() {
         let client = client.clone();
-        let url = url.clone();
+        let url = urls[index].clone();
         let range = range.cloned();
         attempts.spawn(async move {
             // Give the preferred CDN a short head start, then hedge slow connections.
-            tokio::time::sleep(Duration::from_millis(index as u64 * 140)).await;
+            tokio::time::sleep(Duration::from_millis(order as u64 * 140)).await;
             let mut request = client
                 .get(url)
                 .header(header::USER_AGENT, MEDIA_USER_AGENT)
@@ -820,15 +974,10 @@ async fn fetch_playback_range(
                 {
                     return None;
                 }
-                // A tiny first packet is not evidence of a fast media route.
-                // Race a useful startup block, or the entire short probe range.
-                let mut prefix = response.chunk().await.ok()??.to_vec();
-                while prefix.len() < 64 * 1024 {
-                    match response.chunk().await.ok()? {
-                        Some(chunk) => prefix.extend_from_slice(&chunk),
-                        None => break,
-                    }
-                }
+                // Hand the first payload to the decoder immediately. Ongoing
+                // transfer health is bounded by resumable_media; startup must
+                // not wait for an arbitrary 64 KiB throughput sample.
+                let prefix = response.chunk().await.ok()??.to_vec();
                 Some((response, index, axum::body::Bytes::from(prefix)))
             })
             .await
@@ -842,6 +991,33 @@ async fn fetch_playback_range(
         }
     }
     None
+}
+
+fn playback_candidates(urls: &[String]) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..urls.len())
+        .filter(|index| !urls[..*index].contains(&urls[*index]))
+        .collect();
+    indices.sort_by_key(|index| {
+        let Ok(url) = url::Url::parse(&urls[*index]) else {
+            return 3;
+        };
+        let host = url.host_str().unwrap_or_default();
+        // Prefer a regular origin over a peer/CDN relay when the API offers
+        // both. Preserve signed URLs byte-for-byte, especially Akamai hdnts.
+        if host.contains(".mcdn.")
+            || url
+                .query_pairs()
+                .any(|(key, value)| key == "os" && value == "mcdn")
+            || url.path().starts_with("/v1/resource")
+        {
+            2
+        } else if host.contains("-302.") {
+            1
+        } else {
+            0
+        }
+    });
+    indices
 }
 
 pub async fn fetch_upstream(
@@ -1148,6 +1324,7 @@ mod tests {
                 42,
                 0,
                 crate::infrastructure::providers::bilibili::PlaybackSource {
+                    quality_id: 30280,
                     audio_url: format!("http://{address}/audio.m4s?secret=not-persisted"),
                     backup_urls: vec![],
                     mime_type: "audio/mp4".into(),
@@ -1172,6 +1349,13 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(b, c);
         assert_eq!(hits.load(Ordering::SeqCst), 1, "same block is fetched once");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while cache.status().unwrap().used_bytes < CHUNK_SIZE {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a probe warms only its bounded cache block");
         assert_eq!(
             cache.status().unwrap().used_bytes,
             CHUNK_SIZE,
@@ -1248,6 +1432,133 @@ mod tests {
         );
         drop(response);
         assert_eq!(reopened.clear().unwrap().used_bytes, 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn signed_candidates_are_ranked_without_rewriting_or_duplicate_fetches() {
+        let urls = vec![
+            "https://a.mcdn.bilivideo.cn/v1/resource?id=1".to_owned(),
+            "https://upos-test.bilivideo.com/upgcxcode/a?sig=a%2Fb%3D&os=cos".to_owned(),
+            "https://mirror.akamaized.net/upgcxcode/a?hdnts=exp%3D123~hmac%3Dabc".to_owned(),
+            "https://upos-test.bilivideo.com/upgcxcode/a?sig=a%2Fb%3D&os=cos".to_owned(),
+        ];
+        let order = super::playback_candidates(&urls);
+        assert_eq!(order, vec![1, 2, 0]);
+        assert_eq!(
+            urls[order[1]],
+            "https://mirror.akamaized.net/upgcxcode/a?hdnts=exp%3D123~hmac%3Dabc"
+        );
+    }
+
+    #[tokio::test]
+    async fn decoder_gets_first_packet_before_rest_of_cache_block_arrives() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("bilimusic-first-packet-{}", uuid::Uuid::new_v4()));
+        let cache =
+            Arc::new(PlaybackCache::open(root.join("media"), root.join("config.json")).unwrap());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let signal = release.clone();
+        let router = Router::new().route(
+            "/audio",
+            get(move || {
+                let signal = signal.clone();
+                async move {
+                    let stream = futures_util::stream::once(async {
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![1u8; 1024]))
+                    })
+                    .chain(futures_util::stream::once(async move {
+                        signal.notified().await;
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![
+                            2u8;
+                            CHUNK_SIZE as usize
+                                - 1024
+                        ]))
+                    }));
+                    Response::builder()
+                        .status(206)
+                        .header(
+                            "content-range",
+                            format!("bytes 0-{}/{}", CHUNK_SIZE - 1, CHUNK_SIZE),
+                        )
+                        .header("content-length", CHUNK_SIZE)
+                        .body(Body::from_stream(stream))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let proxy = MediaProxy::start_inner(Some(cache.clone()), None)
+            .await
+            .unwrap();
+        let url = proxy
+            .register_audio(
+                "test:1",
+                "BVtest",
+                1,
+                0,
+                crate::infrastructure::providers::bilibili::PlaybackSource {
+                    quality_id: 30280,
+                    audio_url: format!("http://{address}/audio"),
+                    backup_urls: vec![],
+                    mime_type: "audio/mp4".into(),
+                    codecs: "mp4a.40.2".into(),
+                    bandwidth: 128000,
+                },
+            )
+            .await;
+        let client = reqwest::Client::new();
+        let probe = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.get(&url).header("range", "bytes=0-1").send(),
+        )
+        .await
+        .expect("probe headers must not wait for a full block")
+        .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), probe.bytes())
+                .await
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            &[1u8, 1]
+        );
+        let mut response = tokio::time::timeout(
+            Duration::from_secs(2),
+            reqwest::Client::new()
+                .get(url)
+                .header("range", format!("bytes=0-{}", CHUNK_SIZE - 1))
+                .send(),
+        )
+        .await
+        .expect("headers must not await a complete block")
+        .unwrap();
+        assert_eq!(response.status(), 206);
+        let first = tokio::time::timeout(Duration::from_secs(2), response.chunk())
+            .await
+            .expect("decoder must receive a partial packet")
+            .unwrap()
+            .unwrap();
+        assert!(!first.is_empty());
+        assert!(first.iter().all(|v| *v == 1));
+        assert_eq!(
+            cache.status().unwrap().used_bytes,
+            0,
+            "partial packets are never persisted as complete blocks"
+        );
+        release.notify_one();
+        let mut size = first.len();
+        while let Some(bytes) = response.chunk().await.unwrap() {
+            size += bytes.len();
+        }
+        assert_eq!(size, CHUNK_SIZE as usize);
+        assert_eq!(cache.status().unwrap().used_bytes, CHUNK_SIZE);
+        upstream.abort();
         std::fs::remove_dir_all(root).unwrap();
     }
 

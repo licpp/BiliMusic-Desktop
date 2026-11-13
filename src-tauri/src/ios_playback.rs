@@ -96,6 +96,7 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
                 }
                 let pages = provider.video_pagelist(bvid).await?;
                 Ok(VideoParts {
+                    published_at: track["publishedAt"].as_u64(),
                     bvid: bvid.to_owned(),
                     aid,
                     title: track["videoTitle"]
@@ -158,6 +159,7 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
         app.state::<MediaProxy>(),
         stored.id.clone(),
         Some(refresh),
+        None,
     )
     .await
     .map_err(|e| e.message)?;
@@ -198,7 +200,16 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
             0.0
         }
     };
-    Ok(json!({"url":url, "track":track, "position":position, "entryId":entry_id, "parts":parts}))
+    let lyrics = {
+        let db = app.state::<Database>();
+        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        crate::infrastructure::repositories::lyrics::LyricsRepository::get(&connection, &stored.id)
+            .ok()
+            .flatten()
+    };
+    Ok(
+        json!({"url":url, "track":track, "position":position, "entryId":entry_id, "parts":parts, "lyrics":lyrics}),
+    )
 }
 
 /// Swift owns the input C string; copy it synchronously before starting asynchronous work.

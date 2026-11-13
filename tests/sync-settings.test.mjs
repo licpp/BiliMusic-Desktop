@@ -13,8 +13,10 @@ const output = await build({
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: 'invoke', namespace: 'test' }))
     builder.onResolve({ filter: /services\/(sync|desktopApi)$/ }, args => ({ path: args.path.endsWith('/sync') ? 'sync' : 'api', namespace: 'test' }))
     builder.onResolve({ filter: /player\/playerStore$/ }, () => ({ path: 'player', namespace: 'test' }))
+    builder.onResolve({ filter: /shared\/ActionMenu$/ }, () => ({ path: 'menu', namespace: 'test' }))
     builder.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({ contents: {
-      icons: `export const Cloud=()=>null; export const LoaderCircle=()=>null; export const RefreshCw=()=>null;`,
+      icons: `export const Cloud=()=>null; export const LoaderCircle=()=>null; export const RefreshCw=()=>null; export const Check=()=>null; export const ChevronDown=()=>null;`,
+      menu: `export const ActionMenu=()=>null;`,
       'react-hooks': `export const useState = initial => globalThis.syncSettingsTest.useState(initial); export const useEffect = () => {};`,
       queries: `export const useQuery = () => globalThis.syncSettingsTest.query; export const useQueryClient = () => ({invalidateQueries:async()=>{}});`,
       invoke: `export const invoke = (...args) => globalThis.syncSettingsTest.invoke(...args);`,
@@ -52,7 +54,7 @@ function setup(fail = false) {
   }
   const module = {exports:{}}
   new Function('require','module','exports',output.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports)
-  const render = () => { cursor = 0; return module.exports.SyncSettings() }
+  const render = props => { cursor = 0; return module.exports.SyncSettings(props) }
   return {calls,render}
 }
 async function connect(render) {
@@ -86,4 +88,32 @@ test('failed connection retains editable settings and shows the error without a 
   assert.ok(elements(render(), node => node.type === 'form').length)
   const message = elements(render(), node => node.props?.role === 'status')[0]
   assert.equal(message.props.children, '连接失败，请重试')
+})
+
+test('sync service picker keeps unavailable cloud disabled and choosing a service clears consent',()=>{
+  const {render}=setup()
+  elements(render(),node=>node.type==='button'&&node.props['aria-expanded']===false)[0].props.onClick()
+  const consent=elements(render(),node=>node.type==='input'&&node.props.type==='checkbox').at(-1)
+  consent.props.onChange({target:{checked:true}})
+  const picker=elements(render(),node=>node.props?.panelClassName==='sync-provider-menu')[0]
+  let closed=false
+  const options=elements(picker.props.children(()=>{closed=true}),node=>node.props?.role==='menuitemradio')
+  assert.equal(options.length,2)
+  assert.equal(options[1].props.disabled,true)
+  assert.equal(options[0].props['aria-checked'],true)
+  options[0].props.onClick()
+  assert.equal(closed,true)
+  assert.equal(elements(render(),node=>node.type==='input'&&node.props.type==='checkbox').at(-1).props.checked,false)
+})
+
+test('inline sync opens its connection fields directly and retains consent before connecting',async()=>{
+  const {render,calls}=setup()
+  const form=elements(render({embedded:true}),node=>node.type==='form')[0]
+  assert.ok(form)
+  assert.equal(elements(render({embedded:true}),node=>node.props?.className==='sync-heading').length,0)
+  assert.equal(elements(form,node=>node.type==='button'&&node.props.children==='取消').length,0)
+  elements(form,node=>node.type==='input'&&node.props.type==='checkbox').at(-1).props.onChange({target:{checked:true}})
+  elements(render({embedded:true}),node=>node.type==='form')[0].props.onSubmit({preventDefault(){}})
+  await new Promise(setImmediate)
+  assert.deepEqual(calls.map(call=>call[0]),['sync_connect','preview'])
 })

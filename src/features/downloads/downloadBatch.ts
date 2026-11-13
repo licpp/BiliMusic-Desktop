@@ -1,3 +1,4 @@
+import type { DownloadOptions } from './downloadRequest'
 import type { QueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import type { Track } from '../../domain/track'
@@ -10,13 +11,13 @@ export const useDownloadBatch = create<{ busy: boolean; batch: Batch | null }>((
 
 window.addEventListener('bilimusic-account-changing', () => useDownloadBatch.setState({ batch: null }))
 
-export async function startDownloadBatch(tracks: Track[], client: QueryClient) {
+export async function startDownloadBatch(tracks: Track[], client: QueryClient, options: DownloadOptions) {
   const items = [...new Map(tracks.filter(track => track.source.provider === 'bilibili').map(track => [track.id, track])).values()]
   if (!items.length || useDownloadBatch.getState().busy) return false
   const epoch = accountEpoch()
   useDownloadBatch.setState({ busy: true, batch: null })
   try {
-    const directory = await getDownloadDirectory() || await chooseDownloadDirectory()
+    const directory = options.directory || await getDownloadDirectory() || await chooseDownloadDirectory()
     if (!directory || epoch !== accountEpoch()) return false
     const batch: Batch = { total: items.length, completed: 0, skipped: 0, failures: [] }
     useDownloadBatch.setState({ batch })
@@ -27,7 +28,7 @@ export async function startDownloadBatch(tracks: Track[], client: QueryClient) {
           try {
             const saved = await saveLibraryTrack(track)
             if (epoch !== accountEpoch()) break
-            const request = downloadTrack(saved, directory, true)
+            const request = downloadTrack(saved, directory, options.skipExisting ?? false, options.audioId, options.exportFormat)
             void client.invalidateQueries({ queryKey: ['downloads'] })
             if (await request) batch.completed++
             else batch.skipped++

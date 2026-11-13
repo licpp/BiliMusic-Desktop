@@ -332,6 +332,7 @@ impl Doc {
 pub struct DavState {
     pub doc: Doc,
     pub needs_publish: bool,
+    pub linked: Option<Box<DavState>>,
 }
 fn folder(c: &Config) -> String {
     format!(
@@ -387,8 +388,56 @@ fn missing_ancestor(data: &[u8]) -> bool {
     }
 }
 pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
+    let mut main = read_vault(c, s, false).await?;
+    // A missing account root cannot contain an extension. Preserve first-connect
+    // read-only checks without doubling requests for an uninitialized vault.
+    if main.version.is_none() {
+        if let Some(state) = main.dav.as_mut() {
+            state.linked = Some(Box::new(DavState {
+                doc: Doc::empty(&c.uid),
+                needs_publish: false,
+                linked: None,
+            }));
+        }
+        return Ok(main);
+    }
+    let linked = read_vault(c, s, true).await?;
+    if linked
+        .snapshot
+        .records
+        .values()
+        .any(|r| r.kind != "linkedFolder")
+    {
+        return Err("关联收藏夹同步区包含不支持的资料".into());
+    }
+    if main
+        .snapshot
+        .records
+        .values()
+        .any(|r| r.kind == "linkedFolder")
+    {
+        return Err("关联收藏夹清单应保存在独立同步区".into());
+    }
+    main.snapshot.records.extend(linked.snapshot.records);
+    main.snapshot.validate(&c.uid)?;
+    main.conflicts.extend(linked.conflicts);
+    if let Some(state) = main.dav.as_mut() {
+        let linked = linked.dav.ok_or("关联收藏夹同步状态缺失")?;
+        // An absent empty extension needs no write or device file.
+        state.needs_publish |= linked.needs_publish
+            && (!linked.doc.fields.is_empty()
+                || !main.snapshot.linked_folders().records.is_empty());
+        state.linked = Some(Box::new(linked));
+    }
+    Ok(main)
+}
+async fn read_vault(c: &Config, s: &Secret, linked: bool) -> Result<Remote, String> {
     let http = client()?;
-    let root = folder(c);
+    let root = if linked {
+        format!("{}linked-folders-v1/", folder(c))
+    } else {
+        folder(c)
+    };
     let response=request(&http,"PROPFIND",root.clone(),s).header("Depth","1").header("Content-Type","application/xml").body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>").send().await.map_err(|_|"无法连接坚果云")?;
     // Nutstore returns 409 AncestorsNotFound, rather than 404, when the
     // application parent directory has never been created. Keep connect read-only.
@@ -413,6 +462,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
             dav: Some(DavState {
                 doc: Doc::empty(&c.uid),
                 needs_publish: true,
+                linked: None,
             }),
             conflicts: vec![],
             legacy_cloud: false,
@@ -474,6 +524,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         version: Some("device-registers-v1".into()),
         dav: Some(DavState {
             needs_publish: own_doc.as_ref() != Some(&doc),
+            linked: None,
             doc,
         }),
         conflicts,
@@ -553,39 +604,208 @@ pub async fn write(
     remote: &Remote,
     snapshot: &Snapshot,
 ) -> Result<bool, String> {
-    let mut doc = remote.dav.as_ref().ok_or("坚果云状态缺失")?.doc.clone();
-    doc.update(&c.device_id, snapshot)?;
-    let payload = serde_json::to_vec(&doc).map_err(|_| "坚果云快照编码失败")?;
-    if payload.len() > MAX_DOC_BYTES {
-        return Err("坚果云设备快照超过12MB，请清理旧设备或导出重建同步库".into());
-    }
+    let state = remote.dav.as_ref().ok_or("坚果云状态缺失")?;
+    let mut main = snapshot.clone();
+    main.omit_linked_folders();
+    let linked = snapshot.linked_folders();
     let http = client()?;
     for path in [
         format!("{}/BiliMusic-sync-v1/", c.url.trim_end_matches('/')),
         folder(c),
     ] {
-        let r = request(&http, "MKCOL", path, s)
-            .body("")
-            .send()
-            .await
-            .map_err(|_| "坚果云目录创建失败")?;
-        if !matches!(r.status().as_u16(), 201 | 405) {
-            check(r.status())?;
-        }
+        create_directory(&http, s, path).await?;
     }
-    let r = put_snapshot(
-        &http,
-        format!("{}{}.json", folder(c), c.device_id),
-        s,
-        payload,
-    )
-    .await?;
-    check(r)?;
+    // Publish the extension first. Replaying either file after a partial upload
+    // is idempotent; no baseline is committed until both writes succeed.
+    if let Some(extension) = state.linked.as_ref() {
+        if !linked.records.is_empty() || !extension.doc.fields.is_empty() {
+            let root = format!("{}linked-folders-v1/", folder(c));
+            create_directory(&http, s, root.clone()).await?;
+            write_doc(&http, c, s, &extension.doc, &linked, root).await?;
+        }
+    } else if !linked.records.is_empty() {
+        return Err("关联收藏夹同步状态缺失".into());
+    }
+    write_doc(&http, c, s, &state.doc, &main, folder(c)).await?;
     Ok(true)
+}
+async fn create_directory(http: &reqwest::Client, s: &Secret, path: String) -> Result<(), String> {
+    let r = request(http, "MKCOL", path, s)
+        .body("")
+        .send()
+        .await
+        .map_err(|_| "坚果云目录创建失败")?;
+    if !matches!(r.status().as_u16(), 201 | 405) {
+        check(r.status())?;
+    }
+    Ok(())
+}
+async fn write_doc(
+    http: &reqwest::Client,
+    c: &Config,
+    s: &Secret,
+    previous: &Doc,
+    snapshot: &Snapshot,
+    root: String,
+) -> Result<(), String> {
+    let mut doc = previous.clone();
+    doc.update(&c.device_id, snapshot)?;
+    let payload = serde_json::to_vec(&doc).map_err(|_| "坚果云快照编码失败")?;
+    if payload.len() > MAX_DOC_BYTES {
+        return Err("坚果云设备快照超过12MB，请清理旧设备或导出重建同步库".into());
+    }
+    check(put_snapshot(http, format!("{}{}.json", root, c.device_id), s, payload).await?)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(Default)]
+    struct MemoryDav {
+        directories: BTreeSet<String>,
+        files: BTreeMap<String, Vec<u8>>,
+        fail_main_once: bool,
+    }
+    async fn memory_dav() -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<MemoryDav>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use axum::{extract::State, http::StatusCode, response::IntoResponse};
+        let memory = std::sync::Arc::new(std::sync::Mutex::new(MemoryDav::default()));
+        memory.lock().unwrap().directories.insert("/dav/".into());
+        let app = axum::Router::new()
+            .fallback(
+                |State(memory): State<std::sync::Arc<std::sync::Mutex<MemoryDav>>>,
+                 request: axum::extract::Request| async move {
+                    let method = request.method().as_str().to_owned();
+                    let path = request.uri().path().to_owned();
+                    let body = axum::body::to_bytes(request.into_body(), MAX_DOC_BYTES)
+                        .await
+                        .unwrap();
+                    let mut m = memory.lock().unwrap();
+                    match method.as_str() {
+                        "PROPFIND" if m.directories.contains(&path) => {
+                            let hrefs = m
+                                .files
+                                .keys()
+                                .chain(m.directories.iter())
+                                .filter(|value| {
+                                    value.starts_with(&path)
+                                        && !value[path.len()..].trim_end_matches('/').contains('/')
+                                })
+                                .map(|value| {
+                                    format!("<d:response><d:href>{value}</d:href></d:response>")
+                                })
+                                .collect::<String>();
+                            (
+                                StatusCode::MULTI_STATUS,
+                                format!("<d:multistatus xmlns:d=\"DAV:\">{hrefs}</d:multistatus>"),
+                            )
+                                .into_response()
+                        }
+                        "MKCOL" => {
+                            let existed = !m.directories.insert(path);
+                            (if existed {
+                                StatusCode::METHOD_NOT_ALLOWED
+                            } else {
+                                StatusCode::CREATED
+                            })
+                            .into_response()
+                        }
+                        "PUT" => {
+                            if m.fail_main_once && !path.contains("linked-folders-v1") {
+                                m.fail_main_once = false;
+                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                            }
+                            m.files.insert(path, body.to_vec());
+                            StatusCode::CREATED.into_response()
+                        }
+                        "GET" => m
+                            .files
+                            .get(&path)
+                            .cloned()
+                            .map(|body| (StatusCode::OK, body).into_response())
+                            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response()),
+                        _ => StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            )
+            .with_state(memory.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/dav/", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, memory, task)
+    }
+    fn linked_snapshot(id: i64, name: &str) -> Snapshot {
+        let mut snapshot = Snapshot::empty("42");
+        snapshot.records.insert(
+            format!("linkedFolder:{id}"),
+            Record {
+                kind: "linkedFolder".into(),
+                fields: serde_json::from_value(json!({"folderId":id,"name":name})).unwrap(),
+            },
+        );
+        snapshot
+    }
+    #[tokio::test]
+    async fn linked_vault_merges_offline_devices_unlinks_and_keeps_legacy_files_unchanged() {
+        let (url, memory, server) = memory_dav().await;
+        let secret = Secret {
+            username: "test".into(),
+            password: "test".into(),
+        };
+        let a = Config {
+            url,
+            uid: "42".into(),
+            device_id: uuid::Uuid::new_v4().to_string(),
+            ..Config::default()
+        };
+        let b = Config {
+            device_id: uuid::Uuid::new_v4().to_string(),
+            ..a.clone()
+        };
+        let a0 = read(&a, &secret).await.unwrap();
+        let b0 = read(&b, &secret).await.unwrap();
+        write(&a, &secret, &a0, &linked_snapshot(1, "设备A"))
+            .await
+            .unwrap();
+        write(&b, &secret, &b0, &linked_snapshot(2, "设备B"))
+            .await
+            .unwrap();
+        let combined = read(&a, &secret).await.unwrap();
+        assert_eq!(combined.snapshot.linked_folders().records.len(), 2);
+        assert!(combined.conflicts.is_empty());
+        // Legacy clients read only account-root UUID files. They never encounter
+        // a new record kind, and their writes cannot delete extension records.
+        let legacy = read_vault(&a, &secret, false).await.unwrap();
+        assert!(legacy.snapshot.records.is_empty());
+        for (path, bytes) in &memory.lock().unwrap().files {
+            if !path.contains("linked-folders-v1") {
+                assert!(!String::from_utf8_lossy(bytes).contains("linkedFolder"));
+            }
+        }
+        let mut removed = combined.snapshot.clone();
+        removed.records.remove("linkedFolder:1");
+        write(&a, &secret, &combined, &removed).await.unwrap();
+        // B was offline during A's unlink; publishing its unchanged older view
+        // must acknowledge, rather than resurrect, A's previous entry.
+        write(&b, &secret, &combined, &combined.snapshot)
+            .await
+            .unwrap();
+        let after = read(&b, &secret).await.unwrap();
+        assert!(!after.snapshot.records.contains_key("linkedFolder:1"));
+        assert!(after.snapshot.records.contains_key("linkedFolder:2"));
+        write(&b, &secret, &after, &after.snapshot).await.unwrap();
+        assert_eq!(read(&a, &secret).await.unwrap().snapshot, after.snapshot);
+        // A partial dual-file upload can safely be retried without losing links.
+        let mut added = after.snapshot.clone();
+        added.records.extend(linked_snapshot(3, "可重试").records);
+        memory.lock().unwrap().fail_main_once = true;
+        assert!(write(&a, &secret, &after, &added).await.is_err());
+        write(&a, &secret, &after, &added).await.unwrap();
+        assert_eq!(read(&a, &secret).await.unwrap().snapshot, added);
+        server.abort();
+    }
     async fn put_server(
         attempts: usize,
         status: Option<u16>,

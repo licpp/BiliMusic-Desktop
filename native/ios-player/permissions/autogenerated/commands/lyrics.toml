@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-lyrics"
+description = "Enables the lyrics command without any pre-configured scope."
+commands.allow = ["lyrics"]
+
+[[permission]]
+identifier = "deny-lyrics"
+description = "Denies the lyrics command without any pre-configured scope."
+commands.deny = ["lyrics"]

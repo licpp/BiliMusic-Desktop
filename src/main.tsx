@@ -1,3 +1,7 @@
+import { FloatingLyricsUnlockWindow } from './features/lyrics/FloatingLyricsUnlockWindow'
+import { SubtitleController } from './features/lyrics/useBiliSubtitles'
+import { FloatingLyricsWindow } from './features/lyrics/FloatingLyricsWindow'
+import { startFloatingLyrics } from './services/floatingLyrics'
 import { startCreatorQueue } from './services/creatorQueue'
 import { startPreloadingNextTrack } from './features/player/preloadNextTrack'
 import { startListeningStatistics } from './services/listeningStatistics'
@@ -31,18 +35,18 @@ const queryClient = new QueryClient({
   },
 })
 
-startCloudSync(queryClient)
-startAutomaticLyrics()
-startListeningStatistics()
-startPreloadingNextTrack()
-startCreatorQueue()
-
+const floatingMode = new URLSearchParams(location.search).get('window')
+const floating = !isMobile && (floatingMode === 'lyrics' || floatingMode === 'lyrics-unlock')
+if (!floating) {
+  startCloudSync(queryClient)
+  startAutomaticLyrics()
+  startListeningStatistics()
+  startPreloadingNextTrack()
+  startCreatorQueue()
+  startFloatingLyrics()
+}
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>,
+  <StrictMode><QueryClientProvider client={queryClient}>{floating ? floatingMode === 'lyrics-unlock' ? <FloatingLyricsUnlockWindow/> : <FloatingLyricsWindow/> : <><SubtitleController/><App/></>}</QueryClientProvider></StrictMode>,
 )
 
 import './styles/collections.css'

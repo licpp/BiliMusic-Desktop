@@ -1,3 +1,4 @@
+import { PublishedDate } from '../../shared/PublishedDate'
 import { FolderEditor, FolderMenu } from './CollectionFolderControls'
 import { CreatorPage } from './CreatorsView'
 import type { Track } from '../../domain/track'
@@ -54,7 +55,7 @@ export function CollectionMenu({item,contextPosition,onOpen,additionalActions}:{
   return <><ActionMenu sheet label={`合集操作：${item.title||item.bvid}`} contextPosition={contextPosition}>{close=><>
     {additionalActions?.(close)}
     {onOpen&&<button role="menuitem" onClick={()=>{close();onOpen()}}><Play size={16}/>打开合集</button>}
-    <button role="menuitem" onClick={()=>{close();setPicking(true)}}><FolderInput size={16}/>收藏到…</button>
+    <button role="menuitem" onClick={()=>{close();setPicking(true)}}><FolderInput size={16}/>收藏到文件夹…</button>
     {saved&&<button role="menuitem" disabled={busy} onClick={()=>{close();void change('remove')}}><Bookmark size={16}/>取消收藏</button>}
   </>}</ActionMenu>{error&&<p className="inline-error" role="alert">{error}</p>}{picking&&<CollectionDialog title="收藏到" onClose={()=>setPicking(false)}><p>{item.title||item.bvid}</p><div className="collection-folder-options">{[{id:'',name:'默认收藏夹'},...(q.data?.folders||[]).filter(f=>f.scope!=='creators')].map(f=><button key={f.id} disabled={busy} onClick={()=>void change(saved?'move':'save',f.id)}><Folder size={17}/><span>{f.name}</span>{saved?.folderId===f.id&&<Check size={17}/>}</button>)}</div><FolderEditor action="create" onDone={()=>void client.invalidateQueries({queryKey:['collections']})}/>{error&&<p role="alert" className="inline-error">{error}</p>}</CollectionDialog>}</>
 }
@@ -113,6 +114,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
     return !previous
   })
   const entries = <div className="collection-entries">
+    {children}
     {visibleItems.map(item => {
       const title = item.title || `合集 ${item.bvid}`
       const onOpen = () => onSelect(item)
@@ -122,7 +124,6 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
         drag={canMove && !isMobile ? { folderId: item.folderId, onMove: target => move.mutate({ item, target }) } : undefined}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
     })}
-    {children}
   </div>
   if (sidebar) return <section className="collections-sidebar">
     <div className="collections-heading">
@@ -189,7 +190,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       const refresh = forceRefresh.current
       forceRefresh.current = false
       const catalog = await getSeason(reference.mid, reference.seasonId, refresh)
-      return { title: catalog.summary.title, coverUrl: catalog.summary.coverUrl, uploaderName: catalog.summary.uploaderName,
+      return { publishedAt: undefined, title: catalog.summary.title, coverUrl: catalog.summary.coverUrl, uploaderName: catalog.summary.uploaderName,
         tracks: catalog.tracks.map(video => seasonVideoRow(video, catalog.summary)), catalog, season: undefined, unavailable: catalog.unavailable }
     }
     const video=await getVideoParts(item.bvid);return {...video,tracks:video.parts.map(p=>toTrack(video,p)),catalog:undefined,unavailable:0}
@@ -275,7 +276,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       <Artwork src={detail?.coverUrl || item.coverUrl}/>
       <div>
         <h2>{detail?.title || item.title || 'B 站合集'}</h2>
-        <p>{detail?.uploaderName || item.uploaderName}{detail && <span> · {tracks.length} {unit}</span>}</p>
+        <p>{detail?.uploaderName || item.uploaderName}{detail && <span> · {tracks.length} {unit}</span>}</p>{!reference && <PublishedDate value={detail?.publishedAt}/>}
       </div>
       <CollectionBookmark item={item}/>
     </header>

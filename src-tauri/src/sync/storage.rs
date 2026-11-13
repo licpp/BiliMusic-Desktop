@@ -38,6 +38,16 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
                 },
             );
         }
+        // Bilibili owns the videos. Sync only which folders this account linked.
+        let mut q=c.prepare("SELECT folder_id,name FROM linked_bili_folders WHERE CAST(owner_uid AS TEXT)=?1 ORDER BY folder_id LIMIT 501")?;
+        for row in q.query_map([uid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, name) = row?;
+            add(
+                format!("linkedFolder:{id}"),
+                "linkedFolder",
+                json!({"folderId":id,"name":name}),
+            );
+        }
         let mut q = c.prepare("SELECT bvid,folder_id FROM collections LIMIT 2001")?;
         for row in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
             let (bvid, folder) = row?;
@@ -163,7 +173,8 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
         }
     }
     s.compact(history);
-    s.validate(uid).map_err(|e| format!("本机同步资料校验失败：{e}"))?;
+    s.validate(uid)
+        .map_err(|e| format!("本机同步资料校验失败：{e}"))?;
     Ok(s)
 }
 fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
@@ -176,6 +187,41 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
         .map_err(|e| e.to_string())?;
     let tx = c;
     let result = (|| -> rusqlite::Result<()> {
+        // Removing a link never issues a delete to Bilibili. Keep cached videos
+        // and local ordering for surviving links; new devices hydrate from Bilibili.
+        let owner = s
+            .uid
+            .parse::<i64>()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let linked = s.linked_folders();
+        let mut query =
+            tx.prepare("SELECT folder_id FROM linked_bili_folders WHERE owner_uid=?1")?;
+        let existing = query
+            .query_map([owner], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in existing {
+            if !linked.records.contains_key(&format!("linkedFolder:{id}")) {
+                tx.execute(
+                    "DELETE FROM linked_bili_folders WHERE folder_id=?1 AND owner_uid=?2",
+                    params![id, owner],
+                )?;
+            }
+        }
+        for r in linked.records.values() {
+            let id = number(r, "folderId");
+            let other_owner: Option<i64> = tx
+                .query_row(
+                    "SELECT owner_uid FROM linked_bili_folders WHERE folder_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if other_owner.is_some_and(|value| value != owner) {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            tx.execute("INSERT INTO linked_bili_folders(folder_id,owner_uid,name,videos_json,refreshed_at) VALUES(?1,?2,?3,'[]',0) ON CONFLICT(folder_id) DO UPDATE SET name=excluded.name",params![id,owner,text(r,"name")])?;
+            tx.execute("INSERT OR IGNORE INTO linked_bili_folder_order(folder_id,added_at) VALUES(?1,(julianday('now')-2440587.5)*86400)",[id])?;
+        }
         // Updating surviving rows keeps their local creation order stable.
         for (table, kind) in [
             ("collection_folders", "collectionFolder"),
@@ -361,22 +407,179 @@ pub fn prune(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn linked_db() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
+        c
+    }
+    fn insert_link(c: &Connection, id: i64, owner: i64, name: &str) {
+        c.execute("INSERT INTO linked_bili_folders VALUES(?1,?2,?3,'[{\"bvid\":\"BVcached\",\"title\":\"private cached title\"}]',123)",params![id,owner,name]).unwrap();
+        c.execute("INSERT INTO linked_bili_folder_order VALUES(?1,9)", [id])
+            .unwrap();
+    }
+    #[test]
+    fn linked_folder_sync_transfers_identity_without_cached_bili_data_and_preserves_local_cache() {
+        let source = linked_db();
+        insert_link(&source, 12, 42, "我的 B站歌单");
+        insert_link(&source, 99, 43, "另一个账号");
+        let snapshot = export(&source, "42", false).unwrap();
+        assert_eq!(snapshot.linked_folders().records.len(), 1);
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(!json.contains("BVcached"));
+        assert!(!json.contains("private cached title"));
+        assert!(!json.contains("另一个账号"));
+        let destination = linked_db();
+        apply(&destination, &snapshot, false).unwrap();
+        let row=destination.query_row("SELECT owner_uid,name,videos_json,refreshed_at FROM linked_bili_folders WHERE folder_id=12",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,i64>(3)?))).unwrap();
+        assert_eq!(row, (42, "我的 B站歌单".into(), "[]".into(), 0));
+        assert_eq!(export(&destination, "42", false).unwrap(), snapshot);
+        // A sync rename preserves this device's refresh cache and added order.
+        let mut renamed = snapshot.clone();
+        renamed
+            .records
+            .get_mut("linkedFolder:12")
+            .unwrap()
+            .fields
+            .insert("name".into(), json!("新名称"));
+        apply(&source, &renamed, false).unwrap();
+        let (videos,at)=source.query_row("SELECT videos_json,added_at FROM linked_bili_folders JOIN linked_bili_folder_order USING(folder_id) WHERE folder_id=12",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,f64>(1)?))).unwrap();
+        assert!(videos.contains("BVcached"));
+        assert_eq!(at, 9.0);
+        // A remote unlink removes only this account's local entry and its order.
+        apply(&source, &Snapshot::empty("42"), false).unwrap();
+        assert_eq!(
+            source
+                .query_row(
+                    "SELECT COUNT(*) FROM linked_bili_folders WHERE owner_uid=42",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            source
+                .query_row(
+                    "SELECT COUNT(*) FROM linked_bili_folder_order WHERE folder_id=12",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            source
+                .query_row(
+                    "SELECT COUNT(*) FROM linked_bili_folders WHERE owner_uid=43",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn linked_sync_merges_first_import_and_propagates_unlink_without_reimporting_stale_devices() {
+        let a = linked_db();
+        let b = linked_db();
+        insert_link(&a, 1, 42, "A");
+        insert_link(&b, 2, 42, "B");
+        let empty = Snapshot::empty("42");
+        let sa = export(&a, "42", false).unwrap();
+        let sb = export(&b, "42", false).unwrap();
+        let (merged, conflicts) = merge(&empty, &sa, &sb, None);
+        assert!(conflicts.is_empty());
+        apply(&a, &merged, false).unwrap();
+        apply(&b, &merged, false).unwrap();
+        a.execute("DELETE FROM linked_bili_folders WHERE folder_id=1", [])
+            .unwrap();
+        let deleted = export(&a, "42", false).unwrap();
+        let (next, conflicts) = merge(&merged, &export(&b, "42", false).unwrap(), &deleted, None);
+        assert!(conflicts.is_empty());
+        apply(&b, &next, false).unwrap();
+        assert!(
+            !export(&b, "42", false)
+                .unwrap()
+                .records
+                .contains_key("linkedFolder:1")
+        );
+        assert!(next.records.contains_key("linkedFolder:2"));
+    }
+    #[test]
+    fn linked_records_validate_ids_owners_and_reject_extra_raw_fields() {
+        let c = linked_db();
+        insert_link(&c, 12, 42, "有效名称");
+        let snapshot = export(&c, "42", false).unwrap();
+        for id in [
+            json!(0),
+            json!(-1),
+            json!("12"),
+            json!(12.5),
+            json!(9_007_199_254_740_992_i64),
+        ] {
+            let mut invalid = snapshot.clone();
+            invalid
+                .records
+                .get_mut("linkedFolder:12")
+                .unwrap()
+                .fields
+                .insert("folderId".into(), id);
+            assert!(invalid.validate("42").is_err());
+        }
+        let mut extra = snapshot.clone();
+        extra
+            .records
+            .get_mut("linkedFolder:12")
+            .unwrap()
+            .fields
+            .insert("videos".into(), json!("private"));
+        assert!(extra.validate("42").is_err());
+        let other = linked_db();
+        insert_link(&other, 12, 43, "其他账号");
+        assert!(apply(&other, &snapshot, false).is_err());
+        assert_eq!(
+            other
+                .query_row(
+                    "SELECT name FROM linked_bili_folders WHERE folder_id=12",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "其他账号"
+        );
+    }
     #[test]
     fn imported_playlists_and_members_round_trip_without_changing_identity() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
         let id = "import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579";
-        c.execute("INSERT INTO playlists(id,name) VALUES(?1,'Imported')", [id]).unwrap();
+        c.execute("INSERT INTO playlists(id,name) VALUES(?1,'Imported')", [id])
+            .unwrap();
         c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1);
             INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track');
             INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579','bilibili:BV123:1',0);").unwrap();
         let snapshot = export(&c, "42", false).unwrap();
         let destination = Connection::open_in_memory().unwrap();
-        destination.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        destination
+            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
         apply(&destination, &snapshot, false).unwrap();
         assert_eq!(snapshot, export(&destination, "42", false).unwrap());
-        assert_eq!(destination.query_row("SELECT playlist_id FROM playlist_items", [], |r| r.get::<_, String>(0)).unwrap(), id);
-        for invalid in ["import:", "import:bad", "import:import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579", "system:favorites"] {
+        assert_eq!(
+            destination
+                .query_row("SELECT playlist_id FROM playlist_items", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            id
+        );
+        for invalid in [
+            "import:",
+            "import:bad",
+            "import:import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579",
+            "system:favorites",
+        ] {
             let mut bad = snapshot.clone();
             let mut playlist = bad.records.remove(&format!("playlist:{id}")).unwrap();
             playlist.fields.insert("id".into(), json!(invalid));

@@ -22,6 +22,8 @@ pub struct Season {
 #[serde(rename_all = "camelCase")]
 pub struct SeasonTrack {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub play_count: Option<u64>,
     pub bvid: String,
     pub aid: i64,
@@ -156,6 +158,10 @@ fn season_member(archive: &Value, episode: Option<&Value>) -> SeasonTrack {
         (hint == 0 || hint == first.cid).then_some(pages)
     });
     SeasonTrack {
+        published_at: archive["pubdate"]
+            .as_u64()
+            .filter(|date| *date > 0)
+            .or_else(|| arc["pubdate"].as_u64().filter(|date| *date > 0)),
         play_count: archive["stat"]["view"]
             .as_u64()
             .or_else(|| arc["stat"]["view"].as_u64())
@@ -553,26 +559,7 @@ impl BilibiliProvider {
     }
     pub async fn media_options(&self, bvid: &str, cid: i64) -> Result<MediaOptions, ProviderError> {
         let dash = self.play_dash(bvid, cid, true).await?;
-        let mut audio: Vec<_> = dash
-            .audio
-            .iter()
-            .filter(|s| s.codecs.starts_with("mp4a"))
-            .map(|s| QualityOption {
-                id: s.id,
-                label: format!(
-                    "{} · 约 {} kbps",
-                    match s.id {
-                        30280 => "高品质",
-                        30232 => "标准",
-                        30216 => "流畅",
-                        _ => "AAC",
-                    },
-                    s.bandwidth / 1000
-                ),
-            })
-            .collect();
-        audio.sort_by_key(|s| s.id);
-        audio.dedup_by_key(|s| s.id);
+        let audio = audio_options(&dash);
         let mut video: Vec<_> = dash
             .video
             .iter()
@@ -604,7 +591,7 @@ mod catalog_tests {
     #[test]
     fn complete_snapshot_distinguishes_single_and_multi_part_videos() {
         let raw = json!({"ep_count":2,"sections":[{"episodes":[
-            {"bvid":"BVsingle","aid":1,"cid":11,"arc":{"title":"Video title","videos":0},"pages":[{"cid":11,"page":1,"part":"upload filename","duration":20}]},
+            {"bvid":"BVsingle","aid":1,"cid":11,"arc":{"title":"Video title","videos":0,"pubdate":1700000000},"pages":[{"cid":11,"page":1,"part":"upload filename","duration":20}]},
             {"bvid":"BVmulti","aid":2,"cid":21,"arc":{"title":"Second video","videos":0},"pages":[{"cid":21,"page":1,"part":"First","duration":20},{"cid":22,"page":2,"part":"Second","duration":21}]}
         ]}]});
         let summary = SeasonSummary {
@@ -615,6 +602,8 @@ mod catalog_tests {
             uploader_name: String::new(),
         };
         let season = complete_season(&raw, &summary, "BVsingle").unwrap();
+        assert_eq!(season.tracks[0].published_at, Some(1700000000));
+        assert_eq!(season.tracks[1].published_at, None);
         let single = season.tracks[0].parts.as_ref().unwrap();
         assert_eq!(single.len(), 1);
         assert_eq!(single[0].title, "Video title");

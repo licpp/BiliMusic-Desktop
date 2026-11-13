@@ -1,3 +1,4 @@
+import { registerOverlay, isTopOverlay } from './overlayStack'
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useCompactLayout } from './useCompactLayout'
@@ -13,6 +14,8 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
   useEffect(() => { onOpenChange?.(open); return () => { if (open) onOpenChange?.(false) } }, [open, onOpenChange])
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
+  const portal = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => { if (position && portal.current) return registerOverlay(portal.current) }, [Boolean(position)])
   const movedHandle = useRef(false)
   const drag = useRef<{ id: number; y: number } | null>(null)
   const close = () => { drag.current = null; setPosition(null) }
@@ -59,8 +62,8 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
       if ((event.target as HTMLElement).closest('.action-menu-no-scrim, .action-sheet-scrim')) return
       close()
     } }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close(); trigger.current?.focus() } }
-    const back = (event: Event) => { event.preventDefault(); event.stopImmediatePropagation(); close() }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && isTopOverlay(portal.current)) { event.preventDefault(); event.stopImmediatePropagation(); close(); trigger.current?.focus() } }
+    const back = (event: Event) => { if (!isTopOverlay(portal.current)) return; event.preventDefault(); event.stopImmediatePropagation(); close() }
     const scroll = (event: Event) => {
       const scroller = event.target
       // Dismiss only when scrolling moves this menu's anchor. Automatic lyric
@@ -68,13 +71,13 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
       if (scroller === document || scroller === window || (scroller instanceof Element && trigger.current && scroller.contains(trigger.current))) close()
     }
     document.addEventListener('pointerdown', dismiss)
-    document.addEventListener('keydown', escape)
+    document.addEventListener('keydown', escape, true)
     window.addEventListener('bilimusic-back', back, true)
     if (!touch) window.addEventListener('resize', close)
     window.addEventListener('scroll', scroll, true)
     menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
     return () => {
-      document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape)
+      document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape, true)
       window.removeEventListener('bilimusic-back', back, true); window.removeEventListener('resize', close); window.removeEventListener('scroll', scroll, true)
     }
   }, [position, touch])
@@ -83,7 +86,7 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
     if (position) { close(); return }
     const rect = trigger.current!.getBoundingClientRect()
     setPosition({ left: rect.right, top: rect.bottom + 6, anchorTop: rect.top })
-  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel data-touch-sheet={touch || undefined} className={`action-menu-panel ${panelClassName} ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} aria-modal={touch || undefined} onKeyDown={(event) => {
+  }}>{icon ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div ref={portal} className="action-menu-portal"><div className={isSheet ? 'action-sheet-scrim' : `action-menu-no-scrim${floating ? ' action-menu-floating-scrim' : ''}`} onClick={close}/><div ref={menu} data-overflow-panel data-touch-sheet={touch || undefined} className={`action-menu-panel ${panelClassName} ${isSheet ? 'action-menu-sheet' : ''}${floating ? ' action-menu-floating-panel' : ''}`} role={panel ? 'dialog' : 'menu'} aria-label={label} aria-modal={touch || undefined} onKeyDown={(event) => {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key) || (event.target as HTMLElement).matches('input,select,textarea')) return
     event.preventDefault()
     const buttons = [...menu.current!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]

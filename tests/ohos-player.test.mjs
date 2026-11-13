@@ -9,6 +9,7 @@ const output = await build({
     b.onResolve({ filter: /^(@kit\.|libbilimusic_lib)/ }, args => ({ path: args.path, namespace: 'harmony' }))
     b.onLoad({ filter: /.*/, namespace: 'harmony' }, args => ({ contents: args.path === 'libbilimusic_lib.so' ? 'export default globalThis.ohosTest.native' : `
       export const wantAgent = globalThis.ohosTest.wantAgent;
+      export const deviceInfo = { sdkApiVersion: 26 };
       export const hilog = { info() {}, error() {}, warn() {} };
       export const http = globalThis.ohosTest.http;
       export const image = globalThis.ohosTest.image;
@@ -37,7 +38,7 @@ function setup() {
     async play() { this.emit('playing') }
     async pause() { this.emit('paused') }
     async release() { this.emit('released') }
-    seek(ms) { this.currentTime = ms }
+    seek(ms) { this.currentTime = ms; for(const cb of this.callbacks.seekDone ?? []) cb() }
     setSpeed(value) { this.speed = value }
     setVolume(value) { this.volume = value }
   }
@@ -50,7 +51,7 @@ function setup() {
     scope: '123',
     native: { tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
     media: { createAVPlayer: async () => (player = new FakePlayer()) },
-    avSession: { PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { metadata.push(value) }, async setAVPlaybackState() {}, async destroy() {} }) },
+    avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
     background: { BackgroundMode: { AUDIO_PLAYBACK: 2 }, async startBackgroundRunning() { background.push('start') }, async stopBackgroundRunning() { background.push('stop') } },
     asset: { Tag: tags, Accessibility: { DEVICE_FIRST_UNLOCKED: 1 }, ReturnType: { ALL: 1 }, ErrorCode: { NOT_FOUND: 24000002 },
       async update(q, attrs) { if (!secrets.has(key(q))) throw missing(); secrets.set(key(q), attrs.get(tags.SECRET)) },
@@ -151,7 +152,7 @@ test('media session receives decoded cover pixels with Bilibili headers and pres
     await h.plugin.artworkReady
     assert.equal(h.artworkRequests[0].url, 'https://i0.hdslb.com/cover.jpg')
     assert.equal(h.artworkRequests[0].options.header.Referer, 'https://www.bilibili.com/')
-    assert.deepEqual(h.metadata.at(-1), { assetId: 'song', title: '歌曲', artist: '歌手', duration: 180_000, mediaImage: h.pixels[0] })
+    assert.deepEqual(h.metadata.at(-1), { assetId: 'song', title: '歌曲', artist: '歌手', duration: 180_000, mediaImage: h.pixels[0], lyric: '' })
     assert.deepEqual(h.pixels[0].size, { width: 800, height: 450 })
     assert.equal(h.artworkRequests[0].request.destroyed, true)
   } finally { await h.plugin.destroy() }
@@ -211,4 +212,117 @@ test('a pending WebDAV upload does not block native pause or snapshot commands',
     finish({ statusCode: 201 }); await new Promise(setImmediate)
     assert.equal(h.replies.find(r => r.id === 999).value.status, 201)
   } finally { await h.plugin.destroy() }
+})
+
+test('Harmony desktop lyrics reuse the audio session and cover updates preserve their timeline', async () => {
+  const h=setup()
+  try {
+    await h.command('play',{id:'song',title:'歌曲',url:'http://127.0.0.1:1234/media'})
+    await h.command('lyrics',{data:JSON.stringify({action:'update',id:'song',lrc:'[00:01.500]你好'})})
+    assert.equal(h.metadata.at(-1).lyric,'[00:01.500]你好')
+    const result=await h.command('lyrics',{data:JSON.stringify({action:'enable',enabled:true})})
+    assert.equal(result.value.enabled,true)
+    assert.equal(h.mock.desktopLyrics,true)
+    assert.equal(h.mock.desktopLyricVisible,true)
+    assert.equal((await h.command('snapshot')).value.floatingLyricsEnabled,true)
+    await h.command('play',{id:'next',url:'http://127.0.0.1:1234/media2'})
+    assert.equal(h.metadata.at(-1).lyric,'','a previous track lyric never follows the next track')
+    await h.command('lyrics',{data:JSON.stringify({action:'enable',enabled:false})})
+    assert.equal(h.mock.desktopLyricVisible,false)
+  } finally { await h.plugin.destroy() }
+})
+
+test('a native pause during slow preparation is immediate and prevents deferred autoplay', async () => {
+  const h=setup(), create=h.mock.media.createAVPlayer
+  let release,waiting=false
+  const barrier=new Promise(resolve=>{release=resolve})
+  h.mock.media.createAVPlayer=async()=>{
+    const player=await create()
+    player.prepare=async()=>{waiting=true;await barrier;player.emit('prepared')}
+    return player
+  }
+  try {
+    h.plugin.dispatch(JSON.stringify({id:900,plugin:'ohos-player',command:'play',payload:JSON.stringify({id:'slow',url:'http://127.0.0.1:1234/slow'})}))
+    for(let i=0;i<8&&!waiting;i++)await new Promise(setImmediate)
+    assert.ok(waiting)
+    h.plugin.dispatch(JSON.stringify({id:901,plugin:'ohos-player',command:'control',payload:JSON.stringify({action:'pause'})}))
+    await new Promise(setImmediate)
+    assert.ok(h.replies.some(reply=>reply.id===901&&reply.ok),'pause does not queue behind the preparation promise')
+    assert.equal(h.events.at(-1).status,'paused')
+    release();await h.plugin.tasks
+    assert.equal(h.player.state,'prepared')
+    assert.equal(h.events.at(-1).status,'paused')
+    assert.deepEqual(h.background,[])
+  }finally{release();await h.plugin.destroy()}
+})
+
+test('stop cancels a preparation promise so the following native request can proceed', async () => {
+  const h=setup(),create=h.mock.media.createAVPlayer
+  let waiting=false
+  h.mock.media.createAVPlayer=async()=>{
+    const player=await create()
+    player.prepare=async()=>{waiting=true}
+    return player
+  }
+  try{
+    h.plugin.dispatch(JSON.stringify({id:910,plugin:'ohos-player',command:'play',payload:JSON.stringify({id:'slow',url:'http://127.0.0.1:1234/slow'})}))
+    for(let i=0;i<8&&!waiting;i++)await new Promise(setImmediate)
+    assert.ok(waiting)
+    h.plugin.dispatch(JSON.stringify({id:911,plugin:'ohos-player',command:'control',payload:JSON.stringify({action:'stop'})}))
+    await h.plugin.tasks;await new Promise(setImmediate)
+    assert.ok(h.replies.some(reply=>reply.id===911&&reply.ok))
+    assert.equal((await h.command('snapshot')).value.stopped,true)
+    h.mock.media.createAVPlayer=create
+    assert.equal((await h.command('play',{id:'next',url:'http://127.0.0.1:1234/next'})).ok,true)
+    assert.equal(h.player.state,'playing')
+  }finally{await h.plugin.destroy()}
+})
+
+test('quality preparation keeps the original transport playing and a pause during preparation wins at handoff',async()=>{
+ const h=setup()
+ let release
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/original'})
+  const original=h.player;original.currentTime=42000
+  const create=h.mock.media.createAVPlayer,barrier=new Promise(resolve=>{release=resolve})
+  h.mock.media.createAVPlayer=async()=>{const next=await create();next.prepare=async()=>{await barrier;next.emit('prepared')};return next}
+  h.plugin.dispatch(JSON.stringify({id:970,plugin:'ohos-player',command:'play',payload:JSON.stringify({id:'song',url:'http://127.0.0.1:1234/new',seamless:true})}))
+  for(let i=0;i<8;i++)await new Promise(setImmediate)
+  assert.equal(original.state,'playing')
+  assert.equal(h.events.at(-1).status,'playing')
+  original.currentTime=45000
+  h.plugin.dispatch(JSON.stringify({id:971,plugin:'ohos-player',command:'control',payload:JSON.stringify({action:'pause'})}))
+  await new Promise(setImmediate);assert.equal(original.state,'paused')
+  release();await h.plugin.tasks
+  assert.equal(h.player.currentTime,45000)
+  assert.equal(h.events.at(-1).status,'paused')
+  assert.ok(h.replies.some(reply=>reply.id===970&&reply.ok))
+ }finally{release?.();await h.plugin.destroy()}
+})
+test('a failed quality candidate leaves the original transport and clock intact',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/original'})
+  const original=h.player,create=h.mock.media.createAVPlayer;original.currentTime=22000
+  h.mock.media.createAVPlayer=async()=>{const next=await create();next.prepare=async()=>{next.callbacks.error?.[0]({message:'failed'})};return next}
+  assert.equal((await h.command('play',{id:'song',url:'http://127.0.0.1:1234/bad',seamless:true})).ok,false)
+  assert.equal(original.state,'playing')
+  assert.equal((await h.command('snapshot')).value.position,22)
+  assert.equal(h.events.at(-1).status,'playing')
+ }finally{await h.plugin.destroy()}
+})
+
+test('quality handoff restores the original player when the prepared candidate cannot start',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/original'})
+  const original=h.player;original.currentTime=21_000
+  const create=h.mock.media.createAVPlayer
+  h.mock.media.createAVPlayer=async()=>{const player=await create();player.play=async()=>{throw new Error('decoder failed')};return player}
+  assert.equal((await h.command('play',{id:'song',url:'http://127.0.0.1:1234/candidate',seamless:true})).ok,false)
+  assert.equal(h.plugin.player,original)
+  assert.equal(original.state,'playing')
+  assert.equal(original.currentTime,21_000)
+  assert.equal((await h.command('snapshot')).value.status,'playing')
+ }finally{await h.plugin.destroy()}
 })

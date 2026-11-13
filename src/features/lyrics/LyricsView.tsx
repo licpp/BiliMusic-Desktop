@@ -1,3 +1,9 @@
+import { chooseDownload } from '../downloads/downloadRequest'
+import { storedLyricLines, lyricAt } from './lyricTimeline'
+import { FloatingLyricsToggle } from './FloatingLyricsToggle'
+import { useFloatingLyrics } from '../../services/floatingLyrics'
+import { WordLyric } from './WordLyric'
+import { touchDirection, type TouchDirection } from '../../shared/touchDirection'
 import { listen } from '@tauri-apps/api/event'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import { SleepTimerEntry } from '../player/SleepTimer'
@@ -7,7 +13,7 @@ import type { Collection } from '../../services/collections'
 import { MobilePlaybackRate, PlaybackRateEntry } from './MobilePlaybackRate'
 import { PlaybackSettings } from './PlaybackSettings'
 import { useBiliSubtitles } from './useBiliSubtitles'
-import { isMobile } from '../../services/platform'
+import { isMobile, isIOS } from '../../services/platform'
 import { controlMobileAudio } from '../player/mobileAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
@@ -17,14 +23,14 @@ import { useArtworkFit } from './useArtworkFit'
 import { AiSubtitleIcon } from './AiSubtitleIcon'
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play } from 'lucide-react'
+import { ChevronDown, Download, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/LibraryView'
 import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
-import { playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
+import { playbackClock, playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
 import {
   commandErrorMessage,
   getDanmaku,
@@ -61,6 +67,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const queryClient = useQueryClient()
   const status = usePlayerStore(state => state.status)
   const duration = usePlayerStore(state => state.durationSeconds)
+  const floatingError = useFloatingLyrics(state => state.error)
 
   const [seasonOpen,setSeasonOpen] = useState(false)
   const [editing, setEditing] = useState<Track | null>(null)
@@ -87,7 +94,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const [candidates, setCandidates] = useState<LyricCandidate[]>([])
   const [chooserOpen, setChooserOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const subtitles = useBiliSubtitles(current?.source, stored?.trackId === current?.id && lines.length > 0, Boolean(loading || (stored && stored.trackId !== current?.id)))
+  const subtitles = useBiliSubtitles()
   const [error, setError] = useState('')
   const [warning, setWarning] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
@@ -137,7 +144,18 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const [biasOpen, setBiasOpen] = useState(false)
   const [browsingLyrics, setBrowsingLyrics] = useState(false)
   const [browseIndex, setBrowseIndex] = useState(-1)
-  const lyricTouchY = useRef<number | null>(null)
+  const lyricTouch = useRef<{ x: number; y: number; direction: TouchDirection } | null>(null)
+  const [foregroundRevision, setForegroundRevision] = useState(0)
+  const instantCenter = useRef(false)
+  useEffect(() => {
+    const resume = () => {
+      instantCenter.current = true
+      if (Date.now() - browseActivity.current > 6000) setBrowsingLyrics(false)
+      setForegroundRevision(value => value + 1)
+    }
+    window.addEventListener('bilimusic-playback-reconciled', resume)
+    return () => window.removeEventListener('bilimusic-playback-reconciled', resume)
+  }, [])
   const browseActivity = useRef(0)
   const browseLyrics = () => { browseActivity.current = Date.now(); setBrowsingLyrics(true); updateBrowseLine() }
   const [hoveredLine, setHoveredLine] = useState<number | null>(null)
@@ -204,7 +222,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     const update = (event: Event) => {
       const lyrics = (event as CustomEvent<StoredLyrics>).detail
       if (lyrics.trackId !== current?.id) return
-      setStored(lyrics); setLines(parseStoredLines(lyrics)); setError(''); setWarning('')
+      setStored(lyrics); setLines(storedLyricLines(lyrics)); setError(''); setWarning('')
     }
     window.addEventListener('bilimusic-lyrics-updated', update)
     return () => window.removeEventListener('bilimusic-lyrics-updated', update)
@@ -222,7 +240,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
         if (cancelled || request !== lyricRequest.current) return
         if (existing) {
           setStored(existing)
-          setLines(parseStoredLines(existing))
+          setLines(storedLyricLines(existing))
           if (!existing.rawText) setWarning(existing.provider === 'local' ? '本地导入的歌词正文未上传，请在这台设备重新导入。时间偏移已保留。' : '歌词选择和时间偏移已同步，歌词服务暂未返回正文，可稍后重试匹配。')
           return
         }
@@ -316,16 +334,11 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   }
   const timingPreview = !subtitles.lines && biasOpen && syncedLyrics
   const biasMs = subtitles.lines ? 0 : stored?.biasMs || 0
+  const lyricClock = useCallback(() => playbackClock() * 1000 - biasMs, [biasMs])
   const activeIndex = useMemo(() => {
     if (!subtitles.lines && !syncedLyrics) return -1
     const currentMs = progressSeconds * 1_000 - biasMs
-    let result = -1
-    for (let index = 0; index < displayLines.length; index += 1) {
-      const { timeMs, endTimeMs } = displayLines[index]
-      if (timeMs > currentMs) break
-      result = endTimeMs !== undefined && currentMs >= endTimeMs ? -1 : index
-    }
-    return result
+    return lyricAt(displayLines, currentMs, !subtitles.lines)
   }, [displayLines, progressSeconds, biasMs, syncedLyrics, subtitles.lines])
 
   useEffect(() => { setBrowsingLyrics(false); setBrowseIndex(-1) }, [current?.id, displayLines])
@@ -361,8 +374,11 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   useEffect(() => {
     if (browsingLyrics || timingPreview && hoveredLine !== null) return
     const line = lineRefs.current[activeIndex]
-    if (scrollRef.current && line) centerLyric(scrollRef.current, line, biasOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
-  }, [activeIndex, browsingLyrics, timingPreview, hoveredLine === null, biasMs, displayLines, supplementMode])
+    if (scrollRef.current && line) {
+      centerLyric(scrollRef.current, line, instantCenter.current || biasOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
+      instantCenter.current = false
+    }
+  }, [activeIndex, browsingLyrics, timingPreview, hoveredLine === null, biasMs, displayLines, supplementMode, foregroundRevision])
 
   async function refreshCandidates() {
     if (!current) return
@@ -401,6 +417,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     if (!current || !lyrics || lyrics.trackId !== current.id) return
     const next = { ...lyrics, biasMs: clampBias(lyrics.biasMs + delta) }
     storedRef.current = next
+    window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias',{detail:next}))
     setStored(next); setBiasSaveError(false); setError(''); setBiasActivity(Date.now())
     biasWriter.set(current.id, next.biasMs)
   }
@@ -449,6 +466,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     <section className="lyrics-view">
       {(!isMobile||!compact)&&dockActions&&createPortal(<>
         {!isMobile && supplementControl}
+        {!isMobile && <FloatingLyricsToggle/>}
         <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={()=>setCommentsOpen(value=>!value)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
         {bvid&&<button type="button" className="lyrics-dock-ai" aria-label={subtitles.active?'关闭 AI / B站字幕':'开启 AI / B站字幕'} title={`${subtitleLabel} · ${subtitles.active?'已开启':subtitles.preferred?'歌词优先':'已关闭'}`} aria-pressed={subtitles.active} aria-busy={subtitles.busy} onClick={toggleSubtitles}><AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/></button>}
       </>,dockActions)}
@@ -456,6 +474,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
         <div className="lyrics-actions">
+          {isMobile && !isIOS && !videoFullscreen && <FloatingLyricsToggle/>}
           {!isMobile&&onMiniPlayer&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" onClick={onMiniPlayer}><PictureInPicture2 size={19}/></button>}
           {isMobile && !compact && supplementControl}
           {!(isMobile && videoFullscreen) && <ActionMenu label={compact ? "播放设置" : "歌词页面更多操作"} panel panelClassName={compact ? "mobile-playback-settings" : undefined} touchSheet={compact}>{(close) => <>
@@ -477,11 +496,13 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
             </label>)}
             {compact && <div className="touch-sheet-section">歌曲与歌词</div>}
             <div className={compact ? 'lyrics-song-actions lyrics-song-actions-grid' : 'lyrics-song-actions'}>
+            {current.source.provider === 'bilibili' && <button role={isMobile ? undefined : 'menuitem'} type="button" onClick={() => { close(); chooseDownload([current]) }}><Download size={16}/>下载歌曲</button>}
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
             <button role={isMobile ? undefined : "menuitem"} disabled={Boolean(subtitles.lines)} onClick={() => { close(); setHoveredLine(null); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
-            {videoDetail && videoDetail.parts.length > 1 && <button role={isMobile ? undefined : "menuitem"} onClick={() => {
+            {(isMobile || (videoDetail && videoDetail.parts.length > 1)) && <button role={isMobile ? undefined : "menuitem"} disabled={!videoDetail || videoDetail.parts.length <= 1} onClick={() => {
+              if (!videoDetail || videoDetail.parts.length <= 1) return
               close()
               if (isMobile) setPartsOpen(true)
               else onOpenCollection({ ...videoDetail, folderId: '' })
@@ -532,15 +553,15 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
           </div>
         </div>
       </div>
-      <div ref={scrollRef} onWheel={browseLyrics} onPointerDown={event => { lyricTouchY.current = event.clientY }} onPointerMove={event => { if (lyricTouchY.current !== null && Math.abs(event.clientY - lyricTouchY.current) > 6) browseLyrics() }} onPointerUp={() => { lyricTouchY.current = null }} onPointerCancel={() => { lyricTouchY.current = null }} onScroll={updateBrowseLine} onPointerLeave={() => setHoveredLine(null)} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
+      <div ref={scrollRef} onWheel={browseLyrics} onPointerDown={event => { lyricTouch.current = { x: event.clientX, y: event.clientY, direction: 'pending' } }} onPointerMove={event => { const touch = lyricTouch.current; if (!touch) return; touch.direction = touchDirection(event.clientX, event.clientY, touch.x, touch.y, touch.direction); if (touch.direction === 'vertical') browseLyrics() }} onPointerUp={() => { lyricTouch.current = null }} onPointerCancel={() => { lyricTouch.current = null }} onScroll={updateBrowseLine} onPointerLeave={() => setHoveredLine(null)} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
         {loading && !displayLines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : displayLines.length ? displayLines.map((line, index) => (
-          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original">{line.text}</span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
+          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original"><WordLyric line={line} active={index === activeIndex} timeMs={progressSeconds * 1000 - biasMs} clock={lyricClock}/></span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
       {biasOpen && !subtitles.lines && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
         onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
-      {(subtitles.message || (error && displayLines.length > 0)) && <div className="lyrics-toast" role="status">{subtitles.message || error}</div>}
+      {(floatingError || subtitles.message || (error && displayLines.length > 0)) && <div className="lyrics-toast" role={floatingError ? 'alert' : 'status'}>{floatingError || subtitles.message || error}{floatingError && <button type="button" onClick={() => useFloatingLyrics.setState({error:''})}>知道了</button>}</div>}
       {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
         onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
@@ -552,13 +573,6 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: ['library'] }); void queryClient.invalidateQueries({ queryKey: ['home-recent'] }) }} />}
     </section>
   )
-}
-
-function parseStoredLines(stored: StoredLyrics): LyricLine[] {
-  try {
-    const parsed = JSON.parse(stored.parsedJson)
-    return Array.isArray(parsed) ? parsed.filter((line) => Number.isFinite(line?.timeMs) && typeof line?.text === 'string') : []
-  } catch { return [] }
 }
 
 function centerLyric(scroll: HTMLDivElement, line: HTMLParagraphElement, behavior: ScrollBehavior) {

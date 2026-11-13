@@ -1,18 +1,30 @@
-import type { LyricCandidate, LyricLine } from '../../services/desktopApi'
+import type { LyricCandidate, LyricLine, LyricWord } from '../../services/desktopApi'
 
 const timestamp = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]/g
 
+const wordTimestamp = /<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/g
+const stampMs = (match: RegExpMatchArray) => Number(match[1]) * 60_000 + Number(match[2]) * 1000 + Number((match[3] || '').padEnd(3,'0').slice(0,3))
 export function parseLrc(source: string): LyricLine[] {
   const lines: LyricLine[] = []
   for (const rawLine of source.split(/\r?\n/)) {
-    const text = rawLine.replace(timestamp, '').trim()
-    const matches = [...rawLine.matchAll(timestamp)]
-    for (const match of matches) {
-      const fraction = (match[3] || '').padEnd(3, '0').slice(0, 3)
-      lines.push({ timeMs: Number(match[1]) * 60_000 + Number(match[2]) * 1_000 + Number(fraction), text })
+    const body = rawLine.replace(timestamp, '').trim()
+    const text = body.replace(wordTimestamp, '')
+    const marks = [...body.matchAll(wordTimestamp)]
+    const words: LyricWord[] = []
+    for (let i = 0; i + 1 < marks.length; i++) {
+      const word = body.slice(marks[i].index! + marks[i][0].length, marks[i + 1].index)
+      const startTimeMs = stampMs(marks[i]), endTimeMs = stampMs(marks[i + 1])
+      if (word && endTimeMs > startTimeMs && endTimeMs - startTimeMs <= 60_000) words.push({text:word,startTimeMs,endTimeMs})
+      else if (word && endTimeMs === startTimeMs && /^[\s\p{P}\p{S}]+$/u.test(word) && words.length) words[words.length-1].text += word
+    }
+    for (const match of rawLine.matchAll(timestamp)) {
+      const timeMs = stampMs(match)
+      // Use word timing only if it covers the complete, unchanged sentence.
+      const validWords = words.length > 0 && words.map(word => word.text).join('') === text && words.every((word,index) => word.startTimeMs >= timeMs && (!index || word.startTimeMs >= words[index-1].endTimeMs))
+      lines.push({ timeMs, text, ...(validWords ? { words, endTimeMs:words[words.length-1].endTimeMs } : {}) })
     }
   }
-  return lines.filter((line) => line.text).sort((left, right) => left.timeMs - right.timeMs)
+  return lines.filter(line => line.text).sort((left,right) => left.timeMs-right.timeMs)
 }
 
 export function candidateLines(candidate: LyricCandidate): LyricLine[] {

@@ -4,6 +4,7 @@ Native audio and queue controls for the local iOS window
 
 #### This default permission set includes the following:
 
+- `allow-lyrics`
 - `allow-play`
 - `allow-control`
 - `allow-snapshot`
@@ -42,6 +43,32 @@ Enables the control command without any pre-configured scope.
 <td>
 
 Denies the control command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`ios-player:allow-lyrics`
+
+</td>
+<td>
+
+Enables the lyrics command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`ios-player:deny-lyrics`
+
+</td>
+<td>
+
+Denies the lyrics command without any pre-configured scope.
 
 </td>
 </tr>

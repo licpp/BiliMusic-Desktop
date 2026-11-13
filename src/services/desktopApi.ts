@@ -6,21 +6,22 @@ import type { Track } from '../domain/track'
 import { attachSupplementalLyrics, candidateLines } from '../features/lyrics/lrc'
 import { rankCatalogCandidates, rankLyricCandidates } from './musicMatchRanking'
 
-export type BiliSearchItem = { bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
+export type BiliSearchItem = { publishedAt?: number; bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
 export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string; firstFrameUrl?: string }
-export type BiliVideoParts = { season?: import('./mediaSources').SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
-export type PlaybackSource = { audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
+export type BiliVideoParts = { publishedAt?: number; season?: import('./mediaSources').SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
+export type PlaybackSource = { qualityId: number; audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
 export type VideoSource = { videoUrl: string; mimeType: string; codecs: string; bandwidth: number }
 export type DanmakuItem = { timeSeconds: number; mode: number; fontSize: number; color: number; text: string }
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
 export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
 export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
-export type LyricLine = { endTimeMs?: number; timeMs: number; text: string; translation?: string; romanization?: string }
+export type LyricWord = { text: string; startTimeMs: number; endTimeMs: number }
+export type LyricLine = { words?: LyricWord[]; endTimeMs?: number; timeMs: number; text: string; translation?: string; romanization?: string }
 export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'qq' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string; translatedLyrics?: string; romanizedLyrics?: string }
 export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
 export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
-export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean; biliFolderId?: number }
+export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean; biliFolderId?: number; addedAt?: number }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 export type CatalogSource = 'auto' | 'netease' | 'qq' | 'itunes' | 'musicbrainz'
@@ -40,6 +41,7 @@ export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; 
 export const inDesktopShell = isTauri()
 async function write<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const value = await invoke<T>(command, args)
+  if (command === 'lyrics_save') window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated',{detail:value}))
   window.dispatchEvent(new Event('bilimusic-data-changed'))
   return value
 }
@@ -69,7 +71,7 @@ export function getVideoParts(bvid: string, refresh = false) {
   return request
 }
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
-export const getTrackPlaybackUrl = (track: Track, refresh = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh })
+export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh, preferOnline })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   if (track.resolveParts && track.source.cid <= 0) {
@@ -139,7 +141,12 @@ export async function enrichStoredLyricLines(stored: StoredLyrics): Promise<Lyri
   const parsed = JSON.parse(stored.parsedJson)
   if (!Array.isArray(parsed) || !parsed.every(line => Number.isFinite(line?.timeMs) && typeof line?.text === 'string')) return null
   // Enrich the saved timeline, preserving its original text and the user's bias.
-  return attachSupplementalLyrics(parsed, candidate.translatedLyrics, candidate.romanizedLyrics)
+  const timed = candidateLines(candidate)
+  const enriched = parsed.map(line => {
+    const match = timed.find(item => item.words?.length && item.text === line.text && Math.abs(item.timeMs-line.timeMs) <= 120)
+    return match ? { ...line, words:match.words, endTimeMs:match.endTimeMs ?? line.endTimeMs } : line
+  })
+  return attachSupplementalLyrics(enriched, candidate.translatedLyrics, candidate.romanizedLyrics)
 }
 
 export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | null> {
@@ -180,6 +187,7 @@ export async function listPlaylists(): Promise<Playlist[]> {
   return invoke<Playlist[]>('playlists_list')
 }
 export const createPlaylist = (name: string) => write<Playlist>('playlist_create', { name })
+export const createLinkedPlaylist = (name: string) => write<Playlist>('bili_linked_create', { name })
 export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
   if (!inDesktopShell) return []
   return (await invoke<StoredTrack[]>('playlist_tracks', { playlistId })).map(fromStoredTrack)
@@ -200,8 +208,8 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
   return invoke<DownloadRecord[]>('downloads_list')
 }
 export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId })
-export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false) => invoke<boolean>('download_track', {
-  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting,
+export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') => invoke<boolean>('download_track', {
+  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
 })
 export async function getAccountProfile(): Promise<AccountProfile> {
   if (!inDesktopShell) return { loggedIn: false }
@@ -215,9 +223,9 @@ export const getFavoriteVideos = (folderId: number, page: number) => invoke<Favo
 export const listLocalAudio = () => invoke<StoredTrack[]>('local_audio_list').then(tracks => tracks.map(fromStoredTrack))
 export const importLocalAudio = (paths: string[]) => invoke<LocalImportResult>('local_audio_import', { paths })
 export const getLinkedFolder = (folderId: number) => invoke<LinkedFolder | null>('bili_linked_folder', { folderId })
-export const refreshLinkedFolder = (folderId: number, link = false) => invoke<LinkedFolder>('bili_linked_refresh', { folderId, link })
-export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => invoke<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
-export const unlinkBiliFolder = (folderId: number) => invoke<void>('bili_linked_unlink', { folderId })
+export const refreshLinkedFolder = (folderId: number, link = false) => write<LinkedFolder>('bili_linked_refresh', { folderId, link })
+export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => write<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
+export const unlinkBiliFolder = (folderId: number) => write<void>('bili_linked_unlink', { folderId })
 export const getComments = (aid: number, next = 1) => invoke<CommentPage>('bili_comments', { aid, next })
 export const getCommentReplies = (aid: number, root: number, page = 1) => invoke<BiliComment[]>('bili_comment_replies', { aid, root, page })
 export const setCommentLike = (aid: number, replyId: number, liked: boolean) => invoke<void>('bili_comment_like', { aid, replyId, liked })

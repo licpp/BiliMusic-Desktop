@@ -25,9 +25,12 @@ class PlayArgs {
     var position: Double = 0.0
     var volume: Double = 0.7
     var playing: Boolean = true
+    var seamless: Boolean = false
     var rate: Double = 1.0
     var collectionRef: String? = null
 }
+@InvokeArg
+class LyricsArgs { var data: String = "{}" }
 @InvokeArg
 class ControlArgs {
     lateinit var action: String
@@ -54,6 +57,14 @@ class ListeningArgs {
 
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
+    @Command
+    fun lyrics(invoke: Invoke) {
+        val args=invoke.parseArgs(LyricsArgs::class.java)
+        activity.runOnUiThread {
+            try { invoke.resolve(JSObject(FloatingLyricsOverlay.command(activity,args.data).toString())) }
+            catch (_: Exception) { invoke.reject("无法显示悬浮歌词，请检查悬浮窗权限") }
+        }
+    }
     // Called only by Rust; no frontend ACL permission is granted for this command.
     @Command
     fun secret(invoke: Invoke) {
@@ -154,7 +165,9 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val safeLeft = if (immersive) bars.left / density else 0f
             val safeRight = if (immersive) bars.right / density else 0f
             val keyboardOverlap = (keyboard.bottom - bottom).coerceAtLeast(0) / density
-            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-keyboard','${keyboardOverlap}px');" +
+            val layoutHeight = (view.rootView.height - top - bottom).coerceAtLeast(0) / density
+            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-layout-height','${layoutHeight}px');" +
+                "document.documentElement.style.setProperty('--native-keyboard','${keyboardOverlap}px');" +
                 "window.dispatchEvent(new Event('bilimusic-keyboard'));" +
                 "document.documentElement.style.setProperty('--native-safe-top','${safeTop}px');" +
                 "document.documentElement.style.setProperty('--native-safe-bottom','${safeBottom}px');" +
@@ -194,6 +207,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val uri = android.net.Uri.parse(args.url)
         if (uri.scheme != "http" || uri.host != "127.0.0.1") {
             invoke.reject("无效的本地播放地址"); return
+        }
+        if(args.seamless){
+            activity.runOnUiThread { val service=PlaybackService.instance;if(service==null)invoke.reject("当前没有可切换的音源") else service.switchSource(args.url,args.id){message->if(message==null)invoke.resolve()else invoke.reject(message)} }
+            return
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)

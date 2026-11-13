@@ -1,6 +1,8 @@
 #[cfg(desktop)]
 mod desktop_media;
 mod domain;
+#[cfg(desktop)]
+mod floating_lyrics;
 mod infrastructure;
 mod interface;
 #[cfg(target_os = "ios")]
@@ -25,6 +27,17 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
+#[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -32,6 +45,7 @@ pub fn run() {
     let builder = builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["floating-lyrics-unlock"])
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
@@ -39,10 +53,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }));
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_android_player::init());
@@ -79,6 +90,8 @@ pub fn run() {
             #[cfg(desktop)]
             app.manage(mini_player::MiniPlayerState::default());
             #[cfg(desktop)]
+            app.manage(floating_lyrics::FloatingLyrics::default());
+            #[cfg(desktop)]
             desktop_media::initialize(app.handle());
             #[cfg(target_os = "ios")]
             ios_playback::initialize(app.handle().clone());
@@ -102,10 +115,7 @@ pub fn run() {
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            show_main_window(app);
                         }
                         "play_pause" => {
                             let _ = app.emit("tray-play-pause", ());
@@ -135,6 +145,20 @@ pub fn run() {
             desktop_media::desktop_media_update,
             #[cfg(desktop)]
             mini_player::desktop_mini_state,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_snapshot,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_update,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_enable,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_control,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_configure,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_unlock,
+            #[cfg(desktop)]
+            floating_lyrics::floating_lyrics_unlock_ready,
             #[cfg(desktop)]
             mini_player::desktop_mini_set,
             #[cfg(desktop)]
@@ -206,11 +230,13 @@ pub fn run() {
             interface::commands::bili_favorite_folders,
             interface::commands::bili_favorite_videos,
             interface::linked_folders::bili_linked_folder,
+            interface::linked_folders::bili_linked_create,
             interface::linked_folders::bili_linked_refresh,
             interface::linked_folders::bili_linked_change,
             interface::linked_folders::bili_linked_unlink,
             interface::commands::bili_logout,
             interface::commands::bili_comments,
+            interface::commands::bili_comment_emotes,
             interface::commands::bili_comment_replies,
             interface::commands::bili_comment_like,
             interface::commands::bili_comment_reply,
@@ -227,6 +253,30 @@ pub fn run() {
             interface::commands::download_remove,
             interface::commands::download_track,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run BiliMusic");
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // A floating lyric window keeps the process alive. Destroying
+                    // main would otherwise leave Dock/tray with nothing to show.
+                    api.prevent_close();
+                    let window = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = window.hide();
+                    });
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
+        .build(tauri::generate_context!())
+        .expect("failed to build BiliMusic")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                show_main_window(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }

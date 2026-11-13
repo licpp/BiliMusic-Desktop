@@ -7,6 +7,7 @@ export function toTrack(detail: BiliVideoParts, part: BiliVideoParts['parts'][nu
     source: { provider: 'bilibili', bvid: detail.bvid, aid: detail.aid || undefined, cid: part.cid, page: part.page, uploaderId: detail.uploaderId, uploaderName: detail.uploaderName },
     title: detail.parts.length === 1 ? detail.title : part.title || detail.title,
     videoTitle: detail.title,
+    publishedAt: detail.publishedAt,
     partCount: detail.parts.length,
     coverUrl: part.coverUrl || detail.coverUrl,
     durationSeconds: part.durationSeconds,

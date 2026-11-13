@@ -6,21 +6,17 @@
 .playback-cache-copy progress::-moz-progress-bar { background:var(--cyan);border-radius:3px; }
 .playback-cache-actions { display:flex;align-items:center;gap:8px;margin-left:auto; }
 .playback-cache-actions button { display:flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:7px 10px;border:0;border-radius:11px;background:transparent;color:var(--muted);font:inherit;font-size:12px;cursor:pointer; }
-.playback-cache-actions .cache-limit-selector>button { gap:12px;min-width:106px;padding:9px 13px;color:var(--cyan);background:rgba(60,180,200,.08);background:color-mix(in srgb,var(--cyan) 8%,transparent);font-weight:600;font-variant-numeric:tabular-nums;transition:background 140ms ease,color 140ms ease; }
-.cache-limit-selector>button svg { width:14px;opacity:.7;transition:transform 140ms ease; }
-.cache-limit-selector>button[aria-expanded="true"] svg { transform:rotate(180deg); }
-.cache-limit-selector>button:hover:not(:disabled) { background:color-mix(in srgb,var(--cyan) 14%,transparent); }
-.cache-limit-selector>button:focus-visible,.cache-limit-options>button:focus-visible { outline:2px solid var(--cyan);outline-offset:3px; }
-.cache-limit-menu .cache-limit-heading { margin:5px 5px 12px;color:var(--muted);font-size:11px; }
-.cache-limit-options { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:2px; }
-.cache-limit-options>button { position:relative;display:flex;align-items:center;justify-content:center;min-height:42px;padding:10px 17px;border:1px solid transparent;border-radius:11px;background:var(--base);color:var(--muted);font:inherit;font-size:12px;font-variant-numeric:tabular-nums;cursor:pointer; }
-.cache-limit-options>button svg { position:absolute;top:5px;right:5px;width:12px;height:12px; }
-.cache-limit-options>button[aria-checked="true"] { border-color:var(--cyan);color:var(--cyan);background:rgba(60,180,200,.08);background:color-mix(in srgb,var(--cyan) 8%,var(--panel));font-weight:600; }
-.cache-limit-options>button:hover { background:var(--line); }
-.cache-limit-menu.action-menu-sheet .cache-limit-heading { display:none; }
-.cache-limit-menu.action-menu-sheet .cache-limit-options { grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:6px 2px 14px; }
-.cache-limit-menu.action-menu-sheet .cache-limit-options>button { min-height:54px;padding:12px 3px;font-size:13px!important; }
 .playback-cache-actions button:disabled { opacity:.4;cursor:default; }
 .playback-cache-settings > .inline-error { grid-column:2 / -1;font-size:12px;margin:0; }
 .playback-cache-settings small { white-space:normal;line-height:1.65; }
+.cache-capacity-setting { grid-column:1 / -1;min-width:0;padding-top:18px;border-top:1px solid var(--line); }
+.cache-capacity-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px; }
+.cache-capacity-heading > span { display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums; }
+.cache-capacity-options { display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--base); }
+.playback-cache-settings .cache-capacity-options > button { justify-content:center;min-width:0;min-height:44px;padding:8px 3px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums; }
+.playback-cache-settings .cache-capacity-options > button[aria-pressed=true] { color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 35%,var(--line));background:color-mix(in srgb,var(--cyan) 10%,var(--panel));font-weight:600; }
+.cache-capacity-options > button:hover:not(:disabled) { background:var(--line); }
+.cache-capacity-options > button:focus-visible { outline:2px solid var(--cyan);outline-offset:1px; }
+.cache-capacity-options > button:disabled { opacity:.45;cursor:default; }
+@media(max-width:680px){.cache-capacity-options{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:680px){.playback-cache-settings { align-items:start;grid-template-columns:42px minmax(0,1fr); }.playback-cache-settings .playback-cache-actions { grid-column:2;justify-content:space-between;margin:0;width:100%; }.playback-cache-actions button { min-height:42px;font-size:13px; }}

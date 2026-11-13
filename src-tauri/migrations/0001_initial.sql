@@ -138,3 +138,8 @@ CREATE TABLE IF NOT EXISTS listening_days(day TEXT PRIMARY KEY,seconds REAL NOT 
 
 -- User notes are separate from refreshable B站 profile caches.
 CREATE TABLE IF NOT EXISTS creator_notes(bvid TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT '');
+
+CREATE TABLE IF NOT EXISTS linked_bili_folder_order (
+ folder_id INTEGER PRIMARY KEY REFERENCES linked_bili_folders(folder_id) ON DELETE CASCADE,
+ added_at REAL NOT NULL
+);

@@ -1,10 +1,11 @@
-import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
+import { chooseDownload } from '../downloads/downloadRequest'
+import { DownloadDialogHost } from '../downloads/DownloadDialog'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Download, FolderPlus, ListMusic, ListVideo, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
-import { commandErrorMessage, downloadTrack, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
+import { commandErrorMessage, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
 import { usePlayerStore } from '../player/playerStore'
 import { MetadataDialog, PlaylistPicker } from './LibraryView'
@@ -47,12 +48,13 @@ export function TrackActionsHost() {
       <button role="menuitem" onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
       {menu.openParts && <button role="menuitem" onClick={() => { useTrackActions.setState({ menu: null }); menu.openParts?.() }}><ListVideo size={15}/>查看选集</button>}
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
-      <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />加入歌单…</button>
-      {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); void (async()=>{try{const directory=await getDownloadDirectory() || await chooseDownloadDirectory();if(!directory)return;const saved=await saveLibraryTrack(track);await downloadTrack(saved,directory);void client.invalidateQueries({queryKey:['downloads']})}catch(cause){setError(commandErrorMessage(cause))}})() }}><Download size={15} />下载歌曲</button>}
+      <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />收藏到歌单…</button>
+      {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); chooseDownload([track]) }}><Download size={15} />下载歌曲</button>}
       <button role="menuitem" onClick={() => void edit(menu.track)}><Pencil size={15} />编辑歌曲信息</button>
       {menu.playlistId && <button role="menuitem" onClick={() => { void remove(menu.playlistId!, menu.track); useTrackActions.setState({ menu: null }) }}><Trash2 size={15} />{menu.playlistId === FAVORITES_PLAYLIST_ID ? '取消喜欢' : '从当前歌单移除'}</button>}
     </div>}
-    {adding && <PlaylistPicker tracks={adding} onClose={() => useTrackActions.setState({ adding: null })} />}
+    <DownloadDialogHost/>
+    {adding && <PlaylistPicker selection={adding} onClose={() => useTrackActions.setState({ adding: null })} />}
     {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(track) => { usePlayerStore.getState().updateTrack(track); setEditing(null); refresh() }} />}
     {error && <button className="library-toast" role="alert" onClick={() => setError('')}>{error}</button>}
   </>, document.body)

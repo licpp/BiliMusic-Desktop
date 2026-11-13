@@ -27,7 +27,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
     }}>
     <button type="button" className="touch-option-trigger" disabled={disabled} aria-expanded={open && !disabled} aria-controls={id}
       onClick={() => setOpen(value => !value)}>
-      {icon}<span>{label}</span><small>{options.find(option => option.value === selected)?.label}</small><ChevronDown size={16}/>
+      {icon}<span>{label}</span><small>{options.find(option => option.value === selected)?.label}</small><ChevronDown className="touch-option-chevron" size={16} aria-hidden="true"/>
     </button>
     {open && !disabled && <div id={id} className="touch-option-list" role="group" aria-label={label} data-touch-picker data-tracking={preview !== undefined || undefined}
       onPointerDown={event => {

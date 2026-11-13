@@ -307,6 +307,18 @@
           "markdownDescription": "Denies the control command without any pre-configured scope."
         },
         {
+          "description": "Enables the lyrics command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-lyrics",
+          "markdownDescription": "Enables the lyrics command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the lyrics command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-lyrics",
+          "markdownDescription": "Denies the lyrics command without any pre-configured scope."
+        },
+        {
           "description": "Enables the play command without any pre-configured scope.",
           "type": "string",
           "const": "allow-play",
@@ -367,10 +379,10 @@
           "markdownDescription": "Denies the snapshot command without any pre-configured scope."
         },
         {
-          "description": "Native audio and queue controls for the local iOS window\n#### This default permission set includes:\n\n- `allow-play`\n- `allow-control`\n- `allow-snapshot`\n- `allow-queue`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Native audio and queue controls for the local iOS window\n#### This default permission set includes:\n\n- `allow-lyrics`\n- `allow-play`\n- `allow-control`\n- `allow-snapshot`\n- `allow-queue`\n- `allow-register-listener`\n- `allow-remove-listener`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Native audio and queue controls for the local iOS window\n#### This default permission set includes:\n\n- `allow-play`\n- `allow-control`\n- `allow-snapshot`\n- `allow-queue`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Native audio and queue controls for the local iOS window\n#### This default permission set includes:\n\n- `allow-lyrics`\n- `allow-play`\n- `allow-control`\n- `allow-snapshot`\n- `allow-queue`\n- `allow-register-listener`\n- `allow-remove-listener`"
         }
       ]
     }

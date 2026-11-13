@@ -127,7 +127,7 @@ impl PlaybackCache {
             return None;
         }
         let c = self.connection.lock().ok()?;
-        c.query_row("SELECT key,bvid,cid,fingerprint,mime,total FROM variants WHERE track_id=?1 AND quality=?2 AND total>0 AND EXISTS(SELECT 1 FROM chunks WHERE variant=variants.key) ORDER BY accessed DESC LIMIT 1",params![track_id,quality],|r|Ok(Variant{key:r.get(0)?,track_id:track_id.into(),bvid:r.get(1)?,cid:r.get(2)?,quality,fingerprint:r.get(3)?,mime:r.get(4)?,total:r.get(5)?})).optional().ok().flatten()
+        c.query_row("SELECT key,bvid,cid,fingerprint,mime,total FROM variants WHERE track_id=?1 AND quality=?2 AND total>0 AND (?2!=0 OR lower(fingerprint) NOT LIKE '%|flac|%') AND EXISTS(SELECT 1 FROM chunks WHERE variant=variants.key) ORDER BY accessed DESC LIMIT 1",params![track_id,quality],|r|Ok(Variant{key:r.get(0)?,track_id:track_id.into(),bvid:r.get(1)?,cid:r.get(2)?,quality,fingerprint:r.get(3)?,mime:r.get(4)?,total:r.get(5)?})).optional().ok().flatten()
     }
     pub fn read(&self, key: &str, index: u64) -> Option<Vec<u8>> {
         let c = self.connection.lock().ok()?;
@@ -318,6 +318,7 @@ mod tests {
             42,
             0,
             &super::super::providers::bilibili::PlaybackSource {
+                quality_id: 30280,
                 audio_url: "https://cdn.example/audio.m4s?token=secret".into(),
                 backup_urls: vec![],
                 mime_type: "audio/mp4".into(),
@@ -326,6 +327,23 @@ mod tests {
             },
         );
         (root, cache, variant)
+    }
+    #[test]
+    fn automatic_playback_does_not_reuse_legacy_hires_chunks() {
+        let (root, cache, aac) = fixture();
+        let source = super::super::providers::bilibili::PlaybackSource {
+            quality_id: 30251, audio_url: "https://cdn.example/hires.m4s".into(),
+            backup_urls: vec![], mime_type: "audio/mp4".into(), codecs: "fLaC".into(), bandwidth: 1500000,
+        };
+        let automatic = Variant::new(&aac.track_id, &aac.bvid, aac.cid, 0, &source);
+        cache.write(&automatic, 8, 0, &[7;8], 0).unwrap();
+        assert!(cache.find(&aac.track_id, 0).is_none());
+        let explicit = Variant::new(&aac.track_id, &aac.bvid, aac.cid, 30251, &source);
+        cache.write(&explicit, 8, 0, &[7;8], 0).unwrap();
+        assert_eq!(cache.find(&aac.track_id, 30251).unwrap().key, explicit.key);
+        cache.write(&aac, 8, 0, &[7;8], 0).unwrap();
+        assert_eq!(cache.find(&aac.track_id, 0).unwrap().key, aac.key);
+        drop(cache);std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn survives_restart_and_rejects_incomplete_or_changed_chunks() {
@@ -398,6 +416,7 @@ mod tests {
     fn signed_url_refresh_keeps_identity_but_quality_and_representation_do_not() {
         let (root, cache, variant) = fixture();
         let source = super::super::providers::bilibili::PlaybackSource {
+            quality_id: 30280,
             audio_url: "https://backup.example/audio.m4s?token=different".into(),
             backup_urls: vec![],
             mime_type: "audio/mp4".into(),

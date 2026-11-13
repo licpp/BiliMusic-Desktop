@@ -25,7 +25,7 @@ const output = await build({
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {}, dispatchEvent() {} }
+  globalThis.window = { addEventListener() {}, dispatchEvent() {}, setInterval: () => 0 }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('Android must not create WebView audio') } }

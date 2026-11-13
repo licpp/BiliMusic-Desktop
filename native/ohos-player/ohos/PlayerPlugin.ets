@@ -5,7 +5,7 @@ import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { asset } from '@kit.AssetStoreKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Artwork } from './Artwork';
@@ -14,16 +14,18 @@ import native from 'libbilimusic_lib.so';
 
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
-  url?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
+  data?: string; url?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
-  rate?: number; action?: string; value?: number | string; profilePath?: string;
+  rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
   key?: string; remove?: boolean;
 }
 interface Snapshot {
   id: string; status: string; position: number; duration: number; rate: number;
   sleepDeadline: number; sleepDuration: number; sleepExpired: boolean;
-  stopped: boolean; error?: string; action?: string;
+  stopped: boolean; error?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
 }
+interface LyricsPayload { action: string; enabled?: boolean; id?: string; lrc?: string; fontSize?: number; locked?: boolean }
+interface LyricsResult { supported: boolean; enabled: boolean; reason?: string; fontSizeSupported?: boolean; lockSupported?: boolean }
 class EmptyResult {}
 interface BridgeError { message: string }
 interface SecretResult { value?: string }
@@ -44,6 +46,9 @@ export class PlayerPlugin {
   private title: string = 'BiliMusic';
   private artist: string = '';
   private status: string = 'paused';
+  private desiredPlaying: boolean = false;
+  private cancelSourceSwitch: (() => void) | null = null;
+  private cancelPreparation: (() => void) | null = null;
   private volume: number = 0.7;
   private rate: number = 1;
   private collectionRef: string = '';
@@ -65,12 +70,33 @@ export class PlayerPlugin {
   private artwork: Artwork = new Artwork();
   private artworkReady: Promise<void> = Promise.resolve();
   private mediaRevision: number = 0;
+  private mediaAdvancedAt: number = 0;
+  private watchdogPosition: number = -1;
+  private desktopLyricsLocked: boolean = false;
+  private desktopLyricsEnabled: boolean = false;
+  private lyricId: string = '';
+  private lyricText: string = '';
+  private lyricTimer: number = -1;
+  private stateSequence: number = 0;
+  private seekRevision: number = 0;
+  private pendingSeek: number = -1;
+  private currentMetadata: avSession.AVMetadata | null = null;
   private metadataTasks: Promise<void> = Promise.resolve();
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
     this.timer = setInterval(() => {
       this.accountListening();
+      if (this.player?.state === 'playing' && (this.status === 'playing' || this.status === 'buffering')) {
+        const position = this.player.currentTime;
+        if (position > this.watchdogPosition + 10 && this.watchdogPosition >= 0) this.mediaAdvancedAt = Date.now();
+        this.watchdogPosition = position;
+        if (Date.now() - this.mediaAdvancedAt >= 12000) {
+          this.accountListening(true); this.desiredPlaying = false; this.error = '音频缓冲超时，请重试'; this.status = 'error';
+          this.player.pause().catch(() => {});
+          hilog.warn(0xB110, 'BiliMusicPlayer', 'Playback stalled; revision=%{public}d', this.mediaRevision);
+        }
+      }
       if (this.sleepingAt > 0 && Date.now() >= this.sleepingAt) {
         this.sleepingAt = 0; this.sleepExpired = true;
         this.enqueueControl('pause');
@@ -83,10 +109,20 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
+    if (request.plugin === 'ohos-player' && request.command === 'play') this.cancelSourceSwitch?.();
     if (request.plugin === 'ohos-player' && request.command === 'webdav_put') {
       // Uploads must not queue playback controls behind a slow connection.
       this.upload(request);
       return;
+    }
+    if (request.plugin === 'ohos-player' && request.command === 'control') {
+      const args = JSON.parse(request.payload) as Args;
+      if (args.action === 'pause' || args.action === 'stop' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection'].includes(args.action ?? '')) {
+        // A preparation promise must never delay a user's pause/stop intent.
+        this.control(args).then(() => native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())))
+          .catch(() => native.tauriOhosPluginResponse(request.id,false,JSON.stringify({message:'无法停止播放，请重试'} as BridgeError)));
+        return;
+      }
     }
     this.tasks = this.tasks.catch(() => {}).then(async () => {
       try {
@@ -111,6 +147,7 @@ export class PlayerPlugin {
   }
 
   private async command(command: string, args: Args): Promise<Object> {
+    if (command === 'lyrics') return this.lyrics(JSON.parse(args.data ?? '{}') as LyricsPayload);
     if (command === 'snapshot') return this.snapshot();
     if (command === 'secret') return this.secret(args);
     if (command === 'observe_listening') { this.profilePath = args.profilePath ?? ''; return new EmptyResult(); }
@@ -124,26 +161,52 @@ export class PlayerPlugin {
   }
 
   private snapshot(): Snapshot {
-    return { id: this.id, status: this.status, position: Math.max(0, (this.player?.currentTime ?? 0) / 1000),
+    return { revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
       duration: Math.max(0, (this.player?.duration ?? 0) / 1000), rate: this.rate,
       sleepDeadline: this.sleepingAt, sleepDuration: this.sleepDuration, sleepExpired: this.sleepExpired,
-      stopped: this.id.length === 0, error: this.error || undefined };
+      stopped: this.id.length === 0, error: this.error || undefined, floatingLyricsEnabled: this.desktopLyricsEnabled };
   }
 
   private emit(action?: string): void {
     if (this.destroyed) return;
     const state = this.snapshot(); state.action = action;
     native.bilimusicOhosState(JSON.stringify(state));
-    if (this.session) {
-      const playback: avSession.AVPlaybackState = {
-        state: this.status === 'playing' ? avSession.PlaybackState.PLAYBACK_STATE_PLAY : avSession.PlaybackState.PLAYBACK_STATE_PAUSE,
-        speed: this.rate, position: { elapsedTime: state.position * 1000, updateTime: Date.now() }
-      };
-      this.session.setAVPlaybackState(playback).catch(() => {});
+    this.updateSessionPosition();
+  }
+
+  private updateSessionPosition(): void {
+    if (!this.session) return;
+    const playback: avSession.AVPlaybackState = {
+      state: this.status === 'playing' ? avSession.PlaybackState.PLAYBACK_STATE_PLAY : avSession.PlaybackState.PLAYBACK_STATE_PAUSE,
+      speed: this.rate, position: { elapsedTime: Math.max(0,this.player?.currentTime ?? 0), updateTime: Date.now() }
+    };
+    this.session.setAVPlaybackState(playback).catch(() => {});
+  }
+
+  private async lyrics(args: LyricsPayload): Promise<LyricsResult> {
+    if (args.action === 'update') {
+      this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').slice(0,200000);
+      if (this.currentMetadata?.assetId === this.lyricId) await this.setMetadata(this.mediaRevision,this.currentMetadata);
+      return { supported: true, enabled: this.desktopLyricsEnabled };
     }
+    const supported = deviceInfo.sdkApiVersion >= 23 && await avSession.isDesktopLyricSupported().catch(() => false);
+    if (!supported) return { supported: false, enabled: false, reason: '需要支持桌面歌词的 HarmonyOS 6.1 或更新系统' };
+    if (args.action === 'configure') { this.desktopLyricsLocked=args.locked === true; if(this.session) await this.session.setDesktopLyricState({isLocked:this.desktopLyricsLocked}); }
+    if (args.action === 'enable') {
+      await this.ensureSession();
+      await this.session?.setDesktopLyricState({isLocked:this.desktopLyricsLocked});
+      await this.session?.enableDesktopLyric(args.enabled === true);
+      await this.session?.setDesktopLyricVisible(args.enabled === true);
+      this.desktopLyricsEnabled = args.enabled === true;
+      clearInterval(this.lyricTimer);
+      if (this.desktopLyricsEnabled) this.lyricTimer = setInterval(() => this.updateSessionPosition(),100);
+      this.emit();
+    }
+    return { supported, enabled: this.desktopLyricsEnabled, fontSizeSupported: false, lockSupported: true };
   }
 
   private enqueueControl(action: string, value: number = 0): void {
+    if (action === 'pause' || action === 'stop') { this.control({action,value}).catch(() => {}); return; }
     this.tasks = this.tasks.catch(() => {}).then(() => this.control({ action, value })).catch((error: BusinessError) => {
       this.error = String(error); this.status = 'error'; this.emit();
     });
@@ -178,30 +241,45 @@ export class PlayerPlugin {
 
   private setMetadata(revision: number, metadata: avSession.AVMetadata): Promise<void> {
     this.metadataTasks = this.metadataTasks.catch(() => {}).then(async () => {
-      if (revision === this.mediaRevision && !this.destroyed) await this.session?.setAVMetadata(metadata);
+      if (revision === this.mediaRevision && !this.destroyed) {
+        const merged: avSession.AVMetadata = { assetId:metadata.assetId,title:metadata.title,artist:metadata.artist,duration:metadata.duration,mediaImage:metadata.mediaImage,
+          lyric:this.lyricId === metadata.assetId ? this.lyricText : '' };
+        await this.session?.setAVMetadata(merged); this.currentMetadata=merged;
+      }
     });
     return this.metadataTasks;
   }
 
   private async play(args: Args): Promise<void> {
     if (!args.url || !args.id || !/^http:\/\/127\.0\.0\.1:\d+\//.test(args.url)) throw new Error('Invalid playback source');
+    if(args.seamless && this.player && this.id===args.id){await this.switchSource(args);return;}
+    this.cancelSourceSwitch?.();
     const revision = ++this.mediaRevision;
+    this.desiredPlaying = args.playing !== false;
+    this.pendingSeek = -1;
     this.artwork.clear();
     this.accountListening(true);
     if (this.player) { await this.player.release(); this.player = null; }
     await this.ensureSession();
+    if (revision !== this.mediaRevision) return;
     this.id = args.id; this.title = args.title ?? 'BiliMusic'; this.artist = args.artist ?? '';
-    this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = 'buffering';
+    this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
+    this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1;
     this.rate = args.rate ?? 1; this.volume = args.volume ?? 0.7;
     this.previousPosition = -1; this.previousId = ''; this.sessionId = util.generateRandomUUID(true);
-    const player = await media.createAVPlayer(); this.player = player;
+    const player = await media.createAVPlayer();
+    if (revision !== this.mediaRevision) { await player.release(); return; }
+    this.player = player;
+    player.on('seekDone', () => { if (this.player !== player) return; this.pendingSeek = -1; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = player.currentTime; this.emit(); });
     player.on('audioInterrupt', event => {
       // Pause on focus loss and unplugged outputs; never resume unexpectedly.
       if (event.hintType !== 0) this.enqueueControl('pause');
     });
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('音频准备超时，请重试')), 20000);
+    try { await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('音频准备超时，请重试')), 12000);
+      this.cancelPreparation = () => { clearTimeout(timeout); reject(new Error('播放已取消')); };
       player.on('error', error => {
+        if (this.player !== player) return;
         hilog.error(0xB110, 'BiliMusicPlayer', 'AVPlayer error code=%{public}d', error.code);
         clearTimeout(timeout); this.accountListening(true);
         this.error = error.message; this.status = 'error'; this.emit();
@@ -228,7 +306,7 @@ export class PlayerPlugin {
         } catch (error) { clearTimeout(timeout); reject(new Error(String(error))); }
       });
       player.url = args.url ?? '';
-    });
+    }); } catch(error) { if(revision !== this.mediaRevision) return; throw new Error(String(error)); } finally { this.cancelPreparation=null; }
     player.setVolume(this.volume); this.applyRate(this.rate);
     if ((args.position ?? 0) > 0) player.seek((args.position ?? 0) * 1000);
     const metadata: avSession.AVMetadata = { assetId: this.id, title: this.title, artist: this.artist, duration: player.duration };
@@ -238,8 +316,44 @@ export class PlayerPlugin {
         duration: metadata.duration, mediaImage: pixels };
       await this.setMetadata(revision, covered);
     });
-    if (args.playing !== false) { await this.startBackground(); await player.play(); }
+    if (revision !== this.mediaRevision || this.player !== player) return;
+    if (this.desiredPlaying) { await this.startBackground(); if (this.desiredPlaying && revision === this.mediaRevision) await player.play(); else await this.stopBackground(); }
     else { this.status = 'paused'; this.emit(); }
+  }
+
+  private async switchSource(args: Args): Promise<void> {
+    const original=this.player,revision=this.mediaRevision,seek=this.seekRevision;
+    if(!original || args.id!==this.id) throw new Error('当前歌曲已变更');
+    const candidate=await media.createAVPlayer();let cancelled=false;let handoffRevision=-1;
+    let ready: (()=>void) | null=null;let failed: ((error:Error)=>void) | null=null;let seekDone: (()=>void) | null=null;
+    const cancel=()=>{cancelled=true;failed?.(new Error('音质切换已取消'));};this.cancelSourceSwitch=cancel;
+    const valid=():boolean=>!cancelled && this.player===original && this.mediaRevision===revision && this.seekRevision===seek;
+    candidate.on('error',error=>{if(this.player===candidate){this.error=error.message;this.status='error';this.emit();}else failed?.(new Error('新音源无法播放，已保留原音质'));});
+    candidate.on('audioInterrupt',event=>{if(this.player===candidate && event.hintType!==0)this.enqueueControl('pause');});
+    candidate.on('seekDone',()=>{seekDone?.();seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
+    candidate.on('stateChange',async state=>{
+      if(this.player===candidate){if(state==='playing')this.status='playing';else if(state==='paused')this.status='paused';else if(state==='completed'){this.accountListening(true);this.status='paused';this.emit('ended');return;}this.emit();return;}
+      if(cancelled)return;
+      try{if(state==='initialized')await candidate.prepare();else if(state==='prepared')ready?.();else if(state==='error')failed?.(new Error('新音源无法播放，已保留原音质'));}catch(error){failed?.(new Error(String(error)));}
+    });
+    try{
+      await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('新音源准备超时，已保留原音质')),12000);ready=()=>{clearTimeout(timeout);resolve();};failed=(error:Error)=>{clearTimeout(timeout);reject(error);};candidate.url=args.url ?? '';});
+      if(!valid())throw new Error('音质切换已取消');
+      candidate.setVolume(0);
+      const position=Math.max(0,original.currentTime);
+      if(position>0)await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('新音源定位超时，已保留原音质')),5000);seekDone=()=>{clearTimeout(timeout);resolve();};failed=(error:Error)=>{clearTimeout(timeout);reject(error);};candidate.seek(position);});
+      if(!valid())throw new Error('音质切换已取消');
+      const rates=[0.75,1,1.25,1.75,2,0.5,1.5,3,0.25,0.125];candidate.setSpeed(rates.indexOf(this.rate) as media.PlaybackSpeed);
+      this.accountListening(true);if(original.state==='playing')await original.pause();
+      if(!valid())throw new Error('音质切换已取消');
+      this.player=candidate;this.mediaRevision+=1;handoffRevision=this.mediaRevision;this.previousPosition=-1;this.mediaAdvancedAt=Date.now();this.watchdogPosition=-1;this.pendingSeek=-1;
+      candidate.setVolume(this.volume);if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
+      try{await original.release();}catch{}this.emit();
+    }catch(error){
+      if(this.player===candidate && this.mediaRevision===handoffRevision){this.player=original;this.mediaRevision+=1;this.previousPosition=-1;this.error='';}
+      if(this.player===original && this.desiredPlaying && original.state==='paused'){await original.play();}
+      throw new Error(String(error));
+    }finally{if(this.cancelSourceSwitch===cancel)this.cancelSourceSwitch=null;if(this.player!==candidate){try{await candidate.release();}catch{}}}
   }
 
   private applyRate(rate: number): void {
@@ -253,16 +367,18 @@ export class PlayerPlugin {
     const value = typeof args.value === 'number' ? args.value : 0;
     switch (args.action) {
       case 'prepare': break;
-      case 'resume': if (this.player) { await this.startBackground(); await this.player.play(); } break;
+      case 'resume': this.desiredPlaying = true; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.error = ''; if (this.player) { const player=this.player; await this.startBackground(); if(this.desiredPlaying && this.player===player) await player.play(); else await this.stopBackground(); } break;
       case 'pause':
-        this.accountListening(true);
+        this.desiredPlaying = false;
+        this.accountListening(true); this.status = 'paused';
         if (this.player?.state === 'playing') await this.player.pause();
         await this.stopBackground(); break;
       case 'stop':
-        this.mediaRevision += 1; this.artwork.clear();
+        this.desiredPlaying = false;
+        this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
         this.accountListening(true); await this.player?.release(); this.player = null;
         this.id = ''; this.status = 'paused'; await this.stopBackground(); break;
-      case 'seek': this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
+      case 'seek': this.seekRevision += 1; this.pendingSeek = Math.max(0, value * 1000); this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
       case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.player?.setVolume(this.volume); break;
       case 'rate': this.accountListening(true); this.applyRate(value); break;
       case 'collection':
@@ -351,8 +467,8 @@ export class PlayerPlugin {
   }
 
   async destroy(): Promise<void> {
-    this.mediaRevision += 1; this.artwork.clear();
-    this.accountListening(true); this.destroyed = true; clearInterval(this.timer);
+    this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
+    this.accountListening(true); this.destroyed = true; clearInterval(this.timer); clearInterval(this.lyricTimer);
     await this.metadataTasks.catch(() => {});
     await this.player?.release(); await this.stopBackground(); await this.session?.destroy();
   }

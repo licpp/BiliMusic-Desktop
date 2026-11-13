@@ -1,3 +1,4 @@
+import { ListSearch, matchesListSearch } from '../../shared/ListSearch'
 import { formatDuration } from '../../shared/time'
 import { formatPlayCount } from '../../shared/count'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
@@ -5,9 +6,9 @@ import { seasonTracks, type Season } from '../../services/mediaSources'
 import { seasonPlaybackQueue } from '../player/playerStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Link2, Play, Plus, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Link2, Play, Plus, RefreshCw } from 'lucide-react'
 import {
-  changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts, listPlaylists,
+  changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts,
   type FavoriteVideo, type Playlist,
 } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
@@ -27,6 +28,8 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const { biliFolderId: folderId, name } = playlist
   const client = useQueryClient()
   const folder = useQuery({ queryKey: linkedFolderKey(folderId), queryFn: () => getLinkedFolder(folderId) })
+  const [filter, setFilter] = useState('')
+  const visibleVideos = (folder.data?.videos || []).filter(video => matchesListSearch(filter, video.title, video.bvid))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -79,7 +82,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     await client.invalidateQueries({ queryKey: ['playlists'] })
   }
 
-  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: (folder.data?.videos || []).map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }
+  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: visibleVideos.map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }
   const queue = seasonTracks(season)
   return <section className="library-view linked-folder">
     <header>
@@ -92,10 +95,12 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
         <p>{folder.data?.videos.length ?? playlist.trackCount} 个视频 · 关联 B 站收藏夹</p>
       </div>
     </header>
-    <div className="collection-actions">
+    <div className="library-list-toolbar"><div className="collection-actions">
       <button type="button" className="collection-primary" disabled={busy} onClick={() => setAdding(value => !value)}><Plus size={16}/>添加视频</button>
       <PlaylistMenu playlist={playlist} onRefresh={refresh} onRemoved={onUnlink}/>
     </div>
+    <ListSearch query={filter} onChange={setFilter} count={visibleVideos.length} label="搜索歌单中的视频"/></div>
+    {filter.trim() && !visibleVideos.length && <p className="collection-empty">没有匹配的视频</p>}
     {refreshError && <div className="linked-refresh-error" role="alert">
       <span>{folder.data ? '已保留上次同步的内容。' : ''}{refreshError}</span>
       <button type="button" className="collection-flat-button" onClick={() => void refresh()}><RefreshCw size={15}/>重试</button>
@@ -119,7 +124,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     {!folder.data && (folder.isLoading || refreshing) && <p className="batch-message">正在读取收藏夹…</p>}
     {folder.error && !refreshError && !refreshing && !folder.data && <p role="alert" className="inline-error">{commandErrorMessage(folder.error)}</p>}
     {folder.data?.videos.length === 0 && <p className="batch-message">这个收藏夹里还没有视频</p>}
-    <div className="result-list" ref={list}>{folder.data?.videos.map(video => <LinkedVideoRow key={video.bvid} video={video} queue={queue} title={name} current={currentBvid === video.bvid}
+    <div className="result-list" ref={list}>{visibleVideos.map(video => <LinkedVideoRow key={video.bvid} video={video} queue={queue} title={name} current={currentBvid === video.bvid}
       expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
       onRemove={() => { setError(''); setConfirm(video) }}/>)}</div>
   </section>
@@ -163,34 +168,4 @@ function LinkedVideoParts({ bvid, queue, title }: { bvid: string; queue: import(
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
   const tracks = video.parts.map(part => toTrack(video, part))
   return <VideoPartsList locateCurrent queueSource={{ kind: 'season', title }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
-}
-
-export function LinkedFolderPicker({ bvid, onClose }: { bvid: string; onClose: () => void }) {
-  const client = useQueryClient()
-  const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
-  const [pending, setPending] = useState(false)
-  const [status, setStatus] = useState('')
-  const folders = playlists.data?.filter(playlist => playlist.biliFolderId) || []
-  const add = async (folderId: number) => {
-    const epoch = accountEpoch()
-    setPending(true)
-    setStatus('')
-    try {
-      const updated = await changeLinkedVideo(folderId, bvid, true)
-      if (epoch !== accountEpoch()) return
-      setStatus('已添加整个视频到 B 站收藏夹')
-      client.setQueryData(linkedFolderKey(folderId), updated)
-      await client.invalidateQueries({ queryKey: ['playlists'] })
-    } catch (cause) { setStatus(commandErrorMessage(cause)) }
-    finally { setPending(false) }
-  }
-  return <div className="dialog-backdrop"><div className="playlist-picker" role="dialog" aria-modal="true" aria-label="添加到关联收藏夹">
-    <header><h3>添加到关联收藏夹</h3><button aria-label="关闭" onClick={onClose}><X size={18}/></button></header>
-    <p>将整个视频 {bvid} 收藏到 B 站。</p>
-    {folders.map(folder => <button key={folder.id} disabled={pending} onClick={() => void add(folder.biliFolderId!)}>
-      <span>{folder.name}</span><Link2 size={16}/>
-    </button>)}
-    {!playlists.isLoading && !folders.length && <p>请通过「导入歌单 → B 站收藏夹」关联一个收藏夹。</p>}
-    {status && <p role="status">{status}</p>}
-  </div></div>
 }

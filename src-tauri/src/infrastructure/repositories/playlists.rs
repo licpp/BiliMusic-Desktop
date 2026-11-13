@@ -14,6 +14,7 @@ pub struct PlaylistRecord {
     pub cover_url: Option<String>,
     pub track_count: i64,
     pub is_system: bool,
+    pub added_at: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bili_folder_id: Option<i64>,
 }
@@ -277,7 +278,7 @@ impl PlaylistRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<PlaylistRecord>> {
-        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
+        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
         let mut playlists = vec![Self::get(connection, FAVORITES_PLAYLIST_ID)?];
         playlists.extend(
             statement
@@ -297,10 +298,11 @@ impl PlaylistRepository {
                 track_count: connection
                     .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))?,
                 is_system: true,
+                added_at: 0.0,
                 bili_folder_id: None,
             });
         }
-        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
+        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
     }
 
     pub fn tracks(connection: &Connection, id: &str) -> rusqlite::Result<Vec<TrackRecord>> {
@@ -435,6 +437,7 @@ impl PlaylistRepository {
             cover_url: row.get(3)?,
             track_count: row.get(4)?,
             is_system: false,
+            added_at: row.get(5)?,
             bili_folder_id: None,
         })
     }

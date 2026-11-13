@@ -1,3 +1,4 @@
+import { accountEpoch } from '../../services/accountScope'
 import { Headphones, Monitor } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { TouchOptions } from '../../shared/TouchOptions'
@@ -37,11 +38,16 @@ export function PlaybackSettings({ track, kind, onChanged }: {
   async function change(value: number) {
     setBusy(true)
     setError('')
+    const epoch=accountEpoch(),previous=preferences.data
+    let saved=false
     try {
       const updated = await setMediaPreferences({ [field]: value })
+      if(epoch!==accountEpoch())return
+      saved=true
       client.setQueryData(['media-preferences'], updated)
       await onChanged()
     } catch (cause) {
+      if(saved && previous && epoch===accountEpoch()){try{const restored=await setMediaPreferences({[field]:previous[field]});client.setQueryData(['media-preferences'],restored)}catch{}}
       setError(commandErrorMessage(cause))
     } finally {
       setBusy(false)
@@ -49,7 +55,7 @@ export function PlaybackSettings({ track, kind, onChanged }: {
   }
 
   if (!supported) return null
-  const automatic = audio ? '自动 · 最佳音质' : '自动 · 优先流畅'
+  const automatic = audio ? '自动 · 最高 AAC 音质' : '自动 · 优先流畅'
   const touchOptions = [
     { value: '0', label: automatic },
     ...(choices ?? []).map(choice => ({ value: String(choice.id), label: choice.label })),
@@ -61,12 +67,12 @@ export function PlaybackSettings({ track, kind, onChanged }: {
       {audio ? '音质' : '清晰度'}
       <select aria-label={audio ? '音频质量' : '视频清晰度'} disabled={busy || !preferences.data || !choices}
         value={selected} onChange={event => void change(Number(event.target.value))}>
-        <option value={0}>{audio ? '自动 · 最佳音质' : '自动 · 优先流畅'}</option>
+        <option value={0}>{audio ? '自动 · 最高 AAC 音质' : '自动 · 优先流畅'}</option>
         {choices?.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
         {missing && <option value={selected}>{audio ? '已记住偏好 · 本曲使用可用音质' : '已记住偏好 · 本片自动适配'}</option>}
       </select>
     </label>}
     {(error || queryError) && <p role="alert">{error || commandErrorMessage(queryError)}</p>}
-    {busy && <small role="status">正在切换…</small>}
+    {busy && <small role="status">{audio ? '正在准备新音质，继续播放当前音源…' : '正在切换…'}</small>}
   </div>
 }

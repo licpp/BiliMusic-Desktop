@@ -1,4 +1,5 @@
 import { CreatorsView } from '../features/collections/CreatorsView'
+import { createLinkedPlaylist } from '../services/desktopApi'
 import { PlaylistEntry } from '../features/library/PlaylistEntry'
 import { LinkedFolderView } from '../features/library/LinkedFolderView'
 import type { Collection } from '../services/collections'
@@ -43,7 +44,8 @@ import {
   Moon,
 } from 'lucide-react'
 import { usePlayerStore } from '../features/player/playerStore'
-import { playerShortcut } from '../features/player/shortcuts'
+import { playerShortcut, resolveShortcut } from '../features/player/shortcuts'
+import { useShortcutStore } from '../services/shortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
@@ -80,6 +82,7 @@ const navigation = [
 ]
 
 export function App() {
+  useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
@@ -134,6 +137,7 @@ export function App() {
   const [searchFocused, setSearchFocused] = useState(false)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const [playlistName, setPlaylistName] = useState('')
+  const [createLinked, setCreateLinked] = useState(false)
   const [actionError, setActionError] = useState('')
   const [importOpen, setImportOpen] = useState(false)
   const [rematchPlaylist,setRematchPlaylist]=useState<Playlist>()
@@ -158,10 +162,8 @@ export function App() {
   const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
   const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
   useEffect(() => { void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined) }, [homeTracks.data, queryClient])
-  const createList = useMutation({ mutationFn: createPlaylist, onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName('') } })
+  const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
   const allPlaylists = playlists.data || [FAVORITES_PLAYLIST]
-  const localPlaylists = allPlaylists.filter(playlist => !playlist.biliFolderId)
-  const linkedFolders = allPlaylists.filter(playlist => playlist.biliFolderId)
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
@@ -192,7 +194,7 @@ export function App() {
   const openCreatorFolder=(id:string)=>openLibraryPage(`creator-folder:${id}`)
   const playlistRemoved = (id: string) => { if (activeNav === `playlist:${id}`) closeLibraryPage() }
   const folderRemoved = (id: string) => { if (activeFolder === id) closeLibraryPage() }
-  const hub = <PlaylistsView playlists={localPlaylists} linkedFolders={linkedFolders} onOpen={openPlaylist} onRemoved={playlistRemoved}
+  const hub = <PlaylistsView playlists={allPlaylists} onOpen={openPlaylist} onRemoved={playlistRemoved}
     onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)}
     onCollectionOpen={openCollection} onOpenFolder={openFolder} onOpenCreatorFolder={openCreatorFolder} section={hubSection} onSectionChange={setHubSection}/>
   const current = usePlayerStore((state) => state.current)
@@ -366,6 +368,7 @@ export function App() {
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || (event.target as HTMLElement)?.closest('[data-shortcut-editor]')) return
       if (event.key === 'Escape') { setLyricsOpen(false); setImportOpen(false); setSearchFocused(false); return }
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
@@ -373,10 +376,16 @@ export function App() {
       // Space belongs to playback controls even after a mouse click leaves
       // previous/next focused. Other buttons retain native keyboard activation.
       if (target.isContentEditable) return
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && [' ', 'Enter'].includes(event.key) && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
       if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
-      const shortcut = playerShortcut(event)
+      const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
       if (!shortcut) return
+      if (shortcut === 'listSearch') {
+        const search = new Event('bilimusic-list-search', { cancelable:true })
+        window.dispatchEvent(search)
+        if (search.defaultPrevented) event.preventDefault()
+        return
+      }
       event.preventDefault()
       const state = usePlayerStore.getState()
       if (event.repeat && ['toggle','next','previous'].includes(shortcut)) return
@@ -447,11 +456,11 @@ export function App() {
           </div></div>
 
           <div className="collection-list" hidden={!playlistsExpanded}>
-            {localPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
+            {allPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
               active={activeNav === `playlist:${playlist.id}`} onOpen={() => openPlaylist(playlist.id)} onRemoved={() => playlistRemoved(playlist.id)}/>)}
           </div>
         </section>
-        <CollectionsView sidebar linkedFolders={linkedFolders} onOpenFolder={openFolder} onOpenLinked={openPlaylist}
+        <CollectionsView sidebar onOpenFolder={openFolder} onOpenLinked={openPlaylist}
           onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/>
         <CreatorsView followed sidebar onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={id=>{if(activeCreatorFolder===id)closeLibraryPage()}}/>
         <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
@@ -556,15 +565,15 @@ export function App() {
       {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}{playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
       {isMobile && <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>}
       {lyricsOpen && <LyricsView onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />}
-      {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id, mode) => {
+      {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id) => {
         setImportOpen(false)
         setRematchPlaylist(undefined)
-        setHubSection(mode === 'link' ? 'collections' : 'playlists')
+        setHubSection('playlists')
         libraryReturn.current = { nav: compact ? '此刻' : '歌单', scroll: 0 }
         setActiveNav(`playlist:${id}`)
         requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = 0 })
       }} onClose={() => {setImportOpen(false);setRematchPlaylist(undefined)}} />}
-      {creatingPlaylist && <div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus maxLength={80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" />{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
+      {creatingPlaylist && <div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus aria-label="歌单名称" maxLength={createLinked ? 40 : 80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" /><label className="create-linked-option"><input type="checkbox" checked={createLinked} disabled={createList.isPending} onChange={event => setCreateLinked(event.target.checked)}/><span>与 B 站收藏夹同步<small>在 B 站账号下新建私密收藏夹</small></span></label>{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
     </div>{miniMode&&<MiniPlayer busy={miniBusy} onRestore={(lyrics,queue)=>void changeMiniMode(false,lyrics,queue)} onFavorite={()=>void toggleCurrentFavorite()} favoritePending={favoritePending} onError={cause=>setActionError(commandErrorMessage(cause))}/>}
     {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError}</span><button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>

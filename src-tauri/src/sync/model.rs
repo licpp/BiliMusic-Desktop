@@ -33,6 +33,19 @@ impl Snapshot {
             records: BTreeMap::new(),
         }
     }
+    pub fn omit_linked_folders(&mut self) {
+        self.records.retain(|_, r| r.kind != "linkedFolder");
+    }
+    pub fn linked_folders(&self) -> Self {
+        let mut snapshot = Self::empty(&self.uid);
+        snapshot.records = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "linkedFolder")
+            .map(|(k, r)| (k.clone(), r.clone()))
+            .collect();
+        snapshot
+    }
     pub fn omit_folder_scopes(&mut self) {
         for r in self
             .records
@@ -159,6 +172,7 @@ impl Snapshot {
                 ],
                 "playlist" => &["id", "name", "description", "coverUrl"],
                 "collectionFolder" => &["id", "name", "scope"],
+                "linkedFolder" => &["folderId", "name"],
                 "collection" => &["bvid", "folderId"],
                 "item" => &["playlistId", "trackId", "position"],
                 "collectionProgress" => &["reference", "checkpoint"],
@@ -191,6 +205,14 @@ impl Snapshot {
                         && text(r, "bvid").starts_with("BV")
                         && text(r, "bvid").bytes().all(|c| c.is_ascii_alphanumeric())
                         && number(r, "cid") > 0
+                }
+                "linkedFolder" => {
+                    let folder_id = number(r, "folderId");
+                    key == &format!("linkedFolder:{folder_id}")
+                        && folder_id > 0
+                        && folder_id <= 9_007_199_254_740_991
+                        && !text(r, "name").trim().is_empty()
+                        && text(r, "name").chars().count() <= 160
                 }
                 "collectionFolder" => {
                     key == &format!("collectionFolder:{id}")
@@ -275,6 +297,7 @@ impl Snapshot {
         }
         for (kind, limit) in [
             ("collectionFolder", 100),
+            ("linkedFolder", 500),
             ("collection", 2000),
             ("collectionProgress", 2000),
             ("playlist", 500),

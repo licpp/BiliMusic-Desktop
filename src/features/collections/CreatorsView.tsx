@@ -1,3 +1,4 @@
+import { CoverCount } from '../../shared/CoverCount'
 import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
 import { LibraryEntry } from '../library/LibraryEntry'
@@ -455,9 +456,8 @@ export function CreatorPage({
                 })
               }
             >
-              <Artwork src={season.meta.cover} />
+              <span className="creator-season-cover"><Artwork src={season.meta.cover}/><CoverCount count={season.meta.total} unit="个视频" single/></span>
               <strong>{season.meta.name}</strong>
-              <small>{season.meta.total} 个视频</small>
             </button>
           ))
         ))}
