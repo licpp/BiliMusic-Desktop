@@ -168,6 +168,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertTrue(release['prerelease'])
             self.assertTrue(next(c[2] for c in calls if c[1] == 'POST')['prerelease'])
 
+    def test_github_missing_tag_can_return_422_before_creating_a_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = 'a' * 40
+            publisher = Publisher({'version': '0.3.1', 'source': source, 'revision': 'first', 'tag': 'v0.3.1'}, {}, directory)
+            def api(channel, path, method='GET', payload=None):
+                if path.startswith('/releases/tags/'):
+                    raise ApiError(channel, method, path, 404)
+                if path == '/commits/v0.3.1':
+                    raise ApiError(channel, method, path, 422)
+                if path == '/releases':
+                    return {'id': 1, 'tag_name': 'v0.3.1', 'prerelease': False}
+                return {'sha': source}
+            publisher.api = Mock(side_effect=api)
+            self.assertEqual(publisher.release('github')['id'], 1)
+
     def test_new_release_does_not_retarget_an_existing_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             publisher = Publisher({'version': '0.3.1', 'source': 'a' * 40, 'revision': 'first', 'tag': 'v0.3.1'}, {}, directory)
