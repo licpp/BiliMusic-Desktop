@@ -5,7 +5,7 @@ on:
       source_ref:
         description: Existing release tag or commit to build
         required: true
-        default: v0.2.3
+        default: main
 permissions:
   contents: read
 jobs:
