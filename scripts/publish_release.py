@@ -352,6 +352,8 @@ class Publisher:
         content = (json.dumps(self.plan['manifest'], ensure_ascii=False, indent=2) + '\n').encode()
         self.api(channel, path, 'PUT', {'message': f'Publish {self.plan["version"]} {self.plan["revision"]} download manifest [skip ci]', 'branch': 'main', 'sha': current['sha'], 'content': base64.b64encode(content).decode()})
 
+    site_filing_pending = False
+
     def get_site(self, path):
         raw = subprocess.check_output(['curl', '--resolve', self.plan['siteHost'] + ':443:127.0.0.1', '-fsS', '--max-time', '10', 'https://' + self.plan['siteHost'] + path], stderr=subprocess.PIPE, timeout=15)
         return json.loads(raw)
@@ -368,6 +370,9 @@ class Publisher:
         endpoints = ['https://' + self.plan['siteHost'] + '/api/v1/releases',
                      'https://gitee.com/' + self.plan['repos']['gitee'] + '/raw/main/website/releases.json',
                      'https://raw.githubusercontent.com/' + self.plan['repos']['github'] + '/main/website/releases.json']
+        if self.site_filing_pending:
+            self.record('websitePublic', {'status': 'pending-icp-filing', 'url': endpoints[0], 'serverManifestVerified': True})
+            endpoints = endpoints[1:]
         for attempt in range(40):
             states = []
             for url in endpoints:
@@ -400,10 +405,15 @@ class Publisher:
         self.record('complete', {'version': self.plan['version'], 'source': self.plan['source'], 'verifiedDownloadCount': len(self.report['downloads']), 'downloadCountPreserved': True})
 
 
-def remote_main(work, phase):
+def remote_main(work, phase, site_filing_pending=False):
     secrets = json.loads(sys.stdin.readline())  # Encrypted SSH stdin; never persisted.
     plan = json.loads((Path(work) / 'plan.json').read_text())
     publisher = Publisher(plan, secrets, work)
+    filing_receipt = Path(work) / 'site-filing-pending.json'
+    if filing_receipt.exists():
+        require(json.loads(filing_receipt.read_text())['planDigest'] == fingerprint(plan), 'Filing acknowledgement belongs to another plan')
+        site_filing_pending = True
+    publisher.site_filing_pending = site_filing_pending
     try:
         with publication_lock(plan['siteRoot'], fingerprint(plan), work) as owner:
             if phase == 'stage':
@@ -453,10 +463,13 @@ def local_main(args):
                     uploaded += 1
             sftp.put(str(bundle / 'release-plan.json'), work + '/plan.json')
             sftp.put(str(Path(__file__).resolve()), work + '/publish_release.py')
+            if args.site_filing_pending:
+                with sftp.open(work + '/site-filing-pending.json', 'w') as acknowledgement:
+                    acknowledgement.write(json.dumps({'planDigest': fingerprint(plan), 'status': 'pending-icp-filing'}))
         print(json.dumps({'stagedInputs': len(plan['assets']), 'uploaded': uploaded, 'reused': len(plan['assets']) - uploaded}), flush=True)
         def run_phase(phase):
             secrets = {name: subprocess.check_output([cli, 'auth', 'token'], text=True, stderr=subprocess.DEVNULL).strip() for name, cli in [('github', 'gh'), ('gitee', 'gitee')]}
-            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase
+            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase + (' --site-filing-pending' if args.site_filing_pending else '')
             stdin, stdout, stderr = ssh.exec_command(cmd, timeout=2400)
             stdin.write(json.dumps(secrets) + '\n')
             stdin.flush()
@@ -509,6 +522,7 @@ if __name__ == '__main__':
     parser.add_argument('--ssh-user', default='root')
     parser.add_argument('--site-root', default='/opt/bilimusic-site')
     parser.add_argument('--plan-only', action='store_true')
+    parser.add_argument('--site-filing-pending', action='store_true', help='Publish verified site configuration while explicitly recording public access pending ICP filing')
     parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')
     parser.add_argument('--remote-work', help=argparse.SUPPRESS)
     parser.add_argument('--remote-phase', choices=['stage', 'activate'], help=argparse.SUPPRESS)
@@ -516,7 +530,7 @@ if __name__ == '__main__':
     try:
         if args.remote_work:
             require(args.remote_phase, 'Remote phase is required')
-            remote_main(args.remote_work, args.remote_phase)
+            remote_main(args.remote_work, args.remote_phase, args.site_filing_pending)
         else:
             require(args.bundle and (args.plan_only or args.ssh_host), 'Provide --bundle and --ssh-host (or --plan-only)')
             local_main(args)

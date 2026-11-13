@@ -168,6 +168,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertTrue(release['prerelease'])
             self.assertTrue(next(c[2] for c in calls if c[1] == 'POST')['prerelease'])
 
+    def test_pending_icp_filing_skips_only_public_site_check_and_records_the_limit(self):
+        for pending in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                manifest = {'platforms': [{'channels': [{}, {}]} for _ in range(4)]}
+                plan = {'version': '0.3.1', 'source': 'a' * 40, 'revision': 'stable', 'siteHost': 'bilimusic.cn', 'siteRoot': '/opt/test', 'manifest': manifest, 'previous': {}, 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}}
+                publisher = Publisher(plan, {}, directory)
+                publisher.site_filing_pending = pending
+                publisher.report['downloads'] = [{} for _ in range(8)]
+                publisher.mirror = Mock()
+                response = MagicMock()
+                response.__enter__.return_value.read.return_value = json.dumps(manifest).encode()
+                with patch('publish_release.deploy_site', return_value={'version': '0.3.1'}), patch('publish_release.urllib.request.urlopen', return_value=response) as get:
+                    publisher.activate()
+                self.assertEqual(get.call_count, 2 if pending else 3)
+                self.assertEqual('websitePublic' in publisher.report, pending)
+                if pending:
+                    self.assertEqual(publisher.report['websitePublic']['status'], 'pending-icp-filing')
+                    self.assertTrue(all('bilimusic.cn' not in call.args[0] for call in get.call_args_list))
+                self.assertEqual(publisher.mirror.call_count, 2)
+
     def test_gitee_missing_release_can_return_json_null_with_http_200(self):
         with tempfile.TemporaryDirectory() as directory:
             source = 'a' * 40
