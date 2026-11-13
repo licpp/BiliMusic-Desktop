@@ -1,3 +1,4 @@
+import { releaseContentType } from './release_content_types.mjs'
 // Publish an existing Git tag and its artifacts using the local Gitee CLI login.
 import { execFileSync } from 'node:child_process'
 import { openAsBlob } from 'node:fs'
@@ -54,7 +55,7 @@ for (const asset of assets) {
     if (uploaded.size !== asset.size) throw new Error(`Existing attachment has a different size: ${asset.name}`)
   } else {
     const form = new FormData()
-    form.append('file', await openAsBlob(asset.path), asset.name)
+    form.append('file', await openAsBlob(asset.path, { type:releaseContentType(asset.name) }), asset.name)
     await api(`${releasePath}/attach_files`, { method: 'POST', payload: form })
   }
   console.log(`Gitee ${tag}: ${asset.name}`)

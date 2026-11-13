@@ -27,6 +27,10 @@ def require(value, message):
         raise ValueError(message)
 
 
+def release_content_type(name):
+    return {'.apk': 'application/vnd.android.package-archive', '.zip': 'application/zip', '.json': 'application/json', '.txt': 'text/plain', '.md': 'text/markdown'}.get(Path(name).suffix.lower(), 'application/octet-stream')
+
+
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -169,11 +173,11 @@ class Publisher:
                 body = json.dumps(payload).encode()
                 headers['Content-Type'] = 'application/json'
         if binary is not None:
-            body, headers['Content-Type'] = binary, 'application/octet-stream'
+            body, headers['Content-Type'] = binary, release_content_type(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get('name', [''])[0])
         if multipart:
             name, data = multipart
             boundary = 'BiliMusic' + uuid.uuid4().hex
-            body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode() + data + f'\r\n--{boundary}--\r\n'.encode())
+            body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: {release_content_type(name)}\r\n\r\n'.encode() + data + f'\r\n--{boundary}--\r\n'.encode())
             headers['Content-Type'] = 'multipart/form-data; boundary=' + boundary
         if body is not None:
             headers['Content-Length'] = str(len(body))

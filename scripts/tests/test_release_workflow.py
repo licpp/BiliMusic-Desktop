@@ -9,12 +9,26 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock
+from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type
 from release_packages import validate_bundle
 from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_apk_upload_has_android_content_type_instead_of_zip_or_unspecified_binary(self):
+        self.assertEqual(release_content_type('BiliMusic.APK'), 'application/vnd.android.package-archive')
+        self.assertEqual(release_content_type('BiliMusic.exe'), 'application/octet-stream')
+        self.assertEqual(release_content_type('BiliMusic.zip'), 'application/zip')
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.1', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'gitee': 'owner/repo'}}, {'gitee': 'TEST-TOKEN'}, directory)
+            publisher.opener = Mock()
+            publisher.opener.open.return_value.__enter__.return_value.read.return_value = b'{}'
+            publisher.api('gitee', '/releases/1/attach_files', 'POST', multipart=('BiliMusic.apk', b'APK-BYTES'))
+            request = publisher.opener.open.call_args.args[0]
+            self.assertIn(b'filename="BiliMusic.apk"', request.data)
+            self.assertIn(b'Content-Type: application/vnd.android.package-archive\r\n', request.data)
+            self.assertNotIn(b'Content-Type: application/zip', request.data)
+
     def test_later_four_platform_release_keeps_harmony_original_download_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             publisher = Publisher({'version': '0.3.1', 'tag': 'v0.3.1', 'source': 'a' * 40, 'revision': 'fix', 'repos': {'github': 'owner/repo'}}, {}, directory)
