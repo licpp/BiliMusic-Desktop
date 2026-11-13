@@ -7,8 +7,9 @@ import type { FloatingFrame } from '../../services/floatingLyrics'
 import { readFloatingPreferences, useFloatingPreferences, type FloatingPreferences } from '../../services/floatingLyricsPreferences'
 import { FloatingLyricsColors } from './FloatingLyricsColors'
 import { createLyricClock } from './lyricClock'
-import { lyricAt, floatingLinePair } from './lyricTimeline'
+import { lyricAt, floatingLineSlots } from './lyricTimeline'
 import { WordLyric } from './WordLyric'
+import { FloatingLyricMarquee } from './FloatingLyricMarquee'
 
 export function FloatingLyricsWindow() {
  const [frame,setFrame]=useState<FloatingFrame|null>(null),[,setLineTick]=useState(0)
@@ -30,13 +31,16 @@ export function FloatingLyricsWindow() {
 }
 export function FloatingLyricsSurface({frame,timeMs,clock,fontSize,locked,activeColor='#b4f3e9',inactiveColor='#91a6b5',externalUnlock=false,update,control,onDrag,onClose}:{frame:FloatingFrame|null;timeMs:number;clock?:()=>number;fontSize:number;locked:boolean;activeColor?:string;inactiveColor?:string;externalUnlock?:boolean;update:(value:Partial<FloatingPreferences>)=>void;control:(action:string)=>void;onDrag:()=>void;onClose:()=>void}) {
  const [colorsOpen,setColorsOpen]=useState(false)
- const lines=frame?.lines||[],{active,line,next}=floatingLinePair(lines,timeMs,frame?.subtitles)
+ const lines=frame?.lines||[],slots=floatingLineSlots(lines,timeMs,frame?.subtitles)
  return <section className="floating-lyrics-window" data-locked={locked} data-colors-open={colorsOpen&&!locked} aria-label="双行悬浮歌词" style={{'--floating-font-size':`${fontSize}px`,'--floating-active':activeColor,'--floating-inactive':inactiveColor} as CSSProperties}>
   <header className="floating-controls"><span className="floating-drag" onPointerDown={event=>{if(!locked&&event.button===0)onDrag()}}><Move size={14}/><span>{frame?.title||'BiliMusic'}</span></span><button aria-label="锁定悬浮歌词" title="锁定位置，悬停可解锁" onClick={()=>{setColorsOpen(false);update({locked:true})}}><LockKeyhole size={15}/></button><button aria-label="关闭悬浮歌词" onClick={onClose}><X size={17}/></button></header>
   {locked&&!externalUnlock&&<button className="floating-unlock" aria-label="解锁悬浮歌词" onClick={()=>update({locked:false})}><LockKeyholeOpen size={15}/><span>解锁</span></button>}
   <div className="floating-lyric-lines" onPointerDown={event=>{if(!locked&&event.button===0)onDrag()}}>
-   <div className="floating-lyric-line current">{line?<WordLyric line={line} timeMs={timeMs} active={active>=0} clock={clock}/>:<span>{lines.length?'\u00a0':frame?.title||'开始播放，让歌词陪着你'}</span>}</div>
-   <div className="floating-lyric-line upcoming">{next?.text||(lines.length?'\u00a0':frame?.artist||'\u00a0')}</div>
+   {slots.map(({line,index,active},slot)=><div key={slot} data-slot={slot} className={`floating-lyric-line ${active?'current':'upcoming'}`}>
+    <FloatingLyricMarquee identity={`${frame?.id}:${index}:${line?.timeMs}:${line?.text}`}>
+      {line?<WordLyric line={line} timeMs={timeMs} active={active} clock={active?clock:undefined}/>:<span>{lines.length?'\u00a0':slot===0?frame?.title||'开始播放，让歌词陪着你':frame?.artist||'\u00a0'}</span>}
+    </FloatingLyricMarquee>
+   </div>)}
   </div>
   <footer className="floating-controls"><button aria-label="上一首" onClick={()=>control('previous')}><SkipBack size={15}/></button><button aria-label={frame?.playing?'暂停':'播放'} onClick={()=>control('toggle')}>{frame?.playing?<Pause size={16}/>:<Play size={16}/>}</button><button aria-label="下一首" onClick={()=>control('next')}><SkipForward size={15}/></button><span className="floating-tool-divider"/><button aria-label="歌词颜色" aria-expanded={colorsOpen} onClick={()=>setColorsOpen(!colorsOpen)}><Palette size={16}/></button><span className="floating-font-controls"><button aria-label="减小歌词字号" disabled={fontSize<=18} onClick={()=>update({fontSize:fontSize-2})}><Minus size={14}/></button><output aria-label="歌词字号">{fontSize}</output><button aria-label="增大歌词字号" disabled={fontSize>=48} onClick={()=>update({fontSize:fontSize+2})}><Plus size={14}/></button></span></footer>
   {colorsOpen&&!locked&&<div className="floating-colors-popover" role="group" aria-label="桌面歌词颜色"><header><span>歌词颜色</span><button aria-label="关闭颜色设置" onClick={()=>setColorsOpen(false)}><X size={14}/></button></header><FloatingLyricsColors activeColor={activeColor} inactiveColor={inactiveColor} update={update}/></div>}

@@ -13,7 +13,7 @@ import type { Collection } from '../../services/collections'
 import { MobilePlaybackRate, PlaybackRateEntry } from './MobilePlaybackRate'
 import { PlaybackSettings } from './PlaybackSettings'
 import { useBiliSubtitles } from './useBiliSubtitles'
-import { isMobile, isIOS } from '../../services/platform'
+import { isMobile, isIOS, isOHOS } from '../../services/platform'
 import { controlMobileAudio } from '../player/mobileAudio'
 import { formatDuration } from '../../shared/time'
 import { LyricsChooser } from './LyricsChooser'
@@ -474,7 +474,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
         <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
         <div className="lyrics-actions">
-          {isMobile && !isIOS && !videoFullscreen && <FloatingLyricsToggle/>}
+          {isMobile && !isIOS && !isOHOS && !videoFullscreen && <FloatingLyricsToggle/>}
           {!isMobile&&onMiniPlayer&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" onClick={onMiniPlayer}><PictureInPicture2 size={19}/></button>}
           {isMobile && !compact && supplementControl}
           {!(isMobile && videoFullscreen) && <ActionMenu label={compact ? "播放设置" : "歌词页面更多操作"} panel panelClassName={compact ? "mobile-playback-settings" : undefined} touchSheet={compact}>{(close) => <>

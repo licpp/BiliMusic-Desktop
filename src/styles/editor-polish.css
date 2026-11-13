@@ -571,9 +571,9 @@ html[data-window="lyrics"][data-theme],html[data-window="lyrics"] body,html[data
 .floating-font-controls output { min-width:22px;text-align:center;font-variant-numeric:tabular-nums; }
 .floating-lyric-lines { display:flex;flex-direction:column;justify-content:center;gap:1px;width:100%;min-width:0;min-height:0;cursor:move;filter:drop-shadow(0 1px 2px #0007); }
 .floating-lyrics-window[data-locked="true"] .floating-lyric-lines { cursor:default; }
-.floating-lyric-line { flex:0 0 auto;display:block;min-width:0;min-height:0;margin:0;padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.06;font-size:var(--floating-font-size,28px);font-weight:650; }
-.floating-lyric-line.current { text-align:left;color:var(--floating-active,#b4f3e9); }
-.floating-lyric-line.upcoming { text-align:right;font-size:calc(var(--floating-font-size,28px) * .94);color:var(--floating-inactive,#91a6b5); }
+.floating-lyric-line { flex:0 0 auto;display:block;min-width:0;min-height:0;margin:0;padding:0;overflow:hidden;white-space:nowrap;line-height:1.06;font-size:var(--floating-font-size,28px);font-weight:650; }
+.floating-lyric-line.current {color:var(--floating-active,#b4f3e9); }
+.floating-lyric-line.upcoming {color:var(--floating-inactive,#91a6b5); }
 .floating-lyric-line .word-lyric { white-space:nowrap; }
 .floating-lyric-line .lyric-word { background-image:linear-gradient(to right,var(--floating-active,#b4f3e9) var(--word-progress),var(--floating-inactive,#91a6b5) var(--word-progress)); }
 .floating-lyrics-window .floating-unlock { position:absolute;z-index:2;top:5px;right:14px;gap:6px;width:auto;height:28px;padding:0 9px;visibility:hidden;opacity:0;background:var(--floating-glass);font:inherit;font-size:11px; }
@@ -650,9 +650,19 @@ html[data-window="lyrics-unlock"],html[data-window="lyrics-unlock"] body,html[da
 .floating-unlock-window > button:focus-visible { outline:2px solid var(--cyan);outline-offset:-2px; }
 
 /* Mobile download choices use the same bottom-sheet silhouette as other lists. */
-.dialog-backdrop.collection-dialog-sheet-layer { align-items:end;justify-items:stretch;padding:0; }
+.dialog-backdrop.collection-dialog-sheet-layer { inset:var(--visible-top,0px) 0 auto;height:var(--visible-height,100dvh);align-items:end;justify-items:stretch;padding:0; }
 .collection-dialog.collection-dialog-mobile-sheet { width:100%;max-width:none;max-height:calc(100% - max(12px,var(--native-safe-top,env(safe-area-inset-top,0px))));margin:0;padding:0 20px calc(16px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px)));border-radius:24px 24px 0 0;border-width:1px 0 0;overflow-y:auto;overscroll-behavior:contain;transform:translateY(var(--sheet-drag-y,0px)); }
-.collection-dialog-mobile-sheet > .collection-sheet-handle { display:grid;place-items:center;width:100%;height:28px;margin:0;padding:10px 0;border:0;background:transparent;touch-action:none; }
+.collection-dialog-mobile-sheet > .collection-sheet-handle { display:grid;place-items:center;flex:none;width:100%;height:28px;margin:0;padding:10px 0;border:0;background:transparent;touch-action:none; }
 .collection-sheet-handle > span { width:36px;height:4px;border-radius:4px;background:var(--muted);opacity:.45; }
 .collection-dialog.collection-dialog-mobile-sheet > header { margin:0 0 16px;padding:4px 0 14px;border-bottom:1px solid var(--line); }
 .collection-dialog-mobile-sheet > header h3 { margin:0;font-size:20px; }
+
+.floating-lyric-line[data-slot="0"] { text-align:left; }
+.floating-lyric-line[data-slot="1"] { text-align:right; }
+.floating-lyric-viewport { width:100%;overflow:hidden; }
+.floating-lyric-marquee { display:inline-block;width:max-content;max-width:none;vertical-align:top; }
+.floating-lyric-viewport[data-overflow="true"] { text-align:left; }
+.floating-lyric-viewport[data-overflow="true"] > .floating-lyric-marquee { animation:floating-lyric-scroll var(--lyric-scroll-duration) linear infinite alternate; }
+@keyframes floating-lyric-scroll { 0%,15% { transform:translateX(0); } 85%,100% { transform:translateX(calc(-1 * var(--lyric-travel))); } }
+/* Leave a clear gap below the system capsule/cutout, including tall lists. */
+.collection-dialog.creator-import-dialog.collection-dialog-mobile-sheet { max-height:min(80dvh,calc(var(--visible-height,100dvh) - max(72px,var(--native-safe-top,env(safe-area-inset-top,0px))) - 16px)); }

@@ -21,7 +21,7 @@ export async function floatingCapability(): Promise<FloatingCapability> {
   return isMobile ? nativeLyrics({action:'status'}) : {supported:true,enabled:useFloatingLyrics.getState().enabled}
 }
 export async function setFloatingLyrics(enabled: boolean) {
-  if (isIOS || useFloatingLyrics.getState().busy) return
+  if (isIOS || isOHOS || useFloatingLyrics.getState().busy) return
   const epoch=accountEpoch()
   useFloatingLyrics.setState({busy:true,error:''})
   try {
@@ -92,7 +92,7 @@ export function startFloatingLyrics() {
     if (currentKey() !== trackKey) void load()
     else if (state.current?.title !== previous.current?.title || state.current?.artist !== previous.current?.artist || !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   })
-  const configure = () => { if(isIOS)return;const {fontSize,locked,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
+  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
   useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()})
   window.addEventListener('bilimusic-floating-lyrics-change',configure)
   configure()

@@ -395,6 +395,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
       window.dispatchEvent(new Event('bilimusic-data-changed'))
     }
   }
+  if (state.action && state.id && state.id !== usePlayerStore.getState().current?.id) return
   if (state.action === 'resume') { void usePlayerStore.getState().toggle(); return }
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }

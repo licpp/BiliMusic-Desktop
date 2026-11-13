@@ -35,3 +35,14 @@ export function systemLrc(lines: LyricLine[], biasMs: number) {
     return `[${String(Math.floor(ms/60000)).padStart(2,'0')}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}]${line.text.replace(/[\r\n]/g,' ')}`
   }).join('\n')
 }
+
+// Keep a sentence in its physical row while it changes from upcoming to active.
+// Only the expired row is replaced, so successive sentences alternate rows.
+export function floatingLineSlots(lines: LyricLine[], timeMs: number, subtitles = false) {
+  const index=lyricAt(lines,timeMs),active=lyricAt(lines,timeMs,!subtitles)
+  const current=Math.max(0,index),other=current+1<lines.length?current+1:current-1
+  return [0,1].map(slot=>{
+    const at=current%2===slot?current:other
+    return {line:at>=0?lines[at]:undefined,index:at,active:at===active&&at>=0}
+  })
+}

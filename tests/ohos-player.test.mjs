@@ -51,7 +51,7 @@ function setup() {
     scope: '123',
     native: { tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
     media: { createAVPlayer: async () => (player = new FakePlayer()) },
-    avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
+    avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { if(Object.hasOwn(value,"mediaImage") && value.mediaImage === undefined)throw {code:401,message:"mediaImage property value type invalid"};metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
     background: { BackgroundMode: { AUDIO_PLAYBACK: 2 }, async startBackgroundRunning() { background.push('start') }, async stopBackgroundRunning() { background.push('stop') } },
     asset: { Tag: tags, Accessibility: { DEVICE_FIRST_UNLOCKED: 1 }, ReturnType: { ALL: 1 }, ErrorCode: { NOT_FOUND: 24000002 },
       async update(q, attrs) { if (!secrets.has(key(q))) throw missing(); secrets.set(key(q), attrs.get(tags.SECRET)) },
@@ -153,7 +153,7 @@ test('media session receives decoded cover pixels with Bilibili headers and pres
     assert.equal(h.artworkRequests[0].url, 'https://i0.hdslb.com/cover.jpg')
     assert.equal(h.artworkRequests[0].options.header.Referer, 'https://www.bilibili.com/')
     assert.deepEqual(h.metadata.at(-1), { assetId: 'song', title: '歌曲', artist: '歌手', duration: 180_000, mediaImage: h.pixels[0], lyric: '' })
-    assert.deepEqual(h.pixels[0].size, { width: 800, height: 450 })
+    assert.deepEqual(h.pixels[0].size, { width: 384, height: 216 })
     assert.equal(h.artworkRequests[0].request.destroyed, true)
   } finally { await h.plugin.destroy() }
   assert.equal(h.pixels[0].released, true)
@@ -177,7 +177,7 @@ test('a late old cover cannot overwrite the next song and failed covers do not i
     await h.plugin.artworkReady
     assert.equal((await h.command('snapshot')).value.status, 'playing')
     assert.equal(h.metadata.at(-1).assetId, 'offline')
-    assert.equal(h.metadata.at(-1).mediaImage, undefined)
+    assert.equal(h.metadata.at(-1).mediaImage, undefined);assert.equal(Object.hasOwn(h.metadata.at(-1),'mediaImage'),false,'a missing cover must not invalidate the complete media card')
   } finally { await h.plugin.destroy() }
 })
 
@@ -214,22 +214,37 @@ test('a pending WebDAV upload does not block native pause or snapshot commands',
   } finally { await h.plugin.destroy() }
 })
 
-test('Harmony desktop lyrics reuse the audio session and cover updates preserve their timeline', async () => {
+test('Harmony notification lyrics follow the native clock automatically, preserve artwork, and fall back in subtitle gaps', async () => {
   const h=setup()
   try {
-    await h.command('play',{id:'song',title:'歌曲',url:'http://127.0.0.1:1234/media'})
-    await h.command('lyrics',{data:JSON.stringify({action:'update',id:'song',lrc:'[00:01.500]你好'})})
-    assert.equal(h.metadata.at(-1).lyric,'[00:01.500]你好')
-    const result=await h.command('lyrics',{data:JSON.stringify({action:'enable',enabled:true})})
-    assert.equal(result.value.enabled,true)
-    assert.equal(h.mock.desktopLyrics,true)
-    assert.equal(h.mock.desktopLyricVisible,true)
-    assert.equal((await h.command('snapshot')).value.floatingLyricsEnabled,true)
-    await h.command('play',{id:'next',url:'http://127.0.0.1:1234/media2'})
-    assert.equal(h.metadata.at(-1).lyric,'','a previous track lyric never follows the next track')
-    await h.command('lyrics',{data:JSON.stringify({action:'enable',enabled:false})})
-    assert.equal(h.mock.desktopLyricVisible,false)
+    await h.command('play',{id:'song',title:'歌曲',artist:'歌手',url:'http://127.0.0.1:1234/media',coverUrl:'https://i0.hdslb.com/art.jpg'})
+    await h.plugin.artworkReady
+    await h.command('lyrics',{data:JSON.stringify({action:'update',id:'song',lrc:'[00:01.000]你好',lines:[{timeMs:1000,endTimeMs:2000,text:'你好'},{timeMs:3000,endTimeMs:4000,text:'下一句'}],subtitles:true})})
+    assert.equal(h.metadata.at(-1).artist,'歌手')
+    h.player.currentTime=1500;await h.plugin.setMetadata(h.plugin.mediaRevision)
+    assert.equal(h.metadata.at(-1).artist,'你好');assert.equal(h.metadata.at(-1).title,'歌曲');assert.equal(h.metadata.at(-1).mediaImage,h.pixels[0])
+    const count=h.metadata.length;await h.plugin.setMetadata(h.plugin.mediaRevision);assert.equal(h.metadata.length,count,'unchanged lyrics do not flood system metadata')
+    h.player.currentTime=2500;await h.plugin.setMetadata(h.plugin.mediaRevision);assert.equal(h.metadata.at(-1).artist,'歌手')
+    h.player.currentTime=3500;await h.plugin.setMetadata(h.plugin.mediaRevision);assert.equal(h.metadata.at(-1).artist,'下一句')
+    const legacy=await h.command('lyrics',{data:JSON.stringify({action:'enable',enabled:true})});assert.equal(legacy.value.enabled,false)
+    await h.command('play',{id:'next',artist:'新歌手',url:'http://127.0.0.1:1234/media2'})
+    assert.equal(h.metadata.at(-1).lyric,'');assert.equal(h.metadata.at(-1).artist,'新歌手')
   } finally { await h.plugin.destroy() }
+})
+
+test('a queued lyric refresh cannot erase artwork decoded while an older metadata task was pending',async()=>{
+ const h=setup();let reply,release
+ h.mock.artworkReply=()=>new Promise(resolve=>{reply=resolve})
+ try {
+  await h.command('play',{id:'song',title:'歌曲',artist:'歌手',url:'http://127.0.0.1:1234/media',coverUrl:'https://i0.hdslb.com/art.jpg'})
+  h.plugin.metadataTasks=new Promise(resolve=>{release=resolve})
+  reply({responseCode:200,result:new ArrayBuffer(4)})
+  for(let i=0;i<4;i++)await new Promise(setImmediate)
+  const lyrics=h.command('lyrics',{data:JSON.stringify({action:'update',id:'song',lines:[{timeMs:0,text:'当前歌词'}]})})
+  release();await lyrics;await h.plugin.artworkReady
+  assert.equal(h.metadata.at(-1).mediaImage,h.pixels[0]);assert.equal(h.metadata.at(-1).artist,'当前歌词')
+  assert.equal(h.pixels[0].released,false)
+ } finally {release?.();await h.plugin.destroy()}
 })
 
 test('a native pause during slow preparation is immediate and prevents deferred autoplay', async () => {

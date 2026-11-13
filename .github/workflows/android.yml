@@ -44,6 +44,9 @@ jobs:
       - run: npm run android:init
       # Optimized native code and stripped symbols; sign the release APK with the existing preview key.
       - run: npm run tauri -- android build --apk --target aarch64
+      - name: Test headset controls and lyric overlay window policy
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-android-player:testReleaseUnitTest --no-daemon
       - run: node scripts/android-verify-acl.mjs
       - name: Sign preview with persistent repository key
         env:
@@ -87,4 +90,5 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             android-bridge-acl.json
+            native/android-player/android/build/test-results/testReleaseUnitTest/*.xml
           if-no-files-found: error

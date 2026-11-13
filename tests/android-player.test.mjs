@@ -78,3 +78,15 @@ test('Android source errors show a localized playback message', async () => {
   await s.getState().play(track)
   assert.equal(s.getState().error, '暂时无法播放这首歌，请重试')
 })
+
+test('system navigation changes the Android queue and late commands for a previous track are ignored',async()=>{
+ const store=setup(),second={...track,id:'bilibili:BV123:2',title:'第二首',source:{...track.source,cid:2,page:2}}
+ await store.getState().playFromList([track,second],track.id)
+ nativeTest.event({id:track.id,status:'playing',position:1,revision:50,sequence:8})
+ nativeTest.event({id:track.id,revision:50,sequence:9,action:'next'})
+ for(let i=0;i<15&&store.getState().current?.id!==second.id;i++)await Promise.resolve()
+ assert.equal(store.getState().current.id,second.id)
+ const plays=nativeTest.plays.length
+ nativeTest.event({id:track.id,revision:50,sequence:10,action:'previous'})
+ await Promise.resolve();assert.equal(store.getState().current.id,second.id);assert.equal(nativeTest.plays.length,plays)
+})

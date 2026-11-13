@@ -154,8 +154,8 @@ class PlaybackService : Service() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(intent: Intent): Boolean {
                 val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return super.onMediaButtonEvent(intent)
-                if (key.keyCode == KeyEvent.KEYCODE_HEADSETHOOK || key.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
-                    if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0) control("toggle")
+                if (MediaButtons.supports(key.keyCode)) {
+                    MediaButtons.action(key.keyCode,key.action == KeyEvent.ACTION_DOWN,key.repeatCount)?.let { control(it) }
                     return true
                 }
                 return super.onMediaButtonEvent(intent)
@@ -164,9 +164,9 @@ class PlaybackService : Service() {
             override fun onPause() { control("pause") }
             override fun onStop() { control("stop") }
             override fun onSeekTo(pos: Long) { control("seek", pos / 1000.0) }
-            override fun onSkipToNext() { listener?.invoke(JSObject().put("action", "next")) }
-            override fun onSkipToPrevious() { listener?.invoke(JSObject().put("action", "previous")) }
-        })
+            override fun onSkipToNext() { control("next") }
+            override fun onSkipToPrevious() { control("previous") }
+        },handler)
         session.isActive = true
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(unplugged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
         else registerReceiver(unplugged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
@@ -185,7 +185,7 @@ class PlaybackService : Service() {
                 status = "buffering"; error = null; startForeground(NOTIFICATION, notification())
             }
             "load" -> load(intent)
-            "next", "previous" -> listener?.invoke(JSObject().put("action", intent.action))
+            "next", "previous" -> control(intent.action!!)
             "toggle" -> control(if (status == "playing" || status == "buffering") "pause" else "resume")
             "stop" -> control("stop")
         }
@@ -258,7 +258,7 @@ class PlaybackService : Service() {
                 if (player !== it) return@setOnCompletionListener
                 didFinishTrack = true; savePosition(force = true)
                 accountListening(true)
-                if (!expireSleepIfNeeded()) { status = "paused"; publish(); listener?.invoke(JSObject().put("action", "ended")) }
+                if (!expireSleepIfNeeded()) { status = "paused"; publish(); emitAction("ended") }
                 handler.postDelayed({ if (player === it && status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000)
             }
             media.setOnErrorListener { candidate, what, extra ->
@@ -356,15 +356,18 @@ class PlaybackService : Service() {
             if (!media.isPlaying) media.start()
         }
     }
+    private fun emitAction(action: String) { listener?.invoke(snapshot().put("action",action)) }
     fun control(action: String, value: Double = 0.0) {
+        if(action == "toggle") { control(if(status == "playing" || status == "buffering") "pause" else "resume");return }
         if (action == "resume") resetPlaybackWatchdog()
         when (action) {
+            "next", "previous" -> emitAction(action)
             "sleepStart" -> if (value in 60.0..10800.0) scheduleSleep(value)
             "sleepCancel" -> { clearSleep(); publish() }
             "sleepDismiss" -> { sleepExpired = false; publish() }
             "sleepRepeat" -> if (sleepExpired && sleepDuration > 0) { scheduleSleep(sleepDuration); control("resume") }
             "pause" -> { resumeOnFocus = false; pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { listener?.invoke(JSObject().put("action", "resume")) } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
+            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { emitAction("resume") } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                     if (!seeking) player?.let(::startAtRate)

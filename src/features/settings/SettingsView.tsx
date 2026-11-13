@@ -3,7 +3,7 @@ import { FloatingLyricsSettings } from './FloatingLyricsSettings'
 import { UpdateSettings } from './UpdateSettings'
 import { PlaybackCacheSettings } from './PlaybackCacheSettings'
 import { SyncSettings } from '../sync/SyncSettings'
-import { isMobile, isIOS } from '../../services/platform'
+import { isMobile, isIOS, isOHOS } from '../../services/platform'
 import { Cloud, Download, FolderOpen, HardDrive, History, LoaderCircle, Sun } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
 import { usePlayerStore } from '../player/playerStore'
@@ -36,7 +36,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     </div></section>
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <div className="settings-card"><div className="settings-icon"><History/></div><div><strong id="auto-resume-label">断点续播</strong><small>从上次听到的位置继续</small></div><button type="button" className="auto-resume-switch" role="switch" aria-checked={autoResume} aria-labelledby="auto-resume-label" onClick={() => setAutoResume(!autoResume)}><span aria-hidden="true"/></button></div>
-      {!isIOS && <FloatingLyricsSettings/>}
+      {!isIOS && !isOHOS && <FloatingLyricsSettings/>}
       {!isMobile && <ShortcutSettings/>}
     </div></section>
     <section className="settings-group" aria-labelledby="settings-library"><h3 id="settings-library">音乐资料</h3><div className="settings-group-body">

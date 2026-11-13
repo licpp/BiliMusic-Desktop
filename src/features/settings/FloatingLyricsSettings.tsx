@@ -35,7 +35,7 @@ export function FloatingLyricsSettings() {
         </div>
       </div>}
       {capability?.supported&&!fontSupported&&!colorSupported&&<p className="floating-settings-note">字号与配色由系统桌面歌词管理。</p>}
-      {capability?.supported&&capability.lockSupported!==false&&<label className="floating-lock-setting"><input type="checkbox" aria-label="锁定悬浮歌词位置" checked={locked} onChange={event=>update({locked:event.target.checked})}/><span>锁定位置<small>{locked ? isMobile ? '已锁定，可在这里解锁' : '已锁定，悬停歌词可解锁' : isMobile ? '固定歌词位置，防止误拖动' : '歌词区域可点击穿透，悬停时显示解锁按钮'}</small></span></label>}
+      {capability?.supported&&capability.lockSupported!==false&&<label className="floating-lock-setting"><input type="checkbox" aria-label="锁定悬浮歌词位置" checked={locked} onChange={event=>update({locked:event.target.checked})}/><span>锁定位置<small>{locked ? isMobile ? '点击歌词旁的解锁图标，也可在这里解锁' : '已锁定，悬停歌词可解锁' : isMobile ? '固定歌词位置，防止误拖动' : '歌词区域可点击穿透，悬停时显示解锁按钮'}</small></span></label>}
       {capability&&!capability.supported&&<p className="floating-settings-note">{description}</p>}
       {error&&<p className="settings-error" role="alert">{error}</p>}
     </div>

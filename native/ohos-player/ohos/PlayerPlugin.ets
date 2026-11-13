@@ -1,11 +1,12 @@
 import { common, Want, wantAgent } from '@kit.AbilityKit';
 import { avSession } from '@kit.AVSessionKit';
 import { media } from '@kit.MediaKit';
+import { image } from '@kit.ImageKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { asset } from '@kit.AssetStoreKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Artwork } from './Artwork';
@@ -24,7 +25,8 @@ interface Snapshot {
   sleepDeadline: number; sleepDuration: number; sleepExpired: boolean;
   stopped: boolean; error?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
 }
-interface LyricsPayload { action: string; enabled?: boolean; id?: string; lrc?: string; fontSize?: number; locked?: boolean }
+interface NotificationLyricLine { timeMs: number; text: string; endTimeMs?: number }
+interface LyricsPayload { lines?: NotificationLyricLine[]; biasMs?: number; subtitles?: boolean; action: string; enabled?: boolean; id?: string; lrc?: string; fontSize?: number; locked?: boolean }
 interface LyricsResult { supported: boolean; enabled: boolean; reason?: string; fontSizeSupported?: boolean; lockSupported?: boolean }
 class EmptyResult {}
 interface BridgeError { message: string }
@@ -72,11 +74,16 @@ export class PlayerPlugin {
   private mediaRevision: number = 0;
   private mediaAdvancedAt: number = 0;
   private watchdogPosition: number = -1;
-  private desktopLyricsLocked: boolean = false;
-  private desktopLyricsEnabled: boolean = false;
   private lyricId: string = '';
   private lyricText: string = '';
   private lyricTimer: number = -1;
+  private lyricLines: NotificationLyricLine[] = [];
+  private lyricBias: number = 0;
+  private lyricSubtitles: boolean = false;
+  private cover: image.PixelMap | undefined = undefined;
+  private coverRevision: number = 0;
+  private metadataSignature: string = '';
+  private metadataRetryAt: number = 0;
   private stateSequence: number = 0;
   private seekRevision: number = 0;
   private pendingSeek: number = -1;
@@ -103,6 +110,7 @@ export class PlayerPlugin {
       }
       this.emit();
     }, 1000);
+    this.lyricTimer = setInterval(() => { this.setMetadata(this.mediaRevision).catch(() => {}); },250);
   }
 
   setWindow(win: window.Window): void { this.win = win; }
@@ -164,7 +172,7 @@ export class PlayerPlugin {
     return { revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
       duration: Math.max(0, (this.player?.duration ?? 0) / 1000), rate: this.rate,
       sleepDeadline: this.sleepingAt, sleepDuration: this.sleepDuration, sleepExpired: this.sleepExpired,
-      stopped: this.id.length === 0, error: this.error || undefined, floatingLyricsEnabled: this.desktopLyricsEnabled };
+      stopped: this.id.length === 0, error: this.error || undefined };
   }
 
   private emit(action?: string): void {
@@ -186,23 +194,21 @@ export class PlayerPlugin {
   private async lyrics(args: LyricsPayload): Promise<LyricsResult> {
     if (args.action === 'update') {
       this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').slice(0,200000);
-      if (this.currentMetadata?.assetId === this.lyricId) await this.setMetadata(this.mediaRevision,this.currentMetadata);
-      return { supported: true, enabled: this.desktopLyricsEnabled };
+      this.lyricLines = (args.lines ?? []).filter(line => Number.isFinite(line.timeMs) && typeof line.text === 'string');
+      this.lyricBias = Number.isFinite(args.biasMs) ? args.biasMs ?? 0 : 0; this.lyricSubtitles = args.subtitles === true;
+      await this.setMetadata(this.mediaRevision);
     }
-    const supported = deviceInfo.sdkApiVersion >= 23 && await avSession.isDesktopLyricSupported().catch(() => false);
-    if (!supported) return { supported: false, enabled: false, reason: '需要支持桌面歌词的 HarmonyOS 6.1 或更新系统' };
-    if (args.action === 'configure') { this.desktopLyricsLocked=args.locked === true; if(this.session) await this.session.setDesktopLyricState({isLocked:this.desktopLyricsLocked}); }
-    if (args.action === 'enable') {
-      await this.ensureSession();
-      await this.session?.setDesktopLyricState({isLocked:this.desktopLyricsLocked});
-      await this.session?.enableDesktopLyric(args.enabled === true);
-      await this.session?.setDesktopLyricVisible(args.enabled === true);
-      this.desktopLyricsEnabled = args.enabled === true;
-      clearInterval(this.lyricTimer);
-      if (this.desktopLyricsEnabled) this.lyricTimer = setInterval(() => this.updateSessionPosition(),100);
-      this.emit();
-    }
-    return { supported, enabled: this.desktopLyricsEnabled, fontSizeSupported: false, lockSupported: true };
+    // Notification lyrics are automatic; retain compatibility with older clients.
+    return { supported:false,enabled:false,reason:'当前歌词自动显示在通知栏',fontSizeSupported:false,lockSupported:false };
+  }
+
+  private notificationArtist(): string {
+    if (this.lyricId !== this.id || !this.player) return this.artist;
+    const time = (this.pendingSeek >= 0 ? this.pendingSeek : this.player.currentTime) - this.lyricBias;
+    let active: NotificationLyricLine | undefined = undefined;
+    for (const line of this.lyricLines) { if(line.timeMs > time) break; active=line; }
+    if(!active || this.lyricSubtitles && active.endTimeMs !== undefined && time >= active.endTimeMs) return this.artist;
+    return active.text.trim().replace(/\s+/g,' ').slice(0,300) || this.artist;
   }
 
   private enqueueControl(action: string, value: number = 0): void {
@@ -239,12 +245,25 @@ export class PlayerPlugin {
     this.background = false;
   }
 
-  private setMetadata(revision: number, metadata: avSession.AVMetadata): Promise<void> {
+  private setMetadata(revision: number): Promise<void> {
     this.metadataTasks = this.metadataTasks.catch(() => {}).then(async () => {
-      if (revision === this.mediaRevision && !this.destroyed) {
-        const merged: avSession.AVMetadata = { assetId:metadata.assetId,title:metadata.title,artist:metadata.artist,duration:metadata.duration,mediaImage:metadata.mediaImage,
-          lyric:this.lyricId === metadata.assetId ? this.lyricText : '' };
-        await this.session?.setAVMetadata(merged); this.currentMetadata=merged;
+      if (revision !== this.mediaRevision || this.destroyed || !this.session || !this.id) return;
+      // Build from live authoritative state when the queued task executes. A
+      // lyric update queued before image decoding must never erase that image.
+      const artist=this.notificationArtist(),duration=this.player?.duration ?? 0;
+      const lyric=this.lyricId === this.id ? this.lyricText : '';
+      const signature=JSON.stringify([revision,this.id,this.title,artist,duration,this.coverRevision,lyric]);
+      if(signature === this.metadataSignature || Date.now() < this.metadataRetryAt) return;
+      const merged: avSession.AVMetadata = {assetId:this.id,title:this.title,artist,duration,lyric};
+      // Native AVSession validates property presence, not just its TS type.
+      // An explicitly present undefined image rejects the entire media card.
+      if(this.cover !== undefined) merged.mediaImage=this.cover;
+      try {
+        await this.session.setAVMetadata(merged);
+        if(revision === this.mediaRevision) { this.currentMetadata=merged;this.metadataSignature=signature; }
+      } catch(error) {
+        this.metadataRetryAt=Date.now()+2000;
+        hilog.warn(0xB110,'BiliMusicPlayer','Media metadata update failed; code=%{public}d',(error as BusinessError).code ?? -1);
       }
     });
     return this.metadataTasks;
@@ -257,7 +276,7 @@ export class PlayerPlugin {
     const revision = ++this.mediaRevision;
     this.desiredPlaying = args.playing !== false;
     this.pendingSeek = -1;
-    this.artwork.clear();
+    this.artwork.clear();this.cover=undefined;this.currentMetadata=null;this.metadataSignature='';this.metadataRetryAt=0;this.coverRevision+=1;
     this.accountListening(true);
     if (this.player) { await this.player.release(); this.player = null; }
     await this.ensureSession();
@@ -309,12 +328,11 @@ export class PlayerPlugin {
     }); } catch(error) { if(revision !== this.mediaRevision) return; throw new Error(String(error)); } finally { this.cancelPreparation=null; }
     player.setVolume(this.volume); this.applyRate(this.rate);
     if ((args.position ?? 0) > 0) player.seek((args.position ?? 0) * 1000);
-    const metadata: avSession.AVMetadata = { assetId: this.id, title: this.title, artist: this.artist, duration: player.duration };
-    await this.setMetadata(revision, metadata);
+    await this.setMetadata(revision);
     this.artworkReady = this.artwork.load(args.coverUrl, async pixels => {
-      const covered: avSession.AVMetadata = { assetId: metadata.assetId, title: metadata.title, artist: metadata.artist,
-        duration: metadata.duration, mediaImage: pixels };
-      await this.setMetadata(revision, covered);
+      if(revision !== this.mediaRevision || this.player !== player) return;
+      this.cover=pixels;this.coverRevision+=1;
+      await this.setMetadata(revision);
     });
     if (revision !== this.mediaRevision || this.player !== player) return;
     if (this.desiredPlaying) { await this.startBackground(); if (this.desiredPlaying && revision === this.mediaRevision) await player.play(); else await this.stopBackground(); }

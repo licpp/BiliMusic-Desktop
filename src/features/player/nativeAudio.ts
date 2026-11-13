@@ -12,6 +12,14 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
   function observe(callback: (state: State) => void) {
     consumer = callback
     const receive = (state: State) => {
+      // Commands are events, not clock samples. Older Android players send
+      // action-only packets; comparing their absent revision with the latest
+      // playback revision silently dropped notification/headset navigation.
+      if (state.action) {
+        if (state.revision !== undefined && !accept(state)) return
+        consumer(state)
+        return
+      }
       if (!accept(state)) return
       latest=state
       clock.update(state, performance.now())

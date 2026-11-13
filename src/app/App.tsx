@@ -44,7 +44,7 @@ import {
   Moon,
 } from 'lucide-react'
 import { usePlayerStore } from '../features/player/playerStore'
-import { playerShortcut, resolveShortcut } from '../features/player/shortcuts'
+import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
 import { useShortcutStore } from '../services/shortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
@@ -380,25 +380,26 @@ export function App() {
       if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
       const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
       if (!shortcut) return
-      if (shortcut === 'listSearch') {
-        const search = new Event('bilimusic-list-search', { cancelable:true })
-        window.dispatchEvent(search)
-        if (search.defaultPrevented) event.preventDefault()
-        return
-      }
-      event.preventDefault()
-      const state = usePlayerStore.getState()
-      if (event.repeat && ['toggle','next','previous'].includes(shortcut)) return
-      if (shortcut === 'toggle') void state.toggle()
-      else if (shortcut === 'next') void state.next()
-      else if (shortcut === 'previous') void state.previous()
-      else if (shortcut === 'seekBack' || shortcut === 'seekForward') state.seek(state.progressSeconds + (shortcut === 'seekBack' ? -10 : 10))
-      else state.setVolume(Math.max(0, Math.min(1, state.volume + (shortcut === 'volumeUp' ? .05 : -.05))))
+      if (event.repeat && ['toggle','next','previous'].includes(shortcut)) { event.preventDefault();return }
+      if(run(shortcut))event.preventDefault()
     }
+    const run=(shortcut:ShortcutAction)=>{
+      if(shortcut==='listSearch'){
+        const search=new Event('bilimusic-list-search',{cancelable:true});window.dispatchEvent(search);return search.defaultPrevented
+      }
+      const state=usePlayerStore.getState()
+      if(shortcut==='toggle')void state.toggle()
+      else if(shortcut==='next')void state.next()
+      else if(shortcut==='previous')void state.previous()
+      else if(shortcut==='seekBack'||shortcut==='seekForward')state.seek(state.progressSeconds+(shortcut==='seekBack'?-10:10))
+      else state.setVolume(Math.max(0,Math.min(1,state.volume+(shortcut==='volumeUp'?.05:-.05))))
+      return true
+    }
+    const stopMouse=isMobile?()=>undefined:installMouseShortcuts(window,()=>useShortcutStore.getState().bindings,run,event=>Boolean((event.target as Element)?.closest?.('[data-shortcut-editor],input,textarea,select,[contenteditable="true"]')||document.querySelector('[aria-modal="true"]')))
     window.addEventListener('keydown', handler)
     const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
     document.addEventListener('contextmenu', disableBrowserMenu)
-    return () => { window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
+    return () => { stopMouse();window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
   useEffect(() => {

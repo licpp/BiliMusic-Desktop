@@ -8,7 +8,7 @@ export type PlayerShortcut = Exclude<ShortcutAction, 'listSearch'>
 export type Shortcut = { code:string; ctrl:boolean; meta:boolean; alt:boolean; shift:boolean }
 export type ShortcutBindings = Record<ShortcutAction, Shortcut | null>
 type KeyEvent = Pick<KeyboardEvent, 'code'|'key'|'metaKey'|'ctrlKey'|'altKey'|'shiftKey'> & Partial<Pick<KeyboardEvent,'isComposing'|'getModifierState'>>
-const allowedCode = /^(Key[A-Z]|Digit[0-9]|Numpad[0-9]|F(?:[1-9]|1[0-2])|Arrow(?:Up|Down|Left|Right)|Space|Enter|Backspace|Delete|Home|End|PageUp|PageDown|Insert|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Backquote|Numpad(?:Add|Subtract|Multiply|Divide|Decimal|Enter))$/
+const allowedCode = /^(MouseBack|MouseForward|Key[A-Z]|Digit[0-9]|Numpad[0-9]|F(?:[1-9]|1[0-2])|Arrow(?:Up|Down|Left|Right)|Space|Enter|Backspace|Delete|Home|End|PageUp|PageDown|Insert|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Backquote|Numpad(?:Add|Subtract|Multiply|Divide|Decimal|Enter))$/
 export function defaultShortcuts(mac = false): ShortcutBindings {
   const key = (code:string, command=false, alt=false): Shortcut => ({ code,ctrl:command&&!mac,meta:command&&mac,alt,shift:false })
   return {toggle:key('Space'),previous:key('ArrowLeft',true),next:key('ArrowRight',true),seekBack:key('ArrowLeft',false,true),seekForward:key('ArrowRight',false,true),volumeUp:key('ArrowUp',true),volumeDown:key('ArrowDown',true),listSearch:key('KeyF',true)}
@@ -18,6 +18,37 @@ export function shortcutFromEvent(event: KeyEvent): Shortcut | undefined {
   const code = /^(Arrow|F\d+$)/.test(event.key) ? event.key : event.code || (/^[a-z]$/i.test(event.key) ? `Key${event.key.toUpperCase()}` : event.key === ' ' ? 'Space' : event.key)
   if (!allowedCode.test(code)) return
   return {code,ctrl:event.ctrlKey,meta:event.metaKey,alt:event.altKey,shift:event.shiftKey}
+}
+type MouseShortcutEvent = Pick<MouseEvent,'button'|'ctrlKey'|'metaKey'|'altKey'|'shiftKey'>
+export function shortcutFromMouseEvent(event: MouseShortcutEvent): Shortcut | undefined {
+  const code=event.button===3?'MouseBack':event.button===4?'MouseForward':undefined
+  return code?{code,ctrl:event.ctrlKey,meta:event.metaKey,alt:event.altKey,shift:event.shiftKey}:undefined
+}
+export function resolveMouseShortcut(event: MouseShortcutEvent,bindings: ShortcutBindings): ShortcutAction | undefined {
+  const key=shortcutFromMouseEvent(event)
+  return shortcutActions.find(item=>sameShortcut(bindings[item.id],key))?.id
+}
+// Suppress native back/forward on every phase, but execute only on mouse-down.
+export function installMouseShortcuts(target: EventTarget,bindings:()=>ShortcutBindings,run:(action:ShortcutAction)=>void,blocked:(event:MouseEvent)=>boolean) {
+  const pressed=new Set<number>(),auxiliary=new Set<number>(),capture={capture:true}
+  const suppress=(event:Event)=>{event.preventDefault();event.stopPropagation()}
+  const down=(raw:Event)=>{
+    const event=raw as MouseEvent
+    if(event.defaultPrevented)return
+    const action=resolveMouseShortcut(event,bindings())
+    if(!action)return
+    // Editors/modals retain their own interaction, but a bound side key must
+    // still not navigate away from a draft or a recording field.
+    const paused=blocked(event)
+    if(paused)event.preventDefault();else suppress(event)
+    if(pressed.has(event.button))return
+    pressed.add(event.button);auxiliary.add(event.button);if(!paused)run(action)
+  }
+  const up=(raw:Event)=>{const event=raw as MouseEvent;if(pressed.delete(event.button))suppress(event)}
+  const auxiliaryClick=(raw:Event)=>{const event=raw as MouseEvent;if(auxiliary.delete(event.button))suppress(event)}
+  const cancel=()=>{pressed.clear();auxiliary.clear()}
+  target.addEventListener('mousedown',down,capture);target.addEventListener('mouseup',up,capture);target.addEventListener('auxclick',auxiliaryClick,capture);target.addEventListener('blur',cancel)
+  return()=>{target.removeEventListener('mousedown',down,capture);target.removeEventListener('mouseup',up,capture);target.removeEventListener('auxclick',auxiliaryClick,capture);target.removeEventListener('blur',cancel)}
 }
 export function sameShortcut(a: Shortcut | null | undefined, b: Shortcut | null | undefined) {
   return !!a && !!b && a.code===b.code && a.ctrl===b.ctrl && a.meta===b.meta && a.alt===b.alt && a.shift===b.shift
@@ -33,7 +64,7 @@ export function resolveShortcut(event: KeyEvent, bindings: ShortcutBindings): Sh
 }
 export function shortcutLabel(key: Shortcut | null, mac=false) {
   if (!key) return '未设置'
-  const names:Record<string,string> = {Space:'空格',ArrowLeft:'←',ArrowRight:'→',ArrowUp:'↑',ArrowDown:'↓',Enter:'Enter',Backspace:'退格',Delete:'Delete',PageUp:'Page Up',PageDown:'Page Down',Minus:'−',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`',NumpadAdd:'数字 +',NumpadSubtract:'数字 −',NumpadMultiply:'数字 ×',NumpadDivide:'数字 ÷',NumpadDecimal:'数字 .',NumpadEnter:'数字 Enter'}
+  const names:Record<string,string> = {MouseBack:'鼠标后退键',MouseForward:'鼠标前进键',Space:'空格',ArrowLeft:'←',ArrowRight:'→',ArrowUp:'↑',ArrowDown:'↓',Enter:'Enter',Backspace:'退格',Delete:'Delete',PageUp:'Page Up',PageDown:'Page Down',Minus:'−',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`',NumpadAdd:'数字 +',NumpadSubtract:'数字 −',NumpadMultiply:'数字 ×',NumpadDivide:'数字 ÷',NumpadDecimal:'数字 .',NumpadEnter:'数字 Enter'}
   const name=names[key.code] || key.code.replace(/^Key|^Digit/,'').replace(/^Numpad/,'数字 ')
   return [key.ctrl?'Ctrl':'',key.meta?(mac?'⌘':'Win'):'',key.alt?(mac?'Option':'Alt'):'',key.shift?'Shift':'',name].filter(Boolean).join(' + ')
 }

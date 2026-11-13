@@ -1,18 +1,28 @@
 import { Keyboard, RotateCcw, X } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
 import { useState } from 'react'
-import { shortcutActions, shortcutFromEvent, shortcutLabel, type ShortcutAction } from '../player/shortcuts'
+import { shortcutActions, shortcutFromEvent, shortcutFromMouseEvent, shortcutLabel, type ShortcutAction } from '../player/shortcuts'
 import { shortcutMac, useShortcutStore } from '../../services/shortcuts'
 export function ShortcutSettings() {
   const {bindings,setBinding,reset}=useShortcutStore()
   const [recording,setRecording]=useState<ShortcutAction|null>(null),[message,setMessage]=useState('')
-  return <SettingsDisclosure icon={<Keyboard/>} title="自定义快捷键" description="单键或组合键，窗口内生效" onToggle={open=>{if(!open)setRecording(null)}}>
+  return <SettingsDisclosure icon={<Keyboard/>} title="自定义快捷键" description="键盘或鼠标侧键，窗口内生效" onToggle={open=>{if(!open)setRecording(null)}}>
     <div className="shortcut-editor" data-shortcut-editor>
-      <p>点击右侧按键后，按下想使用的快捷键。按 Esc 取消。</p>
+      <p>点击右侧按键后，按下键盘或鼠标侧键，可配合 Ctrl / ⌘、Alt 和 Shift。按 Esc 取消。</p>
       <div className="shortcuts-list">{shortcutActions.map(({id,label})=><div key={id}>
         <span>{label}</span><span><button type="button" className="shortcut-record" data-recording={recording===id} aria-label={`设置${label}快捷键`} aria-pressed={recording===id}
           onBlur={()=>setRecording(current=>current===id?null:current)}
           onClick={()=>{setRecording(current=>current===id?null:id);setMessage('')}}
+          onMouseDown={event=>{
+            const key=shortcutFromMouseEvent(event.nativeEvent)
+            if(!key)return
+            event.preventDefault();event.stopPropagation()
+            if(recording!==id)return
+            const error=setBinding(id,key);setMessage(error||`已设置${label}：${shortcutLabel(key,shortcutMac)}`)
+            if(!error)setRecording(null)
+          }}
+          onMouseUp={event=>{if(event.button>=3){event.preventDefault();event.stopPropagation()}}}
+          onAuxClick={event=>{if(event.button>=3){event.preventDefault();event.stopPropagation()}}}
           onKeyDown={event=>{
             if(recording!==id)return
             event.stopPropagation()
@@ -25,7 +35,7 @@ export function ShortcutSettings() {
             const error=setBinding(id,key)
             setMessage(error||`已设置${label}：${shortcutLabel(key,shortcutMac)}`)
             if(!error)setRecording(null)
-          }}><kbd>{recording===id?'请按键…':shortcutLabel(bindings[id],shortcutMac)}</kbd></button>
+          }}><kbd>{recording===id?'请按键或侧键…':shortcutLabel(bindings[id],shortcutMac)}</kbd></button>
           <button type="button" className="shortcut-clear" disabled={!bindings[id]} aria-label={`清除${label}快捷键`} title="清除快捷键" onClick={()=>{setRecording(null);setMessage(setBinding(id,null)||`已清除${label}快捷键`)}}><X size={14}/></button></span>
       </div>)}</div>
       <footer><span role="status" aria-live="polite">{message}</span><button type="button" onClick={()=>{setRecording(null);setMessage(reset()||'已恢复默认快捷键')}}><RotateCcw size={14}/>恢复默认</button></footer>

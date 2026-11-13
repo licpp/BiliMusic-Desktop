@@ -47,3 +47,34 @@ test('shortcut conflicts, reserved keys, clearing and persistence are checked co
  bindings.previous=bindings.next
  assert.deepEqual(readShortcuts(JSON.stringify({version:1,bindings}),true),defaultShortcuts(true))
 })
+
+const {shortcutFromMouseEvent,resolveMouseShortcut,installMouseShortcuts}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
+const mouseEvent=(button,extra={})=>({button,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,...extra})
+test('mouse side keys support exact modifiers, readable labels, conflicts and saved mappings',()=>{
+ const bindings=defaultShortcuts(false)
+ bindings.previous=shortcutFromMouseEvent(mouseEvent(3));bindings.next=shortcutFromMouseEvent(mouseEvent(4,{ctrlKey:true}))
+ assert.equal(resolveMouseShortcut(mouseEvent(3),bindings),'previous')
+ assert.equal(resolveMouseShortcut(mouseEvent(4),bindings),undefined)
+ assert.equal(resolveMouseShortcut(mouseEvent(4,{ctrlKey:true}),bindings),'next')
+ assert.equal(shortcutLabel(bindings.previous),'鼠标后退键');assert.equal(shortcutLabel(bindings.next),'Ctrl + 鼠标前进键')
+ assert.match(shortcutProblem(bindings.next,bindings,'toggle'),/下一首/)
+ assert.deepEqual(readShortcuts(JSON.stringify({version:1,bindings})),bindings)
+ for(const button of [0,1,2,5])assert.equal(shortcutFromMouseEvent(mouseEvent(button)),undefined)
+})
+test('side-key gesture fires once and prevents native back/forward on down, up and auxclick',()=>{
+ const target=new EventTarget(),bindings=defaultShortcuts(),actions=[]
+ bindings.next=shortcutFromMouseEvent(mouseEvent(4))
+ const stop=installMouseShortcuts(target,()=>bindings,action=>actions.push(action),()=>false)
+ const dispatch=(type,button=4)=>{const e=new Event(type,{cancelable:true});Object.assign(e,mouseEvent(button));target.dispatchEvent(e);return e.defaultPrevented}
+ assert.equal(dispatch('mousedown'),true);assert.equal(dispatch('mousedown'),true)
+ assert.equal(dispatch('mouseup'),true);assert.equal(dispatch('auxclick'),true);assert.deepEqual(actions,['next'])
+ assert.equal(dispatch('mousedown',3),false)
+ stop();assert.equal(dispatch('mousedown'),false)
+})
+test('a bound side key cannot navigate away from an editor or modal while its custom action is suspended',()=>{
+ const target=new EventTarget(),bindings=defaultShortcuts(),actions=[]
+ bindings.toggle=shortcutFromMouseEvent(mouseEvent(3))
+ const stop=installMouseShortcuts(target,()=>bindings,action=>actions.push(action),()=>true)
+ const e=new Event('mousedown',{cancelable:true});Object.assign(e,mouseEvent(3));target.dispatchEvent(e)
+ assert.equal(e.defaultPrevented,true);assert.deepEqual(actions,[]);stop()
+})
