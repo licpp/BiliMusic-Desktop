@@ -1,4 +1,10 @@
 /* A compact platform directory, with the same reading order on every device. */
+.sync-upgrade-note { display:flex;align-items:flex-start;gap:10px;margin:0 0 14px;padding:12px 15px;border:1px solid #b7d6c72e;border-radius:10px;background:#b7d6c709;color:var(--mint);font-size:12px;line-height:1.8; }
+.sync-upgrade-note svg { flex:none;width:18px;height:18px;margin-top:2px; }
+.sync-upgrade-note p { min-width:0; }
+.sync-upgrade-note strong { margin-right:12px;font-weight:600; }
+.sync-upgrade-note span { color:#bac5bf; }
+@media(max-width:620px) { .sync-upgrade-note { padding:11px 12px; }.sync-upgrade-note strong { display:block;margin:0 0 2px; } }
 .download-grid { display:grid;grid-template-columns:minmax(0,1fr);gap:0;border:1px solid #3b4740;border-radius:14px;background:#202824; }
 .download-grid .download-card { display:grid;grid-template-columns:minmax(280px,1fr) minmax(210px,1fr) 232px;grid-template-rows:auto auto;align-items:center;gap:6px 24px;min-width:0;padding:16px 20px;border:0;border-bottom:1px solid #35433a;border-radius:0;background:none; }
 .download-grid .download-card:last-child { border-bottom:0; }
