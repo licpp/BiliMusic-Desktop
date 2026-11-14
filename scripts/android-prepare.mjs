@@ -24,3 +24,7 @@ await writeFile(new URL('res/xml/bilimusic_network_security.xml', base), `<?xml 
 console.log('Android: cleartext allowed only for the on-device media proxy.')
 
 await cp(new URL('../src-tauri/.android-icons/android/', import.meta.url), new URL('res/', base), { recursive: true })
+
+// Round launchers use the same safe foreground/background as other adaptive masks.
+const adaptive = await readFile(new URL('res/mipmap-anydpi-v26/ic_launcher.xml', base), 'utf8')
+await writeFile(new URL('res/mipmap-anydpi-v26/ic_launcher_round.xml', base), adaptive)

@@ -1,3 +1,6 @@
+import { ListeningBars } from './ListeningBars'
+import { hydrateSourceTitles } from '../../services/sourceTitles'
+import { listeningDuration } from '../../shared/listeningDuration'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -12,7 +15,7 @@ import { isMobile } from '../../services/platform'
 import '../../styles/listening-statistics.css'
 import { listeningCalendar } from './listeningCalendar'
 
-const duration = (seconds: number) => seconds < 60 ? `${Math.floor(seconds)} 秒` : seconds < 3600 ? `${Math.floor(seconds / 60)} 分钟` : `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分钟`
+const duration = listeningDuration
 const bytes = (value: number) => value < 1048576 ? `${Math.round(value / 1024)} KB` : `${(value / 1048576).toFixed(1)} MB`
 const tabs = [{ id: 'week', label: '本周' }, { id: 'month', label: '本月' }, { id: 'year', label: '本年' }, { id: 'total', label: '累计' }] as const
 const labels = { week: '本周', month: '本月', year: '本年', total: '累计' }
@@ -55,6 +58,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const query = useQuery({ queryKey: ['listening-statistics'], queryFn: getListeningStatistics, refetchInterval: 15000 })
   useEffect(() => { window.dispatchEvent(new Event('bilimusic-statistics-sync-requested')) }, [])
   const data = query.data, summary = data?.[period], top = summary?.top
+  useEffect(() => { if (top?.length) void hydrateSourceTitles(top.map(track => track.id), client) }, [top, client])
   const today = accountToday(), thisYear = today.getUTCFullYear(), todayKey = dayKey(today)
   const [calendarYear, setCalendarYear] = useState(thisYear)
   const years = [...new Set([thisYear, ...(data?.daily || []).map(d => Number(d.day.slice(0, 4)))])].sort((a, b) => b - a)
@@ -106,8 +110,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       <section className="listening-trend listening-section">
         <header><div><h3>{calendar ? '聆听日历' : '聆听足迹'}</h3><p>{calendar ? `${chartYear} 年，${activeCalendarDays} 天有音乐相伴` : period === 'week' ? '这一周，每天听了多久' : `${thisYear} 年 ${today.getUTCMonth() + 1} 月的每日时长`}</p></div>{period === 'total' ? <select aria-label="聆听日历年份" value={calendarYear} onChange={e => setCalendarYear(Number(e.target.value))}>{years.map(y => <option key={y} value={y}>{y} 年</option>)}</select> : <ChartNoAxesColumn size={18} aria-hidden="true" />}</header>
         {calendar ? <ListeningCalendar daily={data?.daily || []} year={chartYear} today={todayKey} /> : <>
-          <div className="listening-chart-scale"><span>{duration(max === 1 ? 0 : max)}</span><span>0</span></div>
-          <div className="listening-chart-scroll"><div className="listening-chart" style={{ '--bar-count': bars.length } as CSSProperties}>{bars.map((d, i) => <div key={d.key} data-today={d.key === todayKey || undefined} data-future={d.future || undefined} title={`${d.key} · ${duration(d.seconds)}`}><span style={{ height: `${d.seconds > 0 ? Math.max(3, d.seconds / max * 100) : 2}%` }} /><small>{period === 'week' || i === 0 || (i + 1) % 5 === 0 || i === bars.length - 1 ? d.label : ''}</small></div>)}</div></div>
+          <ListeningBars bars={bars} max={max} today={todayKey} weekly={period==='week'}/>
         </>}
       </section>
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
@@ -119,7 +122,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       </section>
       <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>
       {enabled && data?.sync.error && <p className="inline-error" role="status">{data.sync.error}</p>}
-      <details className="listening-explanation"><summary><Info size={13} />统计说明</summary><p>按实际播放时长统计，日期统一采用 UTC+8。同一 B 站账号的各端连接同一同步服务后，共享一份统计；坚果云还需使用同一坚果云账号和目录。汇总所有设备的聆听时长，多端同时播放分别累计。离线记录在联网后补传，未登录时的本机记录不会自动归入账号。有效播放次数从新版开始记录，暂停恢复不重复计次。旧数据计入累计；历史月榜仅包含可还原的明细。</p>{enabled && <p>成功同步累计上传 {bytes(data?.sync.uploadedBytes || 0)}，下载 {bytes(data?.sync.downloadedBytes || 0)}，不含网络协议开销及失败周期。</p>}{uid && (data?.sync.provider || data?.sync.paused) && <button type="button" className="listening-sync-preference" disabled={busy} onClick={() => void configure()}>{enabled ? '暂停账号统计同步' : '恢复账号统计同步'}</button>}</details>
+      <details className="listening-explanation"><summary><Info size={13} />统计说明</summary><p>按实际播放时长统计，日期统一采用 UTC+8。同一 B 站账号的各端连接同一同步服务后，共享一份统计；坚果云还需使用同一坚果云账号和目录。汇总所有设备的聆听时长，多端同时播放分别累计。离线记录在联网后补传，未登录时的本机记录不会自动归入账号。有效播放次数从新版开始记录，暂停恢复不重复计次。旧数据计入累计；历史月榜仅包含可还原的明细。</p>{enabled && <p>近 30 天同步估计上传 {bytes(data?.sync.uploadedBytes || 0)}，下载 {bytes(data?.sync.downloadedBytes || 0)}，包含失败尝试，不含网络协议开销。</p>}{uid && (data?.sync.provider || data?.sync.paused) && <button type="button" className="listening-sync-preference" disabled={busy} onClick={() => void configure()}>{enabled ? '暂停账号统计同步' : '恢复账号统计同步'}</button>}</details>
     </div>}
   </div>
   return isMobile ? <MobilePage className="listening-statistics-page" title="听歌统计" onBack={onClose}>{body}</MobilePage> : <CollectionDialog className="listening-statistics-dialog" title="听歌统计" onClose={onClose}>{body}</CollectionDialog>

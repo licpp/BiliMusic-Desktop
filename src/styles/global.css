@@ -288,6 +288,22 @@ button:disabled{cursor:default;opacity:.45}
 .sync-preview .sync-actions { margin-top:12px; margin-bottom:8px; }
 .sync-message { margin:12px 0 0; overflow-wrap:anywhere; }
 .sync-settings .sync-message { color:var(--coral); }
+.sync-device-section { margin-top:16px; padding-top:12px; border-top:1px solid var(--line); }
+.sync-device-heading { display:flex; align-items:center; gap:12px; margin-top:10px; }
+.sync-device-heading p { flex:1; min-width:0; margin:0; }
+.sync-device-note { color:var(--muted); }
+.sync-device-heading button { flex:none; }
+.sync-device-list { list-style:none; padding:0; margin:8px 0 0; }
+.sync-device-list li { display:flex; align-items:center; gap:12px; min-width:0; padding:12px 0; border-bottom:1px solid var(--line); }
+.sync-device-list li:last-child { border-bottom:0; padding-bottom:0; }
+.sync-device-icon { width:36px; height:36px; display:grid; place-items:center; flex:none; color:var(--muted); background:var(--panel-raised); border-radius:10px; }
+.sync-device-icon svg { width:18px; height:18px; }
+.sync-device-copy { flex:1; min-width:0; }
+.sync-device-copy strong { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; overflow-wrap:anywhere; }
+.sync-device-copy small { margin-top:3px; }
+.sync-device-current { font-weight:400; color:var(--cyan); font-size:10px; padding:1px 5px; background:color-mix(in srgb,var(--cyan) 10%,transparent); border-radius:4px; }
+.sync-settings .sync-device-retire { flex:none; padding:7px 9px; background:transparent; }
+.sync-device-section button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
 @media(max-width:600px) {
   .sync-settings { padding:16px; }
   .sync-heading { flex-wrap:wrap; }
@@ -319,3 +335,14 @@ button:disabled{cursor:default;opacity:.45}
 .account-profile-avatar { display: grid; place-items: center; width: 74px; height: 74px; border-radius: 50%; background: var(--panel-raised); color: var(--muted); }
 .account-profile-avatar img { width: 100%; height: 100%; }
 .vip-avatar { outline: 2px solid #e782a5; outline-offset: 2px; }
+
+.sync-conflicts { display: grid; gap: 14px; min-width: 0; }
+.sync-settings .sync-conflict { padding: 14px; margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 16px; }
+.sync-conflict legend { padding: 0 6px; font-size: 14px; font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
+.sync-conflict legend small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 3px; }
+.sync-conflict-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 10px; }
+.sync-settings .sync-conflict-options button { display: grid; align-content: start; gap: 8px; text-align: left; min-width: 0; padding: 12px 14px; background: var(--panel); white-space: normal; overflow-wrap: anywhere; }
+.sync-settings .sync-conflict-options button[aria-pressed="true"] { border-color: var(--cyan); background: color-mix(in srgb, var(--cyan) 10%, var(--panel)); }
+.sync-conflict-label { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
+.sync-conflict-options button[aria-pressed="true"] .sync-conflict-label { color: var(--cyan); }
+.sync-conflict-options button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }

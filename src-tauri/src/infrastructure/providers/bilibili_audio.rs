@@ -17,6 +17,23 @@ fn lossless(stream: &DashStream) -> bool {
 fn rank(stream: &DashStream) -> (bool, u64) {
     (lossless(stream), stream.bandwidth)
 }
+pub(super) fn startup_audio<'a>(dash: &'a DashData, target: &DashStream) -> Option<&'a DashStream> {
+    audio_streams(dash)
+        .into_iter()
+        .filter(|s| {
+            !lossless(s)
+                && s.id != 30251
+                && s.id != target.id
+                && s.bandwidth > 0
+                && prefer_progressive_startup(&target.codecs, target.bandwidth, s.bandwidth)
+        })
+        .min_by_key(|s| s.bandwidth)
+}
+pub(crate) fn prefer_progressive_startup(codecs: &str, target: u64, initial: u64) -> bool {
+    initial > 0
+        && (codecs.eq_ignore_ascii_case("flac")
+            || target >= 256000 && initial.saturating_mul(2) <= target)
+}
 pub(super) fn select_audio(dash: &DashData, requested: u32) -> Option<&DashStream> {
     let streams = audio_streams(dash);
     // Lossless is opt-in: automatic playback uses the best available AAC.
@@ -68,6 +85,29 @@ pub(super) fn audio_options(dash: &DashData) -> Vec<QualityOption> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn startup_uses_aac_without_changing_the_requested_target_or_automatic_hires_policy() {
+        let dash: DashData = serde_json::from_value(json!({"audio":[
+            {"id":30216,"codecs":"mp4a.40.2","bandwidth":64000,"base_url":"https://cdn/fast"},
+            {"id":30232,"codecs":"mp4a.40.2","bandwidth":128000,"base_url":"https://cdn/standard"},
+            {"id":30280,"codecs":"mp4a.40.2","bandwidth":192000,"base_url":"https://cdn/high"}],
+            "flac":{"audio":{"id":30251,"codecs":"fLaC","bandwidth":1500000,"base_url":"https://cdn/hires"}}
+        })).unwrap();
+        for requested in [0, 30280, 30251] {
+            let target = select_audio(&dash, requested).unwrap();
+            assert_eq!(target.id, if requested == 30251 { 30251 } else { 30280 });
+            if requested == 30251 {
+                assert_eq!(startup_audio(&dash, target).unwrap().id, 30216);
+            } else {
+                assert!(startup_audio(&dash, target).is_none());
+            }
+        }
+        assert!(startup_audio(&dash, select_audio(&dash, 30216).unwrap()).is_none());
+        let only: DashData = serde_json::from_value(json!({"audio":[{"id":30280,"codecs":"mp4a.40.2","bandwidth":192000,"base_url":"https://cdn/high"}]})).unwrap();
+        assert!(startup_audio(&only, select_audio(&only, 0).unwrap()).is_none());
+        assert!(!prefer_progressive_startup("mp4a.40.2", 192000, 64000));
+        assert!(prefer_progressive_startup("mp4a.40.2", 512000, 64000));
+    }
     #[test]
     fn hires_is_a_separate_track_and_ids_are_not_quality_ranks() {
         let dash: DashData = serde_json::from_value(json!({"audio":[

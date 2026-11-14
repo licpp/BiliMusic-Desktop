@@ -3,7 +3,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 
 pub const FAVORITES_PLAYLIST_ID: &str = "system:favorites";
-const PLAYLIST_COVER: &str = "COALESCE(NULLIF(p.cover_url,''),(SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM playlist_items first_item JOIN tracks t ON t.id=first_item.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE first_item.playlist_id=p.id ORDER BY first_item.position,first_item.created_at DESC,first_item.rowid DESC LIMIT 1))";
+const PLAYLIST_COVER: &str = "COALESCE(NULLIF(p.cover_url,''),(SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM playlist_items first_item JOIN tracks t ON t.id=first_item.track_id JOIN source_items s ON s.id=t.source_item_id AND s.provider='bilibili' LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE first_item.playlist_id=p.id ORDER BY first_item.position,first_item.created_at DESC,first_item.rowid DESC LIMIT 1))";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,7 +278,7 @@ impl PlaylistRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<PlaylistRecord>> {
-        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
+        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
         let mut playlists = vec![Self::get(connection, FAVORITES_PLAYLIST_ID)?];
         playlists.extend(
             statement
@@ -294,15 +294,15 @@ impl PlaylistRepository {
                 id: id.into(),
                 name: "我喜欢".into(),
                 description: "点击红心收藏的歌曲 · 默认歌单".into(),
-                cover_url: connection.query_row("SELECT (SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM favorites f JOIN tracks t ON t.id=f.track_id LEFT JOIN metadata_overrides m ON m.track_id=t.id ORDER BY f.created_at DESC,f.rowid DESC LIMIT 1)",[],|row|row.get(0))?,
+                cover_url: connection.query_row("SELECT (SELECT NULLIF(COALESCE(m.cover_url,t.cover_url),'') FROM favorites f JOIN tracks t ON t.id=f.track_id JOIN source_items s ON s.id=t.source_item_id AND s.provider='bilibili' LEFT JOIN metadata_overrides m ON m.track_id=t.id ORDER BY f.created_at DESC,f.rowid DESC LIMIT 1)",[],|row|row.get(0))?,
                 track_count: connection
-                    .query_row("SELECT COUNT(*) FROM favorites", [], |row| row.get(0))?,
+                    .query_row("SELECT COUNT(*) FROM favorites f JOIN tracks t ON t.id=f.track_id JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili'", [], |row| row.get(0))?,
                 is_system: true,
                 added_at: 0.0,
                 bili_folder_id: None,
             });
         }
-        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
+        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
     }
 
     pub fn tracks(connection: &Connection, id: &str) -> rusqlite::Result<Vec<TrackRecord>> {

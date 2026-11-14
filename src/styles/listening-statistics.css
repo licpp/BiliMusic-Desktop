@@ -99,3 +99,20 @@
 
 .listening-sync-preference { padding:6px 0;border:0;background:transparent;color:var(--muted);font-size:12px;cursor:pointer; }
 .listening-sync-preference:hover { color:var(--ink); }
+.listening-song-time { white-space:nowrap;font-variant-numeric:tabular-nums;max-width:none; }
+.listening-duration { flex-wrap:wrap; }
+.listening-duration strong { font-size:clamp(28px,8vw,48px);overflow-wrap:anywhere; }
+@media(max-width:620px) {
+ .listening-ranking>li { display:grid;grid-template-columns:17px 40px minmax(0,1fr);column-gap:9px; }
+ .listening-ranking .listening-song { grid-column:3;grid-row:1 / span 2; }
+ .listening-song-time { grid-column:3;justify-self:start;text-align:left;max-width:none; }
+ .listening-ranking .listening-song { grid-row:1; }
+ .listening-duration .listening-duration-minutes { font-size:clamp(22px,6vw,28px); }
+}
+.listening-interactive-chart { position:relative;isolation:isolate; }
+.listening-bar { cursor:crosshair;outline-offset:-2px;touch-action:pan-x pan-y; }
+.listening-bar[data-selected]::after { content:'';position:absolute;left:50%;inset-block:0;border-left:1px dashed var(--cyan);opacity:.8;pointer-events:none;z-index:1; }
+.listening-statistics .listening-bar[data-selected]>span { background:var(--cyan); }
+.listening-bar-tooltip { position:absolute;top:5px;transform:translateX(-50%);z-index:2;display:grid;gap:5px;min-width:136px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel-raised);box-shadow:0 4px 18px #0002;pointer-events:none;font-size:11px;color:var(--ink); }
+.listening-bar-tooltip strong { font-size:10px;color:var(--muted);font-weight:500; }
+.listening-bar-tooltip span { font-variant-numeric:tabular-nums; }

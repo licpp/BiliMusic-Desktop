@@ -15,7 +15,7 @@ impl Database {
             data_dir.join("resonance.sqlite3")
         };
         let connection = Connection::open(&path)?;
-        connection.execute_batch(include_str!("../../migrations/0001_initial.sql"))?;
+        super::migrations::migrate(&connection)?;
         connection.execute("UPDATE downloads SET status='failed',error_message='上次下载被中断，可以重新下载' WHERE status IN ('queued','downloading')", [])?;
         #[cfg(unix)]
         {
@@ -38,8 +38,7 @@ impl Database {
             self.1.join(format!("profile-{profile}.sqlite3"))
         };
         let next = Connection::open(&path).map_err(|e| e.to_string())?;
-        next.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .map_err(|e| e.to_string())?;
+        super::migrations::migrate(&next).map_err(|e| e.to_string())?;
         crate::sync::storage::init(&next)?;
         if let Some(cookie) = cookie {
             crate::infrastructure::repositories::auth::AuthRepository::save_cookie(

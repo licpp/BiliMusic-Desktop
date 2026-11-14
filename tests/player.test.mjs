@@ -8,11 +8,17 @@ const output = await build({
   format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
   plugins: [{ name: 'desktop-boundary', setup(builder) {
     builder.onResolve({ filter: /services\/desktopApi$/ }, () => ({ path: 'desktop-api', namespace: 'test' }))
-    builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: `
+    builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, args => /(?:^|[\\/])playbackPosition\.ts$/.test(args.importer) ? { path: 'position-api', namespace: 'test' } : undefined)
+    builder.onLoad({ filter: /.*/, namespace: 'test' }, ({path}) => ({ contents: path === 'position-api' ? `
+      export const isTauri = () => true;
+      export const invoke = async (command,args) => command === 'listening_scope' ? 'scope'
+        : args.seconds === undefined ? globalThis.testApi.positions.get(args.trackId) || 0 : undefined;
+    ` : `
       export const inDesktopShell = true;
       export const recordPlayedTrack = track => globalThis.testApi.record(track);
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = (track, refresh) => globalThis.testApi.resolve(track, refresh);
+      export const getTrackPlaybackPlan = async (t,r) => globalThis.testApi.plan ? globalThis.testApi.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
     ` }))
   } }],
 })
@@ -21,18 +27,19 @@ function setup(snapshot) {
   const listeners = {}
   const audio = []
   const storage = new Map(snapshot ? [['resonance-player-v1', JSON.stringify(snapshot)]] : [])
-  globalThis.window = { addEventListener: (name, callback) => { listeners[name] = callback } }
+  globalThis.window = { addEventListener: (name, callback) => { listeners[name] = callback }, dispatchEvent() {} }
   globalThis.localStorage = { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }
   globalThis.Audio = class {
-    src = ''; currentTime = 0; volume = 1; duration = 120; callbacks = {}; plays = 0
+    src = ''; currentTime = 0; volume = 1; duration = 120; callbacks = {}; plays = 0; readyState = 3; seeking = false; paused = true
     constructor() { audio.push(this) }
     addEventListener(name, callback) { this.callbacks[name] = callback }
-    pause() { this.callbacks.pause?.() }
+    removeEventListener(name, callback) { if(this.callbacks[name]===callback)delete this.callbacks[name] }
+    pause() { this.paused = true; this.callbacks.pause?.() }
     load() {}
     removeAttribute() { this.src = '' }
-    async play() { this.plays++; this.callbacks.playing?.() }
+    async play() { this.paused = false; this.plays++; this.callbacks.playing?.() }
   }
-  globalThis.testApi = { record: async track => track, resolve: async track => `local://${track.id}` }
+  globalThis.testApi = { positions:new Map(), record: async track => track, resolve: async track => `local://${track.id}` }
   const module = { exports: {} }
   new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports)
   return { store: module.exports.usePlayerStore, audio, listeners, storage }
@@ -205,18 +212,100 @@ test('playback rate changes in place and carries to the next song', async () => 
   listeners.pagehide()
 })
 
-test('automatic resume defaults on, persists off, and permits manual resume', async () => {
+test('resume slider defaults to all, persists disabled, and permits explicit positions', async () => {
   const initial = setup()
-  assert.equal(initial.store.getState().autoResume, true)
-  initial.store.getState().setAutoResume(false)
+  assert.equal(initial.store.getState().resumeThresholdSeconds, 0)
+  initial.store.getState().setResumeThreshold(null)
   initial.listeners.pagehide()
   const saved = JSON.parse(initial.storage.get('resonance-player-v1'))
   const longTrack = { ...track('1'), durationSeconds: 720 }
   Object.assign(saved.state, { current: longTrack, queue: [longTrack], progressSeconds: 85, durationSeconds: 720 })
   const { store, audio } = setup(saved)
-  assert.equal(store.getState().autoResume, false)
+  assert.equal(store.getState().resumeThresholdSeconds, null)
   await store.getState().toggle()
   assert.equal(audio[0].currentTime, 0)
   await store.getState().play({ ...longTrack, id: '2' }, 85)
   assert.equal(audio[0].currentTime, 85)
+})
+
+test('retired local audio is removed from restored current track and queue without removing Bilibili songs', () => {
+  const local = { ...track('legacy'), id:'local:00000000-0000-4000-8000-000000000001', source:{provider:'local'} }
+  const {store,listeners} = setup({state:{current:local,queue:[local,track('1')],progressSeconds:34},version:0})
+  assert.equal(store.getState().current,null)
+  assert.equal(store.getState().progressSeconds,0)
+  assert.equal(store.getState().durationSeconds,0)
+  assert.deepEqual(store.getState().queue.map(value=>value.id),['1'])
+  listeners.pagehide()
+})
+
+
+test('legacy resume switches migrate to the matching slider endpoints', () => {
+  for (const [legacy,expected] of [[false,null],[true,0]]) {
+    const {store,listeners}=setup({state:{autoResume:legacy},version:0})
+    assert.equal(store.getState().resumeThresholdSeconds,expected)
+    assert.equal('autoResume' in store.getState(),false)
+    listeners.pagehide()
+  }
+})
+
+test('restart applies the single-video threshold at the duration boundary', async () => {
+  for (const duration of [599,600,601]) {
+    const current={...track('1'),durationSeconds:duration}
+    const {store,audio,listeners}=setup({state:{current,queue:[current],progressSeconds:85,durationSeconds:duration,resumeThresholdSeconds:600},version:0})
+    await store.getState().toggle()
+    assert.equal(audio[0].currentTime,duration>=600?85:0)
+    listeners.pagehide()
+  }
+})
+
+test('disabled single-video resume retains multipart and collection checkpoints', async () => {
+  const base=track('1')
+  for (const [current,queueSource] of [[{...base,partCount:2},undefined],[{...base,source:{...base.source,page:2}},undefined],[base,{kind:'season',title:'合集'}],[base,{kind:'video',title:'选集',collectionRef:'BVTEST00001'}]]) {
+    const {store,audio,listeners}=setup({state:{current,queue:[current],queueSource,progressSeconds:32,durationSeconds:120,resumeThresholdSeconds:null},version:0})
+    await store.getState().toggle()
+    assert.equal(audio[0].currentTime,32)
+    listeners.pagehide()
+  }
+})
+
+test('threshold changes never rewind an already loaded song after pause', async () => {
+  const {store,audio,listeners}=setup()
+  await store.getState().play(track('1'),42)
+  await store.getState().toggle()
+  store.getState().setResumeThreshold(null)
+  await store.getState().toggle()
+  assert.equal(audio[0].currentTime,42)
+  listeners.pagehide()
+})
+
+test('selecting a video applies its own duration to the saved checkpoint, while explicit collection resume bypasses the threshold', async () => {
+  const {store,audio,listeners}=setup()
+  store.getState().setResumeThreshold(600)
+  const short={...track('1'),durationSeconds:599}
+  const long={...track('2'),source:{...track('2').source,bvid:'BVother'},durationSeconds:600}
+  testApi.positions.set(short.id,84);testApi.positions.set(long.id,85)
+  await store.getState().play(short)
+  assert.equal(audio[0].currentTime,0)
+  await store.getState().play(long)
+  assert.equal(audio[0].currentTime,85)
+  store.getState().setResumeThreshold(null)
+  await store.getState().playFromList([short],short.id,{kind:'season',title:'合集',collectionRef:'season:1'},84)
+  assert.equal(audio[0].currentTime,84)
+  listeners.pagehide()
+})
+
+test('desktop uses progressive startup and hands off only after the initial source advances',async()=>{
+ const {store,audio,listeners}=setup();testApi.plan=async()=>({url:'local://fast',upgradeUrl:'local://high'})
+ await store.getState().play(track('1'),0)
+ assert.equal(audio[0].src,'local://fast');assert.equal(audio.length,1)
+ audio[0].currentTime=.5;audio[0].callbacks.timeupdate();await new Promise(setImmediate);assert.equal(audio.length,1)
+ audio[0].currentTime=1;audio[0].callbacks.timeupdate();await new Promise(setImmediate)
+ assert.equal(audio.length,2);assert.equal(audio[1].src,'local://high');assert.equal(audio[1].currentTime,1);assert.equal(store.getState().status,'playing');assert.equal(audio[0].src,'')
+ listeners.pagehide()
+})
+test('pausing before audible progress defers automatic desktop quality preparation',async()=>{
+ const {store,audio,listeners}=setup();testApi.plan=async()=>({url:'local://fast',upgradeUrl:'local://high'})
+ await store.getState().play(track('1'),0);await store.getState().toggle()
+ audio[0].currentTime=2;audio[0].callbacks.timeupdate();await new Promise(setImmediate);assert.equal(audio.length,1)
+ await store.getState().toggle();audio[0].callbacks.timeupdate();await new Promise(setImmediate);assert.equal(audio[1].src,'local://high');listeners.pagehide()
 })

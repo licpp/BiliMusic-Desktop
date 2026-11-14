@@ -5,6 +5,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackInteractionTest {
+    @Test fun unlockButtonCanBeHiddenWithoutChangingTheLockOrTouchThroughPolicy() {
+        assertTrue(FloatingLyricsWindowPolicy.showUnlock(true,true,true,true))
+        assertFalse(FloatingLyricsWindowPolicy.showUnlock(true,true,false,true))
+        assertFalse(FloatingLyricsWindowPolicy.showUnlock(true,false,true,true))
+        assertFalse(FloatingLyricsWindowPolicy.showUnlock(false,true,true,true))
+        assertFalse(FloatingLyricsWindowPolicy.showUnlock(true,true,true,false))
+        assertEquals(.8f,FloatingLyricsWindowPolicy.alpha(true,36,.8f),.0001f)
+    }
+
+    @Test fun transientInterruptionsResumeOnceAndExplicitPauseCancelsRecovery() {
+        val resume = FocusResume()
+        resume.interrupted(true)
+        resume.interrupted(false)
+        assertTrue(resume.regained())
+        assertFalse(resume.regained())
+        resume.interrupted(true); resume.cancel(); assertFalse(resume.regained())
+        resume.interrupted(false); assertFalse(resume.regained())
+    }
     @Test fun headsetAndMediaKeysHaveOneActionPerPress() {
         val keys=mapOf(KeyEvent.KEYCODE_HEADSETHOOK to "toggle",KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE to "toggle",KeyEvent.KEYCODE_MEDIA_NEXT to "next",KeyEvent.KEYCODE_MEDIA_PREVIOUS to "previous",KeyEvent.KEYCODE_MEDIA_PLAY to "resume",KeyEvent.KEYCODE_MEDIA_PAUSE to "pause",KeyEvent.KEYCODE_MEDIA_STOP to "stop")
         for((key,action) in keys) {

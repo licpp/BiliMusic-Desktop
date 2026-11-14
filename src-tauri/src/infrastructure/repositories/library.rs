@@ -76,11 +76,7 @@ impl LibraryRepository {
         connection: &mut Connection,
         track: &TrackInput,
     ) -> rusqlite::Result<TrackRecord> {
-        let record = if track.id.starts_with("local:") {
-            Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?
-        } else {
-            Self::upsert(connection, track)?
-        };
+        let record = Self::upsert(connection, track)?;
         connection.execute(
             "INSERT INTO play_history (track_id,played_at) VALUES (?1,strftime('%Y-%m-%d %H:%M:%f','now'))",
             params![track.id],
@@ -222,7 +218,7 @@ impl LibraryRepository {
            COALESCE(NULLIF(m.title,''),t.title), COALESCE(m.artist,t.artist), COALESCE(m.album,t.album),
            COALESCE(m.cover_url,t.cover_url), t.duration_seconds, s.uploader_id, s.uploader_name,
            CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END
-         FROM tracks t JOIN source_items s ON s.id=t.source_item_id
+         FROM tracks t JOIN source_items s ON s.id=t.source_item_id AND s.provider='bilibili'
          LEFT JOIN metadata_overrides m ON m.track_id=t.id LEFT JOIN favorites f ON f.track_id=t.id"
     }
 
@@ -398,6 +394,56 @@ mod tests {
             LibraryRepository::get(&connection, &in_playlist.id)
                 .unwrap()
                 .is_some()
+        );
+    }
+    #[test]
+    fn retired_imported_audio_is_hidden_without_touching_files_or_downloaded_bili_tracks() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('local:retired','local','local:retired',0),('bilibili:BVdownload:1','bilibili','BVdownload',1);
+          INSERT INTO tracks(id,source_item_id,title,cover_url) VALUES('local:retired','local:retired','retired','file:///original.jpg'),('bilibili:BVdownload:1','bilibili:BVdownload:1','downloaded song','https://bili/cover.jpg');
+          INSERT INTO local_audio VALUES('local:retired','/untouched/original.mp3');
+          INSERT INTO favorites(track_id) VALUES('local:retired'),('bilibili:BVdownload:1');
+          INSERT INTO play_history(track_id) VALUES('local:retired'),('bilibili:BVdownload:1');
+          INSERT INTO playlists(id,name) VALUES('mixed','mixed');
+          INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('mixed','local:retired',0),('mixed','bilibili:BVdownload:1',1);").unwrap();
+        assert!(
+            LibraryRepository::get(&c, "local:retired")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(LibraryRepository::list(&c, false, 500).unwrap().len(), 1);
+        assert_eq!(
+            LibraryRepository::recent(&c, 500).unwrap()[0].id,
+            "bilibili:BVdownload:1"
+        );
+        assert_eq!(
+            LibraryRepository::saved(&c, 500).unwrap()[0].id,
+            "bilibili:BVdownload:1"
+        );
+        use crate::infrastructure::repositories::playlists::{
+            FAVORITES_PLAYLIST_ID, PlaylistRepository,
+        };
+        for id in [FAVORITES_PLAYLIST_ID, "mixed"] {
+            let playlist = PlaylistRepository::get(&c, id).unwrap();
+            assert_eq!(playlist.track_count, 1);
+            assert_eq!(
+                playlist.cover_url.as_deref(),
+                Some("https://bili/cover.jpg")
+            );
+            assert_eq!(PlaylistRepository::tracks(&c, id).unwrap().len(), 1);
+        }
+        assert!(
+            PlaylistRepository::list(&c)
+                .unwrap()
+                .iter()
+                .all(|p| p.track_count == 1)
+        );
+        assert_eq!(
+            c.query_row("SELECT path FROM local_audio", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "/untouched/original.mp3"
         );
     }
 }

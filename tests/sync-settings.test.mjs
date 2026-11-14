@@ -11,11 +11,13 @@ const output = await build({
     builder.onResolve({ filter: /^react$/ }, () => ({ path: 'react-hooks', namespace: 'test' }))
     builder.onResolve({ filter: /^@tanstack\/react-query$/ }, () => ({ path: 'queries', namespace: 'test' }))
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: 'invoke', namespace: 'test' }))
+    builder.onResolve({ filter: /syncAttention$/ }, () => ({path:'attention',namespace:'test'}))
     builder.onResolve({ filter: /services\/(sync|desktopApi)$/ }, args => ({ path: args.path.endsWith('/sync') ? 'sync' : 'api', namespace: 'test' }))
     builder.onResolve({ filter: /player\/playerStore$/ }, () => ({ path: 'player', namespace: 'test' }))
     builder.onResolve({ filter: /shared\/ActionMenu$/ }, () => ({ path: 'menu', namespace: 'test' }))
     builder.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({ contents: {
-      icons: `export const Cloud=()=>null; export const LoaderCircle=()=>null; export const RefreshCw=()=>null; export const Check=()=>null; export const ChevronDown=()=>null;`,
+      icons: `export const Monitor=()=>null; export const Smartphone=()=>null; export const Cloud=()=>null; export const LoaderCircle=()=>null; export const RefreshCw=()=>null; export const Check=()=>null; export const ChevronDown=()=>null;`,
+      attention: `export const useSyncAttention=select=>select({outcome:null,library:'',statistics:''});export const clearSyncAttention=()=>{};export const reportSyncError=()=>{};`,
       menu: `export const ActionMenu=()=>null;`,
       'react-hooks': `export const useState = initial => globalThis.syncSettingsTest.useState(initial); export const useEffect = () => {};`,
       queries: `export const useQuery = () => globalThis.syncSettingsTest.query; export const useQueryClient = () => ({invalidateQueries:async()=>{}});`,
@@ -66,19 +68,23 @@ async function connect(render) {
   await new Promise(setImmediate)
 }
 
-test('connecting sync keeps settings mounted and presents first merge confirmation', async () => {
+test('connecting sync automatically merges without a confirmation when no conflict exists', async () => {
   const {calls,render} = setup()
   await connect(render)
-  assert.deepEqual(calls.map(call=>call[0]), ['sync_connect','preview'])
-  assert.equal(calls[1][1], true)
-  assert.ok(elements(render(), node => node.props?.className === 'sync-preview').length)
-  const button = elements(render(), node => node.type === 'button' && node.props.children === '确认合并并同步')[0]
-  assert.ok(button)
-  button.props.onClick()
-  await new Promise(setImmediate)
-  assert.equal(calls[2][0], 'preview')
-  assert.equal(calls[2][1], false)
+  assert.deepEqual(calls.slice(0,2).map(call=>call[0]), ['sync_connect','preview'])
+  assert.equal(calls[1][1], false)
+  assert.equal(elements(render(), node => node.props?.className === 'sync-preview').length,0)
   assert.equal(elements(render(), node => node.props?.role === 'status')[0].props.children, '同步完成')
+})
+
+test('automatic initial sync still presents genuine conflicts and never chooses destructively', async () => {
+  const {calls,render} = setup()
+  globalThis.syncSettingsTest.syncNow=async (...args)=>{calls.push(['preview',...args]);return {conflicts:[{key:'playlist:x',field:'__present'}],records:3,bytes:200,changed:false}}
+  await connect(render)
+  assert.equal(calls[1][1],false)
+  assert.equal(calls.filter(c=>c[0]==='preview').length,1)
+  assert.ok(elements(render(),node=>node.props?.className==='sync-preview').length)
+  assert.equal(elements(render(),node=>node.props?.role==='status')[0].props.children,'发现不同修改，请选择保留哪一侧。')
 })
 
 test('failed connection retains editable settings and shows the error without a merge', async () => {
@@ -115,5 +121,5 @@ test('inline sync opens its connection fields directly and retains consent befor
   elements(form,node=>node.type==='input'&&node.props.type==='checkbox').at(-1).props.onChange({target:{checked:true}})
   elements(render({embedded:true}),node=>node.type==='form')[0].props.onSubmit({preventDefault(){}})
   await new Promise(setImmediate)
-  assert.deepEqual(calls.map(call=>call[0]),['sync_connect','preview'])
+  assert.deepEqual(calls.slice(0,2).map(call=>call[0]),['sync_connect','preview'])
 })

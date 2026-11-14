@@ -15,22 +15,22 @@ type Seconds = BTreeMap<String, f64>;
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bucket {
-    schema: u32,
-    uid: String,
-    source: String,
-    month: String,
-    revision: u64,
+    pub(super) schema: u32,
+    pub(super) uid: String,
+    pub(super) source: String,
+    pub(super) month: String,
+    pub(super) revision: u64,
     #[serde(default)]
-    plays: Seconds,
+    pub(super) plays: Seconds,
     #[serde(default)]
-    day_plays: Seconds,
+    pub(super) day_plays: Seconds,
     #[serde(default)]
-    daily_plays: BTreeMap<String, Seconds>,
-    tracks: Seconds,
-    days: Seconds,
-    daily: BTreeMap<String, Seconds>,
+    pub(super) daily_plays: BTreeMap<String, Seconds>,
+    pub(super) tracks: Seconds,
+    pub(super) days: Seconds,
+    pub(super) daily: BTreeMap<String, Seconds>,
     #[serde(default)]
-    names: BTreeMap<String, (String, String)>,
+    pub(super) names: BTreeMap<String, (String, String)>,
 }
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -142,11 +142,11 @@ pub fn init(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<St
     }
     Ok(source)
 }
-fn save(c: &Connection, b: &Bucket, owned: bool, dirty: bool) -> Result<(), String> {
+pub(super) fn save(c: &Connection, b: &Bucket, owned: bool, dirty: bool) -> Result<(), String> {
     c.execute("INSERT INTO listening_buckets VALUES(?1,?2,?3,?4,?5) ON CONFLICT(source,month) DO UPDATE SET json=excluded.json,owned=excluded.owned,dirty=excluded.dirty",params![b.source,b.month,serde_json::to_string(b).map_err(err)?,owned,dirty]).map_err(err)?;
     Ok(())
 }
-fn load(c: &Connection, source: &str, month: &str) -> Result<Option<Bucket>, String> {
+pub(super) fn load(c: &Connection, source: &str, month: &str) -> Result<Option<Bucket>, String> {
     c.query_row(
         "SELECT json FROM listening_buckets WHERE source=?1 AND month=?2",
         params![source, month],
@@ -166,7 +166,9 @@ pub fn record(
     observed_at: Option<f64>,
     session: Option<&str>,
 ) -> Result<(), String> {
-    let source = init(c, directory, uid)?;
+    init(c, directory, uid)?;
+    super::statistics_v2::ensure_recording_identity(c, directory, uid)?;
+    let source = meta(c, "source")?.ok_or("统计来源丢失")?;
     let now: f64 = c
         .query_row("SELECT (julianday('now')-2440587.5)*86400.0", [], |r| {
             r.get(0)
@@ -248,7 +250,7 @@ pub fn record(
     }
     Ok(())
 }
-fn buckets(c: &Connection) -> Result<Vec<Bucket>, String> {
+pub(super) fn buckets(c: &Connection) -> Result<Vec<Bucket>, String> {
     let mut q = c
         .prepare("SELECT json FROM listening_buckets")
         .map_err(err)?;
@@ -367,6 +369,8 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
         let top:Vec<Value>=top.into_iter().take(50).map(|(id,seconds)|{
             let fallback=names.get(&id).cloned().unwrap_or(("已移除的歌曲".into(),String::new()));
             let (title,artist,cover)=c.query_row("SELECT COALESCE(m.title,t.title),COALESCE(m.artist,t.artist,''),COALESCE(m.cover_url,t.cover_url,'') FROM tracks t LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE t.id=?1",[&id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).unwrap_or((fallback.0,fallback.1,String::new()));
+            // Cached source titles also cover statistics-only songs absent from this library.
+            let title = c.query_row("SELECT COALESCE(NULLIF((SELECT title FROM metadata_overrides WHERE track_id=?1),''),(SELECT value FROM sync_info WHERE key='source-title:'||?1),?2)",params![id,title],|r|r.get::<_,String>(0)).unwrap_or(title);
             json!({"id":id,"title":title,"artist":artist,"coverUrl":cover,"seconds":seconds})
         }).collect();
         result[period] =
@@ -382,10 +386,14 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
     let selected = selected_config(c, uid)?;
     let target = selected.as_ref().map(statistics_endpoint).transpose()?;
     let current_target = target.is_some() && meta(c, "last_target")? == target;
-    result["sync"] = json!({"uid":uid,"provider":selected.as_ref().map(|cfg|&cfg.provider),"paused":meta(c,"account_sync_paused")?.as_deref()==Some("1"),"enabled":selected.is_some() && meta(c,"account_sync_paused")?.as_deref()!=Some("1"),"lastSuccess":if current_target {meta(c,"last_success")?} else {None},"error":if current_target {meta(c,"error")?} else {None},"uploadedBytes":meta(c,"uploaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"downloadedBytes":meta(c,"downloaded")?.unwrap_or_default().parse::<u64>().unwrap_or(0),"pending":c.query_row("SELECT COUNT(*) FROM listening_buckets WHERE owned=1 AND dirty=1",[],|r|r.get::<_,i64>(0)).map_err(err)?});
+    let traffic = selected.as_ref().filter(|cfg| cfg.provider == "webdav").map(|cfg| -> Result<(u64,u64),String> {
+        let scope = super::background::scope_key(c, cfg)?;
+        c.query_row("SELECT COALESCE(SUM(uploaded),0),COALESCE(SUM(downloaded),0) FROM sync_traffic WHERE target=?1 AND domain='statistics' AND day>=date('now','-29 days')",[scope],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)
+    }).transpose()?.unwrap_or((0,0));
+    result["sync"] = json!({"uid":uid,"provider":selected.as_ref().map(|cfg|&cfg.provider),"paused":meta(c,"account_sync_paused")?.as_deref()==Some("1"),"enabled":selected.is_some() && meta(c,"account_sync_paused")?.as_deref()!=Some("1"),"lastSuccess":if current_target {meta(c,"last_success")?} else {None},"error":if current_target {meta(c,"error")?} else {None},"uploadedBytes":traffic.0,"downloadedBytes":traffic.1,"pending":c.query_row("SELECT COUNT(*) FROM listening_buckets WHERE owned=1 AND dirty=1",[],|r|r.get::<_,i64>(0)).map_err(err)?});
     Ok(result)
 }
-fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
+pub(super) fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
     c.query_row(
         "SELECT value FROM listening_meta WHERE key=?1",
         [key],
@@ -394,11 +402,11 @@ fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
     .optional()
     .map_err(err)
 }
-fn put_meta(c: &Connection, key: &str, value: &str) -> Result<(), String> {
+pub(super) fn put_meta(c: &Connection, key: &str, value: &str) -> Result<(), String> {
     c.execute("INSERT INTO listening_meta VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,value]).map_err(err)?;
     Ok(())
 }
-fn valid(b: &Bucket, uid: &str) -> bool {
+pub(super) fn valid(b: &Bucket, uid: &str) -> bool {
     b.plays.len() <= 50000
         && b.plays
             .values()
@@ -437,7 +445,7 @@ fn encode(b: &Bucket) -> Result<Vec<u8>, String> {
         .map_err(err)?;
     z.finish().map_err(err)
 }
-fn decode(bytes: &[u8], uid: &str) -> Result<Bucket, String> {
+pub(super) fn decode(bytes: &[u8], uid: &str) -> Result<Bucket, String> {
     let mut v = Vec::new();
     GzDecoder::new(bytes)
         .take(8 * 1024 * 1024 + 1)
@@ -459,6 +467,7 @@ struct Index {
 async fn response_bytes(mut r: reqwest::Response) -> Result<Vec<u8>, String> {
     let mut v = Vec::new();
     while let Some(chunk) = r.chunk().await.map_err(err)? {
+        super::traffic::downloaded(chunk.len());
         if v.len() + chunk.len() > 2 * 1024 * 1024 {
             return Err("统计下载超过上限".into());
         }
@@ -540,12 +549,13 @@ async fn account_credentials(
     }
     if let Some(value) = stored {
         let credentials: transport::Secret = serde_json::from_str(&value).map_err(err)?;
-        let response = transport::client()?
-            .get(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
-            .bearer_auth(&credentials.password)
-            .send()
-            .await
-            .map_err(|_| "无法连接账号统计服务")?;
+        let response = super::traffic::send(
+            transport::client()?
+                .get(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
+                .bearer_auth(&credentials.password),
+        )
+        .await
+        .map_err(|_| "无法连接账号统计服务")?;
         if response.status().is_success() {
             return Ok(credentials);
         }
@@ -581,12 +591,36 @@ pub async fn listening_sync(
     app: AppHandle,
     database: State<'_, Database>,
     state: State<'_, SyncState>,
-) -> Result<(), String> {
+    automatic: Option<bool>,
+) -> Result<bool, String> {
+    let cfg = super::config(&database)?;
+    if cfg.uid.is_empty()
+        || !(cfg.enabled || cfg.initialized)
+        || active(&database, &cfg.uid).is_err()
+    {
+        return Ok(false);
+    }
+    super::background::run(
+        &database,
+        &state,
+        super::scheduler::Domain::Statistics,
+        automatic.unwrap_or(false),
+        listening_sync_inner(app, database.clone(), state.clone()),
+        |_| (false, false),
+    )
+    .await
+    .map(|result| result.unwrap_or(false))
+}
+async fn listening_sync_inner(
+    app: AppHandle,
+    database: State<'_, Database>,
+    state: State<'_, SyncState>,
+) -> Result<bool, String> {
     let _guard = state.statistics_gate.lock().await;
     let (cfg, cancellation) = {
         let _account = state.account_gate.lock().await;
         let Some(cfg) = account_config(&database)? else {
-            return Ok(());
+            return Ok(false);
         };
         let cancellation = tokio_util::sync::CancellationToken::new();
         *state.statistics_active.lock().map_err(err)? = Some(cancellation.clone());
@@ -595,7 +629,11 @@ pub async fn listening_sync(
     let operation = async {
         let credentials = account_credentials(&app, &database, &state, &cfg).await?;
         let base = statistics_endpoint(&cfg)?;
-        exchange(&database, &cfg, &credentials, &base).await
+        if cfg.provider == "webdav" {
+            super::statistics_v2::exchange(&database, &cfg, &credentials).await
+        } else {
+            exchange(&database, &cfg, &credentials, &base).await
+        }
     };
     let result =
         tokio::select! {_=cancellation.cancelled()=>Err("统计同步已取消".into()),r=operation=>r};
@@ -616,15 +654,22 @@ pub async fn listening_sync(
         }
     }
     *state.statistics_active.lock().map_err(err)? = None;
-    result
+    result.map(|_| true)
 }
 fn statistics_endpoint(cfg: &super::Config) -> Result<String, String> {
-    let endpoint = transport::endpoint(cfg)?;
-    Ok(if cfg.provider == "webdav" {
-        endpoint.replace("library.json", "statistics-v1/")
+    if cfg.provider == "webdav" {
+        v2_endpoint(cfg)
     } else {
-        endpoint.replace("/vault", "/statistics/")
-    })
+        Ok(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
+    }
+}
+pub(super) fn v2_endpoint(cfg: &super::Config) -> Result<String, String> {
+    Ok(format!(
+        "{}/BiliMusic-sync-v1/{}/sync-v2/{}/statistics/",
+        cfg.url.trim_end_matches('/'),
+        cfg.uid,
+        super::migration::Genesis::for_config(cfg)?.vault
+    ))
 }
 async fn exchange(
     db: &Database,
@@ -658,7 +703,9 @@ async fn exchange(
             format!("{account}/"),
             base.to_owned(),
         ] {
-            let r = request("MKCOL", folder).send().await.map_err(err)?;
+            let r = super::traffic::send(request("MKCOL", folder))
+                .await
+                .map_err(err)?;
             if !r.status().is_success() && r.status().as_u16() != 405 {
                 return Err(format!("统计目录创建失败：HTTP {}", r.status().as_u16()));
             }
@@ -685,8 +732,7 @@ async fn exchange(
     let mut uploaded = 0u64;
     let mut downloaded = 0u64;
     // A reconnect to an emptied target must restore this writer's clean historical buckets too.
-    let own_index = request("GET", format!("{base}index-{source}.json"))
-        .send()
+    let own_index = super::traffic::send(request("GET", format!("{base}index-{source}.json")))
         .await
         .map_err(err)?;
     if own_index.status().as_u16() == 404 {
@@ -734,20 +780,20 @@ async fn exchange(
         let bytes = encode(&b)?;
         uploaded += bytes.len() as u64;
         if cfg.provider == "webdav" {
-            let r = request("MKCOL", format!("{base}{source}/"))
-                .send()
+            let r = super::traffic::send(request("MKCOL", format!("{base}{source}/")))
                 .await
                 .map_err(err)?;
             if !r.status().is_success() && r.status().as_u16() != 405 {
                 return Err("无法创建统计来源目录".into());
             }
         }
-        let r = request("PUT", format!("{base}{source}/{}.json.gz", b.month))
-            .header("Content-Type", "application/gzip")
-            .body(bytes)
-            .send()
-            .await
-            .map_err(err)?;
+        let r = super::traffic::send(
+            request("PUT", format!("{base}{source}/{}.json.gz", b.month))
+                .header("Content-Type", "application/gzip")
+                .body(bytes),
+        )
+        .await
+        .map_err(err)?;
         if !r.status().is_success() {
             return Err(format!("统计上传失败：{}", r.status()));
         }
@@ -786,12 +832,13 @@ async fn exchange(
         meta(&c, &published_key)?.as_deref() != Some(&index_json)
     };
     if publish {
-        let r = request("PUT", format!("{base}index-{source}.json"))
-            .header("Content-Type", "application/json")
-            .body(index_json.clone())
-            .send()
-            .await
-            .map_err(err)?;
+        let r = super::traffic::send(
+            request("PUT", format!("{base}index-{source}.json"))
+                .header("Content-Type", "application/json")
+                .body(index_json.clone()),
+        )
+        .await
+        .map_err(err)?;
         if !r.status().is_success() {
             return Err("统计索引上传失败".into());
         }
@@ -800,50 +847,54 @@ async fn exchange(
         active(db, &cfg.uid)?;
         put_meta(&c, &published_key, &index_json)?;
     }
-    let sources: Vec<String> = if cfg.provider == "webdav" {
-        let r = request("PROPFIND", base.to_owned())
+    let sources: Vec<String> =
+        if cfg.provider == "webdav" {
+            let r = super::traffic::send(request("PROPFIND", base.to_owned())
             .header("Depth", "1")
             .header("Content-Type", "application/xml")
-            .body("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")
-            .send()
+            .body("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>"))
             .await
             .map_err(err)?;
-        if !r.status().is_success() {
-            return Err("统计目录读取失败".into());
-        }
-        let data = response_bytes(r).await?;
-        downloaded += data.len() as u64;
-        let mut reader = quick_xml::Reader::from_reader(data.as_slice());
-        let mut href = false;
-        let mut ids = Vec::new();
-        loop {
-            match reader.read_event() {
-                Ok(quick_xml::events::Event::Start(e)) => href = e.local_name().as_ref() == b"href",
-                Ok(quick_xml::events::Event::Text(e)) if href => {
-                    let text = e.decode().map_err(err)?;
-                    let name = text.rsplit('/').next().unwrap_or("");
-                    if let Some(id) = name
-                        .strip_prefix("index-")
-                        .and_then(|s| s.strip_suffix(".json"))
-                    {
-                        if uuid::Uuid::parse_str(id).is_ok() {
-                            ids.push(id.to_string())
+            if !r.status().is_success() {
+                return Err("统计目录读取失败".into());
+            }
+            let data = response_bytes(r).await?;
+            downloaded += data.len() as u64;
+            let mut reader = quick_xml::Reader::from_reader(data.as_slice());
+            let mut href = false;
+            let mut ids = Vec::new();
+            loop {
+                match reader.read_event() {
+                    Ok(quick_xml::events::Event::Start(e)) => {
+                        href = e.local_name().as_ref() == b"href"
+                    }
+                    Ok(quick_xml::events::Event::Text(e)) if href => {
+                        let text = e.decode().map_err(err)?;
+                        let name = text.rsplit('/').next().unwrap_or("");
+                        if let Some(id) = name
+                            .strip_prefix("index-")
+                            .and_then(|s| s.strip_suffix(".json"))
+                        {
+                            if uuid::Uuid::parse_str(id).is_ok() {
+                                ids.push(id.to_string())
+                            }
                         }
                     }
+                    Ok(quick_xml::events::Event::Eof) => break,
+                    Err(e) => return Err(err(e)),
+                    _ => {}
                 }
-                Ok(quick_xml::events::Event::Eof) => break,
-                Err(e) => return Err(err(e)),
-                _ => {}
             }
-        }
-        ids
-    } else {
-        let r = request("GET", base.to_owned()).send().await.map_err(err)?;
-        if !r.status().is_success() {
-            return Err("云端统计接口暂不可用，请更新同步服务".into());
-        }
-        serde_json::from_slice(&response_bytes(r).await?).map_err(err)?
-    };
+            ids
+        } else {
+            let r = super::traffic::send(request("GET", base.to_owned()))
+                .await
+                .map_err(err)?;
+            if !r.status().is_success() {
+                return Err("云端统计接口暂不可用，请更新同步服务".into());
+            }
+            serde_json::from_slice(&response_bytes(r).await?).map_err(err)?
+        };
     if sources.len() > 100 {
         return Err("统计来源超过100个".into());
     }
@@ -863,7 +914,7 @@ async fn exchange(
         if let Some(ref e) = etag {
             req = req.header("If-None-Match", e)
         }
-        let r = req.send().await.map_err(err)?;
+        let r = super::traffic::send(req).await.map_err(err)?;
         if r.status().as_u16() == 304 {
             continue;
         }
@@ -899,10 +950,12 @@ async fn exchange(
             if current.as_ref().is_some_and(|b| b.revision >= revision) {
                 continue;
             }
-            let r = request("GET", format!("{base}{remote_source}/{month}.json.gz"))
-                .send()
-                .await
-                .map_err(err)?;
+            let r = super::traffic::send(request(
+                "GET",
+                format!("{base}{remote_source}/{month}.json.gz"),
+            ))
+            .await
+            .map_err(err)?;
             if !r.status().is_success() {
                 return Err("统计月份下载失败".into());
             }

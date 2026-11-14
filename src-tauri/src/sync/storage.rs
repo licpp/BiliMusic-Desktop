@@ -3,11 +3,46 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 pub fn init(c: &Connection) -> Result<(), String> {
-    c.execute_batch("CREATE TABLE IF NOT EXISTS sync_settings(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_base(provider TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_info(key TEXT PRIMARY KEY,value TEXT NOT NULL);").map_err(|e|e.to_string())
+    crate::interface::list_preferences::init(c).map_err(|e|e.to_string())?;
+    c.execute_batch("CREATE TABLE IF NOT EXISTS sync_settings(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_base(provider TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_info(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_scheduler(target TEXT PRIMARY KEY,json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_traffic(target TEXT NOT NULL,day TEXT NOT NULL,domain TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0,uploaded INTEGER NOT NULL DEFAULT 0,downloaded INTEGER NOT NULL DEFAULT 0,cache_hits INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,elapsed_ms INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(target,day,domain));
+        CREATE TABLE IF NOT EXISTS sync_target_base(target TEXT PRIMARY KEY,json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_legacy_binding(provider TEXT PRIMARY KEY,target TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_lyric_archive(track_id TEXT PRIMARY KEY,provider TEXT NOT NULL,provider_lyric_id TEXT,raw_text TEXT NOT NULL,parsed_json TEXT NOT NULL,bias_ms INTEGER NOT NULL,selected_manually INTEGER NOT NULL,updated_at TEXT NOT NULL);").map_err(|e|e.to_string())
+}
+
+pub fn target_key(
+    provider: &str,
+    uid: &str,
+    endpoint: &str,
+    principal: &str,
+) -> Result<String, String> {
+    let url = url::Url::parse(endpoint).map_err(|_| "同步地址无效")?;
+    let identity = serde_json::to_string(&(
+        provider,
+        uid,
+        url.as_str().trim_end_matches('/'),
+        principal.trim(),
+    ))
+    .unwrap();
+    // This is a stable namespace, not an authentication token. Password is excluded.
+    Ok(format!("target-v1-{:x}", md5::compute(identity)))
+}
+
+/// Claim the old baseline once, while its original settings/credentials are still available.
+pub fn bind_legacy(c: &Connection, provider: &str, target: &str) -> Result<(), String> {
+    init(c)?;
+    let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT OR IGNORE INTO sync_legacy_binding(provider,target) VALUES(?1,?2)",
+        params![provider, target],
+    )
+    .map_err(|e| e.to_string())?;
+    c.execute("INSERT OR IGNORE INTO sync_target_base(target,json) SELECT ?2,b.json FROM sync_base b JOIN sync_legacy_binding l ON l.provider=b.provider WHERE b.provider=?1 AND l.target=?2",params![provider,target]).map_err(|e|e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
 }
 pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, String> {
-    crate::infrastructure::repositories::collections::separate_legacy_folders(c)
-        .map_err(|e| e.to_string())?;
     let mut s = Snapshot::empty(uid);
     let mut add = |key: String, kind: &str, value: Value| {
         s.records.insert(
@@ -172,6 +207,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
     }
+    crate::interface::list_preferences::export(c,&mut s)?;
     s.compact(history);
     s.validate(uid)
         .map_err(|e| format!("本机同步资料校验失败：{e}"))?;
@@ -181,12 +217,31 @@ fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
     r.fields.get(k).and_then(Value::as_str)
 }
 pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> {
+    init(c)?;
     crate::infrastructure::repositories::collections::init_folders(c).map_err(|e| e.to_string())?;
     s.validate(&s.uid)?;
     c.execute_batch("SAVEPOINT sync_apply")
         .map_err(|e| e.to_string())?;
     let tx = c;
     let result = (|| -> rusqlite::Result<()> {
+        // Remove only sync-owned selections. Preserve local audio and B站 subtitles;
+        // archive the former text before deleting so local content is recoverable.
+        let keep: std::collections::BTreeSet<_> = s
+            .records
+            .values()
+            .filter(|r| r.kind == "lyric")
+            .map(|r| text(r, "id"))
+            .collect();
+        let mut q = tx.prepare("SELECT track_id FROM lyrics WHERE provider IN ('lrclib','netease','qq','local') AND track_id NOT IN (SELECT track_id FROM local_audio)")?;
+        let ids = q
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            if !keep.contains(id.as_str()) && s.records.contains_key(&format!("track:{id}")) {
+                tx.execute("INSERT OR REPLACE INTO sync_lyric_archive(track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at) SELECT track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at FROM lyrics WHERE track_id=?1",[&id])?;
+                tx.execute("DELETE FROM lyrics WHERE track_id=?1", [&id])?;
+            }
+        }
         // Removing a link never issues a delete to Bilibili. Keep cached videos
         // and local ordering for surviving links; new devices hydrate from Bilibili.
         let owner = s
@@ -383,6 +438,7 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             tx.execute_batch("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
                 AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
         }
+        crate::interface::list_preferences::apply(&tx,s)?;
         prune(&tx)?;
         Ok(())
     })();
@@ -407,10 +463,97 @@ pub fn prune(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn target_baselines_do_not_follow_provider_reconnections() {
+        let c = Connection::open_in_memory().unwrap();
+        init(&c).unwrap();
+        c.execute("INSERT INTO sync_base VALUES('webdav','old')", [])
+            .unwrap();
+        let a = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a/", "one").unwrap();
+        let same = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a", "one").unwrap();
+        let b = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/b/", "one").unwrap();
+        assert_eq!(a, same);
+        assert_ne!(a, b);
+        assert_ne!(
+            a,
+            target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a/", "two").unwrap()
+        );
+        bind_legacy(&c, "webdav", &a).unwrap();
+        bind_legacy(&c, "webdav", &b).unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT COUNT(*) FROM sync_target_base WHERE target=?1",
+                [&b],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT json FROM sync_target_base WHERE target=?1",
+                [&a],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "old"
+        );
+    }
+    #[test]
+    fn deleted_selection_stays_deleted_and_preserves_original_text_in_archive() {
+        let c = linked_db();
+        c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1);
+            INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track');
+            INSERT INTO favorites(track_id) VALUES('bilibili:BV123:1');
+            INSERT INTO lyrics(track_id,provider,raw_text,parsed_json) VALUES('bilibili:BV123:1','local','original text','[]');").unwrap();
+        let mut snapshot = export(&c, "42", false).unwrap();
+        snapshot.records.remove("lyric:bilibili:BV123:1");
+        for _ in 0..3 {
+            apply(&c, &snapshot, false).unwrap();
+            assert_eq!(export(&c, "42", false).unwrap(), snapshot);
+        }
+        assert_eq!(
+            c.query_row("SELECT raw_text FROM sync_lyric_archive", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "original text"
+        );
+    }
+    #[test]
+    fn unshared_lyrics_and_bilibili_subtitles_are_not_deleted_by_sync() {
+        let c = linked_db();
+        for (cid, provider, favorite) in [(1, "local", false), (2, "bilibili", true)] {
+            let id = format!("bilibili:BV123:{cid}");
+            c.execute(
+                "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV123',?2)",
+                params![id, cid],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'Track')",
+                [&id],
+            )
+            .unwrap();
+            c.execute("INSERT INTO lyrics(track_id,provider,raw_text,parsed_json) VALUES(?1,?2,'private text','[]')",params![id,provider]).unwrap();
+            if favorite {
+                c.execute("INSERT INTO favorites(track_id) VALUES(?1)", [&id])
+                    .unwrap();
+            } else {
+                c.execute("INSERT INTO play_history(track_id) VALUES(?1)", [&id])
+                    .unwrap();
+            }
+        }
+        let snapshot = export(&c, "42", false).unwrap();
+        apply(&c, &snapshot, false).unwrap();
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM lyrics", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
     fn linked_db() -> Connection {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         c
     }
     fn insert_link(c: &Connection, id: i64, owner: i64, name: &str) {
@@ -552,8 +695,7 @@ mod tests {
     #[test]
     fn imported_playlists_and_members_round_trip_without_changing_identity() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let id = "import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579";
         c.execute("INSERT INTO playlists(id,name) VALUES(?1,'Imported')", [id])
             .unwrap();
@@ -562,9 +704,7 @@ mod tests {
             INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579','bilibili:BV123:1',0);").unwrap();
         let snapshot = export(&c, "42", false).unwrap();
         let destination = Connection::open_in_memory().unwrap();
-        destination
-            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&destination).unwrap();
         apply(&destination, &snapshot, false).unwrap();
         assert_eq!(snapshot, export(&destination, "42", false).unwrap());
         assert_eq!(
@@ -592,8 +732,7 @@ mod tests {
     fn sync_preserves_local_playlist_and_folder_creation_order() {
         use crate::infrastructure::repositories::{collections, playlists::PlaylistRepository};
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let a = "ffffffff-2861-4be1-8b08-a6a0fb0b0579";
         let b = "00000000-2861-4be1-8b08-a6a0fb0b0579";
         for id in [a, b] {
@@ -619,8 +758,7 @@ mod tests {
             FAVORITES_PLAYLIST_ID, PlaylistRepository,
         };
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         for (id, cid) in [("bilibili:BV123:2", 2), ("bilibili:BV123:1", 1)] {
             c.execute(
                 "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV123',?2)",
@@ -649,9 +787,7 @@ mod tests {
         use crate::infrastructure::repositories::collections;
         let reference = "season:42:73";
         let local = Connection::open_in_memory().unwrap();
-        local
-            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&local).unwrap();
         local
             .execute(
                 "INSERT INTO collections(bvid,folder_id) VALUES(?1,'')",
@@ -671,9 +807,7 @@ mod tests {
         assert_eq!(export(&local, "42", false).unwrap().records.len(), 1);
 
         let remote = Connection::open_in_memory().unwrap();
-        remote
-            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&remote).unwrap();
         apply(&remote, &merged, true).unwrap();
         let progress = collections::progress(&remote, reference).unwrap().unwrap();
         assert_eq!(
@@ -688,9 +822,7 @@ mod tests {
     fn recent_order_survives_history_sync_in_record_key_order() {
         use crate::infrastructure::repositories::library::LibraryRepository;
         let local = Connection::open_in_memory().unwrap();
-        local
-            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&local).unwrap();
         for (id, cid, played_at) in [
             ("bilibili:BV123:2", 2, "2026-11-10 00:00:00.900"),
             ("bilibili:BV123:1", 1, "2026-11-10 00:00:00.100"),
@@ -721,9 +853,7 @@ mod tests {
                 .contains_key(&history)
         );
         let remote = Connection::open_in_memory().unwrap();
-        remote
-            .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&remote).unwrap();
         apply(&remote, &snapshot, true).unwrap();
         apply(&remote, &snapshot, true).unwrap();
         let recent = LibraryRepository::recent(&remote, 10).unwrap();
@@ -772,8 +902,7 @@ mod tests {
     #[test]
     fn collections_round_trip_without_uploading_source_cache() {
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         use crate::infrastructure::repositories::collections::{self, Collection};
         collections::change(&mut c, "create", "", "听书", None).unwrap();
         let id = collections::list(&c).unwrap().folders.remove(0).id;
@@ -796,8 +925,7 @@ mod tests {
         assert_eq!(s.records.len(), 2);
         assert!(!serde_json::to_string(&s).unwrap().contains("local cache"));
         let d = Connection::open_in_memory().unwrap();
-        d.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&d).unwrap();
         apply(&d, &s, false).unwrap();
         assert_eq!(s, export(&d, "42", false).unwrap());
         collections::change(&mut c, "delete", &id, "", None).unwrap();
@@ -808,8 +936,7 @@ mod tests {
     #[test]
     fn cloud_round_trip_preserves_device_only_audio_memberships() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         c.execute_batch("
             INSERT INTO source_items(id,provider,bvid,cid) VALUES('local:fixture','local','local:fixture',0);
             INSERT INTO tracks(id,source_item_id,title) VALUES('local:fixture','local:fixture','Device audio');
@@ -835,8 +962,7 @@ mod tests {
     #[test]
     fn bounded_export_excludes_unreferenced_metadata_and_secrets() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV1:1','bilibili','BV1',1); INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV1:1','bilibili:BV1:1','Song'); INSERT INTO metadata_overrides(track_id,title) VALUES('bilibili:BV1:1','Edit'); INSERT INTO auth_session(provider,cookie_header) VALUES('bilibili','secret');").unwrap();
         assert!(export(&c, "42", false).unwrap().records.is_empty());
         c.execute(
@@ -849,8 +975,7 @@ mod tests {
         assert!(j.contains("Edit"));
         assert!(!j.contains("secret"));
         let d = Connection::open_in_memory().unwrap();
-        d.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&d).unwrap();
         apply(&d, &s, false).unwrap();
         assert_eq!(s, export(&d, "42", false).unwrap());
         c.execute("DELETE FROM favorites", []).unwrap();
@@ -866,14 +991,12 @@ mod tests {
     fn scoped_creator_folders_round_trip_including_empty_folders() {
         use crate::infrastructure::repositories::collections;
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         collections::change(&mut c, "createCreator", "", "独立UP文件夹", None).unwrap();
         let source = export(&c, "42", true).unwrap();
         source.validate("42").unwrap();
         let d = Connection::open_in_memory().unwrap();
-        d.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&d).unwrap();
         apply(&d, &source, true).unwrap();
         let data = collections::list(&d).unwrap();
         assert_eq!(data.folders.len(), 1);

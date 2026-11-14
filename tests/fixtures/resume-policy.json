@@ -1,0 +1,12 @@
+[
+  { "threshold": null, "duration": 600, "resume": false },
+  { "threshold": null, "duration": 0, "resume": false },
+  { "threshold": 0, "duration": 60, "resume": true },
+  { "threshold": 0, "duration": 0, "resume": true },
+  { "threshold": 600, "duration": 599, "resume": false },
+  { "threshold": 600, "duration": 600, "resume": true },
+  { "threshold": 600, "duration": 601, "resume": true },
+  { "threshold": 600, "duration": 0, "resume": false },
+  { "threshold": null, "duration": 60, "collection": true, "resume": true },
+  { "threshold": 600, "duration": 60, "collection": true, "resume": true }
+]

@@ -26,6 +26,13 @@ test('word fill uses fractional frame positions and remains filled after a word 
 globalThis.window={addEventListener(){}}
 const{readFloatingPreferences}=await moduleAt('src/services/floatingLyricsPreferences.ts')
 test('existing lyric settings migrate with colors and invalid color input falls back safely',()=>{
- assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5'})
+ assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5'})
  const value=readFloatingPreferences('{"fontSize":100,"activeColor":"#AABBCC","inactiveColor":"url(x)"}');assert.equal(value.fontSize,48);assert.equal(value.activeColor,'#aabbcc');assert.equal(value.inactiveColor,'#91a6b5')
+})
+
+test('Android unlock target is visible by default and hiding it preserves the locked setting',()=>{
+ assert.equal(readFloatingPreferences(null).showUnlockButton,true)
+ const hidden=readFloatingPreferences('{"locked":true,"showUnlockButton":false}')
+ assert.equal(hidden.locked,true);assert.equal(hidden.showUnlockButton,false)
+ assert.equal(readFloatingPreferences(JSON.stringify(hidden)).showUnlockButton,false)
 })

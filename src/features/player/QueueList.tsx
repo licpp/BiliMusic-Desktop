@@ -1,3 +1,5 @@
+import { useQueryClient } from '@tanstack/react-query'
+import { hydrateSourceTitles } from '../../services/sourceTitles'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ListMusic, Play, ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
@@ -14,6 +16,8 @@ import { prepareSeasonQueueEntry, usePlayerStore } from './playerStore'
 
 export function QueueList({ open }: { open: boolean }) {
   const queue = usePlayerStore(state => state.queue)
+  const client = useQueryClient()
+  useEffect(() => { if (open && queue.length) void hydrateSourceTitles(queue.map(track => track.id), client) }, [open, queue, client])
   const source = usePlayerStore(state => state.queueSource)
   const currentId = usePlayerStore(state => state.current?.id)
   const { structured, groups, partsOnly } = useMemo(() => presentQueue(queue, source?.kind), [queue, source?.kind])

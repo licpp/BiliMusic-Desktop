@@ -85,7 +85,22 @@ impl Snapshot {
             }
         }
     }
+    pub fn normalize(&mut self) {
+        for r in self.records.values_mut() {
+            if r.kind == "collectionFolder"
+                && r.fields
+                    .get("scope")
+                    .is_some_and(|v| v.is_null() || v == "collections")
+            {
+                r.fields.remove("scope");
+            }
+            if r.kind == "history" && r.fields.get("resume").is_some_and(Value::is_null) {
+                r.fields.remove("resume");
+            }
+        }
+    }
     pub fn compact(&mut self, history: bool) {
+        self.normalize();
         if !history {
             self.records
                 .retain(|_, r| !matches!(r.kind.as_str(), "history" | "collectionProgress"));
@@ -170,10 +185,11 @@ impl Snapshot {
                     "overrideAlbum",
                     "overrideCover",
                 ],
-                "playlist" => &["id", "name", "description", "coverUrl"],
-                "collectionFolder" => &["id", "name", "scope"],
-                "linkedFolder" => &["folderId", "name"],
-                "collection" => &["bvid", "folderId"],
+                "view" => &["id","displayRank","sortRule"],
+                "playlist" => &["id", "name", "description", "coverUrl", "displayRank", "sortRule"],
+                "collectionFolder" => &["id", "name", "scope", "displayRank", "sortRule"],
+                "linkedFolder" => &["folderId", "name", "displayRank", "sortRule"],
+                "collection" => &["bvid", "folderId", "displayRank", "sortRule"],
                 "item" => &["playlistId", "trackId", "position"],
                 "collectionProgress" => &["reference", "checkpoint"],
                 "favorite" => &["trackId"],
@@ -196,9 +212,11 @@ impl Snapshot {
             {
                 return Err("同步记录格式或字段长度无效".into());
             }
+            if r.fields.get("displayRank").is_some_and(|v|!v.as_str().is_some_and(crate::interface::list_preferences::valid_rank)) || r.fields.get("sortRule").is_some_and(|v|!v.as_str().is_some_and(crate::interface::list_preferences::valid_rule)) {return Err("同步排序设置无效".into())}
             let id = text(r, "id");
             let track = text(r, "trackId");
             let valid = match r.kind.as_str() {
+                "view" => key==&format!("view:{id}") && matches!(id,"favorites"|"saved"),
                 "track" => {
                     key == &format!("track:{id}")
                         && id == format!("bilibili:{}:{}", text(r, "bvid"), number(r, "cid"))
@@ -300,6 +318,7 @@ impl Snapshot {
             ("linkedFolder", 500),
             ("collection", 2000),
             ("collectionProgress", 2000),
+            ("view",2),
             ("playlist", 500),
             ("track", 5000),
             ("item", 10000),
@@ -375,29 +394,15 @@ pub fn text<'a>(r: &'a Record, k: &str) -> &'a str {
 pub fn number(r: &Record, k: &str) -> i64 {
     r.fields.get(k).and_then(Value::as_i64).unwrap_or(0)
 }
-pub fn merge(
-    base: &Snapshot,
-    local: &Snapshot,
-    remote: &Snapshot,
-    resolution: Option<&str>,
-) -> (Snapshot, Vec<Conflict>) {
-    let mut result = Snapshot::empty(&local.uid);
-    let mut conflicts = vec![];
-    let keys: BTreeSet<_> = base
-        .records
-        .keys()
-        .chain(local.records.keys())
-        .chain(remote.records.keys())
-        .cloned()
-        .collect();
-    for key in keys {
-        let b = base.records.get(&key);
-        let l = local.records.get(&key);
-        let r = remote.records.get(&key);
-        let value = if let (Some(l), Some(r)) = (l, r)
-            && l.kind == "history"
-            && r.kind == "history"
-        {
+/// Progress is an automatically ordered observation, not an editable library field.
+/// Keep playback time and resume position independently: seeking backwards or
+/// restarting a song can legitimately produce a newer, smaller position.
+pub fn merge_progress_records(l: &Record, r: &Record) -> Option<Record> {
+    if l.kind != r.kind {
+        return None;
+    }
+    match l.kind.as_str() {
+        "history" => {
             let mut latest = if text(l, "playedAt") >= text(r, "playedAt") {
                 l.clone()
             } else {
@@ -411,14 +416,40 @@ pub fn merge(
                 latest.fields.insert("resume".into(), position.clone());
             }
             Some(latest)
-        } else if let (Some(l), Some(r)) = (l, r)
-            && l.kind == "collectionProgress"
-            && r.kind == l.kind
-        {
-            [l, r]
-                .into_iter()
-                .max_by_key(|record| checkpoint_order(&record.fields["checkpoint"]))
-                .cloned()
+        }
+        "collectionProgress" => [l, r]
+            .into_iter()
+            .max_by_key(|record| checkpoint_order(&record.fields["checkpoint"]))
+            .cloned(),
+        _ => None,
+    }
+}
+pub fn merge(
+    base: &Snapshot,
+    local: &Snapshot,
+    remote: &Snapshot,
+    resolution: Option<&str>,
+) -> (Snapshot, Vec<Conflict>) {
+    let (mut base, mut local, mut remote) = (base.clone(), local.clone(), remote.clone());
+    base.normalize();
+    local.normalize();
+    remote.normalize();
+    let mut result = Snapshot::empty(&local.uid);
+    let mut conflicts = vec![];
+    let keys: BTreeSet<_> = base
+        .records
+        .keys()
+        .chain(local.records.keys())
+        .chain(remote.records.keys())
+        .cloned()
+        .collect();
+    for key in keys {
+        let b = base.records.get(&key);
+        let l = local.records.get(&key);
+        let r = remote.records.get(&key);
+        let progress = l.zip(r).and_then(|(l, r)| merge_progress_records(l, r));
+        let value = if let Some(progress) = progress {
+            Some(progress)
         } else if key.starts_with("collectionProgress:") {
             if l == b {
                 r.cloned()

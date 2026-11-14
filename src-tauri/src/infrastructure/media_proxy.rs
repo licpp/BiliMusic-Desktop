@@ -33,9 +33,13 @@ const ENTRY_LIFETIME: Duration = Duration::from_secs(6 * 3600);
 const MAX_ENTRIES: usize = 24;
 const PREFIX_LIMIT: usize = 256 * 1024;
 const MEDIA_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+#[cfg(test)]
+#[path = "startup_benchmark.rs"]
+mod startup_benchmark;
 
 #[derive(Clone)]
 struct MediaEntry {
+    upgrade_gate: Option<(u64, Arc<tokio::sync::OnceCell<bool>>)>,
     upstream_urls: Vec<String>,
     content_type: String,
     expires_at: Instant,
@@ -207,7 +211,8 @@ impl MediaProxy {
         let mut entries = self.state.entries.write().await;
         entries.retain(|_, entry| entry.expires_at > Instant::now());
         if let Some((id, _)) = entries.iter().find(|(_, entry)| {
-            entry.local_path.is_none()
+            entry.upgrade_gate.is_none()
+                && entry.local_path.is_none()
                 && entry.content_type == content_type
                 && entry
                     .upstream_urls
@@ -228,6 +233,7 @@ impl MediaProxy {
         entries.insert(
             media_id.clone(),
             MediaEntry {
+                upgrade_gate: None,
                 upstream_urls,
                 content_type,
                 expires_at: Instant::now() + ENTRY_LIFETIME,
@@ -255,6 +261,7 @@ impl MediaProxy {
         entries.insert(
             id.clone(),
             MediaEntry {
+                upgrade_gate: None,
                 upstream_urls: vec![],
                 content_type: "audio/mp4".into(),
                 expires_at: Instant::now() + Duration::from_secs(24 * 3600),
@@ -275,6 +282,42 @@ impl MediaProxy {
         let cache = self.state.cache.as_ref()?;
         let variant = cache.find(track_id, quality)?;
         Some(self.register_cached(variant, vec![]).await)
+    }
+    pub async fn complete_cached_audio(&self, track_id: &str, quality: u32) -> Option<String> {
+        let cache = self.state.cache.as_ref()?;
+        let variant = cache.find(track_id, quality)?;
+        if !cache.complete(&variant) {
+            return None;
+        }
+        Some(self.register_cached(variant, vec![]).await)
+    }
+    pub async fn guard_upgrade(&self, url: &str, bandwidth: u64) -> String {
+        let id = Uuid::new_v4().simple().to_string();
+        let mut entries = self.state.entries.write().await;
+        let Some(mut entry) = url
+            .rsplit('/')
+            .next()
+            .and_then(|key| entries.get(key))
+            .cloned()
+        else {
+            return url.to_owned();
+        };
+        // The same CDN route can already serve explicit playback. Give the
+        // automatic candidate its own gate without changing that route's policy.
+        entry.upgrade_gate = Some((bandwidth, Arc::new(tokio::sync::OnceCell::new())));
+        entries.retain(|_, value| value.expires_at > Instant::now());
+        if entries.len() >= MAX_ENTRIES {
+            if let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, value)| value.expires_at)
+                .map(|(key, _)| key.clone())
+            {
+                entries.remove(&oldest);
+            }
+        }
+        entries.insert(id.clone(), entry);
+        drop(entries);
+        self.local_url(&id).await
     }
     pub async fn register_audio(
         &self,
@@ -337,6 +380,7 @@ impl MediaProxy {
         entries.insert(
             id.clone(),
             MediaEntry {
+                upgrade_gate: None,
                 upstream_urls: vec![],
                 content_type: audio.variant.mime.clone(),
                 expires_at: Instant::now() + Duration::from_secs(24 * 3600),
@@ -491,6 +535,7 @@ impl CachedAudio {
         self.total
             .store(span.2, std::sync::atomic::Ordering::Release);
         let entry = MediaEntry {
+            upgrade_gate: None,
             upstream_urls: urls,
             content_type: self.variant.mime.clone(),
             expires_at: Instant::now() + ENTRY_LIFETIME,
@@ -705,6 +750,14 @@ async fn proxy_media(
     };
     if entry.expires_at <= Instant::now() {
         return status_response(StatusCode::GONE);
+    }
+    if let Some((bandwidth, gate)) = &entry.upgrade_gate {
+        if !*gate
+            .get_or_init(|| upgrade_feasible(&state, &entry, *bandwidth))
+            .await
+        {
+            return status_response(StatusCode::SERVICE_UNAVAILABLE);
+        }
     }
     if let Some(path) = entry.local_path {
         return serve_local(&path, &request_headers).await;
@@ -1084,7 +1137,7 @@ async fn serve_local(path: &std::path::Path, headers: &HeaderMap) -> Response<Bo
         })
         .header(
             header::CONTENT_TYPE,
-            crate::interface::local_audio::audio_mime(path).unwrap_or("audio/mp4"),
+            audio_mime(path).unwrap_or("audio/mp4"),
         )
         .header(header::CONTENT_LENGTH, length)
         .header(header::ACCEPT_RANGES, "bytes")
@@ -1093,6 +1146,67 @@ async fn serve_local(path: &std::path::Path, headers: &HeaderMap) -> Response<Bo
         response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
     response.body(Body::from_stream(stream)).unwrap()
+}
+
+// A successful decoder prepare alone does not prove a high bitrate can be
+// sustained. Probe 64 KiB once per automatic upgrade (one backup on error), off the startup
+// path. Manual quality choices and downloads do not use this gate.
+async fn upgrade_feasible(state: &ProxyState, entry: &MediaEntry, bandwidth: u64) -> bool {
+    if bandwidth == 0 {
+        return true;
+    }
+    let urls = if let Some(audio) = &entry.cached {
+        if audio.cache.complete(&audio.variant) {
+            return true;
+        }
+        audio.urls.lock().await.clone()
+    } else {
+        entry.upstream_urls.clone()
+    };
+    let client = state.client.read().await.clone();
+    for url in urls.into_iter().take(2) {
+        let probe = tokio::time::timeout(Duration::from_secs(3), async {
+            let overall = Instant::now();
+            let response = client
+                .get(url)
+                .header(header::RANGE, "bytes=0-65535")
+                .header(header::REFERER, "https://www.bilibili.com/")
+                .header(header::USER_AGENT, MEDIA_USER_AGENT)
+                .send()
+                .await?
+                .error_for_status()?;
+            let mut stream = response.bytes_stream();
+            let mut total = 0usize;
+            let mut first = 0usize;
+            let mut started = Instant::now();
+            while total < 65536 {
+                let Some(chunk) = stream.next().await else {
+                    break;
+                };
+                let chunk = chunk?;
+                if total == 0 {
+                    first = chunk.len();
+                    started = Instant::now();
+                }
+                total += chunk.len();
+            }
+            let (bytes, elapsed) = if total > first {
+                (total - first, started.elapsed())
+            } else {
+                (total, overall.elapsed())
+            };
+            Ok::<_, reqwest::Error>(
+                bytes >= 16384
+                    && bytes as f64 / elapsed.as_secs_f64().max(0.001)
+                        >= bandwidth as f64 / 8.0 * 1.35,
+            )
+        })
+        .await;
+        if let Ok(Ok(feasible)) = probe {
+            return feasible;
+        }
+    }
+    false
 }
 
 fn byte_range(range: Option<&str>, size: u64) -> Option<(u64, u64)> {
@@ -1452,6 +1566,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn automatic_upgrade_rejects_unsustainable_bandwidth_without_blocking_manual_playback() {
+        use super::*;
+        let router = Router::new().route(
+            "/{delay}",
+            get(|Path(delay): Path<u64>| async move {
+                let stream = futures_util::stream::unfold(0, move |index| async move {
+                    if index == 8 {
+                        return None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![1; 8192])),
+                        index + 1,
+                    ))
+                });
+                Response::builder()
+                    .status(206)
+                    .header(header::CONTENT_LENGTH, 65536)
+                    .header(header::CONTENT_RANGE, "bytes 0-65535/65536")
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let proxy = MediaProxy::start().await.unwrap();
+        let client = Client::builder().no_proxy().build().unwrap();
+        let slow = proxy
+            .register_stream(format!("http://{address}/80"), vec![], "audio/mp4".into())
+            .await;
+        let guarded_slow = proxy.guard_upgrade(&slow, 1_300_000).await;
+        assert_ne!(slow, guarded_slow);
+        assert_eq!(client.get(guarded_slow).send().await.unwrap().status(), 503);
+        let fast = proxy
+            .register_stream(format!("http://{address}/2"), vec![], "audio/mp4".into())
+            .await;
+        let fast = proxy.guard_upgrade(&fast, 1_300_000).await;
+        assert!(client.get(fast).send().await.unwrap().status().is_success());
+        let manual = proxy
+            .register_stream(format!("http://{address}/80"), vec![], "audio/mp4".into())
+            .await;
+        assert_eq!(
+            manual, slow,
+            "explicit playback may reuse the original CDN route"
+        );
+        assert!(
+            client
+                .get(manual)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn decoder_gets_first_packet_before_rest_of_cache_block_arrives() {
         use super::*;
         let root =
@@ -1633,6 +1806,7 @@ mod tests {
         let prefix = response.chunk().await.unwrap().unwrap();
         let cache = Arc::new(tokio::sync::RwLock::new((Vec::new(), 0)));
         let entry = super::MediaEntry {
+            upgrade_gate: None,
             upstream_urls: vec![format!("{base}/truncated"), format!("{base}/backup")],
             content_type: "audio/mp4".into(),
             expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
@@ -1971,5 +2145,17 @@ mod tests {
             eprintln!("browser media probe ready for 60 seconds");
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
+    }
+}
+
+// Downloaded Bilibili audio is served locally for offline playback.
+pub(crate) fn audio_mime(path: &std::path::Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "mp3" => Some("audio/mpeg"),
+        "m4a" => Some("audio/mp4"),
+        "flac" => Some("audio/flac"),
+        "aac" => Some("audio/aac"),
+        "wav" => Some("audio/wav"),
+        _ => None,
     }
 }

@@ -1,3 +1,7 @@
+import {useOrganizer} from '../shared/useOrganizer'
+import {useListPreferences,playlistEntity} from '../services/listPreferences'
+import {rankList} from '../services/listOrdering'
+import { useSyncAttention, revealSync } from '../services/syncAttention'
 import { CreatorsView } from '../features/collections/CreatorsView'
 import { createLinkedPlaylist } from '../services/desktopApi'
 import { PlaylistEntry } from '../features/library/PlaylistEntry'
@@ -85,6 +89,7 @@ const navigation = [
 export function App() {
   useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
+  const syncAttention = useSyncAttention(state => state.library || state.statistics)
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
@@ -124,7 +129,7 @@ export function App() {
     return () => window.removeEventListener('bilimusic-account-changing', clear)
   }, [])
   const [activeNav, setActiveNav] = useState('此刻')
-  const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads' | 'local'>('saved')
+  const [libraryTab, setLibraryTab] = useState<'saved' | 'recent' | 'downloads'>('saved')
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const searchScroll = useRef<HTMLDivElement>(null)
@@ -164,7 +169,9 @@ export function App() {
   const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
   useEffect(() => { void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined) }, [homeTracks.data, queryClient])
   const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
-  const allPlaylists = playlists.data || [FAVORITES_PLAYLIST]
+  const displayPreferences=useListPreferences()
+  const allPlaylists = rankList(playlists.data || [FAVORITES_PLAYLIST],displayPreferences.data?.preferences||[],playlistEntity)
+  const sidebarOrganizer = useOrganizer(allPlaylists.map(item => ({id:playlistEntity(item),name:item.name,coverUrl:item.coverUrl,kind:item.biliFolderId?'linked' as const:'playlist' as const})), '整理歌单')
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
@@ -398,12 +405,12 @@ export function App() {
     }
     const stopMouse=isMobile?()=>undefined:installMouseShortcuts(window,()=>useShortcutStore.getState().bindings,run,event=>Boolean((event.target as Element)?.closest?.('[data-shortcut-editor],input,textarea,select,[contenteditable="true"]')||document.querySelector('[aria-modal="true"]')))
     const stopGlobal = isMobile ? () => undefined : listenGlobalShortcuts(run)
-    const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings))
-    if (!isMobile) syncGlobalShortcuts(useShortcutStore.getState().bindings)
+    const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings,state.globalEnabled))
+    if (!isMobile) { const state=useShortcutStore.getState();syncGlobalShortcuts(state.bindings,state.globalEnabled) }
     window.addEventListener('keydown', handler)
     const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
     document.addEventListener('contextmenu', disableBrowserMenu)
-    return () => { stopMouse();stopGlobal();stopSync();window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
+    return () => { stopMouse();stopGlobal();stopSync();if(!isMobile)syncGlobalShortcuts(useShortcutStore.getState().bindings,false);window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
   useEffect(() => {
@@ -441,12 +448,12 @@ export function App() {
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { setActiveNav(label); resetCollection(); setLyricsOpen(false); libraryReturn.current = null }}
+              onClick={() => { setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false); libraryReturn.current = null }}
               title={label}
-              aria-label={label}
+              aria-label={label === '我的' && syncAttention ? `我的，${syncAttention}` : label}
               aria-current={navIsActive(label) ? 'page' : undefined}
             >
-              <Icon size={20} /><span className="mobile-nav-label">{label}</span>
+              <Icon size={20} />{label === '我的' && syncAttention && <span className="sync-nav-warning" aria-hidden="true">!</span>}<span className="mobile-nav-label">{label}</span>
             </button>
           ))}
         </nav>
@@ -456,12 +463,13 @@ export function App() {
         <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
           <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions" hidden={!playlistsExpanded}>
-            <button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
-            <ImportPlaylistButton sidebar onClick={() => setImportOpen(true)}/>
+            {sidebarOrganizer.controls}
+            {!sidebarOrganizer.editing && <><button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
+            <ImportPlaylistButton sidebar onClick={() => setImportOpen(true)}/></>}
           </div></div>
 
           <div className="collection-list" hidden={!playlistsExpanded}>
-            {allPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
+            {sidebarOrganizer.editing ? sidebarOrganizer.editor : allPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
               active={activeNav === `playlist:${playlist.id}`} onOpen={() => openPlaylist(playlist.id)} onRemoved={() => playlistRemoved(playlist.id)}/>)}
           </div>
         </section>

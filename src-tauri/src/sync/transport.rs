@@ -34,6 +34,12 @@ pub struct Remote {
     pub creator_groups: bool,
 }
 pub fn client() -> Result<Client, String> {
+    #[cfg(not(test))]
+    static HTTP: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+    #[cfg(not(test))]
+    if let Some(client) = HTTP.get() {
+        return Ok(client.clone());
+    }
     let builder = Client::builder();
     #[cfg(test)]
     let builder = if std::env::var("SYNC_TEST_DIRECT").as_deref() == Ok("1") {
@@ -43,11 +49,15 @@ pub fn client() -> Result<Client, String> {
     } else {
         builder
     };
-    builder
+    let built = builder
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|_| "无法初始化同步连接".into())
+        .map_err(|_| "无法初始化同步连接".to_string())?;
+    #[cfg(not(test))]
+    return Ok(HTTP.get_or_init(|| built).clone());
+    #[cfg(test)]
+    Ok(built)
 }
 pub fn endpoint(c: &Config) -> Result<String, String> {
     if c.provider == "cloud" {

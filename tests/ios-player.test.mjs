@@ -13,6 +13,7 @@ const output = await build({
       export const recordPlayedTrack = async t => t;
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
+      export const getTrackPlaybackPlan = async (t,r) => globalThis.iosTest?.plan ? globalThis.iosTest.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
       export const playIOSAudio = async (...args) => globalThis.iosTest.plays.push(args);
@@ -96,10 +97,16 @@ test('iOS restores the parts of a video expanded during background queue playbac
 test('iOS background queue receives automatic resume preference changes', async () => {
   const { usePlayerStore: store } = setup()
   await store.getState().playFromList([track('1'), track('2')], '1')
-  assert.equal(iosTest.queues.at(-1)[3], true)
-  store.getState().setAutoResume(false)
+  assert.equal(iosTest.queues.at(-1)[3], 0)
+  store.getState().setResumeThreshold(null)
   await Promise.resolve()
-  assert.equal(iosTest.queues.at(-1)[3], false)
+  assert.equal(iosTest.queues.at(-1)[3], null)
+  store.getState().setResumeThreshold(600)
+  await Promise.resolve()
+  assert.equal(iosTest.queues.at(-1)[3],600)
+  await store.getState().playFromList([track('1'),track('2')],'1',{kind:'season',title:'合集',collectionRef:'season:42'})
+  await Promise.resolve()
+  assert.equal(iosTest.queues.at(-1)[4].collectionRef,'season:42')
 })
 
 test('iOS native recovery is bounded and a later user retry retains the current position', async () => {
@@ -115,7 +122,7 @@ test('iOS native recovery is bounded and a later user retry retains the current 
   await new Promise(setImmediate)
   assert.equal(resolutions, 1)
   assert.equal(store.getState().status, 'error')
-  store.getState().setAutoResume(false)
+  store.getState().setResumeThreshold(null)
   await store.getState().toggle()
   assert.equal(resolutions, 2)
   assert.equal(iosTest.plays.at(-1)[2], 42)
@@ -139,4 +146,11 @@ test('account reset clears immediately and ignores native events until stop comp
   assert.equal(iosTest.controls.filter(([action])=>action==='stop').length, 1)
   await store.getState().playFromList([track('2')], '2')
   assert.equal(store.getState().current.id, '2')
+})
+
+test('mobile startup hands the native player both sources without starting a second track or recording twice',async()=>{
+ const {usePlayerStore:store}=setup()
+ iosTest.plan=async()=>({url:'http://127.0.0.1:1234/fast',upgradeUrl:'http://127.0.0.1:1234/high'})
+ await store.getState().play(track('1'))
+ assert.equal(iosTest.plays.length,1);assert.equal(iosTest.plays[0][1],'http://127.0.0.1:1234/fast');assert.equal(iosTest.plays[0][8],'http://127.0.0.1:1234/high');assert.equal(store.getState().queue.length,1)
 })

@@ -142,8 +142,7 @@ pub fn separate_legacy_folders(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
-    separate_legacy_folders(c)?;
-    let mut q = c.prepare("SELECT id,name,scope FROM collection_folders ORDER BY rowid DESC")?;
+    let mut q = c.prepare("SELECT id,name,scope FROM collection_folders ORDER BY created_at DESC,rowid DESC")?;
     let folders = q
         .query_map([], |r| {
             Ok(Folder {
@@ -323,8 +322,7 @@ mod tests {
     #[test]
     fn creator_notes_survive_cache_refresh_and_group_changes() {
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let up = || Collection {
             bvid: "up:123".into(),
             folder_id: String::new(),
@@ -356,8 +354,7 @@ mod tests {
     #[test]
     fn folder_delete_moves_bookmarks_without_creating_tracks() {
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         change(&mut c, "create", "", "听书", None).unwrap();
         let folder = list(&c).unwrap().folders.remove(0).id;
         change(
@@ -387,8 +384,7 @@ mod tests {
     #[test]
     fn creator_and_collection_folders_are_independent_and_reject_cross_moves() {
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         change(&mut c, "create", "", "收藏组", None).unwrap();
         change(&mut c, "createCreator", "", "UP组", None).unwrap();
         let folders = list(&c).unwrap().folders;
@@ -429,8 +425,7 @@ mod tests {
     #[test]
     fn legacy_mixed_folder_splits_once_without_losing_members() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let id = uuid::Uuid::new_v4().to_string();
         c.execute(
             "INSERT INTO collection_folders(id,name) VALUES(?1,'旧文件夹')",
@@ -444,6 +439,8 @@ mod tests {
             )
             .unwrap();
         }
+        c.execute_batch("PRAGMA user_version=1; DELETE FROM schema_migrations; DROP TRIGGER collection_folder_created; ALTER TABLE collection_folders DROP COLUMN created_at;").unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let data = list(&c).unwrap();
         assert_eq!(data.folders.len(), 2);
         let up = data.items.iter().find(|i| i.bvid == "up:123").unwrap();

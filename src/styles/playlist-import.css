@@ -43,6 +43,10 @@
 .import-destination button[aria-pressed=true]{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 25%,var(--line));background:var(--panel);box-shadow:0 1px 4px #00000008}.import-destination strong{font-size:13px;font-weight:600}
 .import-mode-note{font-size:12px;line-height:1.7;color:var(--muted);margin:10px 4px 24px}
 .import-section-label{font-size:12px;font-weight:600;color:var(--muted);margin:0 4px 10px}
+.import-folder-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 4px 10px;color:var(--muted);font-size:12px;font-weight:600}
+.import-folder-toolbar>button{border:0;border-radius:7px;padding:7px 10px;background:color-mix(in srgb,var(--cyan) 8%,transparent);color:var(--cyan);font:inherit}
+.import-folders .import-folder-error,.import-folders .import-folder-done{font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.import-folder-error{color:var(--coral)}.import-folder-done{color:var(--cyan)}
 .import-folders{display:grid;gap:4px}.import-folders>button{display:flex;align-items:center;gap:12px;padding:12px 10px;border:0;border-radius:12px;background:transparent;color:var(--ink);text-align:left}.import-folders>button[aria-pressed=true]{background:color-mix(in srgb,var(--cyan) 7%,transparent)}
 .import-folders>button>span:nth-child(2){display:grid;gap:5px;flex:1;min-width:0}.import-folders strong{font-size:14px;font-weight:550;overflow-wrap:anywhere}.import-folders small{font-size:11px;color:var(--muted)}
 .import-folder-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:10px;background:color-mix(in srgb,var(--cyan) 8%,transparent);color:var(--cyan);flex-shrink:0}

@@ -37,6 +37,7 @@ object FloatingLyricsOverlay {
         private set
     var locked = false
         private set
+    private var showUnlockButton = true
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
@@ -56,7 +57,7 @@ object FloatingLyricsOverlay {
         val args=JSONObject(raw)
         when(args.optString("action")) {
             "configure" -> {
-                fontSize=args.optDouble("fontSize",fontSize.toDouble()).toFloat().coerceIn(18f,48f);locked=args.optBoolean("locked",locked)
+                fontSize=args.optDouble("fontSize",fontSize.toDouble()).toFloat().coerceIn(18f,48f);locked=args.optBoolean("locked",locked);showUnlockButton=args.optBoolean("showUnlockButton",showUnlockButton)
                 fun color(key:String,fallback:Int)=args.optString(key).takeIf{it.matches(Regex("#[0-9a-fA-F]{6}"))}?.let{Color.parseColor(it)} ?: fallback
                 activeColor=color("activeColor",activeColor);inactiveColor=color("inactiveColor",inactiveColor)
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
@@ -164,7 +165,7 @@ object FloatingLyricsOverlay {
     private fun syncUnlock() {
         val context=owner ?: return
         val row=view
-        if(!enabled || !locked || row==null){hideUnlock();return}
+        if(row==null || !FloatingLyricsWindowPolicy.showUnlock(enabled,locked,showUnlockButton,true)){hideUnlock();return}
         val params=layout ?: return
         val window=context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val density=context.resources.displayMetrics.density

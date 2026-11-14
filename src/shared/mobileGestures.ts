@@ -14,7 +14,7 @@ export function installMobileGestures() {
     suppressUntil = 0
     if (event.touches.length !== 1) { press = undefined; return }
     const target = event.target as HTMLElement
-    if (target.closest('[data-touch-picker]')) { press = undefined; return }
+    if (target.closest('[data-touch-picker],[data-order-editor]')) { press = undefined; return }
     const touch = event.touches[0]
     press = { x: touch.clientX, y: touch.clientY, target, edge: touch.clientX < 24, direction: 'pending' }
     if (target.closest('input,textarea,select,[contenteditable="true"],[data-overflow-panel],.track-context-menu')) return

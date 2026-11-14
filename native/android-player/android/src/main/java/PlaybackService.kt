@@ -26,6 +26,8 @@ class PlaybackService : Service() {
     private var sourceCandidate: MediaPlayer? = null
     private var sourceReply: ((String?) -> Unit)? = null
     private var sourceTimeout: Runnable? = null
+    private var pendingUpgradeUrl: String? = null
+    private var upgradeAfterPosition = 0.0
     private lateinit var session: MediaSession
     private lateinit var audioManager: AudioManager
     private lateinit var focus: AudioFocusRequest
@@ -40,7 +42,7 @@ class PlaybackService : Service() {
     private var artist = ""
     private var status = "paused"
     private var error: String? = null
-    private var resumeOnFocus = false
+    private val focusResume = FocusResume()
     private var prepared = false
     private var seeking = false
     private var listeningProfile: String? = null
@@ -119,6 +121,11 @@ class PlaybackService : Service() {
                 if (SystemClock.elapsedRealtime() - mediaAdvancedAt >= 12_000) { fail("音频缓冲超时，请重试"); return }
             }
             if (status == "playing") savePosition()
+            if (status == "playing" && prepared && !seeking && sourceCandidate == null && lastPosition + 0.001 >= upgradeAfterPosition) {
+                val url = pendingUpgradeUrl
+                pendingUpgradeUrl = null
+                if (url != null) switchSource(url, id) { /* Keep the initial stream if preparation fails. */ }
+            }
             publish(false)
             if (status == "playing" || status == "buffering") handler.postDelayed(this, 500)
         }
@@ -136,12 +143,12 @@ class PlaybackService : Service() {
         focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { change ->
                 when (change) {
-                    AudioManager.AUDIOFOCUS_LOSS -> { resumeOnFocus = false; control("pause") }
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> { resumeOnFocus = status == "playing"; pause() }
+                    AudioManager.AUDIOFOCUS_LOSS -> control("pause")
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> { focusResume.interrupted(status == "playing" || status == "buffering"); pause() }
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.setVolume(volume * .2f, volume * .2f)
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         player?.setVolume(volume, volume)
-                        if (resumeOnFocus) { resumeOnFocus = false; control("resume") }
+                        if (focusResume.regained()) control("resume")
                     }
                 }
             }.build()
@@ -174,6 +181,7 @@ class PlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "prepare" -> {
+                pendingUpgradeUrl = null; focusResume.cancel(); cancelSourceSwitch()
                 savePosition(force = true)
                 accountListening(true)
                 seeking = false
@@ -193,6 +201,7 @@ class PlaybackService : Service() {
         return START_NOT_STICKY
     }
     private fun load(intent: Intent) {
+        focusResume.cancel()
         cancelSourceSwitch()
         savePosition(force = true)
         accountListening(true)
@@ -211,6 +220,8 @@ class PlaybackService : Service() {
         artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
         prepareArtwork(intent.getStringExtra("coverUrl"))
         lastPosition = intent.getDoubleExtra("position", 0.0); lastDuration = 0.0
+        pendingUpgradeUrl = intent.getStringExtra("upgradeUrl")
+        upgradeAfterPosition = lastPosition + 0.75
         status = if (intent.getBooleanExtra("playing", true)) "buffering" else "paused"
         error = null
         updateMetadata()
@@ -281,6 +292,7 @@ class PlaybackService : Service() {
         val reply=sourceReply;sourceReply=null;reply?.invoke(message)
     }
     fun switchSource(url:String,expectedId:String,reply:(String?)->Unit) {
+        pendingUpgradeUrl = null
         cancelSourceSwitch()
         val original=player
         if(original==null || !prepared || id!=expectedId){reply("当前歌曲已变更，请重新选择音质");return}
@@ -315,6 +327,8 @@ class PlaybackService : Service() {
         }catch(_:Exception){cancelSourceSwitch("新音源无法加载，已保留原音质")}
     }
     private fun fail(message: String) {
+        pendingUpgradeUrl = null; cancelSourceSwitch()
+        focusResume.cancel()
         accountListening(true)
         status = "error"; error = message; prepared = false
         player?.release(); player = null; handler.removeCallbacks(ticker)
@@ -359,19 +373,19 @@ class PlaybackService : Service() {
     private fun emitAction(action: String) { listener?.invoke(snapshot().put("action",action)) }
     fun control(action: String, value: Double = 0.0) {
         if(action == "toggle") { control(if(status == "playing" || status == "buffering") "pause" else "resume");return }
-        if (action == "resume") resetPlaybackWatchdog()
+        if (action == "resume") { focusResume.cancel(); resetPlaybackWatchdog() }
         when (action) {
             "next", "previous" -> emitAction(action)
             "sleepStart" -> if (value in 60.0..10800.0) scheduleSleep(value)
             "sleepCancel" -> { clearSleep(); publish() }
             "sleepDismiss" -> { sleepExpired = false; publish() }
             "sleepRepeat" -> if (sleepExpired && sleepDuration > 0) { scheduleSleep(sleepDuration); control("resume") }
-            "pause" -> { resumeOnFocus = false; pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { emitAction("resume") } else if (!prepared && player != null) { status = "buffering"; publish() } else if (prepared) {
+            "pause" -> { focusResume.cancel(); pause(); audioManager.abandonAudioFocusRequest(focus) }
+            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) { emitAction("resume") } else {
                 startForeground(NOTIFICATION, notification())
                 if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                    if (!seeking) player?.let(::startAtRate)
-                    status = if (seeking) "buffering" else "playing"
+                    if (prepared && !seeking) player?.let(::startAtRate)
+                    status = if (!prepared || seeking) "buffering" else "playing"
                     handler.removeCallbacks(ticker); handler.post(ticker); publish()
                 } else { pause() }
             }
@@ -396,7 +410,7 @@ class PlaybackService : Service() {
                 publish()
             }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
-            "stop" -> { cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { pendingUpgradeUrl = null;focusResume.cancel();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
     fun snapshot(): JSObject {

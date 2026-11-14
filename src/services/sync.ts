@@ -1,5 +1,6 @@
-import { startAccountStatisticsSync } from './listeningStatisticsSync'
+import { startBackgroundSync } from './backgroundSync'
 import { accountEpoch } from './accountScope'
+import { reportSyncOutcome, reportSyncError } from './syncAttention'
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell, fromStoredTrack } from './desktopApi'
 import type { QueryClient } from '@tanstack/react-query'
@@ -10,10 +11,20 @@ export type SyncConflict = { key: string; field: string; local: unknown; remote:
 export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean }
 export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav', uid: '', url: 'https://dav.jianguoyun.com/dav/', history: false, statistics: false, initialized: false, deviceId: '' }
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
-export const syncNow = (preview = false, resolution?: 'local' | 'remote', automatic = false) => invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
+export async function syncNow(preview = false, resolution?: string, automatic = false) {
+  const epoch = accountEpoch()
+  try {
+    const result = await invoke<SyncOutcome>('sync_now', { preview, resolution, automatic })
+    if (epoch === accountEpoch()) reportSyncOutcome(result, preview)
+    return result
+  } catch (error) {
+    if (epoch === accountEpoch()) reportSyncError('library', true)
+    throw error
+  }
+}
 export async function refreshSyncedLibrary(client: QueryClient) {
   const epoch = accountEpoch()
-  await Promise.all(['library', 'playlists', 'home-recent', 'collections', 'collection-progress', 'linked-bili-folder'].map((key) => client.invalidateQueries({ queryKey: [key] })))
+  await Promise.all(['library', 'playlists', 'home-recent', 'collections', 'collection-progress', 'linked-bili-folder','list-preferences'].map((key) => client.invalidateQueries({ queryKey: [key] })))
   if (epoch !== accountEpoch()) return
   const current = usePlayerStore.getState().current
   if (current) {
@@ -23,38 +34,18 @@ export async function refreshSyncedLibrary(client: QueryClient) {
 }
 export function startCloudSync(client: QueryClient) {
   if (!inDesktopShell) return () => undefined
-  const stopStatistics = startAccountStatisticsSync(client)
-  let busy = false, stopped = false, failures = 0, blocked = false
-  let nextAllowed = 0, timer = 0
-  const run = async () => {
-    if (stopped || document.hidden) return
-    if (busy || blocked || Date.now() < nextAllowed) return
-    busy = true
-    try {
-      const status = await syncStatus()
-      if (stopped || !status.config.enabled || !status.config.initialized) return
-      const outcome = await syncNow(false, undefined, true)
-      if (outcome.conflicts.length) { blocked = true; window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '有同步冲突，请到设置中处理' })); return }
-      failures = 0; nextAllowed = Date.now() + 30_000
-      if (outcome.changed) await refreshSyncedLibrary(client)
+  return startBackgroundSync(client, async outcome => {
+    if (outcome.conflicts.length) {
+      window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '有同步冲突，请到设置中处理' }))
+      return
+    }
+    if (outcome.changed) {
+      await refreshSyncedLibrary(client)
+      const epoch = accountEpoch()
       const loaded = await invoke<number>('sync_hydrate_sources')
-      if (loaded) await refreshSyncedLibrary(client)
-      window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '' }))
-    } catch {
-      failures++; nextAllowed = Date.now() + Math.min(30 * 60_000, 30_000 * 2 ** Math.min(failures, 6))
-      window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '同步暂未完成，请到设置中查看或手动重试' }))
-    } finally { busy = false }
-  }
-  const schedule = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void run(), 10_000) }
-  const reconfigure = () => { blocked = false; nextAllowed = 0; failures = 0; schedule() }
-  const foreground = () => { if (!document.hidden) void run() }
-  window.addEventListener('bilimusic-data-changed', schedule)
-  window.addEventListener('bilimusic-sync-configured', reconfigure)
-  window.addEventListener('bilimusic-account-changed', reconfigure)
-  document.addEventListener('visibilitychange', foreground)
-  const interval = window.setInterval(() => void run(), 180_000)
-  schedule()
-  return () => { stopStatistics(); stopped = true; window.clearTimeout(timer); window.clearInterval(interval); window.removeEventListener('bilimusic-data-changed', schedule); window.removeEventListener('bilimusic-sync-configured', reconfigure); window.removeEventListener('bilimusic-account-changed', reconfigure); document.removeEventListener('visibilitychange', foreground) }
+      if (loaded && epoch === accountEpoch()) await refreshSyncedLibrary(client)
+    }
+  })
 }
 
 export async function hydrateVisibleTracks(tracks: import('../domain/track').Track[] | undefined, client: QueryClient) {

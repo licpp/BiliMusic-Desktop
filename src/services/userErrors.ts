@@ -12,7 +12,7 @@ export function commandErrorMessage(error: unknown, fallback = '请求失败，�
   const message = rawMessage(error)
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   if (code === 'database_error') return '无法读取或保存本机数据，请重试'
-  if (/\b(?:412|429)\b/.test(message)) return '服务暂时限制了请求，请稍后重试'
+  if (/\b(?:412|429)\b|-352|-412|-509|-799/.test(message)) return '服务暂时限制了请求，请稍后重试'
   if (/\b(?:502|503|504)\b/.test(message)) return '服务暂时不可用，请稍后重试'
   if (/timed?\s*out|timeout|超时/i.test(message)) return '连接超时，请重试'
   if (isConnectionError(error)) return '暂时无法连接服务器，请检查网络后重试'

@@ -1,3 +1,4 @@
+import { consumeTouchClick } from './consumeTouchClick'
 import { Check, ChevronDown } from 'lucide-react'
 import { useId, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 
@@ -34,7 +35,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
         if (event.pointerType !== 'touch' || !event.isPrimary) return
         const value = choiceAt(event)
         if (value === null) return
-        event.preventDefault()
+        event.preventDefault();event.stopPropagation()
         pointer.current = event.pointerId
         skipClick.current = true
         event.currentTarget.setPointerCapture(event.pointerId)
@@ -43,6 +44,8 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
       onPointerMove={event => { if (pointer.current === event.pointerId) setPreview(choiceAt(event)) }}
       onPointerUp={event => {
         if (pointer.current !== event.pointerId) return
+        event.preventDefault();event.stopPropagation()
+        consumeTouchClick(event)
         const value = choiceAt(event)
         cancel()
         if (value !== null) choose(value)
@@ -50,7 +53,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
       onPointerCancel={cancel} onLostPointerCapture={cancel}>
       {options.map(option => <button type="button" key={option.value} aria-pressed={option.value === selected}
         data-touch-option={option.value} data-preview={option.value === preview || undefined}
-        onClick={() => choose(option.value)}>
+        onClick={event => {event.stopPropagation();choose(option.value)}}>
         {option.label}{option.value === selected && <Check size={17} aria-hidden="true"/>}
       </button>)}
     </div>}

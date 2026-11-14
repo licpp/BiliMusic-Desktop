@@ -9,13 +9,16 @@ export interface WebDAVResponse { status: number; errorCode?: number }
 // Only HTTP transport differs. Rust owns the snapshot, destination, merge,
 // validation and acknowledgement; no music-library logic lives here.
 export async function putWebDAV(args: WebDAVUpload): Promise<WebDAVResponse> {
-  if (!/^https:\/\/dav\.jianguoyun\.com\/[^?#]*\/BiliMusic-sync-v1\/\d+\/[0-9a-f-]{36}\.json$/i.test(args.url) ||
+  const legacy = /^https:\/\/dav\.jianguoyun\.com\/[^?#]*\/BiliMusic-sync-v1\/\d+\/(?:linked-folders-v1\/)?[0-9a-f-]{36}\.json$/i;
+  const control = /^https:\/\/dav\.jianguoyun\.com\/[^?#]*\/BiliMusic-sync-v1\/\d+\/compat-v2\/(?:devices|retirements)\/[0-9a-f-]{36}\.json$/i;
+  const v2 = /^https:\/\/dav\.jianguoyun\.com\/[^?#]*\/BiliMusic-sync-v1\/\d+\/sync-v2\/[0-9a-f-]{36}\/(?:[a-z0-9-]+\/){1,5}[a-z0-9.-]+\.(?:json|json\.gz)$/i;
+  if ((!legacy.test(args.url) && !control.test(args.url) && !v2.test(args.url)) || args.url.includes('/../') ||
       !/^Basic [A-Za-z0-9+/]+=*$/.test(args.authorization) || args.bodyBase64.length > 16 * 1024 * 1024) {
     throw new Error('Invalid WebDAV upload');
   }
   const bytes = new util.Base64Helper().decodeSync(args.bodyBase64);
   if (bytes.byteLength > 12 * 1024 * 1024) throw new Error('WebDAV upload exceeds size limit');
-  const headers: rcp.RequestHeaders = { 'Content-Type': 'application/json', 'Authorization': args.authorization,
+  const headers: rcp.RequestHeaders = { 'Content-Type': args.url.endsWith('.gz') ? 'application/gzip' : 'application/json', 'Authorization': args.authorization,
     'Content-Length': String(bytes.byteLength) };
   const configuration: rcp.Configuration = { transfer: { autoRedirect: false, timeout: { connectMs: 10000, transferMs: 30000 } } };
   const request = new rcp.Request(args.url, 'PUT', headers,

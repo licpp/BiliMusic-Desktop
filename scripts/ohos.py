@@ -107,6 +107,7 @@ def overlay():
     # dependency tables are irrelevant to this OHOS-only overlay.
     common, rest = manifest.split('[target.', 1)
     common = re.sub(r'^tauri-plugin-(dialog|opener) = .*\n', '', common, flags=re.M)
+    common = common.replace('features = ["macos-private-api"]', 'features = []')
     profiles = '[profile.release]' + rest.split('[profile.release]', 1)[1].split('[patch.crates-io]', 1)[0]
     common += 'napi-ohos = "1.2"\nnapi-derive-ohos = "1.2"\n'
     common += f'tauri-plugin-ohos-player = {{ path = {json.dumps(str(ROOT / "native/ohos-player"))} }}\n'

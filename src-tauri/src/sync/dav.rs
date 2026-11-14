@@ -101,6 +101,8 @@ impl Doc {
         });
     }
     fn flat(s: &Snapshot) -> BTreeMap<String, Value> {
+        let mut s = s.clone();
+        s.normalize();
         let mut result = BTreeMap::new();
         for (k, r) in &s.records {
             result.insert(
@@ -330,6 +332,7 @@ impl Doc {
 }
 #[derive(Clone)]
 pub struct DavState {
+    pub observations: Vec<super::devices::Observation>,
     pub doc: Doc,
     pub needs_publish: bool,
     pub linked: Option<Box<DavState>>,
@@ -344,6 +347,7 @@ fn folder(c: &Config) -> String {
 async fn bytes(mut r: reqwest::Response) -> Result<Vec<u8>, String> {
     let mut out = vec![];
     while let Some(chunk) = r.chunk().await.map_err(|_| "坚果云下载中断")? {
+        super::traffic::downloaded(chunk.len());
         if out.len() + chunk.len() > MAX_DOC_BYTES {
             return Err("坚果云设备快照超过12MB上限".into());
         }
@@ -356,7 +360,7 @@ fn request(c: &reqwest::Client, method: &str, url: String, s: &Secret) -> reqwes
         .basic_auth(&s.username, Some(&s.password))
         .header("User-Agent", "BiliMusic/0.1.6")
 }
-fn check(status: reqwest::StatusCode) -> Result<(), String> {
+pub(super) fn check(status: reqwest::StatusCode) -> Result<(), String> {
     if status.is_success() {
         Ok(())
     } else if status.as_u16() == 401 {
@@ -388,12 +392,20 @@ fn missing_ancestor(data: &[u8]) -> bool {
     }
 }
 pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
-    let mut main = read_vault(c, s, false).await?;
+    read_cached(c, s, None).await
+}
+pub async fn read_cached(
+    c: &Config,
+    s: &Secret,
+    cache: Option<&std::path::Path>,
+) -> Result<Remote, String> {
+    let mut main = read_vault_cached(c, s, false, cache).await?;
     // A missing account root cannot contain an extension. Preserve first-connect
     // read-only checks without doubling requests for an uninitialized vault.
     if main.version.is_none() {
         if let Some(state) = main.dav.as_mut() {
             state.linked = Some(Box::new(DavState {
+                observations: vec![],
                 doc: Doc::empty(&c.uid),
                 needs_publish: false,
                 linked: None,
@@ -401,7 +413,7 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         }
         return Ok(main);
     }
-    let linked = read_vault(c, s, true).await?;
+    let linked = read_vault_cached(c, s, true, cache).await?;
     if linked
         .snapshot
         .records
@@ -422,37 +434,48 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
     main.snapshot.validate(&c.uid)?;
     main.conflicts.extend(linked.conflicts);
     if let Some(state) = main.dav.as_mut() {
-        let linked = linked.dav.ok_or("关联收藏夹同步状态缺失")?;
+        let mut linked = linked.dav.ok_or("关联收藏夹同步状态缺失")?;
         // An absent empty extension needs no write or device file.
-        state.needs_publish |= linked.needs_publish
+        linked.needs_publish = linked.needs_publish
             && (!linked.doc.fields.is_empty()
                 || !main.snapshot.linked_folders().records.is_empty());
+        state.observations.extend(linked.observations.clone());
         state.linked = Some(Box::new(linked));
     }
     Ok(main)
 }
+#[cfg(test)]
 async fn read_vault(c: &Config, s: &Secret, linked: bool) -> Result<Remote, String> {
+    read_vault_cached(c, s, linked, None).await
+}
+async fn read_vault_cached(
+    c: &Config,
+    s: &Secret,
+    linked: bool,
+    cache: Option<&std::path::Path>,
+) -> Result<Remote, String> {
     let http = client()?;
     let root = if linked {
         format!("{}linked-folders-v1/", folder(c))
     } else {
         folder(c)
     };
-    let response=request(&http,"PROPFIND",root.clone(),s).header("Depth","1").header("Content-Type","application/xml").body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>").send().await.map_err(|_|"无法连接坚果云")?;
+    let response=super::traffic::send(request(&http,"PROPFIND",root.clone(),s).header("Depth","1").header("Content-Type","application/xml").body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>")).await.map_err(|_|"无法连接坚果云")?;
     // Nutstore returns 409 AncestorsNotFound, rather than 404, when the
     // application parent directory has never been created. Keep connect read-only.
     let status = response.status();
     let data = bytes(response).await?;
     if status.as_u16() == 404 || (status.as_u16() == 409 && missing_ancestor(&data)) {
         // A typo/nonexistent user-supplied base must not masquerade as an empty vault.
-        let base = request(
-            &http,
-            "PROPFIND",
-            format!("{}/", c.url.trim_end_matches('/')),
-            s,
+        let base = super::traffic::send(
+            request(
+                &http,
+                "PROPFIND",
+                format!("{}/", c.url.trim_end_matches('/')),
+                s,
+            )
+            .header("Depth", "0"),
         )
-        .header("Depth", "0")
-        .send()
         .await
         .map_err(|_| "无法检查坚果云服务器地址")?;
         check(base.status()).map_err(|e| format!("检查坚果云根目录失败：{e}"))?;
@@ -460,6 +483,7 @@ async fn read_vault(c: &Config, s: &Secret, linked: bool) -> Result<Remote, Stri
             snapshot: Snapshot::empty(&c.uid),
             version: None,
             dav: Some(DavState {
+                observations: vec![],
                 doc: Doc::empty(&c.uid),
                 needs_publish: true,
                 linked: None,
@@ -504,15 +528,66 @@ async fn read_vault(c: &Config, s: &Secret, linked: bool) -> Result<Remote, Stri
     }
     let mut doc = Doc::empty(&c.uid);
     let mut own_doc = None;
+    let mut observations = Vec::new();
     for file in files {
         let own = file.ends_with(&format!("/{}.json", c.device_id));
-        let r = request(&http, "GET", file, s)
-            .send()
+        let cached = cache
+            .and_then(|root| super::cache::load(root, &file))
+            .filter(|entry| {
+                serde_json::from_slice::<Doc>(&entry.body)
+                    .is_ok_and(|d| d.uid == c.uid && d.schema == 1)
+            });
+        let mut get = request(&http, "GET", file.clone(), s);
+        if let Some(entry) = &cached {
+            get = get.header("If-None-Match", &entry.etag);
+        }
+        let r = super::traffic::send(get)
             .await
             .map_err(|_| "坚果云设备快照读取失败")?;
-        check(r.status())?;
-        let other: Doc =
-            serde_json::from_slice(&bytes(r).await?).map_err(|_| "坚果云设备快照格式无效")?;
+        let date = |name: &str| {
+            r.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| httpdate::parse_http_date(v).ok())
+                .and_then(|v| v.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+        };
+        let server_time = date("date");
+        let modified =
+            date("last-modified").filter(|time| server_time.is_some_and(|now| *time <= now));
+        let (body, etag) = if r.status().as_u16() == 304 {
+            let entry = cached.ok_or("坚果云缓存缺失，请重新同步")?;
+            (entry.body, None)
+        } else {
+            check(r.status())?;
+            let etag = r
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            (bytes(r).await?, etag)
+        };
+        let other: Doc = serde_json::from_slice(&body).map_err(|_| "坚果云设备快照格式无效")?;
+        let mut verified = Doc::empty(&c.uid);
+        verified.join(other.clone())?;
+        verified.materialize()?;
+        let writer = file
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .trim_end_matches(".json")
+            .to_owned();
+        observations.push(super::devices::Observation {
+            writer: writer.clone(),
+            source: format!("{}:{writer}", if linked { "linked" } else { "library" }),
+            hash: super::causal::hash(&body),
+            has_data: !other.fields.is_empty() || !other.clock.is_empty(),
+            modified,
+            server_time,
+        });
+        if let (Some(root), Some(etag)) = (cache, etag) {
+            super::cache::save(root, &file, etag, body);
+        }
         if own {
             own_doc = Some(other.clone());
         }
@@ -523,6 +598,7 @@ async fn read_vault(c: &Config, s: &Secret, linked: bool) -> Result<Remote, Stri
         snapshot,
         version: Some("device-registers-v1".into()),
         dav: Some(DavState {
+            observations,
             needs_publish: own_doc.as_ref() != Some(&doc),
             linked: None,
             doc,
@@ -543,21 +619,21 @@ async fn put_snapshot(
     #[cfg(target_env = "ohos")]
     {
         let _ = http;
-        return crate::ohos_playback::put_webdav(
-            &url,
-            &secret.username,
-            &secret.password,
-            &payload,
-        )
-        .await;
+        super::traffic::bridge_started(payload.len());
+        let result =
+            crate::ohos_playback::put_webdav(&url, &secret.username, &secret.password, &payload)
+                .await;
+        super::traffic::bridge_finished(result.as_ref().ok().map(|s| s.as_u16()));
+        return result;
     }
     #[cfg(not(target_env = "ohos"))]
     for attempt in 1..=2 {
-        let result = request(http, "PUT", url.clone(), secret)
-            .header("Content-Type", "application/json")
-            .body(payload.clone())
-            .send()
-            .await;
+        let result = super::traffic::send(
+            request(http, "PUT", url.clone(), secret)
+                .header("Content-Type", "application/json")
+                .body(payload.clone()),
+        )
+        .await;
         match result {
             Ok(response) => return Ok(response.status()), // HTTP denials/limits are never retried.
             Err(error) => {
@@ -609,30 +685,34 @@ pub async fn write(
     main.omit_linked_folders();
     let linked = snapshot.linked_folders();
     let http = client()?;
-    for path in [
-        format!("{}/BiliMusic-sync-v1/", c.url.trim_end_matches('/')),
-        folder(c),
-    ] {
-        create_directory(&http, s, path).await?;
+    if remote.version.is_none() {
+        for path in [
+            format!("{}/BiliMusic-sync-v1/", c.url.trim_end_matches('/')),
+            folder(c),
+        ] {
+            create_directory(&http, s, path).await?;
+        }
     }
     // Publish the extension first. Replaying either file after a partial upload
     // is idempotent; no baseline is committed until both writes succeed.
     if let Some(extension) = state.linked.as_ref() {
-        if !linked.records.is_empty() || !extension.doc.fields.is_empty() {
+        if extension.needs_publish || extension.doc.materialize()?.0 != linked {
             let root = format!("{}linked-folders-v1/", folder(c));
-            create_directory(&http, s, root.clone()).await?;
+            if extension.doc.fields.is_empty() {
+                create_directory(&http, s, root.clone()).await?;
+            }
             write_doc(&http, c, s, &extension.doc, &linked, root).await?;
         }
     } else if !linked.records.is_empty() {
         return Err("关联收藏夹同步状态缺失".into());
     }
-    write_doc(&http, c, s, &state.doc, &main, folder(c)).await?;
+    if state.needs_publish || state.doc.materialize()?.0 != main {
+        write_doc(&http, c, s, &state.doc, &main, folder(c)).await?;
+    }
     Ok(true)
 }
 async fn create_directory(http: &reqwest::Client, s: &Secret, path: String) -> Result<(), String> {
-    let r = request(http, "MKCOL", path, s)
-        .body("")
-        .send()
+    let r = super::traffic::send(request(http, "MKCOL", path, s).body(""))
         .await
         .map_err(|_| "坚果云目录创建失败")?;
     if !matches!(r.status().as_u16(), 201 | 405) {
@@ -659,11 +739,60 @@ async fn write_doc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_folder_scope_never_generates_a_publish_loop() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let key = format!("collectionFolder:{id}");
+        let mut snapshot = Snapshot::empty("42");
+        snapshot.records.insert(
+            key.clone(),
+            Record {
+                kind: "collectionFolder".into(),
+                fields: serde_json::from_value(
+                    json!({"id":id,"name":"folder","scope":"collections"}),
+                )
+                .unwrap(),
+            },
+        );
+        let mut doc = Doc::empty("42");
+        doc.update("a", &snapshot).unwrap();
+        // Old clients can publish a literal default or a null field removal.
+        let scope = serde_json::to_string(&(&key, "collectionFolder", "scope")).unwrap();
+        for value in [json!("collections"), Value::Null] {
+            doc.fields.insert(
+                scope.clone(),
+                vec![Register {
+                    dot: Dot {
+                        device: "old".into(),
+                        seq: 1,
+                    },
+                    context: BTreeMap::new(),
+                    value,
+                }],
+            );
+            let mut expected = snapshot.clone();
+            expected
+                .records
+                .get_mut(&key)
+                .unwrap()
+                .fields
+                .remove("scope");
+            let clock = doc.clock.clone();
+            for _ in 0..5 {
+                doc.update("a", &expected).unwrap();
+                assert_eq!(doc.materialize().unwrap().0, expected);
+                assert_eq!(doc.clock, clock);
+            }
+        }
+    }
     #[derive(Default)]
     struct MemoryDav {
         directories: BTreeSet<String>,
         files: BTreeMap<String, Vec<u8>>,
         fail_main_once: bool,
+        full_gets: usize,
+        conditional_hits: usize,
+        puts: BTreeMap<String, usize>,
     }
     async fn memory_dav() -> (
         String,
@@ -679,6 +808,11 @@ mod tests {
                  request: axum::extract::Request| async move {
                     let method = request.method().as_str().to_owned();
                     let path = request.uri().path().to_owned();
+                    let conditional = request
+                        .headers()
+                        .get("if-none-match")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
                     let body = axum::body::to_bytes(request.into_body(), MAX_DOC_BYTES)
                         .await
                         .unwrap();
@@ -717,15 +851,25 @@ mod tests {
                                 m.fail_main_once = false;
                                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
                             }
+                            *m.puts.entry(path.clone()).or_default() += 1;
                             m.files.insert(path, body.to_vec());
                             StatusCode::CREATED.into_response()
                         }
-                        "GET" => m
-                            .files
-                            .get(&path)
-                            .cloned()
-                            .map(|body| (StatusCode::OK, body).into_response())
-                            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response()),
+                        "GET" => {
+                            if let Some(body) = m.files.get(&path).cloned() {
+                                let etag = format!("\"{:x}\"", md5::compute(&body));
+                                if conditional.as_deref() == Some(&etag) {
+                                    m.conditional_hits += 1;
+                                    (StatusCode::NOT_MODIFIED, [("etag", etag)], Vec::new())
+                                        .into_response()
+                                } else {
+                                    m.full_gets += 1;
+                                    (StatusCode::OK, [("etag", etag)], body).into_response()
+                                }
+                            } else {
+                                StatusCode::NOT_FOUND.into_response()
+                            }
+                        }
                         _ => StatusCode::NOT_FOUND.into_response(),
                     }
                 },
@@ -746,6 +890,60 @@ mod tests {
             },
         );
         snapshot
+    }
+    #[tokio::test]
+    async fn persistent_cache_revalidates_and_domains_publish_independently() {
+        let (url, memory, server) = memory_dav().await;
+        let c = Config {
+            url,
+            uid: "42".into(),
+            device_id: uuid::Uuid::new_v4().to_string(),
+            ..Config::default()
+        };
+        let secret = Secret {
+            username: "test".into(),
+            password: "test".into(),
+        };
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let initial = read(&c, &secret).await.unwrap();
+        let mut snapshot = sample();
+        snapshot
+            .records
+            .extend(linked_snapshot(1, "linked").records);
+        write(&c, &secret, &initial, &snapshot).await.unwrap();
+        let first = read_cached(&c, &secret, Some(&root)).await.unwrap();
+        assert_eq!(first.snapshot, snapshot);
+        let full = memory.lock().unwrap().full_gets;
+        let second = read_cached(&c, &secret, Some(&root)).await.unwrap();
+        assert_eq!(second.snapshot, snapshot);
+        assert_eq!(memory.lock().unwrap().full_gets, full);
+        assert_eq!(memory.lock().unwrap().conditional_hits, 2);
+        let puts = memory.lock().unwrap().puts.clone();
+        snapshot
+            .records
+            .get_mut("linkedFolder:1")
+            .unwrap()
+            .fields
+            .insert("name".into(), json!("renamed"));
+        write(&c, &secret, &second, &snapshot).await.unwrap();
+        for (path, count) in &memory.lock().unwrap().puts {
+            assert_eq!(
+                *count,
+                puts[path] + usize::from(path.contains("linked-folders-v1"))
+            );
+        }
+        // Lost disk cache forces complete reads, never data loss or a stale 304 body.
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            read_cached(&c, &secret, Some(&root))
+                .await
+                .unwrap()
+                .snapshot,
+            snapshot
+        );
+        assert_eq!(memory.lock().unwrap().full_gets, full + 2);
+        std::fs::remove_dir_all(root).unwrap();
+        server.abort();
     }
     #[tokio::test]
     async fn linked_vault_merges_offline_devices_unlinks_and_keeps_legacy_files_unchanged() {
@@ -800,6 +998,7 @@ mod tests {
         // A partial dual-file upload can safely be retried without losing links.
         let mut added = after.snapshot.clone();
         added.records.extend(linked_snapshot(3, "可重试").records);
+        added.records.extend(sample().records);
         memory.lock().unwrap().fail_main_once = true;
         assert!(write(&a, &secret, &after, &added).await.is_err());
         write(&a, &secret, &after, &added).await.unwrap();
@@ -872,10 +1071,13 @@ mod tests {
             password: "test".into(),
         };
         let payload = vec![b'x'; 512 * 1024];
-        let result = put_snapshot(&http, url, &credentials, payload.clone())
-            .await
-            .unwrap();
-        assert_eq!(result.as_u16(), 201);
+        let (result, usage) =
+            super::super::traffic::capture(put_snapshot(&http, url, &credentials, payload.clone()))
+                .await;
+        assert_eq!(result.unwrap().as_u16(), 201);
+        assert_eq!(usage.requests, 2);
+        assert_eq!(usage.uploaded_bytes, 2 * payload.len() as u64);
+        assert_eq!(usage.failed_requests, 1);
         server.await.unwrap();
         assert_eq!(*bodies.lock().unwrap(), vec![payload.clone(), payload]);
     }

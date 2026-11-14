@@ -2,6 +2,8 @@
 mod audio;
 #[path = "bilibili_creators.rs"]
 mod creators;
+#[cfg(test)]
+pub(crate) use audio::prefer_progressive_startup;
 use audio::*;
 #[path = "bilibili_extras.rs"]
 mod extras;
@@ -27,6 +29,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 
 const API_ORIGIN: &str = "https://api.bilibili.com";
 const WEB_ORIGIN: &str = "https://www.bilibili.com/";
+static FAVORITE_READ: Mutex<Option<Instant>> = Mutex::const_new(None);
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
@@ -42,6 +45,22 @@ pub enum ProviderError {
     DanmakuDecode(String),
     #[error("请先登录 Bilibili 账号")]
     NotAuthenticated,
+}
+
+impl ProviderError {
+    pub(crate) fn retryable_read(&self) -> bool {
+        match self {
+            Self::Api { code, .. } => [-352, -412, -509, -799].contains(code),
+            Self::Network(error) => {
+                error.is_timeout()
+                    || error.is_connect()
+                    || error
+                        .status()
+                        .is_some_and(|s| matches!(s.as_u16(), 408 | 412 | 429 | 502 | 503 | 504))
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -159,6 +178,8 @@ pub struct FavoriteFolder {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteVideo {
+    #[serde(default)]
+    pub pubtime: Option<u64>,
     #[serde(default, rename = "id")]
     pub aid: i64,
     #[serde(default)]
@@ -639,7 +660,7 @@ impl BilibiliProvider {
         let mut url = self.api_url("/x/v3/fav/folder/created/list-all");
         url.query_pairs_mut()
             .append_pair("up_mid", &uid.to_string());
-        let data: FavoriteFoldersData = self.get_data(url).await?;
+        let data: FavoriteFoldersData = self.favorite_data(url).await?;
         Ok(data.list.unwrap_or_default())
     }
 
@@ -655,7 +676,7 @@ impl BilibiliProvider {
             .append_pair("ps", "20")
             .append_pair("order", "mtime")
             .append_pair("type", "0");
-        self.get_data(url).await
+        self.favorite_data(url).await
     }
 
     pub async fn change_favorite_video(
@@ -959,6 +980,24 @@ impl BilibiliProvider {
         let stream = select_audio(&dash, audio_id)
             .cloned()
             .ok_or(ProviderError::NoAudio)?;
+        Ok(Self::audio_source(stream))
+    }
+
+    pub async fn playback_startup_sources(
+        &self,
+        bvid: &str,
+        cid: i64,
+        audio_id: u32,
+    ) -> Result<(PlaybackSource, Option<PlaybackSource>), ProviderError> {
+        let dash = self.play_dash(bvid, cid, false).await?;
+        let target = select_audio(&dash, audio_id).ok_or(ProviderError::NoAudio)?;
+        let initial = startup_audio(&dash, target)
+            .cloned()
+            .map(Self::audio_source);
+        Ok((Self::audio_source(target.clone()), initial))
+    }
+
+    fn audio_source(stream: DashStream) -> PlaybackSource {
         let audio_url = if stream.base_url_camel.is_empty() {
             stream.base_url
         } else {
@@ -974,14 +1013,14 @@ impl BilibiliProvider {
         } else {
             stream.mime_type_camel
         };
-        Ok(PlaybackSource {
+        PlaybackSource {
             quality_id: stream.id,
             audio_url,
             backup_urls,
             mime_type,
             codecs: stream.codecs,
             bandwidth: stream.bandwidth,
-        })
+        }
     }
 
     pub async fn video_source(&self, bvid: &str, cid: i64) -> Result<VideoSource, ProviderError> {
@@ -1217,6 +1256,17 @@ impl BilibiliProvider {
             code: -1,
             message: "响应缺少 data".into(),
         })
+    }
+
+    async fn favorite_data<T: DeserializeOwned>(&self, url: Url) -> Result<T, ProviderError> {
+        // Shared by fixed-session import providers too; bulk imports cannot burst
+        // requests by creating another provider or opening another folder.
+        let mut last = FAVORITE_READ.lock().await;
+        if let Some(at) = *last {
+            tokio::time::sleep(Duration::from_millis(500).saturating_sub(at.elapsed())).await;
+        }
+        *last = Some(Instant::now());
+        self.get_data(url).await
     }
 
     async fn authenticated_get(&self, url: Url) -> reqwest::RequestBuilder {
@@ -1512,6 +1562,58 @@ mod tests {
     fn parses_variable_length_duration() {
         assert_eq!(parse_duration("04:12"), 252);
         assert_eq!(parse_duration("1:02:03"), 3723);
+    }
+
+    #[tokio::test]
+    async fn favorite_reads_share_one_request_gate_across_provider_instances() {
+        use axum::{Json, Router, routing::get};
+        let times = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = times.clone();
+        let app = Router::new().route(
+            "/favorites",
+            get(move || {
+                observed.lock().unwrap().push(std::time::Instant::now());
+                async { Json(serde_json::json!({"code":0,"data":{"value":1}})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url: super::Url = format!("http://{}/favorites", listener.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let a = super::BilibiliProvider::new().unwrap();
+        let b = super::BilibiliProvider::new().unwrap();
+        let (x, y) = tokio::join!(
+            a.favorite_data::<serde_json::Value>(url.clone()),
+            b.favorite_data::<serde_json::Value>(url)
+        );
+        assert!(x.is_ok() && y.is_ok());
+        let times = times.lock().unwrap();
+        assert_eq!(times.len(), 2);
+        assert!(times[1].duration_since(times[0]) >= std::time::Duration::from_millis(450));
+        server.abort();
+    }
+
+    #[test]
+    fn read_retry_policy_excludes_authentication_and_missing_content() {
+        for code in [-352, -412, -509, -799] {
+            assert!(
+                super::ProviderError::Api {
+                    code,
+                    message: String::new()
+                }
+                .retryable_read()
+            );
+        }
+        for code in [-101, -400, -404, 0] {
+            assert!(
+                !super::ProviderError::Api {
+                    code,
+                    message: String::new()
+                }
+                .retryable_read()
+            );
+        }
     }
 
     #[tokio::test]

@@ -58,11 +58,21 @@ export function globalShortcutBinding(action: ShortcutAction, key: Shortcut | nu
   return {action, code:key.code, ctrl:key.ctrl, alt:key.alt, shift:key.shift, meta:key.meta}
 }
 
+// RegisterHotKey cannot distinguish the main Enter key from keypad Enter.
+// Other Windows OEM/numpad keys have different virtual keys and stay distinct.
+export function globalShortcutConflict(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction, mac=false): string | undefined {
+  if (!globalShortcutBinding(action, key)) return
+  const canonical = (value: Shortcut) => !mac && value.code === 'NumpadEnter' ? { ...value, code: 'Enter' } : value
+  const conflict = shortcutActions.find(item => item.id !== action && globalShortcutBinding(item.id, bindings[item.id])
+    && sameShortcut(canonical(bindings[item.id]!), canonical(key)))
+  return conflict ? `全局快捷键与“${conflict.label}”冲突，主键盘 Enter 和数字键盘 Enter 无法分别注册` : undefined
+}
+
 export function sameShortcut(a: Shortcut | null | undefined, b: Shortcut | null | undefined) {
   return !!a && !!b && a.code===b.code && a.ctrl===b.ctrl && a.meta===b.meta && a.alt===b.alt && a.shift===b.shift
 }
-export function shortcutProblem(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction): string | undefined {
-  if (key.ctrl && key.alt && !key.shift && !key.meta && key.code==='KeyQ') return 'Ctrl + Alt + Q 用于打开软件'
+export function shortcutProblem(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction, desktop = false): string | undefined {
+  if (desktop && key.ctrl && key.alt && !key.shift && !key.meta && key.code==='KeyQ') return 'Ctrl + Alt / Option + Q 用于唤出软件'
   if ((key.ctrl || key.meta) && !key.alt && /^Key[ACVXYZQWTNLRHM]$/.test(key.code) || key.alt && key.code==='F4' || key.meta && key.code==='Space') return '这个组合由系统或常用编辑操作使用，请换一个'
   const conflict = shortcutActions.find(item => item.id !== action && sameShortcut(bindings[item.id], key))
   return conflict ? `已用于“${conflict.label}”，请先修改或清除该快捷键` : undefined
@@ -77,7 +87,7 @@ export function shortcutLabel(key: Shortcut | null, mac=false) {
   const name=names[key.code] || key.code.replace(/^Key|^Digit/,'').replace(/^Numpad/,'数字 ')
   return [key.ctrl?'Ctrl':'',key.meta?(mac?'⌘':'Win'):'',key.alt?(mac?'Option':'Alt'):'',key.shift?'Shift':'',name].filter(Boolean).join(' + ')
 }
-export function readShortcuts(raw: string | null, mac=false): ShortcutBindings {
+export function readShortcuts(raw: string | null, mac=false, desktop=false): ShortcutBindings {
   const defaults=defaultShortcuts(mac)
   if (!raw) return defaults
   try {
@@ -87,10 +97,14 @@ export function readShortcuts(raw: string | null, mac=false): ShortcutBindings {
     for(const {id} of shortcutActions) {
       const key=value.bindings[id]
       if (key===null) next[id]=null
-      else if(key && allowedCode.test(key.code) && ['ctrl','meta','alt','shift'].every(field=>typeof key[field]==='boolean')) next[id]={code:key.code,ctrl:key.ctrl,meta:key.meta,alt:key.alt,shift:key.shift}
+      else if(key && allowedCode.test(key.code) && ['ctrl','meta','alt','shift'].every(field=>typeof key[field]==='boolean')) {
+        // Only clear the newly reserved launch binding, preserving every other
+        // user mapping when upgrading from window-only shortcuts.
+        next[id]=desktop&&key.code==='KeyQ'&&key.ctrl&&key.alt&&!key.meta&&!key.shift?null:{code:key.code,ctrl:key.ctrl,meta:key.meta,alt:key.alt,shift:key.shift}
+      }
     }
     // Reject corrupt or conflicting saved maps as a whole, so no action is silently shadowed.
-    if(shortcutActions.some(({id})=>next[id] && shortcutProblem(next[id]!,next,id))) return defaults
+    if(shortcutActions.some(({id})=>next[id] && shortcutProblem(next[id]!,next,id,desktop))) return defaults
     return next
   } catch { return defaults }
 }

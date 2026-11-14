@@ -2,11 +2,40 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::providers::bilibili::{BilibiliProvider, FavoriteFolder, FavoriteVideo};
 use crate::infrastructure::repositories::{auth::AuthRepository, playlists::PlaylistRecord};
 use crate::interface::error::CommandError;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::State;
 
 static UPDATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+// Serialize changes to the same folder, without making an opened folder wait
+// for every page of an unrelated bulk import. Provider reads remain globally paced.
+fn folder_update(
+    database: &Database,
+    folder_id: i64,
+) -> Result<std::sync::Arc<tokio::sync::Mutex<()>>, CommandError> {
+    type Locks = std::collections::HashMap<(String, i64), std::sync::Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: std::sync::OnceLock<std::sync::Mutex<Locks>> = std::sync::OnceLock::new();
+    let path = database
+        .0
+        .lock()
+        .map_err(CommandError::database)?
+        .path()
+        .unwrap_or_default()
+        .to_owned();
+    let mut locks = LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(CommandError::database)?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let key = (path, folder_id);
+    if let Some(lock) = locks.get(&key).and_then(std::sync::Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, std::sync::Arc::downgrade(&lock));
+    Ok(lock)
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,10 +198,17 @@ async fn pull_videos(
     let mut videos = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for page in 1..=500 {
-        let result = provider
-            .favorite_videos(folder_id, page)
-            .await
-            .map_err(CommandError::provider)?;
+        let mut attempt = 0;
+        let result = loop {
+            match provider.favorite_videos(folder_id, page).await {
+                Ok(result) => break result,
+                Err(error) if attempt < 2 && error.retryable_read() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500 << attempt)).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err(CommandError::provider(error)),
+            }
+        };
         let items = result.medias.unwrap_or_default();
         if items.is_empty() && result.has_more {
             return Err(CommandError::validation("收藏夹返回不完整，请稍后刷新"));
@@ -222,7 +258,8 @@ async fn refresh_folder(
     folder_id: i64,
     link: bool,
 ) -> Result<LinkedFolder, CommandError> {
-    let _operation = UPDATE.lock().await;
+    let update = folder_update(database, folder_id)?;
+    let _operation = update.lock().await;
     let (provider, active, uid, folder) = owned_folder(database, folder_id).await?;
     let videos = pull_videos(&provider, folder_id).await?;
     let connection = database.0.lock().map_err(CommandError::database)?;
@@ -271,7 +308,8 @@ pub async fn bili_linked_change(
     if !super::commands::valid_bvid(&bvid) {
         return Err(CommandError::validation("请输入有效的 BV 号"));
     }
-    let _operation = UPDATE.lock().await;
+    let update = folder_update(&database, folder_id)?;
+    let _operation = update.lock().await;
     let (provider, active, uid, folder) = owned_folder(&database, folder_id).await?;
     let cached_aid = {
         let connection = database.0.lock().map_err(CommandError::database)?;
@@ -340,6 +378,23 @@ pub fn bili_linked_unlink(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn refreshes_serialize_per_folder_without_blocking_other_folders() {
+        let db = Database(
+            std::sync::Mutex::new(Connection::open_in_memory().unwrap()),
+            std::path::PathBuf::new(),
+        );
+        let first = folder_update(&db, 1).unwrap();
+        let guard = first.lock().await;
+        let same = folder_update(&db, 1).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &same));
+        assert!(same.try_lock().is_err());
+        let other = folder_update(&db, 2).unwrap();
+        assert!(other.try_lock().is_ok());
+        drop(guard);
+        assert!(same.try_lock().is_ok());
+    }
 
     #[test]
     fn refreshing_a_linked_playlist_preserves_when_it_was_added() {

@@ -5,7 +5,7 @@ use crate::infrastructure::{
     providers::bilibili::{BilibiliProvider, VideoParts},
     repositories::library::{LibraryRepository, TrackInput},
 };
-use crate::interface::commands::{library_record_play, track_playback_url};
+use crate::interface::commands::{library_record_play, track_playback_plan};
 use serde_json::{Value, json};
 use std::{
     ffi::{CStr, CString, c_char},
@@ -153,13 +153,12 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
         library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?
     };
     drop(gate);
-    let url = track_playback_url(
+    let plan = track_playback_plan(
         app.state::<Database>(),
         app.state::<BilibiliProvider>(),
         app.state::<MediaProxy>(),
         stored.id.clone(),
         Some(refresh),
-        None,
     )
     .await
     .map_err(|e| e.message)?;
@@ -183,7 +182,16 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
             position
         }
     } else if payload["restart"].as_bool() == Some(true)
-        || payload["autoResume"].as_bool() == Some(false)
+        || !crate::domain::playback::should_resume_video(
+            stored.duration_seconds as f64,
+            payload["autoResume"].as_bool() != Some(false),
+            payload["resumeThresholdSeconds"]
+                .as_f64()
+                .unwrap_or_default(),
+            payload["collectionPlayback"].as_bool() == Some(true)
+                || track["partCount"].as_u64().unwrap_or_default() > 1
+                || track["source"]["page"].as_u64().unwrap_or_default() > 1,
+        )
     {
         0.0
     } else {
@@ -208,7 +216,7 @@ async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String
             .flatten()
     };
     Ok(
-        json!({"url":url, "track":track, "position":position, "entryId":entry_id, "parts":parts, "lyrics":lyrics}),
+        json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "track":track, "position":position, "entryId":entry_id, "parts":parts, "lyrics":lyrics}),
     )
 }
 

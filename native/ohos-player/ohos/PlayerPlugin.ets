@@ -1,6 +1,7 @@
 import { common, Want, wantAgent } from '@kit.AbilityKit';
 import { avSession } from '@kit.AVSessionKit';
 import { media } from '@kit.MediaKit';
+import { audio } from '@kit.AudioKit';
 import { image } from '@kit.ImageKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { asset } from '@kit.AssetStoreKit';
@@ -15,7 +16,7 @@ import native from 'libbilimusic_lib.so';
 
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
-  data?: string; url?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
+  data?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
   rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
   key?: string; remove?: boolean;
@@ -49,6 +50,13 @@ export class PlayerPlugin {
   private artist: string = '';
   private status: string = 'paused';
   private desiredPlaying: boolean = false;
+  private resumeAfterInterruption: boolean = false;
+  private interruptionRevision: number = 0;
+  private interruptionPause: Promise<void> = Promise.resolve();
+  private focusDucked: boolean = false;
+  private pendingUpgradeUrl: string = '';
+  private upgradeAfterPosition: number = 0;
+  private upgradeIntent: number = 0;
   private cancelSourceSwitch: (() => void) | null = null;
   private cancelPreparation: (() => void) | null = null;
   private volume: number = 0.7;
@@ -108,6 +116,7 @@ export class PlayerPlugin {
         this.sleepingAt = 0; this.sleepExpired = true;
         this.enqueueControl('pause');
       }
+      this.maybeUpgrade();
       this.emit();
     }, 1000);
     this.lyricTimer = setInterval(() => { this.setMetadata(this.mediaRevision).catch(() => {}); },250);
@@ -117,7 +126,7 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
-    if (request.plugin === 'ohos-player' && request.command === 'play') this.cancelSourceSwitch?.();
+    if (request.plugin === 'ohos-player' && request.command === 'play') { this.upgradeIntent += 1; this.pendingUpgradeUrl = ''; this.cancelSourceSwitch?.(); }
     if (request.plugin === 'ohos-player' && request.command === 'webdav_put') {
       // Uploads must not queue playback controls behind a slow connection.
       this.upload(request);
@@ -218,6 +227,26 @@ export class PlayerPlugin {
     });
   }
 
+  private audioInterrupted(player: media.AVPlayer, event: audio.InterruptEvent): void {
+    if (this.player !== player || this.destroyed) return;
+    if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
+      this.resumeAfterInterruption = this.resumeAfterInterruption || this.desiredPlaying;
+      if (this.desiredPlaying || this.status !== 'paused') this.interruptionPause = this.control({ action: 'interruptionPause' }).catch(() => {});
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_STOP) {
+      this.enqueueControl('pause');
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_RESUME && event.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
+      const resume = this.resumeAfterInterruption, revision = this.interruptionRevision;
+      this.resumeAfterInterruption = false;
+      if (resume) this.tasks = this.tasks.catch(() => {}).then(async () => {
+        await this.interruptionPause;
+        if (!this.destroyed && this.player === player && revision === this.interruptionRevision) await this.control({ action: 'resume' });
+      }).catch(() => {});
+    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK || event.hintType === audio.InterruptHint.INTERRUPT_HINT_UNDUCK) {
+      this.focusDucked = event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK;
+      player.setVolume(this.volume * (this.focusDucked ? 0.2 : 1));
+    }
+  }
+
   private async ensureSession(): Promise<void> {
     if (this.session) return;
     this.session = await avSession.createAVSession(this.context, 'BiliMusic', 'audio');
@@ -272,9 +301,12 @@ export class PlayerPlugin {
   private async play(args: Args): Promise<void> {
     if (!args.url || !args.id || !/^http:\/\/127\.0\.0\.1:\d+\//.test(args.url)) throw new Error('Invalid playback source');
     if(args.seamless && this.player && this.id===args.id){await this.switchSource(args);return;}
+    this.resumeAfterInterruption = false; this.interruptionRevision += 1; this.focusDucked = false;
     this.cancelSourceSwitch?.();
     const revision = ++this.mediaRevision;
     this.desiredPlaying = args.playing !== false;
+    this.pendingUpgradeUrl = /^http:\/\/127\.0\.0\.1:\d+\//.test(args.upgradeUrl ?? '') ? args.upgradeUrl! : '';
+    this.upgradeAfterPosition = (args.position ?? 0) * 1000 + 750;
     this.pendingSeek = -1;
     this.artwork.clear();this.cover=undefined;this.currentMetadata=null;this.metadataSignature='';this.metadataRetryAt=0;this.coverRevision+=1;
     this.accountListening(true);
@@ -290,10 +322,7 @@ export class PlayerPlugin {
     if (revision !== this.mediaRevision) { await player.release(); return; }
     this.player = player;
     player.on('seekDone', () => { if (this.player !== player) return; this.pendingSeek = -1; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = player.currentTime; this.emit(); });
-    player.on('audioInterrupt', event => {
-      // Pause on focus loss and unplugged outputs; never resume unexpectedly.
-      if (event.hintType !== 0) this.enqueueControl('pause');
-    });
+    player.on('audioInterrupt', event => this.audioInterrupted(player, event));
     try { await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('音频准备超时，请重试')), 12000);
       this.cancelPreparation = () => { clearTimeout(timeout); reject(new Error('播放已取消')); };
@@ -326,7 +355,7 @@ export class PlayerPlugin {
       });
       player.url = args.url ?? '';
     }); } catch(error) { if(revision !== this.mediaRevision) return; throw new Error(String(error)); } finally { this.cancelPreparation=null; }
-    player.setVolume(this.volume); this.applyRate(this.rate);
+    player.setVolume(this.volume * (this.focusDucked ? 0.2 : 1)); this.applyRate(this.rate);
     if ((args.position ?? 0) > 0) player.seek((args.position ?? 0) * 1000);
     await this.setMetadata(revision);
     this.artworkReady = this.artwork.load(args.coverUrl, async pixels => {
@@ -339,7 +368,18 @@ export class PlayerPlugin {
     else { this.status = 'paused'; this.emit(); }
   }
 
+  private maybeUpgrade(): void {
+    if (!this.pendingUpgradeUrl || !this.player || !this.desiredPlaying || this.status !== 'playing' || this.player.currentTime < this.upgradeAfterPosition || this.pendingSeek >= 0 || this.cancelSourceSwitch !== null) return;
+    const url = this.pendingUpgradeUrl, player = this.player, revision = this.mediaRevision, intent = this.upgradeIntent;
+    this.pendingUpgradeUrl = '';
+    this.tasks = this.tasks.catch(() => {}).then(async () => {
+      if (this.destroyed || !this.desiredPlaying || this.player !== player || revision !== this.mediaRevision || intent !== this.upgradeIntent) return;
+      await this.switchSource({url,id:this.id,seamless:true});
+    }).catch(() => { /* Keep playing the initial stream. */ });
+  }
+
   private async switchSource(args: Args): Promise<void> {
+    this.pendingUpgradeUrl = '';
     const original=this.player,revision=this.mediaRevision,seek=this.seekRevision;
     if(!original || args.id!==this.id) throw new Error('当前歌曲已变更');
     const candidate=await media.createAVPlayer();let cancelled=false;let handoffRevision=-1;
@@ -347,7 +387,7 @@ export class PlayerPlugin {
     const cancel=()=>{cancelled=true;failed?.(new Error('音质切换已取消'));};this.cancelSourceSwitch=cancel;
     const valid=():boolean=>!cancelled && this.player===original && this.mediaRevision===revision && this.seekRevision===seek;
     candidate.on('error',error=>{if(this.player===candidate){this.error=error.message;this.status='error';this.emit();}else failed?.(new Error('新音源无法播放，已保留原音质'));});
-    candidate.on('audioInterrupt',event=>{if(this.player===candidate && event.hintType!==0)this.enqueueControl('pause');});
+    candidate.on('audioInterrupt',event=>this.audioInterrupted(candidate,event));
     candidate.on('seekDone',()=>{seekDone?.();seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
     candidate.on('stateChange',async state=>{
       if(this.player===candidate){if(state==='playing')this.status='playing';else if(state==='paused')this.status='paused';else if(state==='completed'){this.accountListening(true);this.status='paused';this.emit('ended');return;}this.emit();return;}
@@ -365,7 +405,7 @@ export class PlayerPlugin {
       this.accountListening(true);if(original.state==='playing')await original.pause();
       if(!valid())throw new Error('音质切换已取消');
       this.player=candidate;this.mediaRevision+=1;handoffRevision=this.mediaRevision;this.previousPosition=-1;this.mediaAdvancedAt=Date.now();this.watchdogPosition=-1;this.pendingSeek=-1;
-      candidate.setVolume(this.volume);if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
+      candidate.setVolume(this.volume * (this.focusDucked ? 0.2 : 1));if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
       try{await original.release();}catch{}this.emit();
     }catch(error){
       if(this.player===candidate && this.mediaRevision===handoffRevision){this.player=original;this.mediaRevision+=1;this.previousPosition=-1;this.error='';}
@@ -383,21 +423,27 @@ export class PlayerPlugin {
 
   private async control(args: Args): Promise<void> {
     const value = typeof args.value === 'number' ? args.value : 0;
+    if (args.action === 'pause' || args.action === 'stop' || args.action === 'resume') {
+      this.resumeAfterInterruption = false; this.interruptionRevision += 1;
+    }
+    if (args.action === 'pause' || args.action === 'stop' || args.action === 'seek') this.upgradeIntent += 1;
     switch (args.action) {
       case 'prepare': break;
       case 'resume': this.desiredPlaying = true; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.error = ''; if (this.player) { const player=this.player; await this.startBackground(); if(this.desiredPlaying && this.player===player) await player.play(); else await this.stopBackground(); } break;
       case 'pause':
+      case 'interruptionPause':
         this.desiredPlaying = false;
         this.accountListening(true); this.status = 'paused';
         if (this.player?.state === 'playing') await this.player.pause();
         await this.stopBackground(); break;
       case 'stop':
+        this.pendingUpgradeUrl = '';
         this.desiredPlaying = false;
         this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
         this.accountListening(true); await this.player?.release(); this.player = null;
         this.id = ''; this.status = 'paused'; await this.stopBackground(); break;
       case 'seek': this.seekRevision += 1; this.pendingSeek = Math.max(0, value * 1000); this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
-      case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.player?.setVolume(this.volume); break;
+      case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.player?.setVolume(this.volume * (this.focusDucked ? 0.2 : 1)); break;
       case 'rate': this.accountListening(true); this.applyRate(value); break;
       case 'collection':
         if (args.id === this.id) { this.accountListening(true); this.collectionRef = args.collectionRef ?? ''; } break;

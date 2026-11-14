@@ -1,7 +1,8 @@
 import { createNativeClock } from './nativeClock'
 import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/core'
 import type { Track } from '../../domain/track'
-import type { RepeatMode } from './playerStore'
+import type { QueueSource, RepeatMode } from './playerStore'
+import type { ResumeThreshold } from './resumePolicy'
 
 export type IOSAudioState = { recoveryAttempted?: boolean; sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; floatingLyricsEnabled?: boolean; floatingLyricsFontSize?: number; floatingLyricsStyleRevision?: number; floatingLyricsLocked?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; rate?: number; duration?: number; error?: string; track?: Track; revision?: number; advancing?: boolean; sequence?: number; seekRevision?: number }
 let ready: Promise<unknown> | undefined
@@ -39,10 +40,10 @@ export async function restartIOSAudioObservation() {
 }
 export const iosListenerAge = () => performance.now() - lastEventAt
 export const setIOSCollection = (id: string, collectionRef?: string) => invoke('plugin:ios-player|control', { action: 'collection', id, collectionRef })
-export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, autoResume = true) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled, autoResume })
-export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false) {
+export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, resumeThresholdSeconds: ResumeThreshold = 0, source?: QueueSource) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled, autoResume: resumeThresholdSeconds !== null, resumeThresholdSeconds, collectionPlayback: Boolean(source?.collectionRef) || source?.kind === 'season' })
+export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string) {
   await ready
-  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}) })
+  await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}) })
 }
 export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {

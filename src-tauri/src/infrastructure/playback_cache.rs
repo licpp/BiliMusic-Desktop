@@ -129,6 +129,12 @@ impl PlaybackCache {
         let c = self.connection.lock().ok()?;
         c.query_row("SELECT key,bvid,cid,fingerprint,mime,total FROM variants WHERE track_id=?1 AND quality=?2 AND total>0 AND (?2!=0 OR lower(fingerprint) NOT LIKE '%|flac|%') AND EXISTS(SELECT 1 FROM chunks WHERE variant=variants.key) ORDER BY accessed DESC LIMIT 1",params![track_id,quality],|r|Ok(Variant{key:r.get(0)?,track_id:track_id.into(),bvid:r.get(1)?,cid:r.get(2)?,quality,fingerprint:r.get(3)?,mime:r.get(4)?,total:r.get(5)?})).optional().ok().flatten()
     }
+    pub fn complete(&self, variant: &Variant) -> bool {
+        variant.total > 0 && self.connection.lock().ok().and_then(|c| c.query_row(
+            "SELECT COALESCE(SUM(bytes),0)=?2 AND COUNT(*)=?3 FROM chunks WHERE variant=?1",
+            params![variant.key, variant.total, variant.total.div_ceil(CHUNK_SIZE)], |r| r.get::<_,bool>(0),
+        ).ok()).unwrap_or(false)
+    }
     pub fn read(&self, key: &str, index: u64) -> Option<Vec<u8>> {
         let c = self.connection.lock().ok()?;
         let expected: u64 = c
@@ -361,9 +367,11 @@ mod tests {
         );
         assert_eq!(cache.status().unwrap().used_bytes, 0);
         cache.write(&variant, CHUNK_SIZE + 8, 0, &bytes, 0).unwrap();
+        assert!(!cache.complete(&cache.find(&variant.track_id, variant.quality).unwrap()));
         cache
             .write(&variant, CHUNK_SIZE + 8, 1, &[9; 8], 0)
             .unwrap();
+        assert!(cache.complete(&cache.find(&variant.track_id, variant.quality).unwrap()));
         assert!(
             cache
                 .write(&variant, CHUNK_SIZE + 9, 1, &[9; 9], 0)

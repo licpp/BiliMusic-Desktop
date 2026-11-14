@@ -55,7 +55,22 @@ test('playback shortcuts except space are global, and Ctrl+Alt+Q stays reserved 
  assert.equal(globalShortcutBinding('listSearch',bindings.listSearch),undefined)
  assert.deepEqual(globalShortcutBinding('previous',bindings.previous),{action:'previous',code:'ArrowLeft',ctrl:true,alt:false,shift:false,meta:false})
  assert.equal(globalShortcutBinding('volumeUp',{code:'ArrowUp',ctrl:false,alt:false,shift:false,meta:false}),undefined)
- assert.match(shortcutProblem({code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false},bindings,'toggle'),/打开软件/)
+ assert.match(shortcutProblem({code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false},bindings,'toggle',true),/唤出软件/)
+ const mac=defaultShortcuts(true),custom={code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false}
+ mac.toggle=custom
+ assert.equal(shortcutProblem(custom,mac,'toggle',false),undefined)
+ assert.deepEqual(readShortcuts(JSON.stringify({version:1,bindings:mac}),true,false),mac)
+ assert.equal(readShortcuts(JSON.stringify({version:1,bindings:mac}),true,true).toggle,null)
+})
+test('Windows global Enter aliases conflict while window-only and numpad digits stay distinct',async()=>{
+ const {globalShortcutConflict}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
+ const bindings=defaultShortcuts(false)
+ bindings.toggle={code:'Enter',ctrl:true,alt:false,shift:false,meta:false}
+ assert.match(globalShortcutConflict({...bindings.toggle,code:'NumpadEnter'},bindings,'next'),/Enter/)
+ assert.equal(shortcutProblem({...bindings.toggle,code:'NumpadEnter'},bindings,'next'),undefined)
+ assert.equal(globalShortcutConflict({...bindings.toggle,code:'NumpadEnter'},bindings,'next',true),undefined)
+ bindings.toggle={...bindings.toggle,code:'Digit1'}
+ assert.equal(globalShortcutConflict({...bindings.toggle,code:'Numpad1'},bindings,'next'),undefined)
 })
 const {shortcutFromMouseEvent,resolveMouseShortcut,installMouseShortcuts}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
 const mouseEvent=(button,extra={})=>({button,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,...extra})

@@ -1,6 +1,8 @@
 package app.bilimusic.player
 
 internal object FloatingLyricsWindowPolicy {
+    fun showUnlock(enabled: Boolean, locked: Boolean, visible: Boolean, attached: Boolean) = enabled && locked && visible && attached
+
     // Android 12+ rejects touch-through from opaque application overlays,
     // including windows whose actual background pixels are transparent.
     fun alpha(locked: Boolean, api: Int, maximum: Float): Float =

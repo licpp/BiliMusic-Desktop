@@ -1,8 +1,32 @@
+mod source_titles;
+pub mod actor;
+pub mod background;
+mod cache;
+pub mod causal;
 mod dav;
+pub mod device_policy;
+pub mod devices;
+mod engine;
+pub mod migration;
+pub mod migration_material;
 pub mod model;
+pub mod outbox;
+mod projection;
+pub mod protocol_v2;
+pub mod publication;
+mod recovery;
+mod scheduler;
 pub mod statistics;
+mod statistics_v2;
 pub mod storage;
+#[cfg(test)]
+mod test_dav;
+#[cfg(test)]
+mod simulation;
+mod traffic;
 mod transport;
+pub mod upgrade_merge;
+mod v2_net;
 use crate::infrastructure::{
     database::Database, providers::bilibili::BilibiliProvider, repositories::auth::AuthRepository,
 };
@@ -13,6 +37,8 @@ use tauri::{AppHandle, State};
 
 #[derive(Default)]
 pub struct SyncState {
+    scheduler: std::sync::Mutex<scheduler::Scheduler>,
+    exchange_gate: tokio::sync::Mutex<()>,
     pub gate: tokio::sync::Mutex<()>,
     pub statistics_gate: tokio::sync::Mutex<()>,
     statistics_active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
@@ -82,6 +108,7 @@ pub struct Status {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outcome {
+    pub skipped: bool,
     pub conflicts: Vec<Conflict>,
     pub records: usize,
     pub bytes: usize,
@@ -89,6 +116,9 @@ pub struct Outcome {
 }
 fn config(db: &Database) -> Result<Config, String> {
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
+    Ok(config_from_connection(&c)?.unwrap_or_default())
+}
+fn config_from_connection(c: &rusqlite::Connection) -> Result<Option<Config>, String> {
     let s: Option<String> = c
         .query_row("SELECT json FROM sync_settings WHERE id=1", [], |r| {
             r.get(0)
@@ -96,7 +126,7 @@ fn config(db: &Database) -> Result<Config, String> {
         .optional()
         .map_err(|e| e.to_string())?;
     s.map(|s| serde_json::from_str(&s).map_err(|_| "同步设置损坏".into()))
-        .unwrap_or(Ok(Config::default()))
+        .transpose()
 }
 fn save(db: &Database, cfg: &Config) -> Result<(), String> {
     db.0.lock().map_err(|_|"数据库正忙")?.execute("INSERT INTO sync_settings(id,json) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET json=excluded.json",[serde_json::to_string(cfg).unwrap()]).map_err(|e|e.to_string())?;
@@ -176,7 +206,7 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
     let last = c
         .query_row(
-            "SELECT value FROM sync_info WHERE key='last_success'",
+            "SELECT value FROM sync_info WHERE key='last_success:' || (SELECT value FROM sync_info WHERE key='active_target')",
             [],
             |r| r.get(0),
         )
@@ -206,6 +236,7 @@ pub async fn sync_connect(
     consent: bool,
 ) -> Result<Status, String> {
     state.interrupt();
+    let _exchange = state.exchange_gate.lock().await;
     let _gate = state.gate.lock().await;
     if !consent {
         return Err("请先确认同步范围及服务商授权说明".into());
@@ -254,8 +285,33 @@ pub async fn sync_connect(
             password,
         }
     };
+    // Bind the legacy provider-only baseline BEFORE replacing its credentials.
+    // Unidentifiable provenance stays quarantined, never attached to the new target.
+    let previous = config(&database)?;
+    let previous_target = secret(&app, &previous, None, false)
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str::<transport::Secret>(&value).ok())
+        .and_then(|value| {
+            storage::target_key(
+                &previous.provider,
+                &previous.uid,
+                &previous.url,
+                &value.username,
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| "unbound-legacy".into());
+    {
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        storage::bind_legacy(&c, &previous.provider, &previous_target)?;
+    }
     // Read-only connection test. A new remote will only be created by explicit first sync.
-    transport::read(&settings, &credentials).await?;
+    if settings.provider == "webdav" {
+        engine::probe(&settings, &credentials).await?;
+    } else {
+        transport::read(&settings, &credentials).await?;
+    }
     secret(
         &app,
         &settings,
@@ -265,6 +321,14 @@ pub async fn sync_connect(
     if uuid::Uuid::parse_str(&settings.device_id).is_err() {
         settings.device_id = uuid::Uuid::new_v4().to_string();
     }
+    let target = storage::target_key(
+        &settings.provider,
+        &settings.uid,
+        &settings.url,
+        &credentials.username,
+    )?;
+    database.0.lock().map_err(|_| "数据库正忙")?.execute("INSERT INTO sync_info(key,value) VALUES('active_target',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
+    database.0.lock().map_err(|_| "数据库正忙")?.execute("INSERT INTO sync_info(key,value) VALUES('scheduler_binding',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
     settings.enabled = true;
     settings.initialized = false;
     save(&database, &settings)?;
@@ -339,7 +403,58 @@ fn preserve_history(base: &mut Snapshot, local: &mut Snapshot, remote: &Snapshot
     }
 }
 #[tauri::command]
+pub fn sync_conflict_options(
+    database: State<'_, Database>,
+) -> Result<engine::ConflictMenu, String> {
+    let cfg = config(&database)?;
+    active(&database, &cfg.uid)?;
+    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    let target: String = c
+        .query_row(
+            "SELECT value FROM sync_info WHERE key='active_target'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|_| "尚未连接同步目标")?;
+    engine::get(&c, &target, "conflict-menu")?.ok_or("请先预览同步冲突".into())
+}
+#[tauri::command]
 pub async fn sync_now(
+    app: AppHandle,
+    database: State<'_, Database>,
+    state: State<'_, SyncState>,
+    resolution: Option<String>,
+    preview: Option<bool>,
+    automatic: Option<bool>,
+) -> Result<Outcome, String> {
+    let auto = automatic.unwrap_or(false);
+    background::run(
+        &database,
+        &state,
+        scheduler::Domain::Library,
+        auto,
+        sync_now_inner(
+            app,
+            database.clone(),
+            state.clone(),
+            resolution,
+            preview,
+            automatic,
+        ),
+        |outcome| (outcome.changed, !outcome.conflicts.is_empty()),
+    )
+    .await
+    .map(|value| {
+        value.unwrap_or(Outcome {
+            skipped: true,
+            conflicts: vec![],
+            records: 0,
+            bytes: 0,
+            changed: false,
+        })
+    })
+}
+async fn sync_now_inner(
     app: AppHandle,
     database: State<'_, Database>,
     state: State<'_, SyncState>,
@@ -354,25 +469,35 @@ pub async fn sync_now(
     }
     active(&database, &cfg.uid)?;
     let cancellation = state.begin();
-    if automatic.unwrap_or(false) && !cfg.initialized {
+    // Nutstore V2 joins automatically; only destructive conflicts require a choice.
+    if automatic.unwrap_or(false) && !cfg.initialized && cfg.provider != "webdav" {
         return Err("请先在设置中预览并确认首次合并".into());
     }
     if resolution
         .as_deref()
-        .is_some_and(|s| s != "local" && s != "remote")
+        .is_some_and(|s| !engine::validate_resolution(s))
     {
         return Err("无效的冲突处理选项".into());
     }
     let credentials: transport::Secret =
         serde_json::from_str(&secret(&app, &cfg, None, false)?.ok_or("请重新连接同步服务")?)
             .map_err(|_| "凭据无效，请重新连接")?;
+    let target = storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &credentials.username)?;
+    if cfg.provider == "webdav" {
+        return tokio::select! {_ = cancellation.cancelled()=>Err("同步已取消".into()), result=async{
+            let outcome=engine::sync(&database,&cfg,&credentials,resolution.as_deref(),preview.unwrap_or(false)).await?;
+            if !preview.unwrap_or(false)&&outcome.conflicts.is_empty(){let updated=config(&database)?;let _=devices::after_sync(&database,&updated,&credentials).await;}
+            Ok(outcome)
+        }=>result};
+    }
     let (initial, base) = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        storage::bind_legacy(&c, &cfg.provider, &target)?;
         let current = storage::export(&c, &cfg.uid, cfg.history)?;
         let base = c
             .query_row(
-                "SELECT json FROM sync_base WHERE provider=?1",
-                [&cfg.provider],
+                "SELECT json FROM sync_target_base WHERE target=?1",
+                [&target],
                 |r| r.get::<_, String>(0),
             )
             .optional()
@@ -383,7 +508,7 @@ pub async fn sync_now(
         (current, base)
     };
     for _ in 0..3 {
-        let response = tokio::select! { _=cancellation.cancelled()=>return Err("同步已取消".into()),response=transport::read(&cfg,&credentials)=>response };
+        let response = tokio::select! { _=cancellation.cancelled()=>return Err("同步已取消".into()),response=async { if cfg.provider == "webdav" { dav::read_cached(&cfg,&credentials,Some(&database.1.join("sync-cache").join(&target))).await } else { transport::read(&cfg,&credentials).await } }=>response };
         let remote = match response {
             Ok(r) => r,
             Err(e) => {
@@ -394,6 +519,12 @@ pub async fn sync_now(
                 return Err(e);
             }
         };
+        if cfg.provider == "webdav" {
+            if let Some(dav) = &remote.dav {
+                let c = database.0.lock().map_err(|_| "数据库正忙")?;
+                devices::observe(&c, &target, &dav.observations)?;
+            }
+        }
         let mut initial = initial.clone();
         let mut baseline = base.clone();
         if cfg.provider != "webdav" {
@@ -451,6 +582,7 @@ pub async fn sync_now(
         let count = merged.records.len();
         if preview.unwrap_or(false) || (!conflicts.is_empty() && resolution.is_none()) {
             return Ok(Outcome {
+                skipped: false,
                 conflicts,
                 records: count,
                 bytes,
@@ -469,7 +601,9 @@ pub async fn sync_now(
         if merged != remote.snapshot
             || remote.version.is_none()
             || !remote.conflicts.is_empty()
-            || remote.dav.as_ref().is_some_and(|d| d.needs_publish)
+            || remote.dav.as_ref().is_some_and(|d| {
+                d.needs_publish || d.linked.as_ref().is_some_and(|l| l.needs_publish)
+            })
         {
             let written = tokio::select! { _=cancellation.cancelled()=>return Err("同步已取消".into()),result=transport::write(&cfg,&credentials,&remote,&merged)=>result }?;
             if !written {
@@ -480,67 +614,75 @@ pub async fn sync_now(
         if cancellation.is_cancelled() {
             return Err("同步已取消".into());
         }
-        let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
-        let local_linked = current.linked_folders();
-        if cfg.provider != "webdav" {
-            current.omit_linked_folders();
-        }
-        if remote.legacy_cloud {
-            current.use_legacy_cloud_format();
-        }
-        if !remote.track_positions {
-            current.omit_track_positions();
-        }
-        let local_scopes: Vec<_> = current
-            .records
-            .iter()
-            .filter(|(_, r)| r.kind == "collectionFolder")
-            .filter_map(|(k, r)| r.fields.get("scope").map(|v| (k.clone(), v.clone())))
-            .collect();
-        if !remote.creator_groups {
-            current.omit_folder_scopes();
-        }
-        let local_creators: Vec<_> = current
-            .records
-            .iter()
-            .filter(|(_, r)| {
-                (r.kind == "collection" && text(r, "bvid").starts_with("up:"))
-                    || (r.kind == "collectionProgress" && text(r, "reference").starts_with("up:"))
-            })
-            .map(|(k, r)| (k.clone(), r.clone()))
-            .collect();
-        if !remote.creators {
-            current.omit_creators();
-        }
-        // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
-        let (mut final_local, post_conflicts) = merge(&initial, &current, &merged, Some("local"));
-        if cfg.provider != "webdav" {
-            final_local.records.extend(local_linked.records);
-        }
-        if !remote.creators {
-            final_local.records.extend(local_creators);
-        }
-        if !remote.creator_groups {
-            for (k, scope) in local_scopes {
-                if let Some(r) = final_local.records.get_mut(&k) {
-                    r.fields.insert("scope".into(), scope);
+        let final_local = {
+            let c = database.0.lock().map_err(|_| "数据库正忙")?;
+            let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
+            let local_linked = current.linked_folders();
+            if cfg.provider != "webdav" {
+                current.omit_linked_folders();
+            }
+            if remote.legacy_cloud {
+                current.use_legacy_cloud_format();
+            }
+            if !remote.track_positions {
+                current.omit_track_positions();
+            }
+            let local_scopes: Vec<_> = current
+                .records
+                .iter()
+                .filter(|(_, r)| r.kind == "collectionFolder")
+                .filter_map(|(k, r)| r.fields.get("scope").map(|v| (k.clone(), v.clone())))
+                .collect();
+            if !remote.creator_groups {
+                current.omit_folder_scopes();
+            }
+            let local_creators: Vec<_> = current
+                .records
+                .iter()
+                .filter(|(_, r)| {
+                    (r.kind == "collection" && text(r, "bvid").starts_with("up:"))
+                        || (r.kind == "collectionProgress"
+                            && text(r, "reference").starts_with("up:"))
+                })
+                .map(|(k, r)| (k.clone(), r.clone()))
+                .collect();
+            if !remote.creators {
+                current.omit_creators();
+            }
+            // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
+            let (mut final_local, post_conflicts) =
+                merge(&initial, &current, &merged, Some("local"));
+            if cfg.provider != "webdav" {
+                final_local.records.extend(local_linked.records);
+            }
+            if !remote.creators {
+                final_local.records.extend(local_creators);
+            }
+            if !remote.creator_groups {
+                for (k, scope) in local_scopes {
+                    if let Some(r) = final_local.records.get_mut(&k) {
+                        r.fields.insert("scope".into(), scope);
+                    }
                 }
             }
-        }
-        final_local.compact(true);
-        if !post_conflicts.is_empty() {
-            return Err("同步期间本机数据发生冲突，已保留本机修改，请再次同步".into());
-        }
-        let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
-        storage::apply(&c, &final_local, cfg.history)?;
-        c.execute("INSERT INTO sync_base(provider,json) VALUES(?1,?2) ON CONFLICT(provider) DO UPDATE SET json=excluded.json",params![cfg.provider,serde_json::to_string(&merged).unwrap()]).map_err(|e|e.to_string())?;
-        c.execute("INSERT INTO sync_info(key,value) VALUES('last_success',datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[]).map_err(|e|e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        drop(c);
+            final_local.compact(true);
+            if !post_conflicts.is_empty() {
+                return Err("同步期间本机数据发生冲突，已保留本机修改，请再次同步".into());
+            }
+            let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+            storage::apply(&c, &final_local, cfg.history)?;
+            c.execute("INSERT INTO sync_target_base(target,json) VALUES(?1,?2) ON CONFLICT(target) DO UPDATE SET json=excluded.json",params![target,serde_json::to_string(&merged).unwrap()]).map_err(|e|e.to_string())?;
+            c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(|e|e.to_string())?;
+            c.execute("INSERT INTO sync_info(key,value) VALUES('active_target',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            final_local
+        };
         cfg.initialized = true;
         save(&database, &cfg)?;
+        // Capability bookkeeping must not turn a successful library merge into a failed sync.
+        let _ = devices::after_sync(&database, &cfg, &credentials).await;
         return Ok(Outcome {
+            skipped: false,
             conflicts: vec![],
             records: count,
             bytes,
@@ -559,9 +701,7 @@ pub async fn sync_import_guest(
     active(&database, &uid)?;
     let guest = rusqlite::Connection::open(database.1.join("resonance.sqlite3"))
         .map_err(|_| "无法打开本机访客资料库")?;
-    guest
-        .execute_batch(include_str!("../../migrations/0001_initial.sql"))
-        .map_err(|e| e.to_string())?;
+    crate::infrastructure::migrations::migrate(&guest).map_err(|e| e.to_string())?;
     let source = storage::export(&guest, &uid, true)?;
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
     let current = storage::export(&c, &uid, true)?;
@@ -577,8 +717,10 @@ pub async fn sync_hydrate_sources(
     provider: State<'_, BilibiliProvider>,
     state: State<'_, SyncState>,
     track_ids: Option<Vec<String>>,
+    title_ids: Option<Vec<String>>,
 ) -> Result<usize, String> {
     let _gate = state.gate.lock().await;
+    if let Some(ids) = title_ids { return source_titles::hydrate(&database, &provider, ids).await; }
     let videos: Vec<String> = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         let mut q=c.prepare("SELECT id,bvid FROM source_items WHERE source_title='' OR source_title='B站歌曲（待加载）' ORDER BY bvid LIMIT 5000").map_err(|e|e.to_string())?;

@@ -13,6 +13,7 @@ const output = await build({
       export const recordPlayedTrack = async t => t;
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
+      export const getTrackPlaybackPlan = async (t,r) => globalThis.iosTest?.plan ? globalThis.iosTest.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
     ` : path === 'platform' ? 'export const isOHOS = false; export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
       export const setAndroidCollection = async () => {};
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };

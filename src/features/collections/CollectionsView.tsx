@@ -1,3 +1,7 @@
+import {useListPreferences} from '../../services/listPreferences'
+import {rankList,sortList} from '../../services/listOrdering'
+import {ListSort,useListSort} from '../../shared/ListSort'
+import {useOrganizer} from '../../shared/useOrganizer'
 import { PublishedDate } from '../../shared/PublishedDate'
 import { FolderEditor, FolderMenu } from './CollectionFolderControls'
 import { CreatorPage } from './CreatorsView'
@@ -79,7 +83,9 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
   const refresh = () => void client.invalidateQueries({ queryKey: ['collections'] })
   const root = folderId === undefined
   const compact = useCompactLayout()
-  const folders = (query.data?.folders || []).filter(f=>f.scope!=='creators')
+  const preferences=useListPreferences()
+  const listSort=useListSort(`collectionFolder:${folderId||''}`)
+  const folders = rankList((query.data?.folders || []).filter(f=>f.scope!=='creators'),preferences.data?.preferences||[],f=>`collectionFolder:${f.id}`)
   const move = useMutation({
     mutationFn: async ({ item, target }: { item: Collection; target: string }) => {
       const epoch = accountEpoch()
@@ -90,7 +96,9 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
   const moveError = move.error && <button type="button" className="library-toast" role="alert" onClick={move.reset}>
     移动失败：{commandErrorMessage(move.error)}
   </button>
-  const items = query.data?.items.filter(item => !item.bvid.startsWith('up:')) || []
+  const rawItems = query.data?.items.filter(item => !item.bvid.startsWith('up:')) || []
+  const items=root?rankList(rawItems,preferences.data?.preferences||[],i=>`collection:${i.bvid}`):sortList(rawItems,listSort.rule,i=>({id:i.bvid,name:i.title,date:listSort.dates[i.bvid]}))
+  const organizer=useOrganizer([...folders.map(f=>({id:`collectionFolder:${f.id}`,name:f.name,group:'folders',kind:'folder' as const})),...items.filter(i=>!i.folderId).map(i=>({id:`collection:${i.bvid}`,name:i.title||i.bvid,group:'items',coverUrl:i.coverUrl}))], '整理收藏')
   const needle = filter.trim().toLowerCase()
   const matches = (value: string) => value.toLowerCase().includes(needle)
   const visibleItems = items.filter(item => (root && needle ? true : item.folderId === (folderId || '')) && matches(item.title || item.bvid))
@@ -130,18 +138,19 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
       <button type="button" className="collections-collapse" aria-expanded={expanded} onClick={toggle}>
         <span>收藏</span>{expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
       </button>
-      {expanded && <FolderEditor action="create" onDone={refresh}/>}
+      {expanded && <div className="collections-heading-actions sidebar-heading-actions">{organizer.controls}{!organizer.editing && <FolderEditor action="create" onDone={refresh}/>}</div>}
     </div>
-    {expanded && entries}
+    {expanded && (organizer.editing ? organizer.editor : entries)}
     {moveError}
   </section>
   return <section className="collections-view collections-embedded">
-    <div className={`collections-heading${hideHeading && root ? ' collections-tools-only' : ''}`}>
+    <div className={`collections-heading${root ? ' hub-list-toolbar' : ''}${hideHeading && root ? ' collections-tools-only' : ''}`}>
       {(!hideHeading || !root) && <h3>{folder?.name || '收藏'}</h3>}
       {hideHeading && root && <span className="hub-summary">{items.length + linkedFolders.length} 项收藏{folders.length > 0 && <small> · {folders.length} 个文件夹</small>}</span>}
-      <div className="collections-heading-actions">
+      <div className="collections-heading-actions hub-toolbar-actions">
         <button type="button" className="collection-icon" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); setFilter('') }}><Search size={18}/></button>
-        {root ? <FolderEditor action="create" onDone={refresh}/> : folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
+        {!root&&folder&&<ListSort entity={`collectionFolder:${folder.id}`}/>}
+        {root ? <><FolderEditor action="create" onDone={refresh}/>{organizer.controls}</> : folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
       </div>
     </div>
     {searchOpen && <label className="collections-search detail-search"><Search size={16}/>
@@ -151,7 +160,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
     {query.error && <p className="inline-error">{commandErrorMessage(query.error)} <button className="collection-flat-button" onClick={() => void query.refetch()}>重试</button></p>}
     {!query.isLoading && !visibleItems.length && (!root || (!folders.some(item => matches(item.name)) && !linkedFolders.some(item => matches(item.name)))) &&
       <p className="collection-empty">{needle ? '没有匹配的收藏' : root ? '点击搜索结果中的书签，收藏喜欢的合集。' : '这个收藏夹还没有合集。'}</p>}
-    {entries}
+    {root&&organizer.editing?organizer.editor:entries}
     {moveError}
   </section>
 }
@@ -206,20 +215,21 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
     },
     enabled: Boolean(openedVideo),
   })
-  const [reversedCollection, setReversedCollection] = useState<string>()
+  const detailSort=useListSort(`collection:${item.bvid}`)
   const client=useQueryClient()
   useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:['collections']})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
   const detail=q.data,player=usePlayerStore.getState()
   const season = detail?.season
-  const reversed = reversedCollection === item.bvid
+  const reversed = detailSort.rule==='source:desc'
   const tracks = useMemo(() => {
     if (!detail) return []
-    return reversed ? [...detail.tracks].reverse() : detail.tracks
-  }, [detail, reversed])
+    return sortList(detail.tracks,detailSort.rule,track=>({id:track.id,name:track.title,date:track.publishedAt||detailSort.dates[track.source.bvid]}))
+  }, [detail, detailSort.rule, detailSort.dates])
   const playbackTracks = useMemo(() => {
     if (!detail?.catalog) return tracks
     const catalog = detail.catalog
-    return seasonTracks(reversed ? { ...catalog, tracks: [...catalog.tracks].reverse() } : catalog)
+    const ordered=tracks.map(track=>catalog.tracks.find(video=>video.bvid===track.source.bvid)).filter((v):v is NonNullable<typeof v>=>Boolean(v))
+    return seasonTracks({...catalog,tracks:ordered})
   }, [detail?.catalog, reversed, tracks])
   const queueSource = { kind: reference ? 'season' as const : 'video' as const, title: detail?.title || item.title, collectionRef: item.bvid }
   const unit=reference?'个视频':'个分 P'
@@ -292,7 +302,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
         </button>}
       </div>
       <div className="collection-list-actions">
-        <button className="collection-icon collection-order" aria-label={reversed ? '恢复原顺序' : '倒序排列'} aria-pressed={reversed} title={reversed ? '恢复原顺序' : '倒序排列'} disabled={tracks.length < 2} onClick={() => setReversedCollection(reversed ? undefined : item.bvid)}><ArrowDownUp size={16}/><span>{reversed ? '倒序' : '原序'}</span></button>
+        <ListSort entity={`collection:${item.bvid}`}/>
         {searchQuery === undefined && <button className="collection-icon" aria-label="搜索列表" aria-expanded={searchOpen} onClick={()=>{setSearchOpen(v=>!v);setFilter('')}}><Search size={18}/></button>}
         <CollectionMenu item={item} contextPosition={context} additionalActions={close => <>
           <button role="menuitem" disabled={!tracks.length} onClick={()=>{player.enqueue(playbackTracks);close()}}><ListPlus size={16}/>全部加入队列</button>

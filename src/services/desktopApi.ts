@@ -31,10 +31,9 @@ export type QrLogin = { key: string; url: string }
 export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
 export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string; level?: number; vipActive?: boolean }
 export type FavoriteFolder = { id: number; title: string; media_count: number }
-export type FavoriteVideo = { aid?: number; bvid: string; title: string; cover: string; duration?: number; cnt_info?: { play?: number } }
+export type FavoriteVideo = { pubtime?:number; aid?: number; bvid: string; title: string; cover: string; duration?: number; cnt_info?: { play?: number } }
 export type FavoritePage = { medias?: FavoriteVideo[]; has_more: boolean }
 export type LinkedFolder = { folderId: number; name: string; refreshedAt: number; videos: FavoriteVideo[] }
-export type LocalImportResult = { added: number; alreadyImported: number; failed: string[] }
 export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; emotes?: Record<string, string>; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
 export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
@@ -72,6 +71,7 @@ export function getVideoParts(bvid: string, refresh = false) {
 }
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
 export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh, preferOnline })
+export const getTrackPlaybackPlan = (track: Track, refresh = false) => invoke<{ url: string; upgradeUrl?: string }>('track_playback_plan', { trackId: track.id, refresh })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   if (track.resolveParts && track.source.cid <= 0) {
@@ -220,8 +220,6 @@ export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login
 export const logoutBilibili = () => invoke<void>('bili_logout')
 export const getFavoriteFolders = () => invoke<FavoriteFolder[]>('bili_favorite_folders')
 export const getFavoriteVideos = (folderId: number, page: number) => invoke<FavoritePage>('bili_favorite_videos', { folderId, page })
-export const listLocalAudio = () => invoke<StoredTrack[]>('local_audio_list').then(tracks => tracks.map(fromStoredTrack))
-export const importLocalAudio = (paths: string[]) => invoke<LocalImportResult>('local_audio_import', { paths })
 export const getLinkedFolder = (folderId: number) => invoke<LinkedFolder | null>('bili_linked_folder', { folderId })
 export const refreshLinkedFolder = (folderId: number, link = false) => write<LinkedFolder>('bili_linked_refresh', { folderId, link })
 export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => write<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
@@ -240,7 +238,7 @@ function toTrackInput(track: Track) {
 }
 
 export function fromStoredTrack(track: StoredTrack): Track {
-  return { id: track.id, source: { provider: track.id.startsWith('local:') ? 'local' : 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
+  return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
 }
 
 export { commandErrorMessage } from './userErrors'

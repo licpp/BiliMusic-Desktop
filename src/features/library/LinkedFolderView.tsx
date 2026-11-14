@@ -1,3 +1,5 @@
+import {ListSort,useListSort} from '../../shared/ListSort'
+import {sortList} from '../../services/listOrdering'
 import { ListSearch, matchesListSearch } from '../../shared/ListSearch'
 import { formatDuration } from '../../shared/time'
 import { formatPlayCount } from '../../shared/count'
@@ -29,7 +31,9 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const client = useQueryClient()
   const folder = useQuery({ queryKey: linkedFolderKey(folderId), queryFn: () => getLinkedFolder(folderId) })
   const [filter, setFilter] = useState('')
-  const visibleVideos = (folder.data?.videos || []).filter(video => matchesListSearch(filter, video.title, video.bvid))
+  const sortEntity=`linkedFolder:${folderId}`,listSort=useListSort(sortEntity)
+  const orderedVideos=sortList(folder.data?.videos||[],listSort.rule,video=>({id:video.bvid,name:video.title,date:video.pubtime||listSort.dates[video.bvid]}))
+  const visibleVideos = orderedVideos.filter(video => matchesListSearch(filter, video.title, video.bvid))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -38,7 +42,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const [confirm, setConfirm] = useState<FavoriteVideo>()
   const [bvid, setBvid] = useState('')
   const [adding, setAdding] = useState(false)
-  const attempted = useRef(false)
+  const refreshGeneration = useRef(0)
   const currentBvid = usePlayerStore(state => state.current?.source.bvid)
   const list = useRef<HTMLDivElement>(null)
   const initialVideo = useRef<string | undefined>(usePlayerStore.getState().current?.source.bvid)
@@ -59,16 +63,17 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     finally { setBusy(false) }
   }
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current
+    const epoch = accountEpoch()
     setRefreshing(true)
     setRefreshError('')
     try { await reloadLinkedFolder(client, folderId) }
-    catch (cause) { setRefreshError(commandErrorMessage(cause)) }
-    finally { setRefreshing(false) }
+    catch (cause) { if (generation === refreshGeneration.current && epoch === accountEpoch()) setRefreshError(commandErrorMessage(cause)) }
+    finally { if (generation === refreshGeneration.current && epoch === accountEpoch()) setRefreshing(false) }
   }, [client, folderId])
   useEffect(() => {
-    if (attempted.current) return
-    attempted.current = true
     void refresh()
+    return () => { refreshGeneration.current++ }
   }, [refresh])
 
   const change = async (videoId: string, add: boolean) => {
@@ -82,7 +87,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     await client.invalidateQueries({ queryKey: ['playlists'] })
   }
 
-  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: visibleVideos.map(video => ({ bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }
+  const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: visibleVideos.map(video => ({ publishedAt:video.pubtime, bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }
   const queue = seasonTracks(season)
   return <section className="library-view linked-folder">
     <header>
@@ -99,7 +104,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
       <button type="button" className="collection-primary" disabled={busy} onClick={() => setAdding(value => !value)}><Plus size={16}/>添加视频</button>
       <PlaylistMenu playlist={playlist} onRefresh={refresh} onRemoved={onUnlink}/>
     </div>
-    <ListSearch query={filter} onChange={setFilter} count={visibleVideos.length} label="搜索歌单中的视频"/></div>
+    <ListSort entity={sortEntity}/><ListSearch query={filter} onChange={setFilter} count={visibleVideos.length} label="搜索歌单中的视频"/></div>
     {filter.trim() && !visibleVideos.length && <p className="collection-empty">没有匹配的视频</p>}
     {refreshError && <div className="linked-refresh-error" role="alert">
       <span>{folder.data ? '已保留上次同步的内容。' : ''}{refreshError}</span>

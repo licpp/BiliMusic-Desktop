@@ -17,13 +17,14 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
   // through the subclass's compatibility registry leaves real iOS listeners silent.
   assert.match(swift, /trigger\("state", data: state\)/)
   globalThis.window = { crypto: webcrypto }
-  let handler; const calls = []
+  let handler; const calls = [], queuePayloads = []
   mockIPC((full, payload) => {
     const command = full.split('|')[1]
     assert.ok(commands.has(command), `${command} missing from native command manifest`)
     assert.ok(permissions.has(`allow-${command.replaceAll('_','-')}`), `${command} not permitted`)
     assert.ok(new RegExp(`@objc public func ${command}\\(`).test(swift), `${command} has no exported Swift selector`)
     calls.push(command)
+    if (command === 'queue') queuePayloads.push(payload)
     if (command === 'register_listener') handler = payload.handler
     if (command === 'snapshot') return {id:'test',status:'playing',position:8,revision:3}
   })
@@ -42,5 +43,12 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     await audio.snapshotIOSAudio(); emit(2,2,1); assert.equal(states.length,1); assert.ok(audio.iosPlaybackClock() >= 8); await subscription.unregister()
     assert.deepEqual(calls,['register_listener','control','queue','play','snapshot','remove_listener'])
     assert.ok(!commands.has('secret'), 'Keychain access must remain Rust-only')
+    await audio.syncIOSQueue([track],'off',false,null)
+    assert.equal(queuePayloads.at(-1).autoResume,false)
+    assert.equal(queuePayloads.at(-1).resumeThresholdSeconds,null)
+    await audio.syncIOSQueue([track],'off',false,600,{kind:'season',title:'合集'})
+    assert.equal(queuePayloads.at(-1).autoResume,true)
+    assert.equal(queuePayloads.at(-1).resumeThresholdSeconds,600)
+    assert.equal(queuePayloads.at(-1).collectionPlayback,true)
   } finally { clearMocks() }
 })

@@ -15,6 +15,7 @@ const output = await build({
       export const image = globalThis.ohosTest.image;
       export const rcp = globalThis.ohosTest.rcp;
       export const media = globalThis.ohosTest.media;
+      export const audio = { InterruptType:{INTERRUPT_TYPE_BEGIN:1,INTERRUPT_TYPE_END:2},InterruptHint:{INTERRUPT_HINT_NONE:0,INTERRUPT_HINT_RESUME:1,INTERRUPT_HINT_PAUSE:2,INTERRUPT_HINT_STOP:3,INTERRUPT_HINT_DUCK:4,INTERRUPT_HINT_UNDUCK:5} };
       export const avSession = globalThis.ohosTest.avSession;
       export const backgroundTaskManager = globalThis.ohosTest.background;
       export const asset = globalThis.ohosTest.asset;
@@ -340,5 +341,56 @@ test('quality handoff restores the original player when the prepared candidate c
   assert.equal(original.state,'playing')
   assert.equal(original.currentTime,21_000)
   assert.equal((await h.command('snapshot')).value.status,'playing')
+ }finally{await h.plugin.destroy()}
+})
+
+test('Harmony focus interruptions resume once, preserve buffering intent, and yield to manual pause or stop', async () => {
+  const h=setup()
+  const interrupt=(hint,eventType=1,player=h.player)=>{for(const cb of player.callbacks.audioInterrupt??[])cb({hintType:hint,eventType,forceType:0})}
+  const settle=async()=>{await h.plugin.tasks;await new Promise(setImmediate)}
+  try {
+    await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media',position:42,volume:.5})
+    interrupt(4);assert.equal(h.player.volume,.1);assert.equal(h.plugin.status,'playing')
+    interrupt(5,2);assert.equal(h.player.volume,.5)
+    interrupt(2);interrupt(2);await settle();assert.equal(h.plugin.status,'paused')
+    interrupt(1,2);await settle();assert.equal(h.plugin.status,'playing');assert.equal(h.player.currentTime,42000)
+    await h.command('control',{action:'pause'});interrupt(1,2);await settle();assert.equal(h.plugin.status,'paused')
+    await h.command('control',{action:'resume'});interrupt(2);interrupt(1,2)
+    await h.command('control',{action:'pause'});await settle();assert.equal(h.plugin.status,'paused')
+    await h.command('control',{action:'resume'});interrupt(3);await settle();interrupt(1,2);await settle();assert.equal(h.plugin.status,'paused')
+    await h.command('control',{action:'resume'});interrupt(2);await settle();await h.command('control',{action:'stop'});interrupt(1,2);await settle();assert.equal(h.plugin.player,null)
+  } finally {await h.plugin.destroy()}
+})
+
+test('progressive playback waits for audible progress, then switches at the current clock without changing metadata',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/fast',upgradeUrl:'http://127.0.0.1:1234/hires',position:12,volume:.4})
+  const original=h.plugin.player
+  original.currentTime=12500;h.plugin.maybeUpgrade();await h.plugin.tasks;assert.equal(h.plugin.player,original)
+  original.currentTime=13500;h.plugin.maybeUpgrade();await h.plugin.tasks
+  assert.notEqual(h.plugin.player,original);assert.equal(h.plugin.player.source,'http://127.0.0.1:1234/hires');assert.equal(h.plugin.player.currentTime,13500);assert.equal(h.plugin.player.volume,.4);assert.equal(h.plugin.id,'song');assert.equal(h.plugin.status,'playing')
+ }finally{await h.plugin.destroy()}
+})
+test('automatic quality preparation keeps the low stream playing on failure and never retries endlessly',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/fast',upgradeUrl:'http://127.0.0.1:1234/hires'})
+  const original=h.plugin.player,create=h.mock.media.createAVPlayer;let attempts=0
+  h.mock.media.createAVPlayer=async()=>{attempts++;const next=await create();next.prepare=async()=>next.callbacks.error?.[0]({message:'failed'});return next}
+  original.currentTime=1000;h.plugin.maybeUpgrade();await h.plugin.tasks
+  assert.equal(h.plugin.player,original);assert.equal(original.state,'playing');assert.equal(h.plugin.status,'playing')
+  h.plugin.maybeUpgrade();await h.plugin.tasks;assert.equal(attempts,1)
+ }finally{await h.plugin.destroy()}
+})
+test('manual pause, track changes and quality choices take priority over pending automatic upgrades',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{id:'song',url:'http://127.0.0.1:1234/fast',upgradeUrl:'http://127.0.0.1:1234/hires'})
+  const original=h.plugin.player;original.currentTime=1000
+  h.plugin.maybeUpgrade();await h.command('control',{action:'pause'});await h.plugin.tasks;assert.equal(h.plugin.player,original);assert.equal(original.state,'paused')
+  await h.command('play',{id:'next',url:'http://127.0.0.1:1234/next',upgradeUrl:'http://127.0.0.1:1234/target'})
+  await h.command('play',{id:'next',url:'http://127.0.0.1:1234/manual',seamless:true})
+  const manual=h.plugin.player;manual.currentTime=2000;h.plugin.maybeUpgrade();await h.plugin.tasks;assert.equal(h.plugin.player,manual);assert.equal(manual.source,'http://127.0.0.1:1234/manual')
  }finally{await h.plugin.destroy()}
 })

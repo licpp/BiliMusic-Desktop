@@ -17,12 +17,14 @@ struct QueueTrack: Codable {
 }
 struct PlayArgs: Decodable {
     let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?; let rate: Double?; let collectionRef: String?; let seamless: Bool?
+    let upgradeUrl: String?
 }
 struct ControlArgs: Decodable {
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
 }
 struct QueueArgs: Decodable {
     let tracks: [QueueTrack]; let repeatMode: String; let shuffled: Bool; let autoResume: Bool?
+    let resumeThresholdSeconds: Double?; let collectionPlayback: Bool?
 }
 struct SecretArgs: Decodable {
     let key: String; let value: String?; let remove: Bool?
@@ -52,10 +54,12 @@ struct PlayerSnapshot: Encodable {
 }
 struct ResolveRequest: Encodable {
     let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
+    let resumeThresholdSeconds: Double; let collectionPlayback: Bool
     let refresh: Bool; let position: Double?
 }
 struct ResolvedTrack: Decodable {
     let url: String?; let track: QueueTrack?; let error: String?
+    let upgradeUrl: String?
     let position: Double?; let entryId: String?; let parts: [QueueTrack]?; let lyrics: NativeSavedLyrics?
 }
 
@@ -96,6 +100,8 @@ class PlayerPlugin: Plugin {
     private var sourceCandidate: AVPlayer?
     private var sourceStatus: NSKeyValueObservation?
     private var sourceTimeout: DispatchWorkItem?
+    private var pendingUpgrade: URL?
+    private var upgradeAfterPosition: Double = 0
     private var sourceReply: ((String?) -> Void)?
     private var state = PlayerSnapshot()
     private var tracks: [QueueTrack] = []
@@ -107,13 +113,15 @@ class PlayerPlugin: Plugin {
     private var repeatMode = "off"
     private var shuffled = false
     private var autoResume = true
+    private var resumeThresholdSeconds: Double = 0
+    private var collectionPlayback = false
     private var generation: Int64 = 0
     private var profile = ""
     private var playbackRate: Float = 1
     private var desiredPlaying = false
     private var startPosition: Double = 0
     private var initialSeekPending = false
-    private var resumeAfterInterruption = false
+    private var interruptionResume = InterruptionResume()
     private var pausedAt: TimeInterval?
     private var recoveryAttempted = false
     private var backgroundedAt: TimeInterval?
@@ -203,12 +211,13 @@ class PlayerPlugin: Plugin {
         sourceCandidate?.pause();sourceCandidate?.replaceCurrentItem(with:nil);sourceCandidate=nil
         let reply=sourceReply;sourceReply=nil;reply?(message)
     }
-    private func switchSource(_ url:URL, invoke:Invoke) {
+    private func switchSource(_ url:URL, completion:@escaping (String?)->Void) {
+        pendingUpgrade=nil
         cancelSourceSwitch()
         let request=generation, id=state.id, original=player, seek=seekRevision
         let candidate=AVPlayer(playerItem:AVPlayerItem(url:url));candidate.volume=0;candidate.isMuted=true;candidate.automaticallyWaitsToMinimizeStalling=true
         candidate.currentItem?.preferredForwardBufferDuration=2
-        sourceCandidate=candidate;sourceReply={message in if let message {invoke.reject(message)} else {invoke.resolve()} }
+        sourceCandidate=candidate;sourceReply=completion
         let timeout=DispatchWorkItem { [weak self,weak candidate] in guard let self,self.sourceCandidate===candidate else{return};self.cancelSourceSwitch("新音源准备超时，已保留原音质") }
         sourceTimeout=timeout;DispatchQueue.main.asyncAfter(deadline:.now()+12,execute:timeout)
         guard let item=candidate.currentItem else{cancelSourceSwitch("新音源无法播放");return}
@@ -259,7 +268,7 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(PlayArgs.self)
         onMain { [self] in
             guard let url = localMediaURL(args.url), args.position?.isFinite != false, args.volume?.isFinite != false else { invoke.reject("无效的本机音频地址"); return }
-            if args.seamless == true, state.id == args.id, player.currentItem != nil { switchSource(url,invoke:invoke);return }
+            if args.seamless == true, state.id == args.id, player.currentItem != nil { switchSource(url) { message in if let message {invoke.reject(message)}else{invoke.resolve()} };return }
             cancelSourceSwitch()
             accountListening(flush: true)
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
@@ -274,7 +283,7 @@ class PlayerPlugin: Plugin {
             prepareArtwork(for: state.track)
             state.duration = state.track?.durationSeconds ?? 0
             player.volume = Float(min(1, max(0, args.volume ?? 0.7)))
-            do { try start(url, at: max(0, args.position ?? 0), autoplay: args.playing ?? true); invoke.resolve() }
+            do { try start(url, at: max(0, args.position ?? 0), autoplay: args.playing ?? true, upgrade:args.upgradeUrl.flatMap(localMediaURL)); invoke.resolve() }
             catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
         }
     }
@@ -289,6 +298,8 @@ class PlayerPlugin: Plugin {
                 return [track]
             }.filter { seen.insert($0.id).inserted }
             repeatMode = args.repeatMode; shuffled = args.shuffled; autoResume = args.autoResume ?? true
+            resumeThresholdSeconds = args.resumeThresholdSeconds ?? 0
+            collectionPlayback = args.collectionPlayback ?? false
             if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; prepareArtwork(for: track); nowPlaying() }
             invoke.resolve()
         }
@@ -298,6 +309,7 @@ class PlayerPlugin: Plugin {
         onMain { [self] in
             switch args.action {
             case "prepare":
+                pendingUpgrade=nil;cancelSourceSwitch();interruptionResume.cancel()
                 cancelPlaybackWatchdog()
                 backgroundPlaybackWanted = false
                 recoveryAttempted = false; pausedAt = nil
@@ -466,8 +478,9 @@ class PlayerPlugin: Plugin {
         try session.setCategory(.playback, mode: .default, options: [])
         try session.setActive(true)
     }
-    private func start(_ url: URL, at position: Double = 0, autoplay: Bool = true) throws {
+    private func start(_ url: URL, at position: Double = 0, autoplay: Bool = true, upgrade: URL? = nil) throws {
         cancelSourceSwitch()
+        pendingUpgrade=upgrade;upgradeAfterPosition=position+0.75
         cancelPlaybackWatchdog()
         didFinishTrack = false
         positionSavedAt = ProcessInfo.processInfo.systemUptime - 15
@@ -546,13 +559,13 @@ class PlayerPlugin: Plugin {
         pause()
         return true
     }
-    private func pause() {
+    private func pause(interrupted: Bool = false) {
         cancelPlaybackWatchdog()
         backgroundPlaybackWanted = false
         if pausedAt == nil { pausedAt = Date().timeIntervalSince1970 }
         savePosition(force: true)
         accountListening(flush: true)
-        resumeAfterInterruption = false
+        if !interrupted { interruptionResume.cancel() }
         desiredPlaying = false
         if state.stopped { generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation }
         player.pause(); state.status = "paused"; endBackgroundTask(); publish()
@@ -562,6 +575,7 @@ class PlayerPlugin: Plugin {
         }
     }
     private func resume() {
+        interruptionResume.cancel()
         if expireSleepIfNeeded() { return }
         if desiredPlaying && state.status == "buffering" && state.stopped { return }
         recoveryAttempted = false
@@ -655,6 +669,7 @@ class PlayerPlugin: Plugin {
         state.position = target; publish()
     }
     private func stop() {
+        pendingUpgrade=nil;cancelSourceSwitch()
         notificationLyrics.clear();lastNowPlayingLyric=nil
         cancelPlaybackWatchdog()
         backgroundPlaybackWanted = false
@@ -663,7 +678,7 @@ class PlayerPlugin: Plugin {
         clearSleep()
         savePosition(force: true)
         accountListening(flush: true)
-        resumeAfterInterruption = false
+        interruptionResume.cancel()
         generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; desiredPlaying = false; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state = PlayerSnapshot(revision: generation); tracks = []; expandedEntries = [:]; endBackgroundTask()
@@ -673,9 +688,10 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
+        pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         accountListening(flush: true)
-        resumeAfterInterruption = false
+        interruptionResume.cancel()
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
     }
     private func accountListening(flush: Bool = false) {
@@ -726,6 +742,10 @@ class PlayerPlugin: Plugin {
             if duration.isFinite && duration > 0 { state.duration = duration }
             if desiredPlaying && player.timeControlStatus == .playing { savePosition() }
             if state.error == nil { state.status = desiredPlaying ? (state.advancing ? "playing" : "buffering") : "paused" }
+        }
+        if state.advancing, state.position >= upgradeAfterPosition, let upgrade=pendingUpgrade, sourceCandidate == nil {
+            pendingUpgrade=nil
+            switchSource(upgrade) { _ in /* Keep the initial stream on failure. */ }
         }
         publish()
     }
@@ -808,6 +828,7 @@ class PlayerPlugin: Plugin {
         resolve(tracks[target])
     }
     private func resolve(_ track: QueueTrack, restart: Bool = false, refresh: Bool = false, position: Double? = nil) {
+        pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
@@ -825,7 +846,8 @@ class PlayerPlugin: Plugin {
             self.fail("后台加载超时，请返回应用继续播放")
         }
         publish()
-        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume, refresh: refresh, position: position)),
+        let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
+        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
@@ -844,7 +866,7 @@ class PlayerPlugin: Plugin {
             notificationLyrics.update(NativeLyricsRequest(action:"update",id:track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,subtitles:false))
             prepareArtwork(for: track)
         }
-        do { try start(url, at: result.position ?? 0) } catch { fail(error.localizedDescription) }
+        do { try start(url, at: result.position ?? 0, upgrade:result.upgradeUrl.flatMap(localMediaURL)) } catch { fail(error.localizedDescription) }
     }
     private func returnedToForeground() {
         mediaLifecycle(false)
@@ -873,10 +895,11 @@ class PlayerPlugin: Plugin {
     private func interrupted(_ note: Notification) {
         guard let value = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, let type = AVAudioSession.InterruptionType(rawValue: value) else { return }
         if type == .began {
-            let wasPlaying = desiredPlaying; pause(); resumeAfterInterruption = wasPlaying
+            interruptionResume.begin(wasPlaying: desiredPlaying)
+            pause(interrupted: true)
         } else {
             let options = AVAudioSession.InterruptionOptions(rawValue: note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
-            if resumeAfterInterruption && options.contains(.shouldResume) { resume() }; resumeAfterInterruption = false
+            if interruptionResume.finish(allowed: options.contains(.shouldResume)) { resume() }
         }
     }
     private func bindRemoteCommands() {

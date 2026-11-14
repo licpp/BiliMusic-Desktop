@@ -21,7 +21,6 @@ use crate::infrastructure::repositories::playlists::{
 };
 use crate::infrastructure::repositories::search_history::SearchHistoryRepository;
 use crate::interface::error::CommandError;
-use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
@@ -64,9 +63,9 @@ pub fn library_summary(database: State<'_, Database>) -> Result<LibrarySummary, 
         })
     };
     Ok(LibrarySummary {
-        tracks: count("tracks").map_err(|error| error.to_string())?,
+        tracks: count("tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili'").map_err(|error| error.to_string())?,
         playlists: count("playlists").map_err(|error| error.to_string())?,
-        favorites: count("favorites").map_err(|error| error.to_string())?,
+        favorites: count("favorites f JOIN tracks t ON t.id=f.track_id JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili'").map_err(|error| error.to_string())?,
     })
 }
 
@@ -855,6 +854,22 @@ pub fn download_remove(
     DownloadRepository::remove(&connection, &download_id)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackPlan {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_url: Option<String>,
+}
+impl PlaybackPlan {
+    fn direct(url: String) -> Self {
+        Self {
+            url,
+            upgrade_url: None,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn track_playback_url(
     database: State<'_, Database>,
@@ -864,11 +879,53 @@ pub async fn track_playback_url(
     refresh: Option<bool>,
     prefer_online: Option<bool>,
 ) -> Result<String, CommandError> {
+    playback_plan(
+        database,
+        provider,
+        media_proxy,
+        track_id,
+        refresh,
+        prefer_online,
+        false,
+    )
+    .await
+    .map(|plan| plan.url)
+}
+
+#[tauri::command]
+pub async fn track_playback_plan(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    track_id: String,
+    refresh: Option<bool>,
+) -> Result<PlaybackPlan, CommandError> {
+    playback_plan(
+        database,
+        provider,
+        media_proxy,
+        track_id,
+        refresh,
+        None,
+        true,
+    )
+    .await
+}
+
+async fn playback_plan(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    track_id: String,
+    refresh: Option<bool>,
+    prefer_online: Option<bool>,
+    progressive: bool,
+) -> Result<PlaybackPlan, CommandError> {
     media_proxy
         .ensure_running()
         .await
         .map_err(|_| CommandError::provider("本机音频服务恢复失败，请稍后重试"))?;
-    let (track, paths, local_path) = {
+    let (track, paths) = {
         let connection = database
             .0
             .lock()
@@ -882,26 +939,8 @@ pub async fn track_playback_url(
             .map_err(CommandError::database)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CommandError::database)?;
-        let local_path = connection
-            .query_row(
-                "SELECT path FROM local_audio WHERE track_id=?1",
-                [&track_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(CommandError::database)?;
-        (track, paths, local_path)
+        (track, paths)
     };
-    if let Some(local_path) = local_path {
-        let path = std::path::PathBuf::from(local_path);
-        if !tokio::fs::metadata(&path)
-            .await
-            .is_ok_and(|m| m.is_file() && m.len() > 0)
-        {
-            return Err(CommandError::validation("本地音频文件已移动或无法访问"));
-        }
-        return Ok(media_proxy.register_local(path).await);
-    }
     for path in paths
         .into_iter()
         .filter(|_| !prefer_online.unwrap_or(false))
@@ -911,7 +950,7 @@ pub async fn track_playback_url(
             .await
             .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
         {
-            return Ok(media_proxy.register_local(path).await);
+            return Ok(PlaybackPlan::direct(media_proxy.register_local(path).await));
         }
     }
     let quality = {
@@ -929,28 +968,61 @@ pub async fn track_playback_url(
         provider.invalidate_playback(&track.bvid, track.cid).await;
     }
     if !refresh.unwrap_or(false) {
-        if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
-            return Ok(url);
+        let cached = if progressive {
+            media_proxy
+                .complete_cached_audio(&track_id, quality.audio_id)
+                .await
+        } else {
+            media_proxy.cached_audio(&track_id, quality.audio_id).await
+        };
+        if let Some(url) = cached {
+            return Ok(PlaybackPlan::direct(url));
         }
     }
-    let source = match provider
-        .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
-        .await
-    {
+    let sources = if progressive {
+        provider
+            .playback_startup_sources(&track.bvid, track.cid, quality.audio_id)
+            .await
+    } else {
+        provider
+            .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
+            .await
+            .map(|source| (source, None))
+    };
+    let (source, initial) = match sources {
         Ok(source) => source,
         Err(error) => {
             if prefer_online.unwrap_or(false) {
                 return Err(CommandError::provider(error));
             }
             if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
-                return Ok(url);
+                return Ok(PlaybackPlan::direct(url));
             }
             return Err(CommandError::provider(error));
         }
     };
-    Ok(media_proxy
+    let target_bandwidth = source.bandwidth;
+    let target = media_proxy
         .register_audio(&track_id, &track.bvid, track.cid, quality.audio_id, source)
-        .await)
+        .await;
+    if let Some(initial) = initial {
+        let target = media_proxy.guard_upgrade(&target, target_bandwidth).await;
+        let url = media_proxy
+            .register_audio(
+                &track_id,
+                &track.bvid,
+                track.cid,
+                initial.quality_id,
+                initial,
+            )
+            .await;
+        Ok(PlaybackPlan {
+            url,
+            upgrade_url: Some(target),
+        })
+    } else {
+        Ok(PlaybackPlan::direct(target))
+    }
 }
 
 #[tauri::command]
@@ -963,11 +1035,6 @@ pub fn library_save_track(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
-    if track.id.starts_with("local:") {
-        return LibraryRepository::get(&connection, &track.id)
-            .map_err(CommandError::database)?
-            .ok_or_else(|| CommandError::validation("本地歌曲尚未导入"));
-    }
     LibraryRepository::upsert(&mut connection, &track).map_err(CommandError::database)
 }
 
@@ -1009,6 +1076,7 @@ pub async fn mobile_export_download(
     database: State<'_, Database>,
     download_id: String,
 ) -> Result<(), CommandError> {
+    use rusqlite::OptionalExtension;
     use tauri::Manager;
     let target: String = {
         let connection = database
@@ -1301,13 +1369,6 @@ pub(super) fn valid_bvid(value: &str) -> bool {
 }
 
 fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
-    if track
-        .id
-        .strip_prefix("local:")
-        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
-    {
-        return Ok(());
-    }
     let expected_id = SourceIdentity {
         provider: "bilibili".into(),
         bvid: track.bvid.clone(),

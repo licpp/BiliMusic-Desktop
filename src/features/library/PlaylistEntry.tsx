@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Album, FolderOpen, Heart, Link2, ListPlus, Pencil, Play, RefreshCw, Trash2, Unlink2 } from 'lucide-react'
+import { Album, ListChecks, FolderOpen, Heart, Link2, ListPlus, Pencil, Play, RefreshCw, Trash2, Unlink2 } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { commandErrorMessage, deletePlaylist, listPlaylistTracks, renamePlaylist, unlinkBiliFolder, type Playlist } from '../../services/desktopApi'
 import { linkedFolderKey, reloadLinkedFolder } from '../../services/linkedFolders'
@@ -11,8 +11,9 @@ import type { MenuPosition } from '../../shared/useRowContextMenu'
 import { usePlayerStore } from '../player/playerStore'
 import { LibraryEntry } from './LibraryEntry'
 
-export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch, contextPosition }: {
+export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch, contextPosition, listActions }: {
   playlist: Playlist
+  listActions?: { select: () => void; play: () => void; enqueue: () => void; disabled: boolean }
   onOpen?: () => void
   onRemoved?: () => void
   onRefresh?: () => Promise<unknown>
@@ -49,13 +50,14 @@ export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch
   })
   return <>
     <ActionMenu sheet label={`${label}操作：${playlist.name}`} contextPosition={contextPosition}>{close => <>
+      {listActions && <button role="menuitem" disabled={busy || listActions.disabled} onClick={() => { close(); listActions.select() }}><ListChecks size={16}/>多选歌曲</button>}
       {onOpen && <button role="menuitem" onClick={() => { close(); onOpen() }}><FolderOpen size={16}/>打开{label}</button>}
       {folderId ? <>
         <button role="menuitem" disabled={busy} onClick={() => { close(); void run(() => onRefresh ? onRefresh() : reloadLinkedFolder(client, folderId)) }}><RefreshCw size={16}/>刷新收藏夹</button>
         <button role="menuitem" disabled={busy} onClick={() => { close(); prepare('unlink') }}><Unlink2 size={16}/>解除关联</button>
       </> : <>
-        <button role="menuitem" disabled={busy || !playlist.trackCount} onClick={() => { close(); void play(false) }}><Play size={16}/>播放全部</button>
-        <button role="menuitem" disabled={busy || !playlist.trackCount} onClick={() => { close(); void play(true) }}><ListPlus size={16}/>全部加入队列</button>
+        <button role="menuitem" disabled={busy || (listActions ? listActions.disabled : !playlist.trackCount)} onClick={() => { close(); if (listActions) listActions.play(); else void play(false) }}><Play size={16}/>播放全部</button>
+        <button role="menuitem" disabled={busy || (listActions ? listActions.disabled : !playlist.trackCount)} onClick={() => { close(); if (listActions) listActions.enqueue(); else void play(true) }}><ListPlus size={16}/>全部加入队列</button>
         {onRematch&&<button role="menuitem" disabled={busy||!playlist.trackCount} onClick={()=>{close();onRematch()}}><RefreshCw size={16}/>重新匹配视频</button>}
         {!playlist.isSystem && <>
           <button role="menuitem" disabled={busy} onClick={() => { close(); prepare('rename') }}><Pencil size={16}/>重命名歌单</button>

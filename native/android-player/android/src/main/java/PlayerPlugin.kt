@@ -26,6 +26,7 @@ class PlayArgs {
     var volume: Double = 0.7
     var playing: Boolean = true
     var seamless: Boolean = false
+    var upgradeUrl: String? = null
     var rate: Double = 1.0
     var collectionRef: String? = null
 }
@@ -214,6 +215,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)
+            .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
             .putExtra("title", args.title).putExtra("artist", args.artist)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)

@@ -13,6 +13,9 @@ export function reloadLinkedFolder(client: QueryClient, folderId: number, link =
   if (pending) return pending
   const request = refreshLinkedFolder(folderId, link).then(async folder => {
     if (epoch === accountEpoch()) {
+      // A slow local cache read must not overwrite the completed remote snapshot.
+      await client.cancelQueries({ queryKey: linkedFolderKey(folderId), exact: true })
+      if (epoch !== accountEpoch()) return folder
       client.setQueryData(linkedFolderKey(folderId), folder)
       await client.invalidateQueries({ queryKey: ['playlists'] })
     }

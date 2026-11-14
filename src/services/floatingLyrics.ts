@@ -92,7 +92,7 @@ export function startFloatingLyrics() {
     if (currentKey() !== trackKey) void load()
     else if (state.current?.title !== previous.current?.title || state.current?.artist !== previous.current?.artist || !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   })
-  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
+  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
   useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()})
   window.addEventListener('bilimusic-floating-lyrics-change',configure)
   configure()

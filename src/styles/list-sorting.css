@@ -1,0 +1,42 @@
+/* A toolbar control shared by playlists, saved collections and linked folders. */
+.list-sort-control { display:inline-flex;align-items:center;gap:6px;min-width:0;flex:none; }
+.list-sort-control>.action-menu-trigger.action-menu-trigger {
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:none;
+  width:auto;height:36px;min-width:0;padding:0 11px;border:1px solid var(--line);
+  border-radius:10px;background:var(--panel-raised);color:var(--muted);font:inherit;
+  font-size:12px;line-height:1;white-space:nowrap;cursor:pointer;
+}
+.list-sort-control>.action-menu-trigger svg { flex:none; }
+.list-sort-control>.action-menu-trigger>:first-child { color:var(--cyan); }
+.list-sort-control>.action-menu-trigger:is(:hover,[aria-expanded="true"]) {
+  border-color:color-mix(in srgb,var(--cyan) 35%,var(--line));
+  background:color-mix(in srgb,var(--cyan) 7%,var(--panel));color:var(--ink);
+}
+.list-sort-control>.action-menu-trigger:focus-visible { outline:2px solid var(--cyan);outline-offset:3px; }
+.sort-trigger-chevron { opacity:.65; }
+[aria-expanded="true"]>.sort-trigger-chevron { transform:rotate(180deg); }
+.action-menu-panel.list-sort-menu { width:258px;padding:7px; }
+.list-sort-menu>button[role="menuitemradio"] {
+  display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:10px 11px;
+  border:0;border-radius:8px;background:transparent;color:var(--ink);font:inherit;font-size:13px;text-align:left;
+}
+.list-sort-menu>button[role="menuitemradio"]>span { flex:1; }
+.list-sort-menu>button[role="menuitemradio"]>svg { flex:none;color:var(--muted); }
+.list-sort-menu>button[role="menuitemradio"]>small { color:var(--muted);font-size:11px; }
+.list-sort-menu>button[aria-checked="true"] { background:color-mix(in srgb,var(--cyan) 10%,var(--panel)); }
+.list-sort-menu>button[aria-checked="true"]>svg { color:var(--cyan); }
+.list-sort-menu>.sort-menu-note { display:block;margin-top:6px;padding:11px 11px 5px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;line-height:1.6; }
+.action-menu-panel.list-sort-menu.action-menu-sheet { width:100%;padding:0 14px calc(16px + env(safe-area-inset-bottom)); }
+@media(max-width:620px) {
+  .list-sort-control>.action-menu-trigger.action-menu-trigger { min-height:40px;padding-inline:10px;font-size:12px; }
+  .action-menu-panel.list-sort-menu.action-menu-sheet { width:100%;padding:0 14px calc(16px + env(safe-area-inset-bottom)); }
+  .list-sort-menu>button[role="menuitemradio"] { min-height:48px;padding:12px;font-size:14px; }
+}
+/* Sorting is a peer of search and more, rather than a separate form field. */
+.list-sort-control>.action-menu-trigger.action-menu-trigger {
+  display:grid;place-items:center;width:36px;min-width:36px;height:36px;min-height:36px;padding:0;gap:0;border:0;background:transparent;color:var(--muted);
+}
+.list-sort-control>.action-menu-trigger>:first-child { width:18px;height:18px;color:inherit; }
+.list-sort-control .sort-current-label,.list-sort-control .sort-trigger-chevron { display:none; }
+.list-sort-control>.action-menu-trigger:is(:hover,[aria-expanded="true"]) { color:var(--cyan);background:color-mix(in srgb,var(--cyan) 7%,transparent); }
+@media(max-width:960px) { .library-list-toolbar-compact .list-sort-control>.action-menu-trigger.action-menu-trigger { width:40px;min-width:40px;height:40px;min-height:40px; } }

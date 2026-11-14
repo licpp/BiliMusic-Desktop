@@ -43,3 +43,12 @@ test('采样说明、双语括号不把搜索词无限加长，Live仍保留',()
 test('来源的电视剧说明不能当作曲名别名，把同剧其他歌曲匹配进来',()=>{
   assert.equal(chooseImportMatch({...song,aliases:['电视剧《某某》片头曲']},[choice(1,'周杰伦 电视剧《某某》片头曲 其他歌曲')]),undefined)
 })
+test('QQ original aliases never discard orchestral and instrumental version requirements',()=>{
+ for(const suffix of ['Orch','Orchestral','管弦版','Inst.']) {
+  const source={sourceId:'qq:1',title:`River Flows (${suffix})`,artists:['Artist'],durationSeconds:198,aliases:['River Flows']}
+  assert.equal(chooseImportMatch(source,[choice(1,'Artist - River Flows',198)]),undefined,suffix)
+  assert.ok(chooseImportMatch(source,[choice(1,`Artist - River Flows (${suffix})`,198)]),suffix)
+ }
+ assert.equal(chooseImportMatch({...song,title:'千秋 (Orch)',aliases:['千秋']},[choice(1,'周杰伦《千秋》')]),undefined)
+ assert.equal(chooseImportMatch({...song,title:'River Flows',artists:['Artist']},[choice(1,'Artist - River Flows (Orch)')]),undefined)
+})

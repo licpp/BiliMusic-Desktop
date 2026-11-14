@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { ArrowLeft, ArrowRight, Check, ChevronRight, FileText, FolderHeart, Link2, ListPlus, LoaderCircle, Minus, Music2, Pause, Play, RefreshCw, Search, Square, X } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
-import { toTrack } from '../../services/collectionTrack'
+import { importFavoriteFolders, type FolderImportResult } from '../../services/biliFavoriteImport'
 import { commandErrorMessage, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, listPlaylistTracks, type Playlist } from '../../services/desktopApi'
 import { reloadLinkedFolder } from '../../services/linkedFolders'
 import { parseSongList, type ImportChoice, type ImportPlaylist } from '../../services/playlistImportModel'
@@ -33,10 +33,12 @@ export function ImportFavorites({onClose,onImported,reviewPlaylist}:{onClose:()=
   const [reviewJob,setReviewJob]=useState<ImportJob|null>(null)
   const job=reviewPlaylist?reviewJob:backgroundJob
   const [page,setPage]=useState<Source|'sources'|'progress'>(reviewPlaylist?'progress':'sources')
-  const [mode,setMode]=useState<'copy'|'link'>('link'),[folderId,setFolderId]=useState<number>()
+  const [mode,setMode]=useState<'copy'|'link'>('link'),[folderIds,setFolderIds]=useState<Set<number>>(()=>new Set())
   const [input,setInput]=useState(''),[name,setName]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[biliStatus,setBiliStatus]=useState(''),[partialId,setPartialId]=useState('')
   const [filter,setFilter]=useState<'all'|'missing'>('all'),[visible,setVisible]=useState(40),[expanded,setExpanded]=useState<number>(),[keyword,setKeyword]=useState(''),[manualBusy,setManualBusy]=useState(false),[manualChoices,setManualChoices]=useState<ImportChoice[]>([])
   const [resultQuery,setResultQuery]=useState('')
+  const [biliResults,setBiliResults]=useState<FolderImportResult[]>([])
+  const copyIds=useRef(new Map<number,string>())
   const cancelled=useRef(false),manualAbort=useRef<AbortController|undefined>(undefined),dialog=useRef<HTMLDivElement>(null)
   const account=useQuery({queryKey:['account'],queryFn:getAccountProfile,enabled:page==='bili'})
   const folders=useQuery({queryKey:['bili-favorites',account.data?.userId],queryFn:getFavoriteFolders,enabled:page==='bili'&&Boolean(account.data?.loggedIn)})
@@ -77,39 +79,28 @@ export function ImportFavorites({onClose,onImported,reviewPlaylist}:{onClose:()=
     finally{if(!cancelled.current)setBusy(false)}
   }
   const importBili=async()=>{
-    const folder=folders.data?.find(item=>item.id===folderId)
-    if(!folder||!scope)return
-    setBusy(true);setError('');setPartialId('')
-    const epoch=accountEpoch(),id=`import:${crypto.randomUUID()}`
-    let count=0,failed=0
-    const stopped=()=>cancelled.current||epoch!==accountEpoch()
+    if(busy)return
+    const selected=(folders.data||[]).filter(folder=>folderIds.has(folder.id))
+    if(!selected.length){setError('请先选择收藏夹');return}
+    setBusy(true);setError('');setBiliStatus('正在准备导入…');setBiliResults([])
+    const epoch=accountEpoch(),stopped=()=>cancelled.current||epoch!==accountEpoch()
     try {
-      if(mode==='link') {
-        setBiliStatus('正在关联收藏夹…');await reloadLinkedFolder(client,folder.id,true)
-        if(!stopped())onImported(`bili-folder:${folder.id}`,'link')
-        return
-      }
-      for(let page=1;!stopped();page++) {
-        const result=await getFavoriteVideos(folder.id,page)
-        for(const video of result.medias||[]) {
-          if(stopped())break
-          setBiliStatus(`正在导入「${video.title}」 · 已保存 ${count} 首`)
-          try {
-            const detail=await getVideoParts(video.bvid)
-            if(stopped())break
-            for(let offset=0;offset<detail.parts.length;offset+=100) {
-              if(stopped())break
-              const entries=detail.parts.slice(offset,offset+100).map(part=>({track:toTrack(detail,part)}))
-              const saved=await commitImportTracks(scope,id,folder.title.slice(0,80),entries)
-              count=saved.trackCount;if(!stopped())setPartialId(id)
-            }
-          }catch(cause){if(stopped())break;failed++;setError(`${failed} 个视频暂未导入：${commandErrorMessage(cause)}`)}
-        }
-        if(!result.has_more||!result.medias?.length)break
-      }
-      if(!stopped())setBiliStatus(`已导入 ${count} 首${failed?`，${failed} 个视频暂不可用`:''}`)
+      await bootPlaylistImport()
+      if(stopped())return
+      const currentScope=usePlaylistImport.getState().scope
+      if(!currentScope)throw new Error('导入准备失败，请重试')
+      const results=await importFavoriteFolders({folders:selected,mode,scope:currentScope,copyIds:copyIds.current,stopped,
+        progress:text=>{if(!stopped())setBiliStatus(text)},
+        result:value=>{if(!stopped()){setBiliResults(items=>[...items,value]);if(mode==='copy'&&value.id)setPartialId(value.id)}},
+        link:id=>reloadLinkedFolder(client,id,true),videos:getFavoriteVideos,detail:getVideoParts,save:commitImportTracks,
+      })
+      if(stopped())return
+      const failed=results.filter(result=>result.error)
+      setFolderIds(new Set(failed.map(result=>result.folderId)))
+      setBiliStatus(`已完成 ${results.length-failed.length} 个收藏夹${failed.length?`，${failed.length} 个待重试`:''}`)
+      if(selected.length===1&&mode==='link'&&!failed.length&&results[0]?.id)onImported(results[0].id,'link')
     }catch(cause){if(!stopped())setError(commandErrorMessage(cause))}
-    finally{if(!stopped())setBusy(false);await refresh()}
+    finally{if(!stopped()){setBusy(false);await refresh()}}
   }
   const searchRow=async(index:number,term:string)=>{
     if(!job||!term.trim())return
@@ -160,9 +151,9 @@ export function ImportFavorites({onClose,onImported,reviewPlaylist}:{onClose:()=
           <label className="import-name-field">歌单名称 <span>选填</span><input maxLength={80} value={name} disabled={busy} onChange={event=>setName(event.target.value)} placeholder="默认沿用原歌单名称"/></label><div className="import-note"><Music2 size={18}/><p>自动匹配并保存，未找到的歌曲会跳过。导入后仍可更换版本。</p></div>
         </form>}
         {page==='bili'&&<>
-          <div className="bili-copy-setting"><div><strong id="bili-copy-label">复制为本地歌单</strong><small>{mode==='copy'?'复制到“歌单”，之后独立管理。':'保存到“歌单”，与 B 站保持同步。'}</small></div><button className="bili-copy-switch" type="button" role="switch" aria-labelledby="bili-copy-label" aria-checked={mode==='copy'} disabled={busy} onClick={()=>setMode(mode==='copy'?'link':'copy')}><span/></button></div>
-          <div className="import-section-label">选择收藏夹</div>
-          {!account.data?.loggedIn?<div className="import-empty"><FolderHeart size={28}/><p>请先登录 B 站账号，再选择收藏夹。</p></div>:folders.isLoading?<p className="import-inline-status"><LoaderCircle className="spin" size={17}/>正在读取收藏夹…</p>:folders.isError?<button className="import-secondary" onClick={()=>void folders.refetch()}>读取失败，重试</button>:<div className="import-folders">{folders.data?.map(folder=><button disabled={busy} key={folder.id} aria-pressed={folder.id===folderId} onClick={()=>setFolderId(folder.id)}><span className="import-folder-icon"><FolderHeart size={21}/></span><span><strong>{folder.title}</strong><small>{folder.media_count} 个视频</small></span><span className="import-selection">{folder.id===folderId&&<Check size={15}/>}</span></button>)}{folders.data?.length===0&&<p className="import-hint">还没有可导入的收藏夹。</p>}</div>}
+          <div className="bili-copy-setting"><div><strong id="bili-copy-label">复制为本地歌单</strong><small>{mode==='copy'?'复制到“歌单”，之后独立管理。':'保存到“歌单”，与 B 站保持同步。'}</small></div><button className="bili-copy-switch" type="button" role="switch" aria-labelledby="bili-copy-label" aria-checked={mode==='copy'} disabled={busy} onClick={()=>{setMode(mode==='copy'?'link':'copy');setBiliResults([]);setBiliStatus('');setPartialId('')}}><span/></button></div>
+          <div className="import-folder-toolbar"><span>选择收藏夹{folderIds.size>0?` · 已选 ${folderIds.size} 个`:''}</span>{Boolean(folders.data?.length)&&<button type="button" disabled={busy} onClick={()=>setFolderIds(new Set(folderIds.size===folders.data!.length?[]:folders.data!.map(folder=>folder.id)))}>{folderIds.size===folders.data!.length?'取消全选':'全选'}</button>}</div>
+          {!account.data?.loggedIn?<div className="import-empty"><FolderHeart size={28}/><p>请先登录 B 站账号，再选择收藏夹。</p></div>:folders.isLoading?<p className="import-inline-status"><LoaderCircle className="spin" size={17}/>正在读取收藏夹…</p>:folders.isError?<button className="import-secondary" onClick={()=>void folders.refetch()}>读取失败，重试</button>:<div className="import-folders">{folders.data?.map(folder=><button disabled={busy} key={folder.id} aria-pressed={folderIds.has(folder.id)} onClick={()=>setFolderIds(ids=>{const next=new Set(ids);if(next.has(folder.id))next.delete(folder.id);else next.add(folder.id);return next})}><span className="import-folder-icon"><FolderHeart size={21}/></span><span><strong>{folder.title}</strong><small>{folder.media_count} 个视频</small>{biliResults.find(result=>result.folderId===folder.id)&&<span className={biliResults.find(result=>result.folderId===folder.id)?.error?'import-folder-error':'import-folder-done'}>{biliResults.find(result=>result.folderId===folder.id)?.error||'已完成'}</span>}</span><span className="import-selection">{folderIds.has(folder.id)&&<Check size={15}/>}</span></button>)}{folders.data?.length===0&&<p className="import-hint">还没有可导入的收藏夹。</p>}</div>}
           {biliStatus&&<p className="import-inline-status">{busy&&<LoaderCircle className="spin" size={16}/>} {biliStatus}</p>}
         </>}
         {page==='progress'&&job&&<>
@@ -182,7 +173,7 @@ export function ImportFavorites({onClose,onImported,reviewPlaylist}:{onClose:()=
           {job.state==='done'&&missing>0&&<button className="import-secondary" onClick={()=>void runPlaylistImport(true).then(()=>refresh())}><RefreshCw size={15}/>重试未匹配</button>}
           {job.state!=='done'&&<button className="import-secondary" onClick={endImport} title="保留已保存的歌曲，停止后续导入"><Square size={14}/>结束导入</button>}
           {saved>0&&<button className={job.state==='done'?'import-primary':'import-secondary'} onClick={()=>{void refresh();onImported(job.playlistId,'copy')}}>打开歌单<ArrowRight size={16}/></button>}
-        </>:page==='bili'?<><small>导入到我的歌单</small>{busy&&mode==='copy'&&<button className="import-secondary" onClick={dismiss}><Square size={14}/>结束导入</button>}{partialId&&!busy?<button className="import-primary" onClick={()=>onImported(partialId,'copy')}>打开歌单<ArrowRight size={16}/></button>:<button className="import-primary" disabled={busy||!folderId||!scope} onClick={()=>void importBili()}>{busy?<LoaderCircle size={17} className="spin"/>:mode==='copy'?<ListPlus size={17}/>:<Link2 size={17}/>} {busy?'正在处理…':mode==='copy'?'导入歌单':'关联收藏夹'}</button>}</>:<><small>自动匹配，无需逐首确认</small><button className="import-primary" type="submit" form="external-playlist-form" disabled={busy||!input.trim()||!scope}>{busy?<LoaderCircle size={17} className="spin"/>:<ListPlus size={18}/>} {busy?'读取歌单中…':'开始导入'}</button></>}
+        </>:page==='bili'?<><small>{folderIds.size?`已选 ${folderIds.size} 个收藏夹`:'导入到我的歌单'}</small>{busy&&<button className="import-secondary" onClick={dismiss}><Square size={14}/>结束导入</button>}{partialId&&!busy&&<button className="import-secondary" onClick={()=>onImported(partialId,'copy')}>打开歌单<ArrowRight size={16}/></button>}<button className="import-primary" disabled={busy||!folderIds.size} onClick={()=>void importBili()}>{busy?<LoaderCircle size={17} className="spin"/>:mode==='copy'?<ListPlus size={17}/>:<Link2 size={17}/>} {busy?'正在处理…':biliResults.some(result=>result.error)?'重试所选':mode==='copy'?'导入歌单':'关联收藏夹'}</button></>:<><small>自动匹配，无需逐首确认</small><button className="import-primary" type="submit" form="external-playlist-form" disabled={busy||!input.trim()||!scope}>{busy?<LoaderCircle size={17} className="spin"/>:<ListPlus size={18}/>} {busy?'读取歌单中…':'开始导入'}</button></>}
       </footer>}
     </div>
   </div>
