@@ -37,6 +37,8 @@ test('采样说明、双语括号不把搜索词无限加长，Live仍保留',()
   assert.equal(importKeyword({...song,title:'Hong Kong (feat. 王菲季候风)',artists:['The Weeknd']}),'Hong Kong The Weeknd')
   assert.equal(importKeyword({...song,title:'日日 (Days)',artists:['陈粒']}),'日日 陈粒')
   assert.match(importKeyword({...song,title:'晴天 (Live)'}),/Live/)
+  assert.equal(importKeyword({...song,title:'浮光 (Inst.)',artists:['纯音乐']}),'浮光 纯音乐')
+  assert.equal(importKeyword({...song,title:'이젠 남 (现在是陌生人) (Now, we are strangers|Inst.)',artists:['Noblesse']}),'이젠 남 (现在是陌生人) Noblesse')
 })
 test('来源的电视剧说明不能当作曲名别名，把同剧其他歌曲匹配进来',()=>{
   assert.equal(chooseImportMatch({...song,aliases:['电视剧《某某》片头曲']},[choice(1,'周杰伦 电视剧《某某》片头曲 其他歌曲')]),undefined)

@@ -205,6 +205,88 @@ fn netease_song(song: &Value) -> Option<ExternalSong> {
     })
 }
 
+fn split_artist(name: &str) -> Vec<String> {
+    let name = name.trim();
+    let Some(index) = name.rfind(|c| c == '(' || c == '（') else {
+        return vec![name.to_owned()];
+    };
+    let outer = name[..index].trim();
+    let inner = name[index..]
+        .chars()
+        .skip(1)
+        .collect::<String>()
+        .trim()
+        .trim_end_matches(|c| c == ')' || c == '）')
+        .trim()
+        .to_owned();
+    if outer.is_empty()
+        || inner.is_empty()
+        || inner
+            .chars()
+            .any(|c| matches!(c, '/' | '、' | ',' | '，' | '(' | '（'))
+    {
+        return vec![name.to_owned()];
+    }
+    vec![outer.to_owned(), inner]
+}
+
+fn qq_artists(song: &Value) -> Vec<String> {
+    names(song, "singer")
+        .into_iter()
+        .flat_map(|name| split_artist(&name))
+        .collect()
+}
+
+fn qq_song(song: &Value) -> Option<ExternalSong> {
+    let title = song["songname"].as_str()?.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let original = song["songorig"]
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != title);
+    Some(ExternalSong {
+        source_id: song["songid"].to_string(),
+        title: title.to_owned(),
+        artists: qq_artists(song),
+        aliases: original.into_iter().map(str::to_owned).collect(),
+        duration_seconds: song["interval"].as_f64().unwrap_or(0.0),
+        album: song["albumname"]
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned),
+        cover_url: None,
+    })
+}
+
+fn qq_page_url(id: &str, begin: usize) -> Url {
+    Url::parse_with_params(
+        "https://i.y.qq.com/qzone-music/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
+        &[
+            ("type", "1"),
+            ("json", "1"),
+            ("utf8", "1"),
+            ("onlysong", "0"),
+            ("nosign", "1"),
+            ("disstid", id),
+            ("format", "json"),
+            ("g_tk", "5381"),
+            ("loginUin", "0"),
+            ("hostUin", "0"),
+            ("inCharset", "utf8"),
+            ("outCharset", "utf-8"),
+            ("notice", "0"),
+            ("platform", "yqq"),
+            ("needNewCode", "0"),
+            ("song_begin", &begin.to_string()),
+            ("song_num", "100"),
+        ],
+    )
+    .unwrap()
+}
+
 async fn read_playlist(input: &str) -> Result<ExternalPlaylist, CommandError> {
     // Separate cookie-free client: never forward Bilibili login credentials to other services.
     let client = Client::builder()
@@ -308,57 +390,67 @@ async fn read_playlist(input: &str) -> Result<ExternalPlaylist, CommandError> {
             songs,
         });
     }
-    let url = Url::parse_with_params(
-        "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
-        &[
-            ("type", "1"),
-            ("json", "1"),
-            ("utf8", "1"),
-            ("onlysong", "0"),
-            ("disstid", id.as_str()),
-            ("format", "json"),
-            ("g_tk", "5381"),
-        ],
-    )
-    .unwrap();
-    let data = json(&client, url, "https://y.qq.com/").await?;
-    let cd = &data["cdlist"][0];
-    let items = cd["songlist"]
-        .as_array()
-        .filter(|_| data["code"].as_i64() == Some(0))
-        .ok_or_else(|| {
-            CommandError::provider("无法读取这份 QQ 歌单，请确认已公开，或改用文本导入")
-        })?;
-    if items.len() > MAX_SONGS {
-        return Err(CommandError::validation(
-            "一次最多导入 5000 首，请将歌单分批导入",
+    let mut songs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut name = "QQ 音乐歌单".to_owned();
+    let mut reported = 0usize;
+    let mut begin = 0usize;
+    loop {
+        let data = json(&client, qq_page_url(&id, begin), "https://y.qq.com/").await?;
+        if data["code"].as_i64() != Some(0) || data["subcode"].as_i64().unwrap_or(0) != 0 {
+            return Err(CommandError::provider(
+                "无法读取这份 QQ 歌单，请确认已公开，或改用文本导入",
+            ));
+        }
+        let cd = &data["cdlist"][0];
+        if begin == 0 {
+            if let Some(title) = cd["dissname"]
+                .as_str()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+            {
+                name = title.to_owned();
+            }
+            reported = cd["total_song_num"]
+                .as_u64()
+                .or(cd["songnum"].as_u64())
+                .unwrap_or(0) as usize;
+            if reported > MAX_SONGS {
+                return Err(CommandError::validation(
+                    "一次最多导入 5000 首，请将歌单分批导入",
+                ));
+            }
+        }
+        let Some(items) = cd["songlist"].as_array().filter(|items| !items.is_empty()) else {
+            break;
+        };
+        let before = songs.len();
+        for song in items {
+            let Some(song) = qq_song(song) else { continue };
+            if !seen.insert(song.source_id.clone()) {
+                continue;
+            }
+            songs.push(song);
+            if songs.len() > MAX_SONGS {
+                return Err(CommandError::validation(
+                    "一次最多导入 5000 首，请将歌单分批导入",
+                ));
+            }
+        }
+        begin += items.len();
+        if songs.len() == before || items.len() < 100 || (reported > 0 && begin >= reported) {
+            break;
+        }
+    }
+    if songs.is_empty() {
+        return Err(CommandError::provider(
+            "无法读取这份 QQ 歌单，请确认已公开，或改用文本导入",
         ));
     }
-    let mut seen = HashSet::new();
-    let songs: Vec<_> = items
-        .iter()
-        .filter_map(|s| {
-            let title = s["songname"].as_str()?.trim();
-            let id = s["songid"].to_string();
-            if title.is_empty() || !seen.insert(id.clone()) {
-                return None;
-            }
-            Some(ExternalSong {
-                source_id: id,
-                title: title.into(),
-                artists: names(s, "singer"),
-                aliases: vec![],
-                duration_seconds: s["interval"].as_f64().unwrap_or(0.0),
-                album: s["albumname"].as_str().map(str::to_owned),
-                cover_url: None,
-            })
-        })
-        .collect();
-    let reported = cd["songnum"].as_u64().unwrap_or(items.len() as u64) as usize;
     Ok(ExternalPlaylist {
-        name: cd["dissname"].as_str().unwrap_or("QQ 音乐歌单").into(),
+        name,
         source: source.into(),
-        reported_count: reported,
+        reported_count: reported.max(songs.len()),
         unavailable_count: reported.saturating_sub(songs.len()),
         songs,
     })
@@ -550,6 +642,42 @@ mod tests {
             .unwrap();
         assert_eq!(qq.source, "qq");
         assert!(!qq.songs.is_empty());
+    }
+    #[test]
+    fn qq_song_keeps_version_title_original_alias_and_splits_artist() {
+        let instrumental = qq_song(&serde_json::json!({
+            "songid": 394240052,
+            "songname": "浮光 (Inst.)",
+            "songorig": "浮光",
+            "interval": 258,
+            "albumname": "",
+            "singer": [{"name": "纯音乐"}]
+        }))
+        .unwrap();
+        assert_eq!(instrumental.title, "浮光 (Inst.)");
+        assert_eq!(instrumental.aliases, ["浮光"]);
+        assert_eq!(instrumental.artists, ["纯音乐"]);
+        assert!(instrumental.album.is_none());
+        let artist = qq_song(&serde_json::json!({
+            "songid": 233812615,
+            "songname": "走るということ",
+            "songorig": "走るということ",
+            "interval": 148,
+            "singer": [{"name": "林友树 (林ゆうき)"}]
+        }))
+        .unwrap();
+        assert!(artist.aliases.is_empty());
+        assert_eq!(artist.artists, ["林友树", "林ゆうき"]);
+        let orchestral = qq_song(&serde_json::json!({
+            "songid": 330267406,
+            "songname": "千秋 (Orch)",
+            "songorig": "千秋",
+            "interval": 198,
+            "singer": [{"name": "古剑奇谭三"}]
+        }))
+        .unwrap();
+        assert_eq!(orchestral.aliases, ["千秋"]);
+        assert_eq!(orchestral.artists, ["古剑奇谭三"]);
     }
     #[test]
     fn recognizes_share_links_and_rejects_unrelated_hosts_and_resources() {

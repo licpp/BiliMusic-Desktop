@@ -400,7 +400,10 @@ mod tests {
                 candidate.id,
                 candidate.translated_lyrics.is_some(),
                 candidate.romanized_lyrics.is_some(),
-                candidate.synced_lyrics.as_ref().is_some_and(|text| text.contains('<'))
+                candidate
+                    .synced_lyrics
+                    .as_ref()
+                    .is_some_and(|text| text.contains('<'))
             );
         }
     }

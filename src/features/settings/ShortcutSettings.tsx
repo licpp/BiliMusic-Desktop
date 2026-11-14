@@ -1,14 +1,16 @@
 import { Keyboard, RotateCcw, X } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { suspendGlobalShortcuts } from '../../services/globalShortcuts'
 import { shortcutActions, shortcutFromEvent, shortcutFromMouseEvent, shortcutLabel, type ShortcutAction } from '../player/shortcuts'
 import { shortcutMac, useShortcutStore } from '../../services/shortcuts'
 export function ShortcutSettings() {
   const {bindings,setBinding,reset}=useShortcutStore()
   const [recording,setRecording]=useState<ShortcutAction|null>(null),[message,setMessage]=useState('')
-  return <SettingsDisclosure icon={<Keyboard/>} title="自定义快捷键" description="键盘或鼠标侧键，窗口内生效" onToggle={open=>{if(!open)setRecording(null)}}>
+  useEffect(()=>{suspendGlobalShortcuts(recording!==null)},[recording])
+  return <SettingsDisclosure icon={<Keyboard/>} title="自定义快捷键" description="Windows 上，播放、切歌、快进和音量在其他窗口也生效" onToggle={open=>{if(!open)setRecording(null)}}>
     <div className="shortcut-editor" data-shortcut-editor>
-      <p>点击右侧按键后，按下键盘或鼠标侧键，可配合 Ctrl / ⌘、Alt 和 Shift。按 Esc 取消。</p>
+      <p>点击右侧按键后，按下键盘或鼠标侧键，可配合 Ctrl / ⌘、Alt 和 Shift。按 Esc 取消。Windows 用 Ctrl + Alt + Q 打开软件：已退出会启动，正在后台会唤出窗口。空格和查找只在本窗口生效。</p>
       <div className="shortcuts-list">{shortcutActions.map(({id,label})=><div key={id}>
         <span>{label}</span><span><button type="button" className="shortcut-record" data-recording={recording===id} aria-label={`设置${label}快捷键`} aria-pressed={recording===id}
           onBlur={()=>setRecording(current=>current===id?null:current)}

@@ -332,18 +332,23 @@ mod tests {
     fn automatic_playback_does_not_reuse_legacy_hires_chunks() {
         let (root, cache, aac) = fixture();
         let source = super::super::providers::bilibili::PlaybackSource {
-            quality_id: 30251, audio_url: "https://cdn.example/hires.m4s".into(),
-            backup_urls: vec![], mime_type: "audio/mp4".into(), codecs: "fLaC".into(), bandwidth: 1500000,
+            quality_id: 30251,
+            audio_url: "https://cdn.example/hires.m4s".into(),
+            backup_urls: vec![],
+            mime_type: "audio/mp4".into(),
+            codecs: "fLaC".into(),
+            bandwidth: 1500000,
         };
         let automatic = Variant::new(&aac.track_id, &aac.bvid, aac.cid, 0, &source);
-        cache.write(&automatic, 8, 0, &[7;8], 0).unwrap();
+        cache.write(&automatic, 8, 0, &[7; 8], 0).unwrap();
         assert!(cache.find(&aac.track_id, 0).is_none());
         let explicit = Variant::new(&aac.track_id, &aac.bvid, aac.cid, 30251, &source);
-        cache.write(&explicit, 8, 0, &[7;8], 0).unwrap();
+        cache.write(&explicit, 8, 0, &[7; 8], 0).unwrap();
         assert_eq!(cache.find(&aac.track_id, 30251).unwrap().key, explicit.key);
-        cache.write(&aac, 8, 0, &[7;8], 0).unwrap();
+        cache.write(&aac, 8, 0, &[7; 8], 0).unwrap();
         assert_eq!(cache.find(&aac.track_id, 0).unwrap().key, aac.key);
-        drop(cache);std::fs::remove_dir_all(root).unwrap();
+        drop(cache);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn survives_restart_and_rejects_incomplete_or_changed_chunks() {

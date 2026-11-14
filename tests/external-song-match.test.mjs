@@ -19,6 +19,8 @@ const scenarios = [
   ['Remix 不能自动代替原版', song(), [candidate('周杰伦《晴天》Remix')], 'review'],
   ['用户明确要 Live 时保留对应版本', song('晴天 (Live)'), [candidate('周杰伦《晴天》Live')], 'automatic'],
   ['用户明确要伴奏时保留对应版本', song('晴天 (伴奏)'), [candidate('周杰伦《晴天》伴奏')], 'automatic'],
+  ['Inst. 按伴奏保留对应版本', song('浮光 (Inst.)', ['林友树'], 258), [candidate('林友树《浮光》Inst.', { durationSeconds: 258 })], 'automatic'],
+  ['Inst. 不能自动选择没有伴奏标记的版本', song('浮光 (Inst.)', ['林友树'], 258), [candidate('林友树《浮光》', { durationSeconds: 258 })], 'review'],
   ['用户明确要 Live 不能选无版本证据的原版', song('晴天 (Live)'), [candidate()], 'review'],
   ['高分近似的两个版本不擅自选一个', song(), [candidate(), candidate('周杰伦《晴天》官方音频', { bvid: 'BV_OTHER', cid: 102 })], 'review'],
   ['时长明显不符需要确认', song(), [candidate(undefined, { durationSeconds: 140 })], 'review'],

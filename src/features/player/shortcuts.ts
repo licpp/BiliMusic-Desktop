@@ -50,10 +50,19 @@ export function installMouseShortcuts(target: EventTarget,bindings:()=>ShortcutB
   target.addEventListener('mousedown',down,capture);target.addEventListener('mouseup',up,capture);target.addEventListener('auxclick',auxiliaryClick,capture);target.addEventListener('blur',cancel)
   return()=>{target.removeEventListener('mousedown',down,capture);target.removeEventListener('mouseup',up,capture);target.removeEventListener('auxclick',auxiliaryClick,capture);target.removeEventListener('blur',cancel)}
 }
+
+const globalActions = new Set<ShortcutAction>(['toggle','previous','next','seekBack','seekForward','volumeUp','volumeDown'])
+export function globalShortcutBinding(action: ShortcutAction, key: Shortcut | null) {
+  if (!key || !globalActions.has(action) || key.code==='Space' || key.code.startsWith('Mouse')) return
+  if (!key.ctrl && !key.alt && !key.shift && !key.meta && !/^F(?:[1-9]|1[0-2])$/.test(key.code)) return
+  return {action, code:key.code, ctrl:key.ctrl, alt:key.alt, shift:key.shift, meta:key.meta}
+}
+
 export function sameShortcut(a: Shortcut | null | undefined, b: Shortcut | null | undefined) {
   return !!a && !!b && a.code===b.code && a.ctrl===b.ctrl && a.meta===b.meta && a.alt===b.alt && a.shift===b.shift
 }
 export function shortcutProblem(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction): string | undefined {
+  if (key.ctrl && key.alt && !key.shift && !key.meta && key.code==='KeyQ') return 'Ctrl + Alt + Q 用于打开软件'
   if ((key.ctrl || key.meta) && !key.alt && /^Key[ACVXYZQWTNLRHM]$/.test(key.code) || key.alt && key.code==='F4' || key.meta && key.code==='Space') return '这个组合由系统或常用编辑操作使用，请换一个'
   const conflict = shortcutActions.find(item => item.id !== action && sameShortcut(bindings[item.id], key))
   return conflict ? `已用于“${conflict.label}”，请先修改或清除该快捷键` : undefined

@@ -46,6 +46,7 @@ import {
 import { usePlayerStore } from '../features/player/playerStore'
 import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
 import { useShortcutStore } from '../services/shortcuts'
+import { listenGlobalShortcuts, syncGlobalShortcuts } from '../services/globalShortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
@@ -396,10 +397,13 @@ export function App() {
       return true
     }
     const stopMouse=isMobile?()=>undefined:installMouseShortcuts(window,()=>useShortcutStore.getState().bindings,run,event=>Boolean((event.target as Element)?.closest?.('[data-shortcut-editor],input,textarea,select,[contenteditable="true"]')||document.querySelector('[aria-modal="true"]')))
+    const stopGlobal = isMobile ? () => undefined : listenGlobalShortcuts(run)
+    const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings))
+    if (!isMobile) syncGlobalShortcuts(useShortcutStore.getState().bindings)
     window.addEventListener('keydown', handler)
     const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
     document.addEventListener('contextmenu', disableBrowserMenu)
-    return () => { stopMouse();window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
+    return () => { stopMouse();stopGlobal();stopSync();window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
   useEffect(() => {

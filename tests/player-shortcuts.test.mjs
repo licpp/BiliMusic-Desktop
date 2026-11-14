@@ -13,7 +13,7 @@ test('Mac 和 Windows 快捷键区分切歌、快进与音量，保留其他组�
  assert.equal(playerShortcut({...event,metaKey:true,shiftKey:true}),undefined)
  assert.equal(playerShortcut(event),undefined)
 })
-const {defaultShortcuts,shortcutFromEvent,resolveShortcut,shortcutProblem,shortcutLabel,readShortcuts}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
+const {defaultShortcuts,shortcutFromEvent,resolveShortcut,shortcutProblem,shortcutLabel,readShortcuts,globalShortcutBinding}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
 const keyEvent=(code,modifiers={})=>({code,key:code.startsWith('Key')?code.slice(3).toLowerCase():code,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,...modifiers})
 test('custom shortcuts support single keys and exact modifier combinations without triggering on composition',()=>{
  const bindings=defaultShortcuts(false)
@@ -48,6 +48,15 @@ test('shortcut conflicts, reserved keys, clearing and persistence are checked co
  assert.deepEqual(readShortcuts(JSON.stringify({version:1,bindings}),true),defaultShortcuts(true))
 })
 
+
+test('playback shortcuts except space are global, and Ctrl+Alt+Q stays reserved for opening the app',()=>{
+ const bindings=defaultShortcuts(false)
+ assert.equal(globalShortcutBinding('toggle',bindings.toggle),undefined)
+ assert.equal(globalShortcutBinding('listSearch',bindings.listSearch),undefined)
+ assert.deepEqual(globalShortcutBinding('previous',bindings.previous),{action:'previous',code:'ArrowLeft',ctrl:true,alt:false,shift:false,meta:false})
+ assert.equal(globalShortcutBinding('volumeUp',{code:'ArrowUp',ctrl:false,alt:false,shift:false,meta:false}),undefined)
+ assert.match(shortcutProblem({code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false},bindings,'toggle'),/打开软件/)
+})
 const {shortcutFromMouseEvent,resolveMouseShortcut,installMouseShortcuts}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
 const mouseEvent=(button,extra={})=>({button,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,...extra})
 test('mouse side keys support exact modifiers, readable labels, conflicts and saved mappings',()=>{

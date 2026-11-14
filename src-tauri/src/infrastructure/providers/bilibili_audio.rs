@@ -92,7 +92,10 @@ mod tests {
     }
     #[test]
     fn lossless_requires_an_explicit_selection_even_without_aac() {
-        let dash: DashData = serde_json::from_value(json!({"flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}})).unwrap();
+        let dash: DashData = serde_json::from_value(
+            json!({"flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}}),
+        )
+        .unwrap();
         assert!(select_audio(&dash, 0).is_none());
         assert!(select_audio(&dash, 30280).is_none());
         assert_eq!(select_audio(&dash, 30251).unwrap().id, 30251);

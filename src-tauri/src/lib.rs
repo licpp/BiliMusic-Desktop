@@ -3,6 +3,7 @@ mod desktop_media;
 mod domain;
 #[cfg(desktop)]
 mod floating_lyrics;
+mod global_shortcuts;
 mod infrastructure;
 mod interface;
 #[cfg(target_os = "ios")]
@@ -87,6 +88,7 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
+            global_shortcuts::start(app.handle().clone());
             #[cfg(desktop)]
             app.manage(mini_player::MiniPlayerState::default());
             #[cfg(desktop)]
@@ -166,6 +168,7 @@ pub fn run() {
             interface::playlist_import::external_playlist_read,
             interface::playlist_import::playlist_import_scope,
             interface::playlist_import::playlist_import_commit,
+            global_shortcuts::global_shortcuts_apply,
             interface::media::bili_creator_catalog,
             interface::commands::collections_list,
             interface::commands::collections_change,
