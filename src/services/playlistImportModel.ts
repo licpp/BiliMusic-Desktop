@@ -30,7 +30,8 @@ export function parseSongList(text: string): ImportPlaylist {
 
 export function importKeyword(song: ImportSong, simple = false) {
   const primary = song.title.replace(/[（(](?:feat\.?|ft\.?|featuring)\s[^）)]*[）)]/giu,'')
-    .replace(/[（(]([A-Za-z\s]+)[）)]/g,(whole,label: string) => /live|remix|cover|instrumental/i.test(label) ? whole : '')
+    .replace(/[（(][^）)]*\b(?:inst|orch)\b\.?[^）)]*[）)]/giu,'')
+    .replace(/[（(]([A-Za-z.\s]+)[）)]/g,(whole,label: string) => /live|remix|cover|instrumental/i.test(label) ? whole : '')
     .trim()
   return simple ? primary : `${primary} ${song.artists[0] || ''}`.trim()
 }

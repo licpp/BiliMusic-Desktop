@@ -28,7 +28,7 @@ type Edition = 'live' | 'cover' | 'instrumental' | 'remix' | 'sped' | 'slowed' |
 const editions: Record<Edition, RegExp> = {
   live: /现场|演唱会|音乐会|\b(?:live|concert|the first take)\b/iu,
   cover: /翻唱|翻弹|\bcover(?:ed)?\b/iu,
-  instrumental: /伴奏|纯音乐|无人声|\b(?:instrumental|off[ -]?vocal|karaoke)\b/iu,
+  instrumental: /伴奏|纯音乐|无人声|\b(?:instrumental|off[ -]?vocal|karaoke|inst)\b\.?/iu,
   remix: /混音|重混|\b(?:remix|dj)\b/iu,
   sped: /加速|\b(?:sped[ -]?up|nightcore)\b/iu,
   slowed: /降速|慢速|\bslowed\b/iu,
