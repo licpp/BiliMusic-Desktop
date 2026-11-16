@@ -41,16 +41,71 @@ pub fn bridge_started(n: usize) {
     });
 }
 pub fn bridge_finished(status: Option<u16>) {
-    update(|u| match status {
-        Some(401 | 403) => u.unauthorized = true,
-        Some(429) => u.retry_after_ms = u.retry_after_ms.max(60_000),
-        None => u.failed_requests += 1,
-        _ => {}
+    update(|u| {
+        if status.is_none_or(|s| s >= 400) {
+            u.failed_requests += 1;
+        }
+        if status.is_some_and(|s| matches!(s, 401 | 403)) {
+            u.unauthorized = true;
+        }
+        if status.is_some_and(|s| matches!(s, 429 | 503)) {
+            u.retry_after_ms = u.retry_after_ms.max(300_000);
+        }
     });
 }
-pub async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response, reqwest::Error> {
+pub fn deferred(delay: u64) {
+    update(|u| u.retry_after_ms = u.retry_after_ms.max(delay));
+}
+#[derive(Debug, thiserror::Error)]
+pub enum RequestError {
+    #[error(transparent)]
+    Network(#[from] reqwest::Error),
+    #[error("{0}")]
+    Deferred(String),
+}
+impl RequestError {
+    pub fn without_url(self) -> Self {
+        match self {
+            Self::Network(e) => Self::Network(e.without_url()),
+            e => e,
+        }
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(self,Self::Network(e) if e.is_timeout())
+    }
+    pub fn is_connect(&self) -> bool {
+        matches!(self,Self::Network(e) if e.is_connect())
+    }
+    pub fn is_body(&self) -> bool {
+        matches!(self,Self::Network(e) if e.is_body())
+    }
+    pub fn is_request(&self) -> bool {
+        matches!(self,Self::Network(e) if e.is_request())
+    }
+}
+pub fn retry_after(value: Option<&str>) -> Option<u64> {
+    value
+        .and_then(|s| {
+            s.parse::<u64>()
+                .ok()
+                .map(std::time::Duration::from_secs)
+                .or_else(|| {
+                    httpdate::parse_http_date(s).ok().map(|t| {
+                        t.duration_since(std::time::SystemTime::now())
+                            .unwrap_or_default()
+                    })
+                })
+        })
+        .map(|d| d.as_millis().min(86_400_000) as u64)
+}
+pub async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response, RequestError> {
     let (client, request) = builder.build_split();
     let request = request?;
+    let budget = super::request_budget::for_request(&request).map_err(RequestError::Deferred)?;
+    if let Some(budget) = &budget {
+        budget.admit().await.map_err(RequestError::Deferred)?;
+    }
     bridge_started(
         request
             .body()
@@ -59,6 +114,21 @@ pub async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response,
     );
     let start = std::time::Instant::now();
     let result = client.execute(request).await;
+    let admission = if let (Some(budget), Ok(response)) = (&budget, &result) {
+        budget
+            .response(
+                response.status().as_u16(),
+                retry_after(
+                    response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
+                ),
+            )
+            .map_err(RequestError::Deferred)
+    } else {
+        Ok(())
+    };
     update(|u| {
         u.elapsed_ms = u
             .elapsed_ms
@@ -75,30 +145,17 @@ pub async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response,
                 }
                 u.unauthorized |= matches!(status, 401 | 403);
                 if status == 429 || status == 503 {
-                    let delay = r
-                        .headers()
-                        .get("retry-after")
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|s| {
-                            s.parse::<u64>()
-                                .ok()
-                                .map(std::time::Duration::from_secs)
-                                .or_else(|| {
-                                    httpdate::parse_http_date(s).ok().map(|t| {
-                                        t.duration_since(std::time::SystemTime::now())
-                                            .unwrap_or_default()
-                                    })
-                                })
-                        })
-                        .map(|d| d.as_millis().min(86_400_000) as u64);
-                    if let Some(delay) = delay.or((status == 429).then_some(60_000)) {
+                    let delay =
+                        retry_after(r.headers().get("retry-after").and_then(|v| v.to_str().ok()));
+                    if let Some(delay) = delay.or(matches!(status, 429 | 503).then_some(300_000)) {
                         u.retry_after_ms = u.retry_after_ms.max(delay);
                     }
                 }
             }
         }
     });
-    result
+    admission?;
+    result.map_err(RequestError::Network)
 }
 pub fn persist(
     c: &rusqlite::Connection,

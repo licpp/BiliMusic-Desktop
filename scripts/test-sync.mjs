@@ -1,5 +1,6 @@
 // Offline correctness tests only: no installer build, release, credentials or cloud endpoint.
 import { spawnSync } from 'node:child_process'
+import { rustTestEnv } from './rust-test.mjs'
 import { fileURLToPath } from 'node:url'
 
 const options = new Map()
@@ -9,7 +10,7 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (['--seeds', '--seed', '--filter'].includes(flag) && process.argv[i + 1]) options.set(flag, process.argv[++i])
   else throw new Error(`Unknown option: ${flag}`)
 }
-const env = { ...process.env }
+const env = rustTestEnv()
 for (const [flag, name] of [['--seeds', 'BILIMUSIC_SYNC_SIM_SEEDS'], ['--seed', 'BILIMUSIC_SYNC_SIM_START']]) {
   if (!options.has(flag)) continue
   const value = String(options.get(flag))

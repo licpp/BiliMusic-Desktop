@@ -1,3 +1,4 @@
+import { trackSubtitle, hasSeriesHeading, withoutSeriesPrefix } from '../../domain/sourceTitle'
 import { useQueryClient } from '@tanstack/react-query'
 import { hydrateSourceTitles } from '../../services/sourceTitles'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -48,7 +49,7 @@ function QueueVideo({ id, tracks, activeId, expanded, onToggle, index, count }: 
 }) {
   const first = tracks[0]
   const menu = useRowContextMenu()
-  const title = first.videoTitle || first.title
+  const title = withoutSeriesPrefix(first.videoTitle || first.title, first.sourceTitleContext?.season?.title)
   const ids = tracks.map(track => track.id)
   return <div className="queue-video">
     <div className="queue-entry queue-video-heading playing-row" onContextMenu={menu.onContextMenu} data-current-row={!expanded && activeId ? id : undefined}>
@@ -73,6 +74,9 @@ function QueueTrack({ track, active, label, groupIndex, groupCount, child = fals
 }) {
   const menu = useRowContextMenu()
   const title = track.displayTitle || track.title
+  const source = usePlayerStore(state=>state.queueSource)
+  const season = track.sourceTitleContext?.season
+  const subtitle = season && !hasSeriesHeading(track,source) ? trackSubtitle(track) : undefined
   const { ref, pages } = useVisibleVideoPages(track.source.bvid, observe && Boolean(track.resolveParts) && track.partCount === undefined)
   useEffect(() => {
     if (observe && track.resolveParts && track.partCount === undefined && pages?.length) void prepareSeasonQueueEntry(track).catch(() => undefined)
@@ -82,7 +86,7 @@ function QueueTrack({ track, active, label, groupIndex, groupCount, child = fals
     onContextMenu={menu.onContextMenu}>
     <button type="button" className="queue-row-main" aria-current={active ? 'true' : undefined} aria-label={`播放 ${title}`} onClick={play}>
       <span className="queue-row-number">{active ? <PlayingMark/> : label}</span>
-      <strong>{title}</strong><small className="queue-row-duration">{formatDuration(track.durationSeconds)}</small>
+      <strong className="queue-track-title">{title}{subtitle && <small>{subtitle}</small>}</strong><small className="queue-row-duration">{formatDuration(track.durationSeconds)}</small>
     </button>
     <QueueActions contextPosition={menu.position} title={title} ids={[track.id]} tracks={[track]} onPlay={play} group={group} flat={!group && !child}
       canUp={groupIndex > 0} canDown={groupIndex < groupCount - 1}/>

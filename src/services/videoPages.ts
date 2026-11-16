@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { BiliVideoPart } from './desktopApi'
+import type { BiliVideoPart } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
 
 const cache = new Map<string, { expires: number; pages: BiliVideoPart[] }>()

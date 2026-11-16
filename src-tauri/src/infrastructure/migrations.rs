@@ -1,7 +1,7 @@
 //! One transactional entry point for fresh, account and guest databases.
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-const VERSION: i64 = 5;
+const VERSION: i64 = 7;
 
 pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -60,6 +60,26 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES(5); PRAGMA user_version=5;",
         )?;
     }
+    if version < 6 {
+        let exists: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('lyrics') WHERE name='write_token')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            c.execute_batch("ALTER TABLE lyrics ADD COLUMN write_token TEXT NOT NULL DEFAULT '';")?;
+        }
+        c.execute_batch(include_str!("../../migrations/0006_lyrics_guard.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(6); PRAGMA user_version=6;",
+        )?;
+    }
+    if version < 7 {
+        c.execute_batch(include_str!("../../migrations/0007_source_titles.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(7); PRAGMA user_version=7;",
+        )?;
+    }
     tx.commit()
 }
 
@@ -84,7 +104,7 @@ mod tests {
                 c.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r
                     .get::<_, i64>(0))
                     .unwrap(),
-                4
+                VERSION - 1
             );
             c.prepare("SELECT scope FROM collection_folders").unwrap();
         }
@@ -123,14 +143,14 @@ mod tests {
             c.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
-            4
+            VERSION - 1
         );
     }
     #[test]
     fn newer_migration_log_is_rejected_even_if_legacy_marker_was_reset() {
         let c = Connection::open_in_memory().unwrap();
         migrate(&c).unwrap();
-        c.execute_batch("INSERT INTO schema_migrations(version) VALUES(7); PRAGMA user_version=1;")
+        c.execute_batch("INSERT INTO schema_migrations(version) VALUES(8); PRAGMA user_version=1;")
             .unwrap();
         assert!(migrate(&c).is_err());
         assert_eq!(
@@ -179,14 +199,47 @@ mod tests {
         );
     }
     #[test]
+    fn source_title_cache_upgrade_preserves_version_six_user_data() {
+        let c = Connection::open_in_memory().unwrap();
+        migrate(&c).unwrap();
+        c.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES('keep','bilibili','BVkeep',1);
+            INSERT INTO tracks(id,source_item_id,title) VALUES('keep','keep','原始标题');
+            INSERT INTO metadata_overrides(track_id,title) VALUES('keep','我的名称');
+            INSERT INTO favorites(track_id) VALUES('keep');
+            DROP TABLE source_title_cache;DELETE FROM schema_migrations WHERE version=7;PRAGMA user_version=6;").unwrap();
+        migrate(&c).unwrap();
+        migrate(&c).unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT title FROM metadata_overrides WHERE track_id='keep'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "我的名称"
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM source_title_cache", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn newer_database_is_rejected_without_changes() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("PRAGMA user_version=7").unwrap();
+        c.execute_batch("PRAGMA user_version=8").unwrap();
         assert!(migrate(&c).is_err());
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            7
+            8
         );
         assert_eq!(
             c.query_row(

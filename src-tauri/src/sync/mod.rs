@@ -4,10 +4,12 @@ pub mod actor;
 pub mod background;
 mod cache;
 pub mod causal;
+mod cloud_transport;
 mod dav;
 pub mod device_policy;
 pub mod devices;
 mod engine;
+mod legacy_import;
 pub mod migration;
 pub mod migration_material;
 pub mod model;
@@ -16,6 +18,7 @@ mod projection;
 pub mod protocol_v2;
 pub mod publication;
 mod recovery;
+pub(crate) mod request_budget;
 mod scheduler;
 #[cfg(test)]
 mod simulation;
@@ -24,7 +27,7 @@ mod statistics_v2;
 pub mod storage;
 #[cfg(test)]
 mod test_dav;
-mod traffic;
+pub(crate) mod traffic;
 mod transport;
 pub mod upgrade_merge;
 mod v2_net;
@@ -752,11 +755,17 @@ pub async fn sync_hydrate_sources(
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
             for part in &video.parts {
                 let id = format!("bilibili:{bvid}:{}", part.cid);
-                let title = if video.parts.len() > 1 {
-                    &part.title
-                } else {
-                    &video.title
-                };
+                let title = crate::domain::source_title::source_title(
+                    &video.title,
+                    &part.title,
+                    video.parts.len(),
+                    video.season.is_some(),
+                    video
+                        .season
+                        .as_ref()
+                        .map(|s| s.title.as_str())
+                        .unwrap_or(""),
+                );
                 c.execute("UPDATE source_items SET aid=?2,page=?3,source_title=?4,uploader_id=?5,uploader_name=?6 WHERE id=?1 AND (source_title='' OR source_title='B站歌曲（待加载）')",params![id,video.aid,part.page,title,video.uploader_id,video.uploader_name]).map_err(|e|e.to_string())?;
                 count += c.execute("UPDATE tracks SET title=?2,cover_url=?3,duration_seconds=?4 WHERE id=?1 AND title='B站歌曲（待加载）'",params![id,title,part.cover_url,part.duration_seconds]).map_err(|e|e.to_string())?;
             }

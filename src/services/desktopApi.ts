@@ -1,45 +1,41 @@
+import { withTrackTitle } from '../domain/sourceTitle'
+import type { BiliComment, CommentPage } from '../domain/comments'
+export type { BiliComment, CommentPage } from '../domain/comments'
+import type { QrLogin, QrLoginStatus, AccountProfile } from '../domain/account'
+export type { QrLogin, QrLoginStatus, AccountProfile } from '../domain/account'
+import type { DownloadRecord } from '../domain/downloads'
+export type { DownloadRecord } from '../domain/downloads'
+import type { StoredTrack, MetadataPatch, Playlist, CatalogSource, CatalogCandidate } from '../domain/library'
+export type { StoredTrack, MetadataPatch, Playlist, CatalogSource, CatalogCandidate } from '../domain/library'
+import type { LyricWord, LyricLine, LyricCandidate, LyricSearchResult, StoredLyrics } from '../domain/lyrics'
+export type { LyricWord, LyricLine, LyricCandidate, LyricSearchResult, StoredLyrics } from '../domain/lyrics'
+import type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
+export type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { rememberVideoPages } from './videoPages'
 import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
-import { attachSupplementalLyrics, candidateLines } from '../features/lyrics/lrc'
+import { attachSupplementalLyrics, candidateLines } from '../domain/lrc'
 import { rankCatalogCandidates, rankLyricCandidates } from './musicMatchRanking'
+import { lookupSongs } from './songLookup'
 
-export type BiliSearchItem = { publishedAt?: number; bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
-export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
-export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string; firstFrameUrl?: string }
-export type BiliVideoParts = { chapterContext?: boolean; publishedAt?: number; season?: import('./mediaSources').SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }
-export type PlaybackSource = { qualityId: number; audioUrl: string; backupUrls: string[]; mimeType: string; codecs: string; bandwidth: number }
-export type VideoSource = { videoUrl: string; mimeType: string; codecs: string; bandwidth: number }
-export type DanmakuItem = { timeSeconds: number; mode: number; fontSize: number; color: number; text: string }
 export type DesktopCommandError = { code: string; message: string; retryable: boolean }
-export type StoredTrack = { id: string; bvid: string; aid?: number; cid: number; page: number; sourceDisplayTitle?:string; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; uploaderId?: number; uploaderName?: string; liked: boolean }
-export type MetadataPatch = { title: string; artist?: string; album?: string; coverUrl?: string }
-export type LyricWord = { text: string; startTimeMs: number; endTimeMs: number }
-export type LyricLine = { words?: LyricWord[]; endTimeMs?: number; timeMs: number; text: string; translation?: string; romanization?: string }
-export type LyricCandidate = { provider: 'lrclib' | 'netease' | 'qq' | 'local'; id: number; trackName: string; artistName: string; albumName: string; duration: number; instrumental: boolean; plainLyrics?: string; syncedLyrics?: string; translatedLyrics?: string; romanizedLyrics?: string }
-export type LyricSearchResult = { candidates: LyricCandidate[]; warning?: string }
-export type StoredLyrics = { trackId: string; provider: string; providerLyricId: string; rawText: string; parsedJson: string; biasMs: number; selectedManually: boolean }
-export type Playlist = { id: string; name: string; description: string; coverUrl?: string; trackCount: number; isSystem: boolean; biliFolderId?: number; addedAt?: number }
 export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
-export type CatalogSource = 'auto' | 'netease' | 'qq' | 'itunes' | 'musicbrainz'
-export type CatalogCandidate = { trackId: string; trackName: string; artistName: string; collectionName?: string; artworkUrl?: string; source: string }
-export type DownloadRecord = { id: string; trackId: string; targetPath: string; status: 'queued' | 'downloading' | 'completed' | 'failed'; receivedBytes: number; totalBytes?: number; errorMessage?: string; track?: Track }
-export type QrLogin = { key: string; url: string }
-export type QrLoginStatus = { status: 'waiting' | 'confirmed' | 'authenticated' | 'expired' | 'error'; message: string }
-export type AccountProfile = { loggedIn: boolean; userId?: number; name?: string; avatarUrl?: string; level?: number; vipActive?: boolean }
-export type FavoriteFolder = { id: number; title: string; media_count: number }
-export type FavoriteVideo = { pubtime?:number; aid?: number; bvid: string; title: string; cover: string; duration?: number; cnt_info?: { play?: number } }
-export type FavoritePage = { medias?: FavoriteVideo[]; has_more: boolean }
-export type LinkedFolder = { folderId: number; name: string; refreshedAt: number; videos: FavoriteVideo[] }
-export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; emotes?: Record<string, string>; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
-export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }
 
 export const inDesktopShell = isTauri()
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename'.split(' '))
+async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  const epoch = accountEpoch()
+  const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
+  const value = await invoke<T>(command, {...args, ...(expectedAccountSession ? {expectedAccountSession} : {})})
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
+  return value
+}
 async function write<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  const value = await invoke<T>(command, args)
+  const value = await scopedInvoke<T>(command, args)
   if (command === 'lyrics_save') window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated',{detail:value}))
   window.dispatchEvent(new Event('bilimusic-data-changed'))
   return value
@@ -81,16 +77,16 @@ export async function saveLibraryTrack(track: Track): Promise<Track> {
     if (!detail.parts[0]) throw new Error('暂无可播放内容')
     track = toTrack(detail, detail.parts[0])
   }
-  return fromStoredTrack(await invoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
+  return fromStoredTrack(await scopedInvoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
 }
-export const getVideoSource = (bvid: string, cid: number) => invoke<VideoSource>('bili_video_source', { bvid, cid })
+export const getVideoSource = (bvid: string, cid: number, refresh = false) => invoke<VideoSource>('bili_video_source', { bvid, cid, refresh })
 export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku', { cid })
 
 export async function recordPlayedTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   const stored = await write<StoredTrack>('library_record_play', { track: toTrackInput(track) })
   window.dispatchEvent(new Event('bilimusic-recent-changed'))
-  return { ...fromStoredTrack(stored), videoTitle: track.videoTitle, partCount: track.partCount }
+  return withTrackTitle({ ...track, ...fromStoredTrack(stored), sourceTitleContext: stored.sourceTitleContext || track.sourceTitleContext, videoTitle: stored.sourceVideoTitle || track.videoTitle, partCount: track.partCount })
 }
 
 export async function listLibraryTracks(favoritesOnly = false, savedOnly = false): Promise<Track[]> {
@@ -121,8 +117,12 @@ export async function updateStoredMetadata(trackId: string, patch: MetadataPatch
 
 export async function searchLyrics(title: string, artist?: string, forceRefresh = false): Promise<LyricSearchResult> {
   if (!inDesktopShell) return { candidates: [] }
-  const result = await invoke<LyricSearchResult>('lyrics_search', { title, artist, forceRefresh })
-  return { ...result, candidates: rankLyricCandidates(result.candidates, title, artist) }
+  const epoch = accountEpoch()
+  const result = await lookupSongs({ title, artist }, async query => {
+    const found = await invoke<LyricSearchResult>('lyrics_search', { ...query, forceRefresh })
+    return { items: found.candidates, warning: found.warning }
+  }, item => `${item.provider}:${item.id}`, () => epoch === accountEpoch())
+  return { warning: result.warning, candidates: rankLyricCandidates(result.items, title, artist, 0, result.queries) }
 }
 
 const lyricSupplements = new Map<string, Promise<LyricCandidate | null>>()
@@ -155,15 +155,22 @@ export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | n
   const stored = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
   // Early builds stored Bilibili captions in the lyric slot. Treat that slot as
   // empty so captions cannot appear when the subtitle switch is off.
+  if (epoch !== accountEpoch()) return null
   if (stored?.provider === 'bilibili') return null
   if (stored && !stored.rawText && stored.provider !== 'local') {
     try {
       const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
       if (epoch !== accountEpoch()) return null
-      if (candidate) { const raw = candidate.syncedLyrics || candidate.plainLyrics || ''; return invoke<StoredLyrics>('lyrics_save', { trackId, manual: stored.selectedManually, lyrics: { provider: stored.provider, providerLyricId: stored.providerLyricId, rawText: raw, parsedJson: JSON.stringify(candidateLines(candidate)) } }) }
-    } catch { /* Keep the synced selection and bias available when the provider is offline. */ }
+      if (candidate && stored.writeToken && stored.accountSession) {
+        const completed = await invoke<StoredLyrics | null>('lyrics_complete_selected', { trackId, expected: stored, rawText: candidate.syncedLyrics || candidate.plainLyrics || '', parsedJson: JSON.stringify(candidateLines(candidate)) })
+        return epoch === accountEpoch() ? completed : null
+      }
+    } catch { /* Re-read the selection below: it may have changed during the failed request. */ }
+    if (epoch !== accountEpoch()) return null
+    const current = await invoke<StoredLyrics | null>('lyrics_get', { trackId })
+    return epoch === accountEpoch() ? current : null
   }
-  return stored
+  return epoch === accountEpoch() ? stored : null
 }
 
 export async function saveStoredLyrics(trackId: string, candidate: LyricCandidate, lines: LyricLine[], manual: boolean): Promise<StoredLyrics> {
@@ -179,8 +186,8 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
   })
 }
 
-export const setStoredLyricsBias = (trackId: string, biasMs: number) =>
-  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs })
+export const setStoredLyricsBias = (trackId: string, biasMs: number, expected?: StoredLyrics) =>
+  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs, ...(expected ? { expected } : {}) })
 
 export async function listPlaylists(): Promise<Playlist[]> {
   if (!inDesktopShell) return [{ ...FAVORITES_PLAYLIST }]
@@ -198,10 +205,13 @@ export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => 
 export const removeTracksFromPlaylist = (playlistId: string, trackIds: string[]) => write<void>('playlist_remove_tracks', { playlistId, trackIds })
 export const deletePlaylist = (playlistId: string) => write<void>('playlist_delete', { playlistId })
 export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
-export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto'): Promise<CatalogCandidate[]> {
+export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto', context?: { uploaderName?: string }): Promise<CatalogCandidate[]> {
   if (!inDesktopShell) return []
-  const candidates = await invoke<CatalogCandidate[]>('metadata_catalog_search', { title, artist, source })
-  return rankCatalogCandidates(candidates, title, artist)
+  const epoch = accountEpoch()
+  const result = await lookupSongs({ title, artist, source: context }, async query => ({
+    items: await invoke<CatalogCandidate[]>('metadata_catalog_search', { ...query, source }),
+  }), item => `${item.source}:${item.trackId}`, () => epoch === accountEpoch())
+  return rankCatalogCandidates(result.items, title, artist, result.queries)
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
@@ -233,13 +243,13 @@ export const replyComment = (aid: number, message: string, root?: number, parent
 function toTrackInput(track: Track) {
   return {
     id: track.id, bvid: track.source.bvid, aid: track.source.aid, cid: track.source.cid, page: track.source.page,
-    sourceTitle: track.videoTitle || track.displayTitle || track.title, title: track.displayTitle || track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl,
+    sourceTitleContext: track.sourceTitleContext, sourceTitle: track.videoTitle || track.displayTitle || track.title, title: track.displayTitle || track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl,
     durationSeconds: track.durationSeconds, uploaderId: track.source.uploaderId, uploaderName: track.source.uploaderName,
   }
 }
 
 export function fromStoredTrack(track: StoredTrack): Track {
-  return { id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, displayTitle: track.sourceDisplayTitle, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked }
+  return withTrackTitle({ id: track.id, source: { provider: 'bilibili', bvid: track.bvid, aid: track.aid, cid: track.cid, page: track.page, uploaderId: track.uploaderId, uploaderName: track.uploaderName }, displayTitle: track.titleOverridden ? track.title : track.sourceDisplayTitle, sourceTitleContext: track.sourceTitleContext, titleOverridden: track.titleOverridden, videoTitle: track.sourceVideoTitle, partCount: track.sourceTitleContext?.partCount, title: track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://'), durationSeconds: track.durationSeconds, liked: track.liked })
 }
 
 export { commandErrorMessage } from './userErrors'

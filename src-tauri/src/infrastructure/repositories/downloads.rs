@@ -36,6 +36,7 @@ mod tests {
                     cid,
                     page: 1,
                     source_title: "视频标题".into(),
+                    source_title_context: None,
                     title: format!("歌曲 {cid}"),
                     artist: Some("歌手".into()),
                     album: None,

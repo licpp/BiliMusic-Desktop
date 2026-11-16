@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
 import zipfile
 import urllib.error
@@ -11,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint
+from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
 from release_packages import validate_bundle
 from prepare_release import prepare
 
@@ -347,6 +348,105 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'digest mismatch'):
                 validate_bundle(root, verifier)
             verifier.assert_not_called()
+
+    def test_github_server_digest_never_downloads_an_asset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable'}, {}, directory)
+            asset = {'name': 'app.apk', 'size': 7, 'sha256': 'b' * 64}
+            remote = {'id': 11, 'name': 'app.apk', 'size': 7, 'state': 'uploaded', 'digest': 'sha256:' + 'b' * 64}
+            publisher.download_attachment = Mock()
+            self.assertTrue(publisher.asset_matches('github', {'id': 1}, remote, asset))
+            publisher.download_attachment.assert_not_called()
+            self.assertEqual(publisher.report['verifiedAssets']['github:app.apk']['method'], 'server-sha256')
+            self.assertFalse(publisher.asset_matches('github', {'id': 1}, dict(remote, digest='sha256:' + 'c' * 64), asset))
+            self.assertFalse(publisher.asset_matches('github', {'id': 1}, dict(remote, state='new'), asset))
+            publisher.download_attachment.assert_not_called()
+
+    def test_gitee_hash_is_read_once_and_receipts_survive_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = {'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable'}
+            asset = {'name': 'app.apk', 'size': 7, 'sha256': 'b' * 64}
+            remote = {'id': 11, 'name': 'app.apk', 'size': 7}
+            publisher = Publisher(plan, {}, directory)
+            publisher.download_attachment = Mock(return_value={'size': 7, 'sha256': 'b' * 64})
+            self.assertTrue(publisher.asset_matches('gitee', {'id': 1}, remote, asset))
+            self.assertTrue(publisher.asset_matches('gitee', {'id': 1}, remote, asset))
+            publisher.download_attachment.assert_called_once()
+            resumed = Publisher(plan, {}, directory)
+            resumed.download_attachment = Mock(return_value={'size': 7, 'sha256': 'b' * 64})
+            self.assertTrue(resumed.asset_matches('gitee', {'id': 1}, remote, asset))
+            resumed.download_attachment.assert_not_called()
+            self.assertTrue(resumed.asset_matches('gitee', {'id': 1}, dict(remote, id=12), asset))
+            self.assertTrue(resumed.asset_matches('gitee', {'id': 1}, dict(remote, id=12, updated_at='changed'), asset))
+            self.assertTrue(resumed.asset_matches('gitee', {'id': 2}, dict(remote, id=12, updated_at='changed'), asset))
+            self.assertEqual(resumed.download_attachment.call_count, 3)
+            self.assertFalse(resumed.asset_matches('gitee', {'id': 2}, dict(remote, size=9), asset))
+            self.assertFalse(resumed.asset_matches('gitee', {'id': 2}, remote, dict(asset, sha256='c' * 64)))
+
+    def test_corrupt_attachment_does_not_create_a_reusable_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable'}, {}, directory)
+            publisher.download_attachment = Mock(return_value={'size': 7, 'sha256': 'c' * 64})
+            self.assertFalse(publisher.asset_matches('gitee', {'id': 1}, {'id': 2, 'name': 'app.apk', 'size': 7}, {'name': 'app.apk', 'size': 7, 'sha256': 'b' * 64}))
+            self.assertNotIn('gitee:app.apk', publisher.report.get('verifiedAssets', {}))
+
+    def test_upload_channels_run_concurrently_and_report_writes_are_serialized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            publisher = Publisher({'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable', 'assets': [{'name': 'app.apk', 'binary': True}]}, {}, directory)
+            publisher.check_ci = Mock()
+            publisher.release = Mock(side_effect=lambda channel: {'id': channel})
+            publisher.list_assets = Mock(return_value=[])
+            barrier = threading.Barrier(2)
+            def upload(channel, release, asset):
+                barrier.wait(timeout=2)
+                for i in range(15):
+                    publisher.record(channel + str(i), {'verified': True})
+            publisher.stage_asset = Mock(side_effect=upload)
+            publisher.stage()
+            recorded = json.loads((Path(directory) / 'report.json').read_text())
+            self.assertTrue(all(channel + str(i) in recorded for channel in ('github', 'gitee') for i in range(15)))
+            self.assertEqual(recorded['staged']['binaryAssets'], 2)
+
+    def test_fast_public_proof_requires_the_exact_staged_attachment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = {'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable', 'tag': 'v0.3.4', 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}, 'notes': '# Release', 'assets': [], 'manifest': {'platforms': []}}
+            publisher = Publisher(plan, {}, directory)
+            results = []
+            for i in range(4):
+                file = f'{i}.bin'
+                entry = {'file': file, 'size': 7, 'sha256': 'b' * 64, 'channels': []}
+                for channel in ('github', 'gitee'):
+                    url = publisher.public_url(channel, file)
+                    entry['channels'].append({'id': channel, 'url': url})
+                    receipt = {'channel': channel, 'releaseId': 1, 'assetId': i + 1, 'name': file, 'size': 7, 'sha256': 'b' * 64, 'method': 'downloaded-sha256'}
+                    publisher.report.setdefault('verifiedAssets', {})[channel + ':' + file] = receipt
+                    results.append({'url': url, 'size': 7, 'sha256': 'b' * 64, 'verification': 'uploaded-hash-and-public-headers', 'uploadProof': receipt.copy()})
+                plan['manifest']['platforms'].append(entry)
+            publisher.api = Mock()
+            publisher.release = Mock(return_value={'id': 1})
+            path = Path(directory) / 'download-verification.json'
+            wrong = json.loads(json.dumps(results)); wrong[0]['uploadProof']['assetId'] = 999
+            path.write_text(json.dumps({'planDigest': fingerprint(plan), 'results': wrong}))
+            with self.assertRaisesRegex(ValueError, 'Upload digest proof'):
+                publisher.finish_release()
+            publisher.api.assert_not_called()
+            path.write_text(json.dumps({'planDigest': fingerprint(plan), 'results': results}))
+            publisher.finish_release()
+            self.assertEqual(len(publisher.report['downloads']), 8)
+
+    def test_changed_attachment_invalidates_cached_header_proof_and_full_audit_requires_bytes(self):
+        receipt = {'assetId': 1, 'sha256': 'b' * 64, 'size': 7}
+        plan = {'manifest': {'platforms': [{'file': 'app.apk', 'sha256': 'b' * 64, 'size': 7, 'channels': [{'id': 'github', 'url': 'https://example.test/app.apk'}]}]}}
+        result = {'url': 'https://example.test/app.apk', 'sha256': 'b' * 64, 'size': 7, 'verification': 'uploaded-hash-and-public-headers', 'uploadProof': receipt}
+        proof = {'planDigest': fingerprint(plan), 'results': [result]}
+        staged = {'verifiedAssets': {'github:app.apk': receipt}}
+        self.assertTrue(cached_downloads_valid(plan, proof, staged))
+        self.assertFalse(cached_downloads_valid(plan, proof, staged, full_audit=True))
+        self.assertFalse(cached_downloads_valid(plan, proof, {'verifiedAssets': {'github:app.apk': dict(receipt, assetId=2)}}))
+        self.assertFalse(cached_downloads_valid(plan, proof, {}))
+        full = dict(proof, results=[dict(result, verification='full-download')])
+        self.assertTrue(cached_downloads_valid(plan, full, {}, full_audit=True))
+        self.assertFalse(cached_downloads_valid(plan, dict(full, planDigest='wrong'), {}))
 
     def test_resume_skips_an_already_verified_binary(self):
         with tempfile.TemporaryDirectory() as directory:

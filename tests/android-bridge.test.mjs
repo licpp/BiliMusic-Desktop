@@ -24,6 +24,7 @@ test('real Tauri SDK listener registration, events, playback and removal satisfy
   globalThis.window = { crypto: webcrypto }
   const calls = []; let handler
   mockIPC((full, payload) => {
+    if(full==='account_session')return 'session-test'
     const command = full.split('|')[1]
     assert.ok(commands.has(command), `${command}: absent from generated command manifest`)
     assert.ok(permissions.has(`allow-${command.replaceAll('_', '-')}`), `${command}: not granted by default`)

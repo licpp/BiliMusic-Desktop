@@ -1,0 +1,36 @@
+/* Shared library component styles; layout/platform variants stay next to their controls. */
+.library-panel .section-heading .sidebar-collapse { min-width:0;min-height:28px;padding:0;font-size:12px;font-weight:600; }
+.library-panel .sidebar-heading-actions button>svg,.library-panel .collections-heading .collection-flat-button>svg { width:17px;height:17px;flex-shrink:0; }
+@media(max-width:960px) {
+ .library-view > header { min-width:0; }
+ .library-view > header > div { min-width:0; }
+ .library-view > header h2 { overflow-wrap:anywhere; }
+ .library-view .collection-actions { min-width:0;gap:8px;flex-wrap:wrap; }
+ .library-view .collection-actions > button,.library-view .collection-actions > .action-menu-trigger { flex-shrink:0;white-space:nowrap; }
+}
+.library-panel .section-heading,.library-panel .collections-sidebar>.collections-heading { position:relative;display:flex;align-items:center;min-height:32px;padding-right:30px; }
+.library-panel .section-heading>.sidebar-collapse,.library-panel .collections-sidebar>.collections-heading>.collections-collapse { position:static;display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0;width:auto;min-height:32px;margin:0;padding:0;overflow:visible; }
+.library-panel .section-heading>.sidebar-heading-actions,.library-panel .collections-sidebar>.collections-heading>.collection-flat-button { position:static;transform:none;flex:none; }
+
+.library-panel .sidebar-collapse>svg,.library-panel .collections-collapse>svg { position:absolute;right:6px;top:50%;transform:translateY(-50%);width:16px;height:16px;flex:0 0 16px;pointer-events:auto; }
+
+.library-panel .sidebar-heading-actions[hidden] { display:none; }
+.list-search { display:flex;align-items:center;gap:12px;margin:8px 0 16px;min-width:0; }
+.list-search .detail-search { width:min(100%,420px);margin:0; }
+.list-search small { color:var(--muted);white-space:nowrap; }
+@media(max-width:620px){.list-search.open{flex-wrap:wrap}.list-search .detail-search{width:100%}}
+.library-list-toolbar { display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:12px 0 16px;min-width:0; }
+.library-list-toolbar > .collection-actions { flex:1;min-width:0;margin:0; }
+.library-list-toolbar > .list-search { flex:none;margin:0;gap:8px;min-width:0; }
+.library-list-toolbar > .list-search.open { flex:1 1 210px;max-width:340px; }
+.list-search .list-search-field { display:flex;align-items:center;gap:8px;width:100%;min-width:0;height:38px;padding:0 10px;background:var(--panel-raised);border:1px solid var(--line);border-radius:11px; }
+.list-search-field > svg { position:static;flex:0 0 16px;width:16px;height:16px;color:var(--muted); }
+.list-search .list-search-field input { flex:1;min-width:0;width:0;height:34px;padding:0;border:0;border-radius:0;background:transparent;color:var(--ink);font:inherit;font-size:13px;line-height:1.4;box-shadow:none;outline:0; }
+.list-search-field input::-webkit-search-cancel-button { display:none; }
+.list-search .list-search-field > button { display:grid;place-items:center;flex:0 0 26px;width:26px;min-width:26px;height:26px;min-height:26px;margin:0;padding:0;border:0;border-radius:7px;background:transparent;color:var(--muted); }
+.list-search-field > button:hover { background:var(--line);color:var(--ink); }
+.list-search-field:focus-within { border-color:var(--cyan);box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 9%,transparent); }
+.list-search > small { flex:none;font-size:11px; }
+:root[data-theme="light"] .list-search-field { background:#fff;border-color:#dbe3eb; }
+@media(max-width:960px){.library-list-toolbar:has(.list-search.open) > .collection-actions > :not(.collection-primary){display:none}.library-list-toolbar > .list-search.open{flex:1;max-width:none}.library-list-toolbar:has(.list-search.open) > .collection-actions{flex:none}}
+@media(max-width:620px){.library-list-toolbar:has(.list-search.open) > .collection-actions{display:none}.library-list-toolbar > .list-search.open{width:100%}.list-search .list-search-field input{font-size:16px}.list-search .list-search-field{height:42px}.list-search .list-search-field input{height:38px}}

@@ -48,6 +48,9 @@ pub fn save(root: &Path, url: &str, etag: String, body: Vec<u8>) {
         trim(root);
     }
 }
+pub fn remove(root: &Path, key: &str) {
+    let _ = std::fs::remove_file(file(root, key));
+}
 fn trim(root: &Path) {
     // Cache is disposable; bound serialized on-disk size, including JSON expansion.
     let Ok(entries) = std::fs::read_dir(root) else {

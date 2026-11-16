@@ -1,3 +1,5 @@
+import { SystemTitleLyricsSettings } from './SystemTitleLyricsSettings'
+import { accountQueryKey } from '../../services/queryKeys'
 import { WindowCloseSettings } from './WindowCloseSettings'
 import { useSyncAttention } from '../../services/syncAttention'
 import { TriangleAlert } from 'lucide-react'
@@ -24,7 +26,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
   const theme = useThemeStore(state => state.theme), setTheme = useThemeStore(state => state.setTheme)
   const [downloadDirectory, setDownloadDirectory] = useState('')
   const [loading, setLoading] = useState(true), [error, setError] = useState('')
-  const sync = useQuery({ queryKey:['sync-status'], queryFn:syncStatus, enabled:inDesktopShell, retry:false })
+  const sync = useQuery({ queryKey:accountQueryKey('sync-status'), queryFn:syncStatus, enabled:inDesktopShell, retry:false })
   useEffect(() => {
     if (!inDesktopShell || isAndroid) { setLoading(false); return }
     void getDownloadDirectory().then(setDownloadDirectory).catch(cause => setError(commandErrorMessage(cause))).finally(() => setLoading(false))
@@ -42,6 +44,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>
       <ResumeSettings/>
+      {isMobile && <SystemTitleLyricsSettings/>}
       {!isIOS && !isOHOS && <FloatingLyricsSettings/>}
       {!isMobile && <ShortcutSettings/>}
     </div></section>

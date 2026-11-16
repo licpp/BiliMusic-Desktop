@@ -1,3 +1,6 @@
+import { startFloatingLyrics } from '../services/floatingLyrics'
+import { startUpdateChecks } from '../services/updates'
+import { installAccountQueryScope } from '../services/queryKeys'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -27,8 +30,11 @@ document.documentElement.dataset.platform = isAndroid ? 'android' : 'desktop'
 installMobileKeyboard({ scrollContainers: '.large-dialog,.large-main', topInset: 58, onDismiss: dismissLargeKeyboard })
 if (isAndroid) void controlMobileAudio('largeScreen', 1).catch(() => undefined)
 const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } } })
+installAccountQueryScope(client)
+startUpdateChecks()
 startCloudSync(client)
 startAutomaticLyrics()
+startFloatingLyrics()
 startListeningStatistics()
 startPreloadingNextTrack()
 startCreatorQueue()

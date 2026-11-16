@@ -210,7 +210,11 @@ def validate_bundle(bundle, native_verifier=verify_native):
     for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + ['THIRD_PARTY_LICENSES-' + p.replace(' ', '-') + '.json' for p in ids]:
         path = bundle / name
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': False})
+    from updater_artifacts import updater_assets
+    updater, extras = updater_assets(bundle, version)
+    known = {a['name'] for a in assets}
+    assets.extend(a for a in extras if a['name'] not in known)
     notes = (bundle / 'RELEASE_NOTES.md').read_text()
     require(source in notes, 'Release notes must pin the package source commit')
     return {'version': version, 'source': source, 'tag': 'v' + version, 'manifest': manifest, 'previous': previous,
-            'assets': assets, 'notes': notes, 'ciRuns': build.get('ciRuns', {}), 'platformSources': {p['platform']: p['source'] for p in build['platforms']}, 'revision': build.get('packageRevision', source[:7])}
+            'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}), 'ciRuns': build.get('ciRuns', {}), 'platformSources': {p['platform']: p['source'] for p in build['platforms']}, 'revision': build.get('packageRevision', source[:7])}

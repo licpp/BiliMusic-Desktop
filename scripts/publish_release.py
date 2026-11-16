@@ -20,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import zipfile
 from pathlib import Path
 
@@ -142,9 +144,29 @@ def deploy_site(site, work, candidate, previous, run, get):
         raise RuntimeError('Website validation failed; previous manifest restored') from None
 
 
+def cached_downloads_valid(plan, proof, upload_report, full_audit=False):
+    expected = {c['url']: (p, c) for p in plan['manifest']['platforms'] for c in p['channels']}
+    results = proof.get('results', [])
+    if proof.get('planDigest') != fingerprint(plan) or len(results) != len(expected) or {r.get('url') for r in results} != set(expected):
+        return False
+    for result in results:
+        package, channel = expected[result['url']]
+        if (result.get('size'), result.get('sha256')) != (package['size'], package['sha256']):
+            return False
+        method = result.get('verification', 'full-download')
+        if method == 'uploaded-hash-and-public-headers':
+            receipt = upload_report.get('verifiedAssets', {}).get(channel['id'] + ':' + package['file'])
+            if full_audit or not receipt or result.get('uploadProof') != receipt:
+                return False
+        elif method != 'full-download':
+            return False
+    return True
+
+
 class Publisher:
     def __init__(self, plan, secrets, work):
         self.plan, self.secrets, self.work = plan, secrets, Path(work)
+        self.report_lock = threading.RLock()
         self.work.mkdir(parents=True, exist_ok=True)
         self.opener = urllib.request.build_opener(NoRedirect)
         self.report = json.loads((self.work / 'report.json').read_text()) if (self.work / 'report.json').exists() else {}
@@ -153,8 +175,9 @@ class Publisher:
         self.report.update(version=plan['version'], source=plan['source'], revision=plan['revision'], planDigest=fingerprint(plan))
 
     def record(self, stage, result):
-        self.report[stage] = result
-        save_json(self.work / 'report.json', self.report)
+        with self.report_lock:
+            self.report[stage] = result
+            save_json(self.work / 'report.json', self.report)
         print(json.dumps({'stage': stage, 'status': 'verified'}, ensure_ascii=False), flush=True)
 
     def base(self, channel):
@@ -236,10 +259,27 @@ class Publisher:
     def asset_matches(self, channel, release, existing, asset):
         if existing['size'] != asset['size']:
             return False
+        identity = {'channel': channel, 'releaseId': release['id'], 'assetId': existing['id'],
+                    'name': existing.get('name', asset['name']), 'size': existing['size'],
+                    'updatedAt': existing.get('updated_at')}
+        key = channel + ':' + asset['name']
         if channel == 'github' and existing.get('digest'):
-            return existing['digest'] == 'sha256:' + asset['sha256'] and existing.get('state') == 'uploaded'
-        result = self.download_attachment(channel, release, existing)
-        return result['size'] == asset['size'] and result['sha256'] == asset['sha256']
+            if existing['digest'] != 'sha256:' + asset['sha256'] or existing.get('state') != 'uploaded':
+                return False
+            method = 'server-sha256'
+        else:
+            with self.report_lock:
+                cached = self.report.get('verifiedAssets', {}).get(key)
+            if cached and all(cached.get(k) == v for k, v in identity.items()) and cached.get('sha256') == asset['sha256'] and cached.get('method') == 'downloaded-sha256':
+                return True
+            result = self.download_attachment(channel, release, existing)
+            if result['size'] != asset['size'] or result['sha256'] != asset['sha256']:
+                return False
+            method = 'downloaded-sha256'
+        with self.report_lock:
+            self.report.setdefault('verifiedAssets', {})[key] = identity | {'sha256': asset['sha256'], 'method': method}
+            save_json(self.work / 'report.json', self.report)
+        return True
 
     def download_attachment(self, channel, release, existing, destination=None):
         # Immutable API IDs avoid cached filename redirects and bypass the
@@ -336,10 +376,12 @@ class Publisher:
     def stage(self):
         self.check_ci()
         releases = {channel: self.release(channel) for channel in ('github', 'gitee')}
-        for channel, release in releases.items():
+        def upload_channel(channel):
             for asset in self.plan['assets']:
                 if asset['binary']:
-                    self.stage_asset(channel, release, asset)
+                    self.stage_asset(channel, releases[channel], asset)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(upload_channel, releases))
         self.record('staged', {'binaryAssets': sum(a['binary'] for a in self.plan['assets']) * len(releases)})
         if 'originalMetadata' not in self.report:
             originals = []
@@ -364,14 +406,21 @@ class Publisher:
                 require(channel['url'] == self.public_url(channel['id'], package['file'], package.get('version', self.plan['version'])), 'Unexpected public download URL')
                 match = next((d for d in downloads if d['url'] == channel['url']), None)
                 require(match and match['size'] == package['size'] and match['sha256'] == package['sha256'], 'Public download proof mismatch')
+                require(match.get('verification', 'full-download') in ('full-download', 'uploaded-hash-and-public-headers'), 'Unknown download verification method')
+                if match.get('verification') == 'uploaded-hash-and-public-headers':
+                    receipt = self.report.get('verifiedAssets', {}).get(channel['id'] + ':' + package['file'])
+                    require(receipt and match.get('uploadProof') == receipt and receipt['sha256'] == package['sha256'] and receipt['size'] == package['size'], 'Upload digest proof missing or changed')
         self.record('downloads', downloads)
         releases = {channel: self.release(channel) for channel in ('github', 'gitee')}
-        for channel, release in releases.items():
+        def upload_metadata(channel):
+            release = releases[channel]
             for asset in self.plan['assets']:
                 if not asset['binary']:
                     self.stage_asset(channel, release, asset)
             title = next(line[2:] for line in self.plan['notes'].splitlines() if line.startswith('# '))
             self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'], 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(upload_metadata, releases))
         self.record('releaseMetadata', {'channels': ['github', 'gitee'], 'assets': len(self.plan['assets'])})
 
     def mirror(self, channel):
@@ -383,6 +432,32 @@ class Publisher:
         require(value == self.plan['previous'], 'Update mirror changed concurrently: ' + channel)
         content = (json.dumps(self.plan['manifest'], ensure_ascii=False, indent=2) + '\n').encode()
         self.api(channel, path, 'PUT', {'message': f'Publish {self.plan["version"]} {self.plan["revision"]} download manifest [skip ci]', 'branch': 'main', 'sha': current['sha'], 'content': base64.b64encode(content).decode()})
+
+    def activate_updater(self):
+        updater = self.plan.get('updater')
+        if updater is None:
+            return
+        # Every archive/signature was uploaded and hash-verified before exposing this feed.
+        for channel in ('github', 'gitee'):
+            path = '/contents/website/updater.json'
+            try:
+                current = self.api(channel, path + '?ref=main')
+            except ApiError as error:
+                if error.status != 404:
+                    raise
+                current = {}
+            if current.get('content') and json.loads(base64.b64decode(current['content'])) == updater:
+                continue
+            payload = {'message': f'Publish {self.plan["version"]} signed updater [skip ci]', 'branch': 'main',
+                       'content': base64.b64encode((json.dumps(updater, ensure_ascii=False, indent=2) + '\n').encode()).decode()}
+            if current.get('sha'):
+                payload['sha'] = current['sha']
+            self.api(channel, path, 'PUT' if current.get('sha') or channel == 'github' else 'POST', payload)
+        path = Path(self.plan['siteRoot']) / 'updater.json'
+        temporary = path.with_suffix('.json.publish-tmp')
+        save_json(temporary, updater)
+        temporary.replace(path)
+        self.record('updater', {'version': updater['version'], 'platforms': list(updater['platforms'])})
 
     site_filing_pending = False
 
@@ -396,6 +471,7 @@ class Publisher:
         run = lambda args: subprocess.check_output(args, stderr=subprocess.PIPE, timeout=60)
         result = deploy_site(self.plan['siteRoot'], self.work, self.plan['manifest'], self.plan['previous'], run, self.get_site)
         self.record('website', result)
+        self.activate_updater()
         for channel in ('github', 'gitee'):
             self.mirror(channel)
             self.record('mirror-' + channel, {'version': self.plan['version']})
@@ -547,10 +623,10 @@ def local_main(args):
         verification = bundle / 'download-verification.json'
         cached = json.loads(verification.read_text()) if verification.exists() else {}
         expected = {c['url']: (p['size'], p['sha256']) for p in plan['manifest']['platforms'] for c in p['channels']}
-        verified = cached.get('results', [])
-        valid = cached.get('planDigest') == fingerprint(plan) and len(verified) == len(expected) and {v['url'] for v in verified} == set(expected) and all((v['size'], v['sha256']) == expected[v['url']] for v in verified)
+        uploaded_report = json.loads((bundle / 'release-report.json').read_text())
+        valid = cached_downloads_valid(plan, cached, uploaded_report, args.full_download_audit)
         if not valid:
-            subprocess.run(['node', str(Path(__file__).with_name('verify_release_downloads.mjs')), str(bundle / 'release-plan.json'), str(verification), fingerprint(plan)], check=True)
+            subprocess.run(['node', str(Path(__file__).with_name('verify_release_downloads.mjs')), str(bundle / 'release-plan.json'), str(verification), fingerprint(plan), '--upload-proof', str(bundle / 'release-report.json')] + (['--full-download'] if args.full_download_audit else []), check=True)
         else:
             print(json.dumps({'stage': 'publicDownloads', 'status': 'reused verified proof'}), flush=True)
         with ssh.open_sftp() as sftp:
@@ -578,6 +654,7 @@ if __name__ == '__main__':
     parser.add_argument('--site-root', default='/opt/bilimusic-site')
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--site-filing-pending', action='store_true', help='Publish verified site configuration while explicitly recording public access pending ICP filing')
+    parser.add_argument('--full-download-audit', action='store_true', help='Audit every public installer by downloading and hashing it again')
     parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')
     parser.add_argument('--remote-work', help=argparse.SUPPRESS)
     parser.add_argument('--remote-phase', choices=['stage', 'activate', 'finalize'], help=argparse.SUPPRESS)

@@ -1360,3 +1360,232 @@ async fn removing_the_last_local_reference_cannot_delete_metadata_needed_by_anot
     );
     server.abort();
 }
+
+/// Exhaust actual HTTP admission at each bootstrap boundary, then restore the
+/// budget. Same durable outbox is replayed; an offline edit made while waiting
+/// must survive on both the writer and a cold receiver.
+#[tokio::test]
+async fn quota_exhaustion_at_every_bootstrap_boundary_resumes_without_losing_offline_edits() {
+    use super::request_budget::{self, Budget};
+    let (cfg, secret, store, server) = test_dav::server().await;
+    let initial = Profile::new(&cfg);
+    initial.sql(&format!(
+        "INSERT INTO playlists(id,name) VALUES('{LIST}','retained')"
+    ));
+    sync(&initial, &cfg, &secret).await;
+    let boundaries = store.lock().unwrap().requests.len();
+    server.abort();
+    assert!(boundaries < 120);
+    for cutoff in 0..boundaries {
+        let (cfg, secret, store, server) = test_dav::server().await;
+        let a = Profile::new(&cfg);
+        a.sql(&format!(
+            "INSERT INTO playlists(id,name) VALUES('{LIST}','retained')"
+        ));
+        let budget = Arc::new(Budget::testing(&a.0.1, cutoff));
+        let result = request_budget::scoped(
+            budget.clone(),
+            engine::sync(&a.0, &cfg, &secret, None, false),
+        )
+        .await;
+        assert!(result.is_err(), "cutoff={cutoff}");
+        assert_eq!(store.lock().unwrap().requests.len(), cutoff);
+        a.sql(&format!(
+            "UPDATE playlists SET name='edited while deferred' WHERE id='{LIST}'"
+        ));
+        let result = request_budget::scoped(
+            budget.clone(),
+            engine::sync(&a.0, &cfg, &secret, None, false),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            store.lock().unwrap().requests.len(),
+            cutoff,
+            "denials must issue no HTTP"
+        );
+        budget.elapse_window();
+        for _ in 0..2 {
+            request_budget::scoped(budget.clone(), sync(&a, &cfg, &secret)).await;
+        }
+        let b = Profile::new(&cfg);
+        sync(&b, &cfg, &secret).await;
+        assert_eq!(a.snapshot(&cfg), b.snapshot(&cfg), "cutoff={cutoff}");
+        assert_eq!(
+            b.snapshot(&cfg).records[&format!("playlist:{LIST}")].fields["name"],
+            json!("edited while deferred")
+        );
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn library_and_statistics_share_one_actor_discovery_per_background_round() {
+    let (cfg, secret, store, server) = test_dav::server().await;
+    let a = Profile::new(&cfg);
+    let b = Profile::new(&cfg);
+    b.sql(&format!(
+        "INSERT INTO playlists(id,name) VALUES('{LIST}','a second library writer')"
+    ));
+    for device in [&a, &b] {
+        sync(device, &cfg, &secret).await;
+        sample(device, &cfg, 30_000);
+        super::statistics_v2::exchange(&device.0, &cfg, &secret)
+            .await
+            .unwrap();
+    }
+    // Stabilize all received facts. No source should echo them back as a write.
+    for _ in 0..2 {
+        sync(&a, &cfg, &secret).await;
+        super::statistics_v2::exchange(&a.0, &cfg, &secret)
+            .await
+            .unwrap();
+    }
+    store.lock().unwrap().requests.clear();
+    super::v2_net::discovery_round(async {
+        sync(&a, &cfg, &secret).await;
+        super::statistics_v2::exchange(&a.0, &cfg, &secret)
+            .await
+            .unwrap();
+    })
+    .await;
+    let calls = store.lock().unwrap().requests.clone();
+    let mut directories = BTreeSet::new();
+    for (method, path) in &calls {
+        if method == "PROPFIND" && path.contains("/control/") {
+            assert!(
+                directories.insert(path.clone()),
+                "duplicate discovery {path}"
+            );
+        }
+    }
+    assert_eq!(
+        directories.len(),
+        5,
+        "root plus four library/statistics actors"
+    );
+    assert!(calls.iter().all(|(method, _)| method != "PUT"));
+    eprintln!(
+        "two-device stable round: {} HTTP requests, {} control listings",
+        calls.len(),
+        directories.len()
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn statistics_quota_exhaustion_preserves_samples_and_deduplicates_replay() {
+    use super::request_budget::{self, Budget};
+    let (cfg, secret, store, server) = test_dav::server().await;
+    let initial = Profile::new(&cfg);
+    sample(&initial, &cfg, 60_000);
+    super::statistics_v2::exchange(&initial.0, &cfg, &secret)
+        .await
+        .unwrap();
+    let boundaries = store.lock().unwrap().requests.len();
+    server.abort();
+    for cutoff in 0..boundaries {
+        let (cfg, secret, store, server) = test_dav::server().await;
+        let a = Profile::new(&cfg);
+        sample(&a, &cfg, 60_000);
+        let budget = Arc::new(Budget::testing(&a.0.1, cutoff));
+        let result = request_budget::scoped(
+            budget.clone(),
+            super::statistics_v2::exchange(&a.0, &cfg, &secret),
+        )
+        .await;
+        assert!(result.is_err(), "cutoff={cutoff}");
+        assert_eq!(store.lock().unwrap().requests.len(), cutoff);
+        sample(&a, &cfg, 15_000);
+        budget.elapse_window();
+        for _ in 0..2 {
+            request_budget::scoped(
+                budget.clone(),
+                super::statistics_v2::exchange(&a.0, &cfg, &secret),
+            )
+            .await
+            .unwrap();
+        }
+        let cold = Profile::new(&cfg);
+        super::statistics_v2::exchange(&cold.0, &cfg, &secret)
+            .await
+            .unwrap();
+        let value =
+            super::statistics::query(&cold.0.0.lock().unwrap(), &cold.0.1, &cfg.uid).unwrap();
+        assert_eq!(value["total"]["seconds"], json!(75.0), "cutoff={cutoff}");
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn discovery_larger_than_a_request_window_resumes_after_restart_and_then_refreshes() {
+    use super::{
+        migration::Genesis,
+        request_budget::{self, Budget},
+        v2_net::Client,
+    };
+    let (cfg, secret, store, server) = test_dav::server().await;
+    let p = Profile::new(&cfg);
+    let g = Genesis::for_config(&cfg).unwrap();
+    let control = format!("/dav/BiliMusic-sync-v1/42/sync-v2/{}/control/", g.vault);
+    let actors: Vec<_> = (0..150)
+        .map(|n| format!("10000000-0000-4000-8000-{n:012}"))
+        .collect();
+    {
+        let mut s = store.lock().unwrap();
+        s.dirs.insert(control.clone());
+        for actor in &actors {
+            s.dirs.insert(format!("{control}{actor}/"));
+        }
+    }
+    let cache = p.0.1.join("discovery-cache");
+    let budget = Arc::new(Budget::testing(&p.0.1, 120));
+    let first = Client::cached(&cfg, &secret, cache.clone()).unwrap();
+    assert!(
+        request_budget::scoped(budget.clone(), engine::heads(&first, &g, &BTreeMap::new()))
+            .await
+            .is_err()
+    );
+    assert_eq!(store.lock().unwrap().requests.len(), 120);
+    drop(first);
+    // A successful scan prefix survives rebuilding the client (process restart).
+    budget.elapse_window();
+    let restarted = Client::cached(&cfg, &secret, cache.clone()).unwrap();
+    assert!(
+        request_budget::scoped(
+            budget.clone(),
+            engine::heads(&restarted, &g, &BTreeMap::new())
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert_eq!(store.lock().unwrap().requests.len(), 152);
+    // The completed checkpoint must be discarded, so later commits are discovered.
+    let doc = Document::empty(g.scope(Domain::Library));
+    let publication =
+        super::protocol_v2::bootstrap_checkpoint(&doc, &actors[0], 1, BTreeMap::new()).unwrap();
+    let head = publication.head;
+    store.lock().unwrap().files.insert(
+        format!("{control}{}/{}", actors[0], head.filename().unwrap()),
+        (serde_json::to_vec(&head).unwrap(), 1_700_000_000),
+    );
+    budget.elapse_window();
+    assert!(
+        request_budget::scoped(
+            budget.clone(),
+            engine::heads(&restarted, &g, &BTreeMap::new())
+        )
+        .await
+        .is_err()
+    );
+    budget.elapse_window();
+    let heads = request_budget::scoped(
+        budget.clone(),
+        engine::heads(&restarted, &g, &BTreeMap::new()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(heads.get(&actors[0]), Some(&head));
+    server.abort();
+}

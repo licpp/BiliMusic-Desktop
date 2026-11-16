@@ -1,22 +1,24 @@
+import { accountKeyAt } from '../services/queryKeys'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check, LoaderCircle, Search } from 'lucide-react'
 import type { Track } from '../domain/track'
 import { accountEpoch } from '../services/accountScope'
-import { commandErrorMessage, searchLyrics, saveStoredLyrics, type LyricCandidate, type StoredLyrics } from '../services/desktopApi'
-import { candidateLines } from '../features/lyrics/lrc'
-import { automaticLyricQuery } from '../features/lyrics/lyricQuery'
+import { commandErrorMessage, searchLyrics, saveStoredLyrics } from '../services/desktopApi'
+import type { LyricCandidate, StoredLyrics } from '../domain/lyrics'
+import { candidateLines } from '../domain/lrc'
+import { firstSongQuery } from '../domain/songIdentity'
 import { rankLyricCandidates } from '../services/musicMatchRanking'
 import { LargeDialog } from './LargeDialog'
 import { Failure } from './Library'
 
 export function LargeLyricSearch({ track, stored, onSaved, onClose }: { track: Track; stored?: StoredLyrics | null; onSaved: (value: StoredLyrics) => void; onClose: () => void }) {
-  const initial = automaticLyricQuery(track), epoch = accountEpoch()
+  const initial = firstSongQuery(track), epoch = accountEpoch()
   const [title, setTitle] = useState(initial.title), [artist, setArtist] = useState(initial.artist)
   const [submitted, setSubmitted] = useState(initial), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  const results = useQuery({ queryKey: ['large-lyric-search', epoch, submitted.title, submitted.artist], queryFn: () => searchLyrics(submitted.title, submitted.artist || undefined, true), enabled: Boolean(submitted.title.trim()), retry: false })
+  const results = useQuery({ queryKey: accountKeyAt(epoch, 'large-lyric-search', submitted.title, submitted.artist), queryFn: () => searchLyrics(submitted.title, submitted.artist || undefined, true), enabled: Boolean(submitted.title.trim()), retry: false })
   const candidates = rankLyricCandidates(results.data?.candidates || [], submitted.title, submitted.artist, track.durationSeconds)
   async function choose(candidate: LyricCandidate) {
     if (busy) return

@@ -1,4 +1,4 @@
-//! Shared native queue resolution. Neither Android nor iOS needs an active WebView.
+//! Shared native queue resolution. Android, iOS and Harmony do not need an active WebView.
 use crate::infrastructure::{
     database::Database,
     media_proxy::MediaProxy,
@@ -9,12 +9,31 @@ use crate::interface::commands::{library_record_play, track_playback_plan};
 use serde_json::{Value, json};
 use tauri::Manager;
 
+fn resolved_title(
+    track: &Value,
+    stored: &crate::infrastructure::repositories::library::TrackRecord,
+) -> String {
+    let chapter = stored
+        .source_title_context
+        .as_ref()
+        .is_some_and(|c| c.season.is_some() || c.chapter_context || c.part_count > 1);
+    if stored.title_overridden || chapter {
+        stored.title.clone()
+    } else {
+        track["displayTitle"]
+            .as_str()
+            .unwrap_or(&stored.title)
+            .to_owned()
+    }
+}
+
 fn input(track: &Value) -> Result<TrackInput, String> {
     let source = &track["source"];
     serde_json::from_value(json!({
         "id": track["id"], "bvid": source["bvid"], "aid": source["aid"],
         "cid": source["cid"], "page": source["page"],
-        "sourceTitle": track["title"], "title": track["title"],
+        "sourceTitle": track["videoTitle"].as_str().or_else(||track["title"].as_str()).unwrap_or_default(), "title": track["title"],
+        "sourceTitleContext":track["sourceTitleContext"],
         "artist": track["artist"], "album": track["album"], "coverUrl": track["coverUrl"],
         "durationSeconds": track["durationSeconds"].as_f64().unwrap_or(0.0).round() as i64,
         "uploaderId": source["uploaderId"], "uploaderName": source["uploaderName"]
@@ -27,14 +46,30 @@ pub(crate) fn current_profile(app: &tauri::AppHandle) -> String {
 }
 
 pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
-    let profile = payload["profile"]
-        .as_str()
-        .ok_or("播放账号已变更，请重新播放")?;
+    resolve_with_guard(app, payload, || true).await
+}
+pub(crate) async fn resolve_with_guard(
+    app: &tauri::AppHandle,
+    payload: Value,
+    current: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let fallback = current_profile(app);
+    let profile = payload["profile"].as_str().unwrap_or(&fallback);
     let mut track = payload["track"].clone();
     // Check briefly under the account gate; sync network requests must not block playback.
     let sync = app.state::<crate::sync::SyncState>();
     let gate = sync.account_gate.lock().await;
-    if profile != current_profile(app) {
+    if !current()
+        || profile != current_profile(app)
+        || payload["accountSession"].as_str().is_some_and(|expected| {
+            let db = app.state::<Database>();
+            let Ok(c) = db.0.lock() else { return true };
+            crate::infrastructure::database::account_session(&c)
+                .ok()
+                .as_deref()
+                != Some(expected)
+        })
+    {
         return Err("播放账号已变更，请重新播放".into());
     }
     drop(gate);
@@ -51,6 +86,7 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
                 }
                 let pages = provider.video_pagelist(bvid).await?;
                 Ok(VideoParts {
+                    play_count: None,
                     published_at: track["publishedAt"].as_u64(),
                     bvid: bvid.to_owned(),
                     aid,
@@ -66,7 +102,8 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
                         .unwrap_or_default()
                         .to_owned(),
                     parts: pages,
-                    season: None,
+                    season: serde_json::from_value(track["sourceTitleContext"]["season"].clone())
+                        .ok(),
                 })
             };
             if let Ok(Ok(video)) =
@@ -77,8 +114,12 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
                     "source": {"provider":"bilibili", "bvid":video.bvid, "cid":part.cid,
                                "page":part.page, "aid":video.aid,
                                "uploaderId":video.uploader_id, "uploaderName":video.uploader_name},
-                    "title":if video.parts.len() == 1 || part.title.is_empty() { &video.title } else { &part.title },
+                    "title":crate::domain::source_title::source_title(&video.title,&part.title,video.parts.len(),video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false), video.season.as_ref().map(|s|s.title.as_str()).unwrap_or("")),
+                    "displayTitle":crate::domain::source_title::source_title(&video.title,&part.title,video.parts.len(),video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false), video.season.as_ref().map(|s|s.title.as_str()).unwrap_or("")),
+                    "publishedAt":video.published_at,"playCount":video.play_count,
+                    "chapterContext":video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false),
                     "videoTitle":video.title, "partCount":video.parts.len(),
+                    "sourceTitleContext":{"videoTitle":video.title,"partTitle":part.title,"partCount":video.parts.len(),"season":video.season,"chapterContext":video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false)},
                     "coverUrl":if video.cover_url.is_empty() { &part.cover_url } else { &video.cover_url },
                     "durationSeconds":part.duration_seconds, "liked":false,
                 })).collect();
@@ -94,7 +135,17 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
         return Err("无法读取合集中的这个视频".into());
     }
     let gate = sync.account_gate.lock().await;
-    if profile != current_profile(app) {
+    if !current()
+        || profile != current_profile(app)
+        || payload["accountSession"].as_str().is_some_and(|expected| {
+            let db = app.state::<Database>();
+            let Ok(c) = db.0.lock() else { return true };
+            crate::infrastructure::database::account_session(&c)
+                .ok()
+                .as_deref()
+                != Some(expected)
+        })
+    {
         return Err("播放账号已变更，请重新播放".into());
     }
     let refresh = payload["refresh"].as_bool() == Some(true);
@@ -118,10 +169,26 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
     .await
     .map_err(|e| e.message)?;
     let _gate = sync.account_gate.lock().await;
-    if profile != current_profile(app) {
+    if !current()
+        || profile != current_profile(app)
+        || payload["accountSession"].as_str().is_some_and(|expected| {
+            let db = app.state::<Database>();
+            let Ok(c) = db.0.lock() else { return true };
+            crate::infrastructure::database::account_session(&c)
+                .ok()
+                .as_deref()
+                != Some(expected)
+        })
+    {
         return Err("播放账号已变更，请重新播放".into());
     }
-    track["title"] = json!(stored.title);
+    track["title"] = json!(resolved_title(&track, &stored));
+    track["videoTitle"] = json!(stored.source_video_title);
+    if stored.source_title_context.is_some() {
+        track["sourceTitleContext"] = json!(stored.source_title_context);
+    }
+    track["displayTitle"] = track["title"].clone();
+    track["titleOverridden"] = json!(stored.title_overridden);
     track["artist"] = json!(stored.artist);
     track["album"] = json!(stored.album);
     track["coverUrl"] = json!(stored.cover_url);
@@ -162,6 +229,12 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
             .ok()
             .flatten()
     };
+    let lyrics = lyrics.map(|stored| {
+        let lines = crate::domain::lyrics::timed_lines(&stored.raw_text, &stored.parsed_json);
+        let mut value = serde_json::to_value(stored).unwrap_or(Value::Null);
+        value["lines"] = json!(lines);
+        value
+    });
     Ok(
         json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts, "lyrics":lyrics}),
     )
@@ -170,6 +243,31 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_native_queue_titles_cannot_replace_cached_chapters_or_manual_names() {
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        let input: TrackInput=serde_json::from_value(json!({"id":"bilibili:BV123:4","bvid":"BV123","cid":4,"page":1,
+            "sourceTitle":"完整系列 第一章","title":"完整系列 第一章","durationSeconds":100,
+            "sourceTitleContext":{"videoTitle":"完整系列 第一章","partTitle":"第一章","partCount":1,"chapterContext":true}
+        })).unwrap();
+        let stored = LibraryRepository::upsert(&mut c, &input).unwrap();
+        let queued = json!({"displayTitle":"完整系列 第一章"});
+        assert_eq!(resolved_title(&queued, &stored), "第一章");
+        let edited = LibraryRepository::update_metadata(
+            &c,
+            &input.id,
+            &crate::infrastructure::repositories::library::MetadataPatch {
+                title: "我的章节".into(),
+                artist: None,
+                album: None,
+                cover_url: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved_title(&queued, &edited), "我的章节");
+    }
+
     #[test]
     fn android_and_ios_queue_tracks_use_the_same_recording_input() {
         let track = json!({"id":"bilibili:BV123:4", "title":"第二部分", "durationSeconds":125.4,

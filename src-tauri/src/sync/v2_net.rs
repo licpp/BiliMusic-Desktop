@@ -3,6 +3,11 @@ use super::{
     Config, traffic,
     transport::{self, Secret},
 };
+type Listings = std::cell::RefCell<std::collections::BTreeMap<String, (Vec<String>, Option<u64>)>>;
+tokio::task_local! { static LISTINGS: Listings; }
+pub async fn discovery_round<T>(future: impl std::future::Future<Output = T>) -> T {
+    LISTINGS.scope(Listings::default(), future).await
+}
 pub struct Client<'a> {
     cfg: &'a Config,
     secret: &'a Secret,
@@ -121,6 +126,62 @@ mod tests {
         );
         server.abort();
     }
+
+    #[tokio::test]
+    async fn round_cache_is_shared_but_invalidates_only_affected_paths_and_never_survives_a_round()
+    {
+        let (cfg, secret, store, server) = super::super::test_dav::server().await;
+        let a = Client::new(&cfg, &secret).unwrap();
+        let b = Client::new(&cfg, &secret).unwrap();
+        for path in [
+            "sync-v2/test/control/a/",
+            "sync-v2/test/control/b/",
+            "sync-v2/test/objects/a/",
+        ] {
+            a.mkdir(path).await.unwrap();
+        }
+        store.lock().unwrap().requests.clear();
+        discovery_round(async {
+            for net in [&a, &b] {
+                net.list("sync-v2/test/control/").await.unwrap();
+                net.list("sync-v2/test/control/a/").await.unwrap();
+                net.list("sync-v2/test/control/b/").await.unwrap();
+            }
+            assert_eq!(store.lock().unwrap().requests.len(), 3);
+            a.put("sync-v2/test/objects/a/object.json", vec![])
+                .await
+                .unwrap();
+            b.list("sync-v2/test/control/").await.unwrap();
+            assert_eq!(store.lock().unwrap().requests.len(), 4);
+            a.put("sync-v2/test/control/a/head.json", vec![])
+                .await
+                .unwrap();
+            b.list("sync-v2/test/control/b/").await.unwrap();
+            assert_eq!(store.lock().unwrap().requests.len(), 5);
+            assert_eq!(
+                b.list("sync-v2/test/control/a/").await.unwrap().0,
+                vec!["head.json"]
+            );
+            b.list("sync-v2/test/control/").await.unwrap();
+            assert_eq!(store.lock().unwrap().requests.len(), 7);
+            let other = Secret {
+                username: "another-login".into(),
+                password: "test".into(),
+            };
+            Client::new(&cfg, &other)
+                .unwrap()
+                .list("sync-v2/test/control/b/")
+                .await
+                .unwrap();
+            assert_eq!(store.lock().unwrap().requests.len(), 8);
+        })
+        .await;
+        discovery_round(b.list("sync-v2/test/control/b/"))
+            .await
+            .unwrap();
+        assert_eq!(store.lock().unwrap().requests.len(), 9);
+        server.abort();
+    }
 }
 #[derive(Debug, Clone)]
 pub struct Object {
@@ -170,6 +231,20 @@ impl<'a> Client<'a> {
         }
         client.cache = Some(directory);
         Ok(client)
+    }
+    pub(super) fn discovery_checkpoint(&self, fingerprint: &str) -> Option<Vec<u8>> {
+        let entry = super::cache::load(self.cache.as_ref()?, "head-discovery")?;
+        (entry.etag == fingerprint).then_some(entry.body)
+    }
+    pub(super) fn save_discovery_checkpoint(&self, fingerprint: &str, body: Vec<u8>) {
+        if let Some(root) = &self.cache {
+            super::cache::save(root, "head-discovery", fingerprint.into(), body);
+        }
+    }
+    pub(super) fn clear_discovery_checkpoint(&self) {
+        if let Some(root) = &self.cache {
+            super::cache::remove(root, "head-discovery");
+        }
     }
     fn directory_known(&self, path: &str) -> bool {
         self.directories.lock().unwrap().contains(path)
@@ -334,7 +409,39 @@ impl<'a> Client<'a> {
         }
         Ok(Some(object))
     }
+    fn listing_key(&self, path: &str) -> Result<String, String> {
+        Ok(format!(
+            "{}:{}",
+            super::causal::hash(self.secret.username.as_bytes()),
+            self.url(path)?
+        ))
+    }
+    fn invalidate_listings(&self, path: &str) {
+        // Invalidate only affected directories. Publishing our own head must not
+        // force statistics to rescan every other actor in this discovery round.
+        let mut parent = Some(path);
+        let mut keys = Vec::new();
+        while let Some(path) = parent {
+            if path.ends_with('/') {
+                if let Ok(key) = self.listing_key(path) {
+                    keys.push(key);
+                }
+            }
+            parent = path.trim_end_matches('/').rfind('/').map(|n| &path[..=n]);
+        }
+        let _ = LISTINGS.try_with(|cache| {
+            let mut cache = cache.borrow_mut();
+            for key in keys {
+                cache.remove(&key);
+            }
+        });
+    }
     pub async fn list(&self, path: &str) -> Result<(Vec<String>, Option<u64>), String> {
+        let key = self.listing_key(path)?;
+        if let Ok(Some(listing)) = LISTINGS.try_with(|c| c.borrow().get(&key).cloned()) {
+            traffic::cache_hit();
+            return Ok(listing);
+        }
         let r = traffic::send(
             self.request("PROPFIND", path)?
                 .header("Depth", "1")
@@ -378,7 +485,9 @@ impl<'a> Client<'a> {
         if names.len() > 4096 {
             return Err("同步目录对象过多".into());
         }
-        Ok((names.into_iter().collect(), obj.server_time))
+        let result = (names.into_iter().collect::<Vec<_>>(), obj.server_time);
+        let _ = LISTINGS.try_with(|c| c.borrow_mut().insert(key, result.clone()));
+        Ok(result)
     }
     pub async fn mkdir(&self, path: &str) -> Result<(), String> {
         if !valid_path(path) {
@@ -392,6 +501,7 @@ impl<'a> Client<'a> {
                 if self.directory_known(&directory) {
                     continue;
                 }
+                self.invalidate_listings(&directory);
                 let status = traffic::send(self.request("MKCOL", &directory)?.body(""))
                     .await
                     .map_err(|e| super::dav::request_error(&e, "创建同步目录"))?
@@ -414,6 +524,7 @@ impl<'a> Client<'a> {
         Err("恢复同步目录失败，请检查云端目录权限后重试".into())
     }
     pub async fn delete(&self, path: &str) -> Result<(), String> {
+        self.invalidate_listings(path);
         let response = traffic::send(self.request("DELETE", path)?)
             .await
             .map_err(|e| super::dav::request_error(&e, "清理同步提交"))?;
@@ -423,6 +534,7 @@ impl<'a> Client<'a> {
         Ok(())
     }
     pub async fn put(&self, path: &str, body: Vec<u8>) -> Result<(), String> {
+        self.invalidate_listings(path);
         let status = self.put_once(path, body.clone()).await?;
         if status.as_u16() == 409 {
             self.directories.lock().unwrap().clear();
@@ -443,7 +555,6 @@ impl<'a> Client<'a> {
         }
         #[cfg(target_env = "ohos")]
         {
-            traffic::bridge_started(body.len());
             let result = crate::ohos_playback::put_webdav(
                 &self.url(path)?,
                 &self.secret.username,
@@ -451,7 +562,6 @@ impl<'a> Client<'a> {
                 &body,
             )
             .await;
-            traffic::bridge_finished(result.as_ref().ok().map(|s| s.as_u16()));
             return result;
         }
         #[cfg(not(target_env = "ohos"))]

@@ -360,6 +360,7 @@ impl Publication {
         if self.head.generation % 16 == 0 {
             let root = format!("{base}control/{}/", self.head.actor);
             if let Ok((names, _)) = net.list(&root).await {
+                let mut removed = 0;
                 for name in names {
                     if let Some(generation) =
                         name.split('-').next().and_then(|n| n.parse::<u64>().ok())
@@ -367,7 +368,11 @@ impl Publication {
                         if generation.saturating_add(8) < self.head.generation
                             && name.ends_with(".json")
                         {
-                            let _ = net.delete(&format!("{root}{name}")).await;
+                            if removed >= 16 || net.delete(&format!("{root}{name}")).await.is_err()
+                            {
+                                break;
+                            }
+                            removed += 1;
                         }
                     }
                 }

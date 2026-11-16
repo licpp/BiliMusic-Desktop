@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import {ListSort,useListSort} from '../../shared/ListSort'
 import {sortList} from '../../services/listOrdering'
 import { ListSearch, matchesListSearch } from '../../shared/ListSearch'
@@ -9,10 +10,9 @@ import { seasonPlaybackQueue } from '../player/playerStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Link2, Play, Plus, RefreshCw } from 'lucide-react'
-import {
-  changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts,
-  type FavoriteVideo, type Playlist,
-} from '../../services/desktopApi'
+import { changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts } from '../../services/desktopApi'
+import type { FavoriteVideo } from '../../domain/bilibili'
+import type { Playlist } from '../../domain/library'
 import { accountEpoch } from '../../services/accountScope'
 import { toTrack } from '../../services/collectionTrack'
 import { PlayingMark } from '../../shared/PlayingMark'
@@ -32,7 +32,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const folder = useQuery({ queryKey: linkedFolderKey(folderId), queryFn: () => getLinkedFolder(folderId) })
   const [filter, setFilter] = useState('')
   const sortEntity=`linkedFolder:${folderId}`,listSort=useListSort(sortEntity)
-  const orderedVideos=sortList(folder.data?.videos||[],listSort.rule,video=>({id:video.bvid,name:video.title,date:video.pubtime||listSort.dates[video.bvid]}))
+  const orderedVideos=sortList(folder.data?.videos||[],listSort.rule,video=>({id:video.bvid,name:video.title,date:video.pubtime||listSort.dates[video.bvid],playCount:video.cnt_info?.play??listSort.playCounts[video.bvid]}))
   const visibleVideos = orderedVideos.filter(video => matchesListSearch(filter, video.title, video.bvid))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -84,7 +84,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     setBvid('')
     setAdding(false)
     client.setQueryData(linkedFolderKey(folderId), updated)
-    await client.invalidateQueries({ queryKey: ['playlists'] })
+    await client.invalidateQueries({ queryKey: accountQueryKey('playlists') })
   }
 
   const season: Season = { unavailable: 0, summary: { id: folderId, uploaderId: 0, title: name, uploaderName: '', coverUrl: '' }, tracks: visibleVideos.map(video => ({ publishedAt:video.pubtime, bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover, durationSeconds: video.duration || 0, playCount: video.cnt_info?.play })) }

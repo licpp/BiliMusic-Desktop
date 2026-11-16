@@ -221,10 +221,10 @@ impl Snapshot {
             }
             if r.fields.get("displayRank").is_some_and(|v| {
                 !v.as_str()
-                    .is_some_and(crate::interface::list_preferences::valid_rank)
+                    .is_some_and(crate::domain::list_preferences::valid_rank)
             }) || r.fields.get("sortRule").is_some_and(|v| {
                 !v.as_str()
-                    .is_some_and(crate::interface::list_preferences::valid_rule)
+                    .is_some_and(crate::domain::list_preferences::valid_rule)
             }) {
                 return Err("同步排序设置无效".into());
             }

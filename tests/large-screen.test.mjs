@@ -36,7 +36,8 @@ test('large screen target preserves native Android identity and uses isolated ou
  assert.equal(config.build.frontendDist,'../dist-large-screen')
  assert.match(await readFile('scripts/android-large-screen.mjs','utf8'),/artifacts\/build\/large-screen\/source/)
  const entry=await readFile('src/large-screen/main.tsx','utf8')
- assert.doesNotMatch(entry,/startFloatingLyrics|installMobileGestures/)
+ assert.doesNotMatch(entry,/installMobileGestures/)
+ assert.match(entry,/startFloatingLyrics/,"native system-title lyrics share the mobile controller without enabling an overlay")
  assert.match(entry,/startCloudSync/)
  assert.match(entry,/startListeningStatistics/)
 })
@@ -186,4 +187,39 @@ test('footer left/right follows toolbar order even when clipped lyric rectangles
   assert.equal(press(1,'ArrowRight'),'bias')
   assert.equal(press(1,'ArrowLeft'),'match')
  }finally{cleanup();Object.assign(globalThis,original)}
+})
+
+test('player header stays in toolbar order and the video window has an exit to back', async () => {
+ const {installDirectionalFocus}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+ const original={document:globalThis.document,window:globalThis.window,getComputedStyle:globalThis.getComputedStyle}
+ let focused;const handlers=new Map()
+ const header={matches:s=>s==='.large-player-header',contains:el=>el.region===header}
+ const info={matches:()=>false,contains:el=>el.region===info}
+ const lyrics={matches:()=>false,contains:el=>el.region===lyrics}
+ const el=(id,region,left,top,width=60,height=48,links={})=>({id,region,tabIndex:0,dataset:{focus:id},matches:()=>false,
+  getAttribute:name=>links[name]||null,closest:selector=>selector.split(',').some(s=>region===header?s==='.large-player-header':region===info?s==='.large-player-info':s==='.large-lyrics')?region:null,
+  getClientRects:()=>[{}],getBoundingClientRect:()=>({left,top,width,height}),hasAttribute:()=>false,focus:()=>{focused=id}})
+ const back=el('player-back',header,24,24,150),video=el('player-video',header,800,24),queue=el('queue',header,900,24)
+ // A scrolled lyric can geometrically overlap the header. It must not intercept left/right.
+ const lyric=el('lyric',lyrics,550,20,400,300)
+ const fullscreen=el('video-fullscreen',info,360,300,60,48,{'data-focus-left':'player-back','data-focus-up':'player-video'})
+ const elements=[back,video,queue,lyric,fullscreen]
+ const shell={querySelectorAll:()=>elements},main={contains:()=>true,getBoundingClientRect:()=>({top:0,bottom:700})}
+ globalThis.document={querySelectorAll:()=>[],querySelector:s=>s==='.large-shell'?shell:s==='.large-main'?main:null,addEventListener:(name,fn)=>handlers.set(name,fn),removeEventListener(){}}
+ globalThis.window={addEventListener(){},removeEventListener(){}}
+ globalThis.getComputedStyle=()=>({visibility:'visible'})
+ const cleanup=installDirectionalFocus()
+ try {
+  const press=(target,key)=>{focused=target.id;handlers.get('keydown')({key,target,preventDefault(){},defaultPrevented:false});return focused}
+  assert.equal(press(video,'ArrowLeft'),'player-back')
+  assert.equal(press(queue,'ArrowLeft'),'player-video')
+  assert.equal(press(back,'ArrowRight'),'player-video')
+  assert.equal(press(fullscreen,'ArrowLeft'),'player-back')
+  assert.equal(press(fullscreen,'ArrowUp'),'player-video')
+  assert.equal(press(back,'ArrowDown'),'video-fullscreen')
+  assert.equal(press(back,'ArrowLeft'),'player-back')
+ } finally {cleanup();Object.assign(globalThis,original)}
+ // Verify the real JSX declares the same exit, rather than testing a fixture-only link.
+ const player=await readFile('src/large-screen/Player.tsx','utf8')
+ assert.match(player,/data-focus="video-fullscreen" data-focus-left="player-back"/)
 })

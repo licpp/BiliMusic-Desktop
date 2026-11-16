@@ -50,10 +50,10 @@ object FloatingLyricsOverlay {
     private val tick = object : Runnable {
         override fun run() { if (enabled) { render(); syncControls();syncUnlock();handler.postDelayed(this,33) } }
     }
-    fun attach(service: PlaybackService) { owner=service; if(enabled) show() }
+    fun attach(service: PlaybackService) { owner=service;SystemTitleLyrics.attach(service); if(enabled) show() }
     fun detach() { hide(); owner=null; enabled=false }
     fun command(context: Context, raw: String): JSONObject {
-        require(raw.length <= 1_000_000)
+        require(raw.length <= 48 * 1024 * 1024)
         val args=JSONObject(raw)
         when(args.optString("action")) {
             "configure" -> {
@@ -63,7 +63,8 @@ object FloatingLyricsOverlay {
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
                 applyLock(context);owner?.notifyLyricsChanged()
             }
-            "update" -> { data=args; render() }
+            "update" -> { data=args;SystemTitleLyrics.update(args); render();owner?.notifyLyricsChanged() }
+            "system-title" -> { SystemTitleLyrics.configure(context,args.optBoolean("enabled"));owner?.notifyLyricsChanged() }
             "enable" -> {
                 if(args.optBoolean("enabled") && !Settings.canDrawOverlays(context)) {
                     if(args.optBoolean("requestPermission")) context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -187,8 +188,7 @@ object FloatingLyricsOverlay {
         if(data.optString("id")!=position.first) { output.showLyric(service.lyricTitle(),position.first);nextText?.showLyric(" ",position.first);return }
         val time=position.second*1000-data.optDouble("biasMs",0.0)
         val lines=data.optJSONArray("lines")
-        var activeIndex=-1
-        if(lines!=null)for(i in 0 until lines.length()){if((lines.optJSONObject(i)?.optDouble("timeMs",Double.MAX_VALUE) ?: Double.MAX_VALUE) > time)break;activeIndex=i}
+        val activeIndex=nativeLyricIndex(lines,time)
         val current=activeIndex.coerceAtLeast(0)
         val other=if(current+1<(lines?.length() ?: 0))current+1 else current-1
         for(slot in 0..1) {
@@ -201,11 +201,11 @@ object FloatingLyricsOverlay {
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
             val scroll=lyricScrollPosition(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"),target)
-            if(!active || words==null || words.length()==0){target.showLyric(line.optString("text"),key,active,scroll);continue}
+            if(!active || words==null || words.length()==0){target.showLyric(lyricDisplayText(line.optString("text")),key,active,scroll);continue}
             val body=SpannableStringBuilder()
             for(i in 0 until words.length()) {
                 val word=words.optJSONObject(i) ?: continue
-                val start=body.length;body.append(word.optString("text"))
+                val start=body.length;body.append(lyricDisplayText(word.optString("text")))
                 val duration=word.optDouble("endTimeMs")-word.optDouble("startTimeMs")
                 val progress=if(duration>0)((time-word.optDouble("startTimeMs"))/duration).coerceIn(0.0,1.0).toFloat() else 0f
                 if(body.length>start)body.setSpan(WordProgress(progress,activeColor,inactiveColor),start,body.length,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -215,7 +215,7 @@ object FloatingLyricsOverlay {
     }
 
     private fun lyricScrollPosition(line: org.json.JSONObject,time: Double,next: Double?,target: ScrollingLyricView): Float {
-        val value=line.optString("text")
+        val value=lyricDisplayText(line.optString("text"))
         val width=target.paint.measureText(value).toDouble()
         val available=(target.width-target.paddingLeft-target.paddingRight).toDouble()
         if(width<=available || available<=0)return 0f
@@ -234,12 +234,12 @@ object FloatingLyricsOverlay {
         val words=line.optJSONArray("words")
         if(words!=null && words.length()>0) {
             var total=0
-            for(i in 0 until words.length())total+=words.optJSONObject(i)?.optString("text")?.let{it.codePointCount(0,it.length)} ?: 0
+            for(i in 0 until words.length())total+=words.optJSONObject(i)?.optString("text")?.let{lyricDisplayText(it)}?.let{it.codePointCount(0,it.length)} ?: 0
             if(total==0)return 0f
             var completed=0.0
             for(i in 0 until words.length()) {
                 val word=words.optJSONObject(i) ?: continue
-                val value=word.optString("text");val size=value.codePointCount(0,value.length)
+                val value=lyricDisplayText(word.optString("text"));val size=value.codePointCount(0,value.length)
                 val start=word.optDouble("startTimeMs");val end=word.optDouble("endTimeMs")
                 if(time<start)return (completed/total).toFloat()
                 if(time<end)return ((completed+size*((time-start)/(end-start).coerceAtLeast(1.0)).coerceIn(0.0,1.0))/total).toFloat()
@@ -248,7 +248,7 @@ object FloatingLyricsOverlay {
             return 1f
         }
         val start=line.optDouble("timeMs")
-        val value=line.optString("text")
+        val value=lyricDisplayText(line.optString("text"))
         val end=if(line.has("endTimeMs"))line.optDouble("endTimeMs") else next ?: (start+maxOf(3000,value.codePointCount(0,value.length)*250))
         return ((time-start)/(end-start).coerceAtLeast(1.0)).coerceIn(0.0,1.0).toFloat()
     }

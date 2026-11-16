@@ -5,3 +5,9 @@ export function listeningDuration(seconds: number) {
   if (total < 3600) return `${Math.floor(total / 60)}分`
   return `${Math.floor(total / 3600)}时${Math.floor(total % 3600 / 60)}分`
 }
+
+/** Summary values may contain negative zero after floating point aggregation. */
+export function listeningTimeParts(seconds: number) {
+  const value = Math.max(0, Number.isFinite(seconds) ? seconds : 0)
+  return { value: Math.floor(value / (value >= 3600 ? 3600 : 60)), unit: value >= 3600 ? '小时' : '分钟', minutes: value >= 3600 ? Math.floor(value % 3600 / 60) : null }
+}

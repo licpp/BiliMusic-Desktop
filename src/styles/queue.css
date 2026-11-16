@@ -55,3 +55,6 @@
 .queue-drawer:not(.queue-sheet) .now-card { display:flex;align-items:center;gap:12px; }
 .queue-drawer:not(.queue-sheet) .now-art { width:52px;height:52px;flex:0 0 52px;aspect-ratio:1;border-radius:9px; }
 .queue-drawer:not(.queue-sheet) .now-meta { min-width:0;flex:1;padding:0; }
+
+.queue-track-title { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.queue-track-title>small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;color:var(--muted);font-size:12px;font-weight:400; }

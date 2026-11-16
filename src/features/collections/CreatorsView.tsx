@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { CoverCount } from '../../shared/CoverCount'
 import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
@@ -56,7 +57,7 @@ export const creatorItem = (up: Creator): Collection => ({
 export function CreatorFollow({ item }: { item: Collection }) {
   const client = useQueryClient()
   const saved = useQuery({
-    queryKey: ['collections'],
+    queryKey: accountQueryKey('collections'),
     queryFn: listCollections,
   })
   const followed = saved.data?.items.some((value) => value.bvid === item.bvid)
@@ -78,7 +79,7 @@ export function CreatorFollow({ item }: { item: Collection }) {
               '',
               item,
             )
-            await client.invalidateQueries({ queryKey: ['collections'] })
+            await client.invalidateQueries({ queryKey: accountQueryKey('collections') })
           } catch (cause) {
             setError(commandErrorMessage(cause))
           } finally {
@@ -143,7 +144,7 @@ export function CreatorsView({
   const [group, setGroup] = useState('all')
   const [expanded, setExpanded] = useState(() => localStorage.getItem('creators-expanded') !== 'false')
   const saved = useQuery({
-    queryKey: ['collections'],
+    queryKey: accountQueryKey('collections'),
     queryFn: listCollections,
   })
   const result = useInfiniteQuery({
@@ -222,12 +223,12 @@ export function CreatorPage({
     profile.data?.data.card?.fans ??
     item.followers
   const saved = useQuery({
-    queryKey: ['collections'],
+    queryKey: accountQueryKey('collections'),
     queryFn: listCollections,
   })
   const followed = saved.data?.items.some((value) => value.bvid === item.bvid)
   const checkpoint = useQuery({
-    queryKey: ['collection-progress', accountEpoch(), item.bvid],
+    queryKey: accountQueryKey('collection-progress', item.bvid),
     queryFn: () => readCollectionProgress(item.bvid),
     enabled: Boolean(followed),
   })
@@ -260,7 +261,7 @@ export function CreatorPage({
   const [error, setError] = useState('')
   const partsRequest = useRef(0)
   const videoResult = useInfiniteQuery({
-    queryKey: ['creator-catalog', accountEpoch(), mid, 'videos', keyword],
+    queryKey: accountQueryKey('creator-catalog', mid, 'videos', keyword),
     initialPageParam: 1,
     queryFn: ({ pageParam }) => catalog('videos', mid, pageParam, keyword),
     enabled: activeTab === 'videos' && !settling,
@@ -268,7 +269,7 @@ export function CreatorPage({
       last.page * 30 < last.data.page?.count ? last.page + 1 : undefined,
   })
   const seasonResult = useInfiniteQuery({
-    queryKey: ['creator-catalog', mid, 'seasons'],
+    queryKey: accountQueryKey('creator-catalog', mid, 'seasons'),
     initialPageParam: 1,
     queryFn: ({ pageParam }) => catalog('seasons', mid, pageParam),
     enabled: activeTab === 'seasons',
@@ -352,7 +353,7 @@ export function CreatorPage({
               creatorPage: page,
               creatorTotal: total,
             },
-            point.positionMs / 1000,
+            point.positionMs / 1000, true,
           )
         } catch (cause) {
           setError(commandErrorMessage(cause))

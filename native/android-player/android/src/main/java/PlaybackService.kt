@@ -64,12 +64,15 @@ class PlaybackService : Service() {
     private var recoveryAttempted = false
     private var resolveProfile: String? = null
     private var transitionWakeLock: PowerManager.WakeLock? = null
+    private var requestedStartPosition = 0.0
     private var initialResumePolicy: AutomaticResumePolicy? = null
     private var resumeDuringResolution: AutomaticResumePolicy? = null
 
     fun attachController() { controllerListener?.invoke(session.controller) }
     fun updateQueue(data: String) {
+        val owner = queue.owner; val account = queue.accountSession
         queue.update(JSONObject(data))
+        if (resolvingNative && (owner != queue.owner || account != queue.accountSession || queue.find(id) == null)) control("pause")
         queue.find(id)?.let { nativeTrack = it }
     }
     private fun currentProfile() = profilePath?.let { runCatching { java.io.File(it).readText() }.getOrNull() }
@@ -96,7 +99,8 @@ class PlaybackService : Service() {
         val resolver = resolveListener ?: run { fail("后台播放器尚未就绪，请重新播放"); return }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false; seeking = false
         nativeTrack = track; id = track.getString("id"); title = track.optString("title", "BiliMusic"); artist = track.optString("artist")
-        lastPosition = position ?: 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
+        requestedStartPosition = position ?: 0.0
+        lastPosition = 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
         playbackRevision += 1; resolveProfile = scope; resolvingNative = true; status = "buffering"; error = null
         prepareArtwork(track.optString("coverUrl")); updateMetadata()
         startForeground(NOTIFICATION, notification())
@@ -148,7 +152,7 @@ class PlaybackService : Service() {
         val track = nativeTrack ?: return false
         if (recoveryAttempted || resolveListener == null) return false
         recoveryAttempted = true
-        resolveTrack(track, refresh = true, position = lastPosition)
+        resolveTrack(track, refresh = true, position = if (prepared) lastPosition else requestedStartPosition)
         return true
     }
 
@@ -193,6 +197,8 @@ class PlaybackService : Service() {
     }
     private var playbackRevision = SystemClock.elapsedRealtime()
     private var stateSequence = 0L
+    private val engineInstanceId = java.util.UUID.randomUUID().toString()
+    private var lastFloatingStyle = -1L
     private var seekRevision = 0L
     private var lastPosition = 0.0
     private var lastDuration = 0.0
@@ -224,7 +230,7 @@ class PlaybackService : Service() {
                 pendingUpgradeUrl = null
                 if (url != null) switchSource(url, id) { /* Keep the initial stream if preparation fails. */ }
             }
-            publish(false)
+            if (mediaTitle() != displayedTitle) { updateMetadata();publish() } else publish(false)
             if (status == "playing" || status == "buffering") handler.postDelayed(this, 500)
         }
     }
@@ -263,6 +269,7 @@ class PlaybackService : Service() {
             PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         })
         session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+        session.setPlaybackToLocal(attributes)
         session.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(intent: Intent): Boolean {
                 val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return super.onMediaButtonEvent(intent)
@@ -273,13 +280,17 @@ class PlaybackService : Service() {
                 }
                 return super.onMediaButtonEvent(intent)
             }
-            override fun onPlay() { control("resume") }
-            override fun onPause() { control("pause") }
+            override fun onPlay() { android.util.Log.i("BiliMusicPlayback", "remote transport=play"); control("resume") }
+            override fun onPause() { android.util.Log.i("BiliMusicPlayback", "remote transport=pause"); control("pause") }
             override fun onStop() { control("stop") }
             override fun onSeekTo(pos: Long) { control("seek", pos / 1000.0) }
-            override fun onSkipToNext() { control("next") }
-            override fun onSkipToPrevious() { control("previous") }
+            override fun onSkipToNext() { android.util.Log.i("BiliMusicPlayback", "remote transport=next"); control("next") }
+            override fun onSkipToPrevious() { android.util.Log.i("BiliMusicPlayback", "remote transport=previous"); control("previous") }
         },handler)
+        // Bluetooth/system controllers can observe the session as soon as it is
+        // activated. Publish its supported commands and metadata before then.
+        updateMetadata()
+        session.setPlaybackState(systemPlaybackState())
         session.isActive = true
         attachController()
         queueData?.let { updateQueue(it) }
@@ -289,6 +300,7 @@ class PlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "prepare" -> {
+                listeningSession = java.util.UUID.randomUUID().toString(); playbackRevision += 1
                 cancelResolution(); recoveryAttempted = false
                 initialResumePolicy = null; resumeDuringResolution = null
                 pendingUpgradeUrl = null; focusResume.cancel(); cancelSourceSwitch()
@@ -297,7 +309,8 @@ class PlaybackService : Service() {
                 seeking = false
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
                 id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
-                artist = intent.getStringExtra("artist") ?: ""; lastPosition = 0.0; lastDuration = 0.0
+                artist = intent.getStringExtra("artist") ?: ""; requestedStartPosition = intent.getDoubleExtra("position", 0.0)
+        lastPosition = 0.0; lastDuration = 0.0
                 nativeTrack = queue.find(id)
                 prepareArtwork(intent.getStringExtra("coverUrl"))
                 updateMetadata()
@@ -319,7 +332,7 @@ class PlaybackService : Service() {
         cancelSourceSwitch()
         savePosition(force = true)
         accountListening(true)
-        if (id != intent.getStringExtra("id") || intent.getDoubleExtra("position", 0.0) < 1.0) listeningSession = java.util.UUID.randomUUID().toString()
+        if (!intent.getBooleanExtra("nativeRecovery", false) && (id != intent.getStringExtra("id") || intent.getDoubleExtra("position", 0.0) < 1.0)) listeningSession = java.util.UUID.randomUUID().toString()
         playbackRate = intent.getDoubleExtra("rate", 1.0).coerceIn(0.75, 2.0).toFloat()
         positionSavedAt = SystemClock.elapsedRealtime() - 15_000
         collectionRef = intent.getStringExtra("collectionRef")
@@ -334,9 +347,10 @@ class PlaybackService : Service() {
         nativeTrack = queue.find(id) ?: nativeTrack?.takeIf { it.optString("id") == id }
         artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
         prepareArtwork(intent.getStringExtra("coverUrl"))
-        lastPosition = intent.getDoubleExtra("position", 0.0); lastDuration = 0.0
+        requestedStartPosition = intent.getDoubleExtra("position", 0.0)
+        lastPosition = 0.0; lastDuration = 0.0
         pendingUpgradeUrl = intent.getStringExtra("upgradeUrl")
-        upgradeAfterPosition = lastPosition + 0.75
+        upgradeAfterPosition = intent.getDoubleExtra("position", 0.0) + 0.75
         status = if (intent.getBooleanExtra("playing", true)) "buffering" else "paused"
         error = null
         updateMetadata()
@@ -392,7 +406,7 @@ class PlaybackService : Service() {
                 listeningPosition = null
                 if (status == "buffering" && !it.isPlaying) { startAtRate(it); status = "playing" }
                 savePosition(force = true)
-                publish(false)
+                if (mediaTitle() != displayedTitle) { updateMetadata();publish() } else publish(false)
             }
             media.setOnCompletionListener {
                 if (player !== it) return@setOnCompletionListener
@@ -556,14 +570,19 @@ class PlaybackService : Service() {
             if (!seeking) lastPosition = runCatching { (player?.currentPosition ?: 0) / 1000.0 }.getOrDefault(lastPosition)
             lastDuration = runCatching { (player?.duration ?: 0) / 1000.0 }.getOrDefault(lastDuration)
         }
-        return JSObject().put("revision",playbackRevision).put("sequence",stateSequence).put("seekRevision",seekRevision).put("id", id).put("status", status).put("position", lastPosition)
+        val snapshot = JSObject().put("capabilities",org.json.JSONObject().put("autonomousQueue",queue.tracks.isNotEmpty()).put("seamlessSourceSwitch",true).put("nativeSleepTimer",true).put("snapshotRebind",true)).put("engineInstanceId",engineInstanceId).put("sessionId",listeningSession).put("sourceRevision",playbackRevision).put("autonomousQueue",queue.tracks.isNotEmpty()).put("queueVersion",queue.version).put("revision",playbackRevision).put("sequence",stateSequence).put("seekRevision",seekRevision).put("id", id).put("status", status).put("position", lastPosition)
             .put("track", nativeTrack).put("expandedEntries", queue.expanded).put("recoveryAttempted", recoveryAttempted)
-            .put("duration", lastDuration).put("rate", playbackRate).put("stopped", player == null).put("error", error).put("floatingLyricsEnabled",FloatingLyricsOverlay.enabled).put("floatingLyricsStyleRevision",FloatingLyricsOverlay.styleRevision).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize).put("floatingLyricsLocked",FloatingLyricsOverlay.locked)
+            .put("duration", lastDuration).put("rate", playbackRate).put("stopped", player == null).put("error", error).put("floatingLyricsEnabled",FloatingLyricsOverlay.enabled)
             .put("sleepDeadline", sleepDeadline).put("sleepDuration", sleepDuration).put("sleepExpired", sleepExpired)
+        if (lastFloatingStyle != FloatingLyricsOverlay.styleRevision.toLong()) {
+            lastFloatingStyle = FloatingLyricsOverlay.styleRevision.toLong()
+            snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize).put("floatingLyricsLocked",FloatingLyricsOverlay.locked)
+        }
+        return snapshot
     }
     fun lyricPosition(): Pair<String,Double> = Pair(id,if(prepared && !seeking) runCatching { (player?.currentPosition ?: 0)/1000.0 }.getOrDefault(lastPosition) else lastPosition)
     fun lyricTitle(): String = title
-    fun notifyLyricsChanged() { publish() }
+    fun notifyLyricsChanged() { updateMetadata();publish() }
     private fun publish(notify: Boolean = true) {
         accountListening()
         // The app receives state first; OS presentation is coalesced separately.
@@ -579,16 +598,23 @@ class PlaybackService : Service() {
     }
     private fun updateSystemPlayback() {
         lastSystemStatus = status; lastSystemPosition = lastPosition
-        val state = if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
-        val playback=PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
-            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f)
-        session.setPlaybackState(playback.build())
+        session.setPlaybackState(systemPlaybackState())
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification())
     }
+    private fun systemPlaybackState(): PlaybackState {
+        val state = if (id.isEmpty()) PlaybackState.STATE_NONE else if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
+        return PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
+            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f)
+            .build()
+    }
+    private var displayedTitle = ""
+    private fun mediaTitle() = SystemTitleLyrics.title(id, lyricPosition().second, title)
     private fun updateMetadata() {
-        val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
-            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, id).putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
+        displayedTitle = mediaTitle()
+        val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, displayedTitle)
+            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, id).putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, displayedTitle)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, nativeTrack?.optString("album") ?: "")
         if (lastDuration > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, (lastDuration * 1000).toLong())
         artwork?.let { metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it).putBitmap(MediaMetadata.METADATA_KEY_ART, it) }
         session.setMetadata(metadata.build())
@@ -638,7 +664,7 @@ class PlaybackService : Service() {
         Intent(this, PlaybackService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     private fun notification(): Notification {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        val builder=Notification.Builder(this, CHANNEL).setContentTitle(title).setContentText(artist).setLargeIcon(artwork)
+        val builder=Notification.Builder(this, CHANNEL).setContentTitle(mediaTitle()).setContentText(artist).setLargeIcon(artwork)
             .setSmallIcon(app.bilimusic.player.R.drawable.ic_music_notification).setColor(Color.rgb(255,115,88))
             .setContentIntent(open).setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true)
             .setOngoing(status == "playing" || status == "buffering")

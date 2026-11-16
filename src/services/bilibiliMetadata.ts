@@ -1,5 +1,6 @@
 import type { Track } from '../domain/track'
-import type { BiliVideoParts, MetadataPatch } from './desktopApi'
+import type { BiliVideoParts } from '../domain/bilibili'
+import type { MetadataPatch } from '../domain/library'
 import { toTrack } from './collectionTrack'
 
 export function originalBilibiliMetadata(track: Track, detail: BiliVideoParts): MetadataPatch {

@@ -1,20 +1,150 @@
 [
-  {"name":"long video whose list duration is missing","threshold":600,"listed":0,"duration":1800,"position":85,"expected":85},
-  {"name":"short video with stale long list duration","threshold":600,"listed":1800,"duration":300,"position":85,"expected":0},
-  {"name":"long video with stale short list duration","threshold":600,"listed":120,"duration":1800,"position":85,"expected":85},
-  {"name":"threshold compares total duration, not saved position","threshold":600,"listed":1800,"duration":1800,"position":85,"expected":85},
-  {"name":"below boundary","threshold":600,"listed":0,"duration":599,"position":85,"expected":0},
-  {"name":"at boundary","threshold":600,"listed":0,"duration":600,"position":85,"expected":85},
-  {"name":"above boundary","threshold":600,"listed":0,"duration":601,"position":85,"expected":85},
-  {"name":"disabled long video","threshold":null,"listed":1800,"duration":1800,"position":85,"expected":0},
-  {"name":"resume all short video","threshold":0,"listed":120,"duration":120,"position":85,"expected":85},
-  {"name":"collection is exempt from disabled setting","threshold":null,"collection":true,"listed":120,"duration":120,"position":85,"expected":85},
-  {"name":"collection is exempt from threshold","threshold":600,"collection":true,"listed":120,"duration":120,"position":85,"expected":85},
-  {"name":"completed video restarts","threshold":0,"listed":1800,"duration":120,"position":119,"expected":0},
-  {"name":"invalid old position beyond actual duration","threshold":0,"listed":1800,"duration":120,"position":200,"expected":0},
-  {"name":"no checkpoint","threshold":600,"listed":1800,"duration":1800,"position":0,"expected":0},
-  {"name":"subsecond checkpoint","threshold":0,"listed":120,"duration":120,"position":0.5,"expected":0},
-  {"name":"known cached duration remains usable","threshold":600,"listed":1800,"duration":0,"position":85,"expected":85},
-  {"name":"explicit start bypasses threshold","threshold":null,"listed":1800,"duration":1800,"position":85,"explicit":true,"expected":85},
-  {"name":"explicit zero always restarts","threshold":0,"listed":1800,"duration":1800,"position":0,"explicit":true,"expected":0}
+  {
+    "name": "long video whose list duration is missing",
+    "threshold": 600,
+    "listed": 0,
+    "duration": 1800,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "short video with stale long list duration",
+    "threshold": 600,
+    "listed": 1800,
+    "duration": 300,
+    "position": 85,
+    "expected": 0
+  },
+  {
+    "name": "long video with stale short list duration",
+    "threshold": 600,
+    "listed": 120,
+    "duration": 1800,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "threshold compares total duration, not saved position",
+    "threshold": 600,
+    "listed": 1800,
+    "duration": 1800,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "below boundary",
+    "threshold": 600,
+    "listed": 0,
+    "duration": 599,
+    "position": 85,
+    "expected": 0
+  },
+  {
+    "name": "at boundary",
+    "threshold": 600,
+    "listed": 0,
+    "duration": 600,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "above boundary",
+    "threshold": 600,
+    "listed": 0,
+    "duration": 601,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "disabled long video",
+    "threshold": null,
+    "listed": 1800,
+    "duration": 1800,
+    "position": 85,
+    "expected": 0
+  },
+  {
+    "name": "resume all short video",
+    "threshold": 0,
+    "listed": 120,
+    "duration": 120,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "disabled automatic collection checkpoint restarts",
+    "threshold": null,
+    "collection": true,
+    "listed": 120,
+    "duration": 120,
+    "position": 85,
+    "expected": 0
+  },
+  {
+    "name": "collection checkpoint obeys duration threshold",
+    "threshold": 600,
+    "collection": true,
+    "listed": 120,
+    "duration": 120,
+    "position": 85,
+    "expected": 0
+  },
+  {
+    "name": "completed video restarts",
+    "threshold": 0,
+    "listed": 1800,
+    "duration": 120,
+    "position": 119,
+    "expected": 0
+  },
+  {
+    "name": "invalid old position beyond actual duration",
+    "threshold": 0,
+    "listed": 1800,
+    "duration": 120,
+    "position": 200,
+    "expected": 0
+  },
+  {
+    "name": "no checkpoint",
+    "threshold": 600,
+    "listed": 1800,
+    "duration": 1800,
+    "position": 0,
+    "expected": 0
+  },
+  {
+    "name": "subsecond checkpoint",
+    "threshold": 0,
+    "listed": 120,
+    "duration": 120,
+    "position": 0.5,
+    "expected": 0
+  },
+  {
+    "name": "known cached duration remains usable",
+    "threshold": 600,
+    "listed": 1800,
+    "duration": 0,
+    "position": 85,
+    "expected": 85
+  },
+  {
+    "name": "explicit start bypasses threshold",
+    "threshold": null,
+    "listed": 1800,
+    "duration": 1800,
+    "position": 85,
+    "explicit": true,
+    "expected": 85
+  },
+  {
+    "name": "explicit zero always restarts",
+    "threshold": 0,
+    "listed": 1800,
+    "duration": 1800,
+    "position": 0,
+    "explicit": true,
+    "expected": 0
+  }
 ]

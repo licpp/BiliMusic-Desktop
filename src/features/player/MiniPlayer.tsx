@@ -1,10 +1,12 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Captions, Heart, ListMusic, Maximize2, Pause, Play, SkipBack, SkipForward, Volume2, X } from 'lucide-react'
-import { getStoredLyrics, inDesktopShell, type StoredLyrics } from '../../services/desktopApi'
+import { getStoredLyrics, inDesktopShell } from '../../services/desktopApi'
+import type { StoredLyrics } from '../../domain/lyrics'
 import { setMiniPlayerPanel } from '../../services/immersiveWindow'
-import { parseLrc } from '../lyrics/lrc'
+import { parseLrc } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
 import { RangeControl } from '../../shared/RangeControl'
 import { formatDuration } from '../../shared/time'
@@ -68,9 +70,9 @@ function MiniLyric({visible}:{visible:boolean}){
   const track=usePlayerStore(state=>state.current)
   const position=usePlayerStore(state=>state.progressSeconds)
   const client=useQueryClient()
-  const stored=useQuery({queryKey:['mini-lyrics',track?.id],queryFn:()=>getStoredLyrics(track!.id),enabled:visible&&!!track&&inDesktopShell,staleTime:60000})
+  const stored=useQuery({queryKey:accountQueryKey('mini-lyrics', track?.id),queryFn:()=>getStoredLyrics(track!.id),enabled:visible&&!!track&&inDesktopShell,staleTime:60000})
   useEffect(()=>{
-    const update=(event:Event)=>{const value=(event as CustomEvent<StoredLyrics>).detail;if(value?.trackId===track?.id)client.setQueryData(['mini-lyrics',track?.id],value)}
+    const update=(event:Event)=>{const value=(event as CustomEvent<StoredLyrics>).detail;if(value?.trackId===track?.id)client.setQueryData(accountQueryKey('mini-lyrics', track?.id),value)}
     window.addEventListener('bilimusic-lyrics-updated',update)
     return()=>window.removeEventListener('bilimusic-lyrics-updated',update)
   },[track?.id,client])

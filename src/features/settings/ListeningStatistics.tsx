@@ -1,7 +1,8 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { syncErrorMessage } from '../../services/userErrors'
 import { ListeningBars } from './ListeningBars'
 import { hydrateSourceTitles } from '../../services/sourceTitles'
-import { listeningDuration } from '../../shared/listeningDuration'
+import { listeningDuration, listeningTimeParts } from '../../shared/listeningDuration'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -56,9 +57,10 @@ function ListeningCalendar({ daily, year, today }: { daily: { day: string; secon
 export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const [period, setPeriod] = useState<ListeningPeriod>('week'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const client = useQueryClient()
-  const query = useQuery({ queryKey: ['listening-statistics'], queryFn: getListeningStatistics, refetchInterval: 15000 })
+  const query = useQuery({ queryKey: accountQueryKey('listening-statistics'), queryFn: getListeningStatistics, refetchInterval: 15000 })
   useEffect(() => { window.dispatchEvent(new Event('bilimusic-statistics-sync-requested')) }, [])
   const data = query.data, summary = data?.[period], top = summary?.top
+  const summaryTime = listeningTimeParts(summary?.seconds ?? 0)
   useEffect(() => { if (top?.length) void hydrateSourceTitles(top.map(track => track.id), client) }, [top, client])
   const today = accountToday(), thisYear = today.getUTCFullYear(), todayKey = dayKey(today)
   const [calendarYear, setCalendarYear] = useState(thisYear)
@@ -79,7 +81,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const uid = data?.sync.uid
   const synchronize = async () => {
     setBusy(true); setError('')
-    try { await invoke('listening_sync'); await client.invalidateQueries({ queryKey: ['listening-statistics'] }) }
+    try { await invoke('listening_sync'); await client.invalidateQueries({ queryKey: accountQueryKey('listening-statistics') }) }
     catch (e) { setError(syncErrorMessage(e)) }
     finally { setBusy(false) }
   }
@@ -88,7 +90,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
     setBusy(true); setError('')
     try {
       await invoke('listening_sync_configure', { uid, enabled: !enabled })
-      await client.invalidateQueries({ queryKey: ['listening-statistics'] })
+      await client.invalidateQueries({ queryKey: accountQueryKey('listening-statistics') })
       window.dispatchEvent(new Event('bilimusic-statistics-sync-requested'))
     } catch (e) { setError(syncErrorMessage(e)) }
     finally { setBusy(false) }
@@ -101,7 +103,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
     {summary && <div id="statistics-panel" role="tabpanel" aria-labelledby={`statistics-period-${period}`}>
       <section className="listening-overview" aria-label={`${labels[period]}聆听总览`}>
         <div className="listening-overview-heading"><span className="listening-icon"><Headphones size={18} /></span><span>{labels[period]}聆听时长</span></div>
-        <div className="listening-duration"><strong>{Math.floor(summary.seconds / (summary.seconds >= 3600 ? 3600 : 60)).toLocaleString()}</strong><span>{summary.seconds >= 3600 ? '小时' : '分钟'}</span>{summary.seconds >= 3600 && <><strong className="listening-duration-minutes">{Math.floor(summary.seconds % 3600 / 60)}</strong><span>分钟</span></>}</div>
+        <div className="listening-duration"><strong>{summaryTime.value.toLocaleString()}</strong><span>{summaryTime.unit}</span>{summaryTime.minutes !== null && <><strong className="listening-duration-minutes">{summaryTime.minutes}</strong><span>分钟</span></>}</div>
         <div className="listening-metrics">
           <div><Music2 size={15} /><strong>{summary.tracks.toLocaleString()}</strong><span>首歌曲</span></div>
           <div><CalendarDays size={15} /><strong>{summary.days.toLocaleString()}</strong><span>天聆听</span></div>
@@ -117,8 +119,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
         {top?.length ? <ol className="listening-ranking">{top.map((track, i) => <li key={track.id}>
           <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />
-          <div className="listening-song"><strong>{track.title}</strong><small>{track.artist || '歌手未知'}</small><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div></div>
-          <span className="listening-song-time">{duration(track.seconds)}</span>
+          <div className="listening-song"><strong>{track.title}</strong><small>{track.sourceTitleContext?.season?.title || track.artist || track.uploaderName || ''}</small><div className="listening-song-duration"><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div><span className="listening-song-time">{duration(track.seconds)}</span></div></div>
         </li>)}</ol> : <div className="listening-empty"><Headphones size={30} /><strong>让喜欢的歌留下足迹</strong><p>开始播放后，这里会记录你常听的声音。</p></div>}
       </section>
       <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>

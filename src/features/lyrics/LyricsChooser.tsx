@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { ListFilter } from 'lucide-react'
 import { isMobile } from '../../services/platform'
-import type { LyricCandidate, StoredLyrics } from '../../services/desktopApi'
+import type { LyricCandidate, StoredLyrics } from '../../domain/lyrics'
 import { MobilePage } from '../../shared/MobilePage'
 
 type Props = {

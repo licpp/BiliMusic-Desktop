@@ -12,7 +12,7 @@ mod interface;
 mod ios_playback;
 #[cfg(desktop)]
 mod mini_player;
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(any(target_os = "ios", target_os = "android", target_env = "ohos", test))]
 mod native_playback;
 #[cfg(target_env = "ohos")]
 mod ohos_playback;
@@ -46,7 +46,14 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder =
+        tauri::Builder::default().manage(infrastructure::update_install::UpdateState::default());
+    #[cfg(all(desktop, not(target_env = "ohos")))]
+    let builder = builder.plugin(
+        tauri_plugin_updater::Builder::new()
+            .pubkey(include_str!("../update-public-key.txt").trim())
+            .build(),
+    );
     #[cfg(desktop)]
     let builder = builder
         .plugin(
@@ -216,6 +223,8 @@ pub fn run() {
             sync::sync_delete_cloud,
             interface::commands::app_health,
             interface::commands::app_check_update,
+            infrastructure::update_install::app_download_update,
+            infrastructure::update_install::app_install_update,
             interface::commands::app_open_download_page,
             interface::commands::library_summary,
             interface::commands::library_record_play,
@@ -276,7 +285,9 @@ pub fn run() {
             interface::commands::bili_comment_reply,
             interface::commands::lyrics_search,
             interface::commands::metadata_catalog_search,
+            interface::commands::account_session,
             interface::commands::lyrics_get,
+            interface::commands::lyrics_complete_selected,
             interface::commands::lyrics_restore_selected,
             interface::commands::lyrics_save,
             interface::commands::lyrics_set_bias,

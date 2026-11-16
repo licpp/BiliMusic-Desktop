@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { LyricLine } from '../../services/desktopApi'
-import { lyricScrollPosition } from './lyricTimeline'
+import type { LyricLine } from '../../domain/lyrics'
+import { lyricScrollPosition } from '../../domain/lyricTimeline'
 
 export function FloatingLyricMarquee({identity,line,active,timeMs,clock,nextTimeMs,children}:{identity:string;line?:LyricLine;active:boolean;timeMs:number;clock?:()=>number;nextTimeMs?:number;children:ReactNode}) {
   const viewport=useRef<HTMLDivElement>(null),text=useRef<HTMLDivElement>(null)

@@ -1,30 +1,32 @@
-import { createNativeClock } from './nativeClock'
-import { addPluginListener, invoke } from '@tauri-apps/api/core'
+import type { NativeControlAction } from './contracts'
+import { normalizeNativeSnapshot } from './contracts'
+import { createSnapshotOrder } from './snapshotOrder'
+import { addPluginListener,invoke } from '@tauri-apps/api/core'
 import type { Track } from '../../domain/track'
+import { createNativeClock } from './nativeClock'
 import type { AutomaticResumePolicy } from './resumePolicy'
 
-type State = { track?: Track; expandedEntries?: Record<string, Track[]>; recoveryAttempted?: boolean; sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; revision?: number; sequence?: number; seekRevision?: number; stopped?: boolean; floatingLyricsEnabled?: boolean; floatingLyricsFontSize?: number; floatingLyricsStyleRevision?: number; floatingLyricsLocked?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; rate?: number; duration?: number; error?: string; action?: 'next' | 'previous' | 'ended' | 'resume' }
+import type { NativeAudioState as State, PlayerSnapshot } from './contracts'
+
 export function createNativeAudio(plugin: string, bind?: (callback: (state: State) => void) => Promise<unknown>) {
   let ready: Promise<unknown> | undefined
-  let consumer: (state: State) => void = () => undefined
+  let consumer: (state: PlayerSnapshot) => void = () => undefined
   const clock = createNativeClock()
-  let latest: State | undefined
-  const accept = (state: State) => !latest || (state.revision ?? 0) > (latest.revision ?? 0) || (state.revision ?? 0) === (latest.revision ?? 0) && (state.sequence === undefined || state.sequence >= (latest.sequence ?? 0))
-  function observe(callback: (state: State) => void) {
+  const order = createSnapshotOrder()
+  function observe(callback: (state: PlayerSnapshot) => void) {
     consumer = callback
     const receive = (state: State) => {
       // Commands are events, not clock samples. Older Android players send
       // action-only packets; comparing their absent revision with the latest
       // playback revision silently dropped notification/headset navigation.
       if (state.action) {
-        if (state.revision !== undefined && !accept(state)) return
-        consumer(state)
+        if (!order.accept(state)) return
+        consumer(normalizeNativeSnapshot(state))
         return
       }
-      if (!accept(state)) return
-      latest=state
+      if (!order.accept(state)) return
       clock.update(state, performance.now())
-      consumer(state)
+      consumer(normalizeNativeSnapshot(state))
     }
     if (!ready) ready = (bind ? bind(receive) : addPluginListener<State>(plugin, 'state', receive)).catch((error) => { ready = undefined; throw error })
     return ready
@@ -34,13 +36,12 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
     await invoke(`plugin:${plugin}|play`, { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
   }
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
-  const control = (action: string, value = 0) => invoke(`plugin:${plugin}|control`, { action, value })
+  const control = (action: NativeControlAction, value = 0) => invoke(`plugin:${plugin}|control`, { action, value })
   const snapshot = async () => {
     const state = await invoke<State>(`plugin:${plugin}|snapshot`)
-    if (!accept(state)) return latest!
-    latest=state
+    if (!order.accept(state)) return normalizeNativeSnapshot(order.latest!)
     clock.update(state, performance.now())
-    return state
+    return normalizeNativeSnapshot(state)
   }
   function playbackClock() { return clock.position(performance.now()) }
 

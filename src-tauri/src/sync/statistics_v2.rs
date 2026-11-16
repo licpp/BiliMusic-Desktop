@@ -162,58 +162,7 @@ fn legacy_document(g: &Genesis, buckets: &[Bucket], cutoff: &str) -> Result<Docu
     }
     Ok(doc)
 }
-async fn legacy(net: &Client<'_>, uid: &str) -> Result<Vec<Bucket>, String> {
-    #[derive(Deserialize)]
-    struct Index {
-        months: BTreeMap<String, u64>,
-    }
-    let (names, _) = net.list("statistics-v1/").await?;
-    let mut result = vec![];
-    let sources = names
-        .into_iter()
-        .filter_map(|n| {
-            n.strip_prefix("index-")
-                .and_then(|s| s.strip_suffix(".json"))
-                .filter(|s| uuid::Uuid::parse_str(s).is_ok())
-                .map(str::to_owned)
-        })
-        .collect::<BTreeSet<_>>();
-    if sources.len() > 100 {
-        return Err("旧统计来源超过上限".into());
-    }
-    for source in sources {
-        let index = net
-            .get(&format!("statistics-v1/index-{source}.json"))
-            .await?
-            .ok_or("旧统计索引暂不可见")?;
-        let index: Index = serde_json::from_slice(&index.body).map_err(|_| "旧统计索引无效")?;
-        if index.months.len() > 1200 {
-            return Err("旧统计月份超限".into());
-        }
-        for (month, revision) in index.months {
-            if month != "baseline"
-                && !(month.len() == 7
-                    && month.as_bytes()[4] == b'-'
-                    && month
-                        .bytes()
-                        .enumerate()
-                        .all(|(i, c)| i == 4 || c.is_ascii_digit()))
-            {
-                return Err("旧统计月份无效".into());
-            }
-            let object = net
-                .get(&format!("statistics-v1/{source}/{month}.json.gz"))
-                .await?
-                .ok_or("旧统计月份暂不可见")?;
-            let bucket = statistics::decode(&object.body, uid)?;
-            if bucket.source != source || bucket.month != month || bucket.revision < revision {
-                return Err("旧统计来源版本不符".into());
-            }
-            result.push(bucket);
-        }
-    }
-    Ok(result)
-}
+
 fn materialize(doc: &Document, cutoff: &str) -> Result<Vec<Bucket>, String> {
     let mut result: BTreeMap<String, Bucket> = BTreeMap::new();
     for (key, register) in &doc.registers {
@@ -471,7 +420,8 @@ pub(super) fn ensure_recording_identity(
 pub async fn exchange(db: &Database, cfg: &Config, secret: &Secret) -> Result<(), String> {
     let target = super::storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &secret.username)?;
     with(db, cfg, |c| engine::bind_target(c, cfg, &target))?;
-    let net = Client::cached(cfg, secret, db.1.join("sync-v2-cache").join(&target))?;
+    let cache = db.1.join("sync-v2-cache").join(&target);
+    let net = Client::cached(cfg, secret, cache.clone())?;
     let g = Genesis::for_config(cfg)?;
     with(db, cfg, |c| {
         let tx = c.unchecked_transaction().map_err(err)?;
@@ -491,7 +441,11 @@ pub async fn exchange(db: &Database, cfg: &Config, secret: &Secret) -> Result<()
         let day = with(db, cfg, cutoff)?;
         let mut seed = Document::empty(g.scope(Domain::Statistics));
         if !existing {
-            seed.join(&legacy_document(&g, &legacy(&net, &cfg.uid).await?, &day)?)?;
+            seed.join(&legacy_document(
+                &g,
+                &super::legacy_import::statistics(&net, &cfg.uid, &cache).await?,
+                &day,
+            )?)?;
         }
         seed = engine::receive_domain(&net, seed, &remote_heads, &BTreeMap::new()).await?;
         // Cached copies are imported only once, preserving their original source identity.
@@ -576,7 +530,9 @@ pub async fn exchange(db: &Database, cfg: &Config, secret: &Secret) -> Result<()
     with(db, cfg, |c| {
         engine::put(c, &target, "statistics-runtime", &state)
     })?;
-    let remote_heads = engine::heads(&net, &g, &known).await?;
+    // Reuse this exchange's validated discovery snapshot. Concurrent commits are
+    // picked up next time; our durable publication is already acknowledged above.
+
     let confirmed = with(db, cfg, |c| {
         outbox::confirmed(c, &target, Domain::Statistics)
     })?;
@@ -838,5 +794,75 @@ mod tests {
             std::fs::remove_dir_all(d.1).unwrap();
         }
         server.abort();
+    }
+    #[tokio::test]
+    async fn legacy_months_exceeding_a_window_resume_by_validated_revision() {
+        use super::super::request_budget::{self, Budget};
+        use std::{io::Write, sync::Arc};
+        let (cfg, secret, store, server) = super::super::test_dav::server().await;
+        let a = device(&cfg);
+        let source = uuid::Uuid::new_v4().to_string();
+        let base = "/dav/BiliMusic-sync-v1/42/statistics-v1/";
+        let mut months = BTreeMap::new();
+        {
+            let mut s = store.lock().unwrap();
+            s.dirs.insert(base.into());
+            for n in 0..130 {
+                let month = format!("{}-{:02}", 2010 + n / 12, n % 12 + 1);
+                let bucket = Bucket {
+                    schema: 1,
+                    uid: cfg.uid.clone(),
+                    source: source.clone(),
+                    month: month.clone(),
+                    revision: 1,
+                    tracks: BTreeMap::from([("bilibili:BV1:1".into(), 60.0)]),
+                    days: BTreeMap::from([(format!("{month}-01"), 60.0)]),
+                    ..Default::default()
+                };
+                let mut gzip =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                gzip.write_all(&serde_json::to_vec(&bucket).unwrap())
+                    .unwrap();
+                let now = s.now;
+                s.files.insert(
+                    format!("{base}{source}/{month}.json.gz"),
+                    (gzip.finish().unwrap(), now),
+                );
+                months.insert(month, 1);
+            }
+            let now = s.now;
+            s.files.insert(
+                format!("{base}index-{source}.json"),
+                (serde_json::to_vec(&json!({"months":months})).unwrap(), now),
+            );
+        }
+        let budget = Arc::new(Budget::testing(&a.1, 120));
+        assert!(
+            request_budget::scoped(budget.clone(), exchange(&a, &cfg, &secret))
+                .await
+                .is_err()
+        );
+        assert_eq!(store.lock().unwrap().requests.len(), 120);
+        add(&a, &cfg, 15.0);
+        budget.elapse_window();
+        request_budget::scoped(budget, exchange(&a, &cfg, &secret))
+            .await
+            .unwrap();
+        let cold = device(&cfg);
+        exchange(&cold, &cfg, &secret).await.unwrap();
+        assert_eq!(total(&cold, &cfg), 7815.0);
+        // Downloaded historical months never repeat just because quota interrupted migration.
+        let s = store.lock().unwrap();
+        let downloads: Vec<_> = s
+            .requests
+            .iter()
+            .filter(|(m, p)| m == "GET" && p.starts_with(base) && p.ends_with(".gz"))
+            .collect();
+        assert_eq!(downloads.len(), 130);
+        drop(s);
+        server.abort();
+        for db in [a, cold] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
     }
 }

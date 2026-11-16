@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 export interface WebDAVUpload { url: string; authorization: string; bodyBase64: string }
-export interface WebDAVResponse { status: number; errorCode?: number }
+export interface WebDAVResponse { status: number; errorCode?: number; retryAfter?: string }
 
 // Only HTTP transport differs. Rust owns the snapshot, destination, merge,
 // validation and acknowledgement; no music-library logic lives here.
@@ -27,7 +27,7 @@ export async function putWebDAV(args: WebDAVUpload): Promise<WebDAVResponse> {
   try {
     const response = await session.fetch(request);
     hilog.info(0xB110, 'BiliMusicSync', 'Native WebDAV PUT bytes=%{public}d status=%{public}d', bytes.byteLength, response.statusCode);
-    return { status: response.statusCode };
+    return { status: response.statusCode, retryAfter: response.headers?.['retry-after']?.toString() || response.headers?.['Retry-After']?.toString() };
   } catch (error) {
     const code = (error as BusinessError).code;
     hilog.warn(0xB110, 'BiliMusicSync', 'Native WebDAV PUT bytes=%{public}d networkCode=%{public}d', bytes.byteLength, code);

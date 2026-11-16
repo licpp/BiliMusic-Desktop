@@ -228,6 +228,7 @@ mod tests {
             cid: 1,
             page: 1,
             source_title: "source".into(),
+            source_title_context: None,
             title: "track".into(),
             artist: None,
             album: None,

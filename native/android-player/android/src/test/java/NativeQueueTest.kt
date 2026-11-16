@@ -48,4 +48,14 @@ class NativeQueueTest {
         val single = queue().payload("account", track("1"), false, false, null)
         assertFalse(single.getBoolean("collectionPlayback")); assertTrue(single.isNull("position"))
     }
+    @Test fun invalidMirrorsDoNotRetireOwnersAndOlderOwnersCannotOverwriteNewMirrors() {
+        val q=NativeQueue()
+        fun data(owner:String,version:Long)=JSONObject().put("owner",owner).put("version",version)
+            .put("accountSession","account").put("repeatMode","off").put("tracks",JSONArray(listOf(track("1"))))
+        q.update(data("a",4))
+        try { q.update(data("broken",1).put("tracks",JSONArray(listOf(JSONObject())))); fail("Expected rejection") } catch (_: IllegalArgumentException) {}
+        assertEquals("a",q.owner);assertEquals(4L,q.version)
+        q.update(data("b",1));q.update(data("a",99))
+        assertEquals("b",q.owner);assertEquals(1L,q.version)
+    }
 }

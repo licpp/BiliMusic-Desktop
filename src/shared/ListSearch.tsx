@@ -7,7 +7,7 @@ export function matchesListSearch(query: string, ...values: (string | undefined)
   return query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).every(term => haystack.includes(term))
 }
 export function matchesTrackSearch(track: Track, query: string) {
-  return matchesListSearch(query, track.title, track.artist, track.album, track.source.uploaderName, track.source.bvid)
+  return matchesListSearch(query, track.title, track.videoTitle, track.sourceTitleContext?.season?.title, track.artist, track.album, track.source.uploaderName, track.source.bvid)
 }
 export function ListSearch({ query, onChange, count, label = '搜索列表中的音乐' }: { query: string; onChange: (value: string) => void; count: number; label?: string }) {
   const [open, setOpen] = useState(false)

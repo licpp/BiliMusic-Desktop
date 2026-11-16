@@ -1,9 +1,13 @@
+import { SystemTitleLyricsSettings } from '../features/settings/SystemTitleLyricsSettings'
+import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../services/queryKeys'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { Cloud, HardDrive, LogOut, Moon, QrCode, Sun, UserRound } from 'lucide-react'
-import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr, type QrLogin } from '../services/desktopApi'
+import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr } from '../services/desktopApi'
+import type { QrLogin } from '../domain/account'
 import { resetPlayerForAccount } from '../features/player/playerStore'
+import { UpdateSettings } from '../features/settings/UpdateSettings'
 import { ResumeSettings } from '../features/settings/ResumeSettings'
 import { PlaybackCacheSettings } from '../features/settings/PlaybackCacheSettings'
 import { SyncSettings } from '../features/sync/SyncSettings'
@@ -18,9 +22,9 @@ export function LargeSettings() {
   const [size, setSize] = useState(() => Number(localStorage.getItem('large-ui-size')) || 1)
   const [lyrics, setLyrics] = useState(() => Number(localStorage.getItem('large-lyrics-size')) || 1)
   const [awake, setAwake] = useState(() => localStorage.getItem('large-keep-awake') === 'true')
-  return <><LargeAccount/>
+  return <><LargeAccount/><div className="large-settings-common"><UpdateSettings/></div>
     <details className="large-disclosure" open={attention ? true : undefined}><summary><Cloud/><span><strong>云同步</strong><small>{attention || '在不同设备间同步音乐库与听歌记录'}</small></span></summary><SyncSettings embedded/></details>
-    <div className="large-settings-common"><ResumeSettings/></div>
+    <div className="large-settings-common"><ResumeSettings/><SystemTitleLyricsSettings/></div>
     <details className="large-disclosure"><summary><HardDrive/><span><strong>播放缓存</strong><small>容量与已用空间</small></span></summary><PlaybackCacheSettings embedded/></details>
     <section className="large-setting-section large-surface"><h2>外观与显示</h2><div className="large-setting-row"><span>主题</span><div className="large-options"><button aria-pressed={theme === 'light'} onClick={() => setTheme('light')}><Sun/>明亮</button><button aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}><Moon/>深色</button></div></div>
       <div className="large-setting-row"><span>界面大小</span><div className="large-options">{[0.9, 1, 1.15].map((value, i) => <button key={value} aria-pressed={size === value} onClick={() => { setSize(value); localStorage.setItem('large-ui-size', String(value)); document.documentElement.style.setProperty('--large-scale', String(value)) }}>{['紧凑', '标准', '较大'][i]}</button>)}</div></div>
@@ -30,7 +34,7 @@ export function LargeSettings() {
 }
 
 function LargeAccount() {
-  const client = useQueryClient(), profile = useQuery({ queryKey: ['account'], queryFn: getAccountProfile, retry: false })
+  const client = useQueryClient(), profile = useQuery({ queryKey: accountQueryKey('account'), queryFn: getAccountProfile, retry: false })
   const [open, setOpen] = useState(false), [qr, setQr] = useState<QrLogin>(), [revision, setRevision] = useState(0), [message, setMessage] = useState(''), [busy, setBusy] = useState(false)
   useEffect(() => {
     if (!open || profile.data?.loggedIn || !inDesktopShell) return
@@ -43,7 +47,7 @@ function LargeAccount() {
         try {
           const status = await pollLoginQr(login.key)
           if (status.status === 'authenticated') {
-            await resetPlayerForAccount(); await client.cancelQueries(); await client.resetQueries()
+            await resetPlayerForAccount(); await client.cancelQueries(accountQueryFilter); await resetAccountQueries(client)
             window.dispatchEvent(new Event('bilimusic-account-changed')); window.dispatchEvent(new Event('bilimusic-sync-configured'))
             if (!cancelled) setOpen(false)
             return
@@ -60,7 +64,7 @@ function LargeAccount() {
   }, [open, revision, profile.data?.loggedIn, client])
   const logout = async () => {
     setBusy(true)
-    try { await client.cancelQueries(); await resetPlayerForAccount(); await logoutBilibili(); await client.resetQueries(); window.dispatchEvent(new Event('bilimusic-account-changed')); window.dispatchEvent(new Event('bilimusic-sync-configured')); setOpen(false) }
+    try { await client.cancelQueries(accountQueryFilter); await resetPlayerForAccount(); await logoutBilibili(); await resetAccountQueries(client); window.dispatchEvent(new Event('bilimusic-account-changed')); window.dispatchEvent(new Event('bilimusic-sync-configured')); setOpen(false) }
     catch (e) { setMessage(commandErrorMessage(e)) } finally { setBusy(false) }
   }
   return <><button className="large-account large-surface" data-focus="account" data-primary-focus onClick={() => { setMessage(''); setOpen(true) }}>{profile.data?.avatarUrl ? <img src={profile.data.avatarUrl} alt="" referrerPolicy="no-referrer"/> : <span><UserRound/></span>}<div><strong>{profile.data?.name || '登录 B站账号'}</strong><small>{profile.data?.loggedIn ? '账号信息' : '扫码连接你的音乐世界'}</small></div><QrCode/></button><Failure error={profile.error} retry={() => void profile.refetch()}/>

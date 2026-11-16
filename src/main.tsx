@@ -1,3 +1,5 @@
+import { startUpdateChecks } from './services/updates'
+import { installAccountQueryScope } from './services/queryKeys'
 import { FloatingLyricsUnlockWindow } from './features/lyrics/FloatingLyricsUnlockWindow'
 import { SubtitleController } from './features/lyrics/useBiliSubtitles'
 import { FloatingLyricsWindow } from './features/lyrics/FloatingLyricsWindow'
@@ -35,9 +37,11 @@ const queryClient = new QueryClient({
   },
 })
 
+installAccountQueryScope(queryClient)
 const floatingMode = new URLSearchParams(location.search).get('window')
 const floating = !isMobile && (floatingMode === 'lyrics' || floatingMode === 'lyrics-unlock')
 if (!floating) {
+  startUpdateChecks()
   startCloudSync(queryClient)
   startAutomaticLyrics()
   startListeningStatistics()

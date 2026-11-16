@@ -6,15 +6,6 @@ import Tauri
 import UIKit
 import WebKit
 
-struct Source: Codable {
-    let provider: String; let bvid: String; let cid: Int64; let page: Int
-    let aid: Int64?; let uploaderId: Int64?; let uploaderName: String?
-}
-struct QueueTrack: Codable {
-    let id: String; let source: Source
-    var title: String; var artist: String?; var album: String?; var coverUrl: String?
-    var durationSeconds: Double; var liked: Bool?; var resolveParts: Bool?; var videoTitle: String?; var partCount: Int?
-}
 struct PlayArgs: Decodable {
     let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?; let rate: Double?; let collectionRef: String?; let seamless: Bool?
     let upgradeUrl: String?
@@ -24,6 +15,7 @@ struct ControlArgs: Decodable {
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
 }
 struct QueueArgs: Decodable {
+    let accountSession: String?; let version: Int64?; let owner: String?
     let tracks: [QueueTrack]; let repeatMode: String; let shuffled: Bool; let autoResume: Bool?
     let resumeThresholdSeconds: Double?; let collectionPlayback: Bool?
 }
@@ -33,27 +25,8 @@ struct SecretArgs: Decodable {
 struct ExportArgs: Decodable { let path: String }
 struct ListenerArgs: Decodable { let event: String; let handler: Channel }
 struct RemoveListenerArgs: Decodable { let event: String; let channelId: UInt64 }
-struct PlayerSnapshot: Encodable {
-    var id: String?
-    var status = "paused"
-    var rate: Double = 1
-    var position: Double = 0
-    var duration: Double = 0
-    var stopped = true
-    var floatingLyricsEnabled = false
-    var error: String?
-    var track: QueueTrack?
-    var revision: Int64 = 0
-    var sequence: Int64 = 0
-    var seekRevision = 0
-    var advancing = false
-    var recoveryAttempted = false
-    var expandedEntries: [String: [QueueTrack]]?
-    var sleepDeadline: Double = 0
-    var sleepDuration: Double = 0
-    var sleepExpired = false
-}
 struct ResolveRequest: Encodable {
+    let accountSession: String?
     let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
     let resumeThresholdSeconds: Double; let collectionPlayback: Bool
     let refresh: Bool; let position: Double?
@@ -96,6 +69,12 @@ class PlayerPlugin: Plugin {
     private var listeningActive = false
     private var listeningID: String?
     private var listeningProfile = ""
+    private let engineInstanceId = UUID().uuidString
+    private var nativeResolutionPending = false
+    private var queueSession: String?
+    private var queueVersion: Int64 = 0
+    private var queueOwner = ""
+    private var retiredQueueOwners = Set<String>()
     private var listeningSession = UUID().uuidString
     private var listeningSeconds: Double = 0
     private var player = AVPlayer()
@@ -138,6 +117,7 @@ class PlayerPlugin: Plugin {
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private let notificationLyrics = NotificationLyrics()
+    private var systemTitleLyrics = UserDefaults.standard.bool(forKey: "bilimusic-system-title-lyrics")
     private weak var webview: WKWebView?
     private let artworkCache = NSCache<NSString, UIImage>()
     private var artworkTask: URLSessionDataTask?
@@ -294,13 +274,22 @@ class PlayerPlugin: Plugin {
     @objc public func queue(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(QueueArgs.self)
         onMain { [self] in
+            let owner = args.owner ?? "legacy"
+            if retiredQueueOwners.contains(owner) { invoke.resolve(); return }
+            let version = args.version ?? (owner == queueOwner ? queueVersion + 1 : 1)
+            guard owner != queueOwner || version > queueVersion else { invoke.resolve(); return }
             guard args.tracks.count <= 10000, ["off", "one", "all"].contains(args.repeatMode) else { invoke.reject("无效的播放队列"); return }
+            let replacedOwner = owner != queueOwner || queueSession != args.accountSession
+            if owner != queueOwner { if !queueOwner.isEmpty {retiredQueueOwners.insert(queueOwner)}; queueOwner=owner }
+            if queueSession != args.accountSession { expandedEntries = [:] }
+            queueVersion=version; queueSession=args.accountSession
             var seen = Set<String>()
             expandedEntries = expandedEntries.filter { key, _ in args.tracks.contains { $0.id == key && $0.resolveParts == true } }
             tracks = args.tracks.flatMap { track in
                 if track.resolveParts == true, let parts = expandedEntries[track.id] { return parts }
                 return [track]
             }.filter { seen.insert($0.id).inserted }
+            if nativeResolutionPending && (replacedOwner || !tracks.contains(where: { $0.id == state.id })) { pause() }
             repeatMode = args.repeatMode; shuffled = args.shuffled; autoResume = args.autoResume ?? true
             resumeThresholdSeconds = args.resumeThresholdSeconds ?? 0
             collectionPlayback = args.collectionPlayback ?? false
@@ -422,8 +411,13 @@ class PlayerPlugin: Plugin {
 
     @objc public func lyrics(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(LyricsArgs.self)
-        guard args.data.utf8.count <= 1_000_000, let data=args.data.data(using:.utf8), let request=try? JSONDecoder().decode(NativeLyricsRequest.self,from:data) else { invoke.reject("歌词内容无效");return }
+        guard args.data.utf8.count <= 48 * 1024 * 1024, let data=args.data.data(using:.utf8), let request=try? JSONDecoder().decode(NativeLyricsRequest.self,from:data) else { invoke.reject("歌词内容无效");return }
         onMain { [self] in
+            if request.action == "system-title" {
+                systemTitleLyrics = request.enabled == true
+                UserDefaults.standard.set(systemTitleLyrics, forKey: "bilimusic-system-title-lyrics")
+                nowPlaying()
+            }
             if request.action == "update" {
                 notificationLyrics.update(request)
                 nowPlaying()
@@ -492,7 +486,7 @@ class PlayerPlugin: Plugin {
         positionSavedAt = ProcessInfo.processInfo.systemUptime - 15
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
-        state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = position; startPosition = position; initialSeekPending = position > 0
+        state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = 0; startPosition = position; initialSeekPending = position > 0
         mediaSourceInvalidated = false
         NSLog("BiliMusic audio start: host=%@ port=%ld position=%.3f", url.host ?? "", url.port ?? 0, position)
         let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 2
@@ -578,6 +572,7 @@ class PlayerPlugin: Plugin {
         return true
     }
     private func pause(interrupted: Bool = false) {
+        nativeResolutionPending = false
         cancelPlaybackWatchdog()
         backgroundPlaybackWanted = false
         if pausedAt == nil { pausedAt = Date().timeIntervalSince1970 }
@@ -690,6 +685,7 @@ class PlayerPlugin: Plugin {
         state.position = target; publish()
     }
     private func stop() {
+        nativeResolutionPending = false
         pendingUpgrade=nil;cancelSourceSwitch()
         notificationLyrics.clear();lastNowPlayingLyric=nil
         cancelPlaybackWatchdog()
@@ -710,6 +706,7 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func fail(_ message: String) {
+        nativeResolutionPending = false
         pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         accountListening(flush: true)
@@ -774,6 +771,12 @@ class PlayerPlugin: Plugin {
     private func publish() {
         publishSequence += 1
         state.sequence = publishSequence
+        state.engineInstanceId = engineInstanceId
+        state.sessionId = listeningSession
+        state.sourceRevision = generation
+        state.autonomousQueue = !tracks.isEmpty
+        state.capabilities.autonomousQueue = state.autonomousQueue
+        state.queueVersion = queueVersion
         state.floatingLyricsEnabled = false
         state.recoveryAttempted = recoveryAttempted
         state.rate = Double(playbackRate)
@@ -808,7 +811,8 @@ class PlayerPlugin: Plugin {
         lastNowPlayingStatus = state.status
         lastNowPlayingID = id
         lastNowPlayingLyric = notificationLyrics.line(for:id,at:state.position)
-        var info: [String: Any] = [MPMediaItemPropertyTitle: state.track?.title ?? "BiliMusic", MPMediaItemPropertyArtist: lastNowPlayingLyric ?? state.track?.artist ?? "歌手未知", MPNowPlayingInfoPropertyExternalContentIdentifier: id,
+        let text = notificationMediaText(title: state.track?.title ?? "BiliMusic", artist: state.track?.artist ?? "歌手未知", lyric: lastNowPlayingLyric, titleLyrics: systemTitleLyrics)
+        var info: [String: Any] = [MPMediaItemPropertyTitle: text.title, MPMediaItemPropertyArtist: text.artist, MPNowPlayingInfoPropertyExternalContentIdentifier: id,
                                   MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? Double(playbackRate) : 0.0]
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }
         if let album = state.track?.album { info[MPMediaItemPropertyAlbumTitle] = album }
@@ -859,7 +863,7 @@ class PlayerPlugin: Plugin {
         if !refresh { listeningSession = UUID().uuidString }
         generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
-        state.id = track.id; state.track = track; state.position = position ?? 0; state.duration = track.durationSeconds
+        state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
         prepareArtwork(for: track)
         state.error = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
@@ -868,14 +872,16 @@ class PlayerPlugin: Plugin {
             guard let self, self.generation == request, self.desiredPlaying else { return }
             self.fail("后台加载超时，请返回应用继续播放")
         }
+        nativeResolutionPending = true
         publish()
         let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
-        guard let data = try? JSONEncoder().encode(ResolveRequest(profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position)),
+        guard let data = try? JSONEncoder().encode(ResolveRequest(accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
     fileprivate func resolved(_ request: Int64, _ data: Data) {
         guard request == generation, desiredPlaying else { return }
+        nativeResolutionPending = false
         guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else { fail("无法解析播放地址"); return }
         if let error = result.error { fail(error); return }
         guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址"); return }

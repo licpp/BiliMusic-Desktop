@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 pub fn init(c: &Connection) -> Result<(), String> {
-    crate::interface::list_preferences::init(c).map_err(|e| e.to_string())?;
+    crate::infrastructure::repositories::list_preferences::init(c).map_err(|e| e.to_string())?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS sync_settings(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_base(provider TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_info(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sync_scheduler(target TEXT PRIMARY KEY,json TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sync_traffic(target TEXT NOT NULL,day TEXT NOT NULL,domain TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0,uploaded INTEGER NOT NULL DEFAULT 0,downloaded INTEGER NOT NULL DEFAULT 0,cache_hits INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,elapsed_ms INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(target,day,domain));
@@ -207,7 +207,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
     }
-    crate::interface::list_preferences::export(c, &mut s)?;
+    crate::infrastructure::repositories::list_preferences::export(c, &mut s)?;
     s.compact(history);
     s.validate(uid)
         .map_err(|e| format!("本机同步资料校验失败：{e}"))?;
@@ -438,7 +438,7 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             tx.execute_batch("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
                 AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
         }
-        crate::interface::list_preferences::apply(&tx, s)?;
+        crate::infrastructure::repositories::list_preferences::apply(&tx, s)?;
         prune(&tx)?;
         Ok(())
     })();

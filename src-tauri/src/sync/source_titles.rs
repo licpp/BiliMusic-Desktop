@@ -2,40 +2,64 @@
 use super::*;
 use crate::infrastructure::providers::bilibili::VideoParts;
 
+#[cfg(test)]
 fn display_title(
     video: &VideoParts,
     part: &crate::infrastructure::providers::bilibili::VideoPart,
 ) -> String {
-    let title = part.title.trim();
-    let normalized = title.to_lowercase().replace(' ', "");
-    let numbered = normalized
-        .strip_prefix("part")
-        .or_else(|| normalized.strip_prefix('p'))
-        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-    let generic = numbered || matches!(title, "正片" | "视频" | "默认" | "默认标题");
-    if !title.is_empty() && (video.parts.len() > 1 || (video.season.is_some() && !generic)) {
-        title.to_owned()
-    } else {
-        video.title.clone()
-    }
+    crate::domain::source_title::source_title(
+        &video.title,
+        &part.title,
+        video.parts.len(),
+        video.season.is_some(),
+        video
+            .season
+            .as_ref()
+            .map(|s| s.title.as_str())
+            .unwrap_or(""),
+    )
+    .to_owned()
 }
 
 pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize, String> {
     let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
     let mut changed = c.execute("INSERT INTO sync_info(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value<>excluded.value",params![format!("source-published:{}",video.bvid),video.published_at.unwrap_or(0).to_string()]).map_err(|e|e.to_string())?;
+    if let Some(count) = video.play_count {
+        changed += c.execute("INSERT INTO sync_info(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value<>excluded.value", params![format!("source-plays:{}",video.bvid),count.to_string()]).map_err(|e|e.to_string())?;
+    }
     for part in &video.parts {
-        let title = display_title(video, part);
         let id = format!("bilibili:{}:{}", video.bvid, part.cid);
+        let previous = crate::infrastructure::repositories::source_titles::get(c, &id)
+            .map_err(|e| e.to_string())?;
+        let context = crate::domain::source_title::SourceTitleContext {
+            video_title: video.title.clone(),
+            part_title: part.title.clone(),
+            part_count: video.parts.len(),
+            season: video
+                .season
+                .clone()
+                .or(previous.as_ref().and_then(|p| p.season.clone())),
+            chapter_context: video.season.is_some()
+                || previous.as_ref().is_some_and(|p| p.chapter_context),
+        };
+        let title = context.title();
         changed += c
             .execute(
                 "UPDATE tracks SET title=?2 WHERE id=?1 AND title<>?2",
                 params![id, title],
             )
             .map_err(|e| e.to_string())?;
+        crate::infrastructure::repositories::source_titles::save(c, &id, &context)
+            .map_err(|e| e.to_string())?;
+        c.execute(
+            "UPDATE source_items SET source_title=?2 WHERE id=?1",
+            params![id, video.title],
+        )
+        .map_err(|e| e.to_string())?;
         let key = format!("source-title:{id}");
         changed += c.execute("INSERT INTO sync_info(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value<>excluded.value", params![key,title]).map_err(|e|e.to_string())?;
     }
-    c.execute("INSERT INTO sync_info(key,value) VALUES(?1,strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [format!("source-title-chapter-v2-checked:{}",video.bvid)]).map_err(|e|e.to_string())?;
+    c.execute("INSERT INTO sync_info(key,value) VALUES(?1,strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [format!("source-title-chapter-v3-checked:{}",video.bvid)]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(changed)
 }
@@ -61,12 +85,15 @@ pub(super) async fn hydrate(
             Some(bvid.to_owned())
         })
         .collect::<std::collections::BTreeSet<_>>();
-    let profile = std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default();
+    let session = {
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?
+    };
     let mut changed = 0;
     for bvid in videos {
         let fresh = {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
-            c.query_row("SELECT CAST(value AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)-604800 FROM sync_info WHERE key=?1 AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-published:'||?2)",params![format!("source-title-chapter-v2-checked:{bvid}"),bvid],|r|r.get::<_,bool>(0)).unwrap_or(false)
+            c.query_row("SELECT CAST(value AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)-604800 FROM sync_info WHERE key=?1 AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-published:'||?2) AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-plays:'||?2)",params![format!("source-title-chapter-v3-checked:{bvid}"),bvid],|r|r.get::<_,bool>(0)).unwrap_or(false)
         };
         if fresh {
             continue;
@@ -74,11 +101,12 @@ pub(super) async fn hydrate(
         let Ok(video) = provider.video_parts(&bvid).await else {
             break;
         };
-        if std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default() != profile
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        if crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?
+            != session
         {
             return Ok(0);
         }
-        let c = database.0.lock().map_err(|_| "数据库正忙")?;
         changed += save(&c, &video)?;
     }
     Ok(changed)
@@ -101,6 +129,7 @@ mod tests {
             page: 1,
             aid: None,
             source_title: "04周旋权臣".into(),
+            source_title_context: None,
             title: "04周旋权臣".into(),
             artist: None,
             album: None,
@@ -111,6 +140,7 @@ mod tests {
         };
         LibraryRepository::upsert(&mut c, &input).unwrap();
         let video = VideoParts {
+            play_count: Some(0),
             published_at: None,
             bvid: input.bvid.clone(),
             aid: 1,
@@ -137,6 +167,18 @@ mod tests {
             video.title
         );
         assert_eq!(save(&c, &video).unwrap(), 0);
+        let mut without_count = video.clone();
+        without_count.play_count = None;
+        assert_eq!(save(&c, &without_count).unwrap(), 0);
+        assert_eq!(
+            c.query_row(
+                "SELECT value FROM sync_info WHERE key=?1",
+                [format!("source-plays:{}", video.bvid)],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "0"
+        );
         let mut chapter = video.clone();
         chapter.season = Some(crate::infrastructure::providers::bilibili::SeasonSummary {
             id: 1,
@@ -214,7 +256,8 @@ mod tests {
         let report = super::super::statistics::query(&c, &dir, "42").unwrap();
         assert_eq!(report["total"]["top"][0]["title"], "四、周旋权臣");
         assert_eq!(report["total"]["top"][0]["seconds"], 5340.0);
-        assert_eq!(report["total"]["top"][1]["title"], "四、周旋权臣");
+        assert_eq!(report["total"]["top"][1]["title"], "我的名称");
+        assert_eq!(report["total"]["top"][1]["titleOverridden"], true);
         std::fs::remove_dir_all(dir).unwrap();
 
         // The second part is statistics-only: cache it without creating a library row.

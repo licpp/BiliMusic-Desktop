@@ -260,11 +260,13 @@ test('restart applies the single-video threshold at the duration boundary', asyn
   }
 })
 
-test('disabled single-video resume retains multipart and collection checkpoints', async () => {
+test('disabled automatic resume restarts multipart and collection tracks but permits explicit continuation', async () => {
   const base=track('1')
   for (const [current,queueSource] of [[{...base,partCount:2},undefined],[{...base,source:{...base.source,page:2}},undefined],[base,{kind:'season',title:'合集'}],[base,{kind:'video',title:'选集',collectionRef:'BVTEST00001'}]]) {
     const {store,audio,listeners}=setup({state:{current,queue:[current],queueSource,progressSeconds:32,durationSeconds:120,resumeThresholdSeconds:null},version:0})
     await store.getState().toggle()
+    assert.equal(audio[0].currentTime,0)
+    await store.getState().play(current,32)
     assert.equal(audio[0].currentTime,32)
     listeners.pagehide()
   }
@@ -394,5 +396,43 @@ test('queue replacement and reordering survive immediate termination without wai
  store.getState().reverseQueue()
  saved=JSON.parse(storage.get('resonance-player-v1')).state
  assert.deepEqual(saved.queue.map(t=>t.id),['803','802','801'])
+ listeners.pagehide()
+})
+
+
+test('desktop start observes disabled resume even when changed while metadata loads', async () => {
+ const {store,audio,listeners}=setup()
+ globalThis.testApi.positions.set('1',32)
+ globalThis.testApi.readyState=0
+ const pending=store.getState().play({...track('1'),partCount:2})
+ while(!audio[0]?.src) await new Promise(setImmediate)
+ store.getState().setResumeThreshold(null)
+ audio[0].readyState=3;audio[0].callbacks.loadedmetadata()
+ await pending
+ assert.equal(audio[0].currentTime,0)
+ listeners.pagehide()
+})
+
+
+test('collection checkpoint selects the saved track but obeys the time-resume setting and starts its UI at zero',async()=>{
+ for(const [threshold,duration,expected] of [[null,1800,0],[600,120,0],[600,1800,84],[0,120,84]]){
+  const {store,audio,listeners}=setup();const current={...track('1'),durationSeconds:duration}
+  store.getState().setResumeThreshold(threshold)
+  const resolving=deferred();globalThis.testApi.resolve=()=>resolving.promise
+  const pending=store.getState().playFromList([current],current.id,{kind:'season',title:'合集'},84,true)
+  await new Promise(setImmediate)
+  assert.equal(store.getState().current.id,current.id);assert.equal(store.getState().progressSeconds,0)
+  resolving.resolve('local://1');await pending
+  assert.equal(audio[0].currentTime,expected,`${threshold},${duration}`)
+  listeners.pagehide()
+ }
+})
+
+test('collection resume re-evaluates settings even when its saved track is already loaded',async()=>{
+ const {store,audio,listeners}=setup();const current=track('1')
+ await store.getState().play(current,40)
+ store.getState().setResumeThreshold(null)
+ await store.getState().playFromList([current],current.id,{kind:'season',title:'合集'},84,true)
+ assert.equal(audio[0].currentTime,0)
  listeners.pagehide()
 })

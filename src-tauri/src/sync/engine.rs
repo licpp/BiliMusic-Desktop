@@ -278,20 +278,57 @@ pub(super) async fn heads(
     if known.keys().any(|a| !actors.contains(a)) {
         return Err("已确认的同步设备提交暂不可见，已保留本机数据".into());
     }
+    // A vault with many historic actors may need more than one request window.
+    // Resume only an unfinished discovery with the identical confirmed baseline;
+    // never treat this checkpoint as an indefinitely fresh directory cache.
+    let fingerprint = super::causal::hash(&serde_json::to_vec(&(g, known)).map_err(err)?);
+    let mut partial: BTreeMap<String, Option<Head>> = net
+        .discovery_checkpoint(&fingerprint)
+        .and_then(|body| serde_json::from_slice(&body).ok())
+        .unwrap_or_default();
     let mut result = BTreeMap::new();
     for actor in actors {
         let old = known.get(&actor);
-        if let Some(head) = protocol_v2::discover(
-            net,
-            &g.uid,
-            &g.vault,
-            &g.seed,
-            &actor,
-            old.map_or(0, |h| h.generation),
-        )
-        .await?
-        {
+        let head = if let Some(head) = partial.get(&actor) {
+            head.clone()
+        } else {
+            match protocol_v2::discover(
+                net,
+                &g.uid,
+                &g.vault,
+                &g.seed,
+                &actor,
+                old.map_or(0, |h| h.generation),
+            )
+            .await
+            {
+                Ok(head) => head,
+                Err(error) => {
+                    if let Ok(body) = serde_json::to_vec(&partial) {
+                        net.save_discovery_checkpoint(&fingerprint, body);
+                    }
+                    return Err(error);
+                }
+            }
+        };
+        let candidate = head.clone();
+        if head.is_none() && old.is_some() {
+            net.clear_discovery_checkpoint();
+            return Err("已确认提交暂不可见，保留本机水位".into());
+        }
+        if let Some(head) = head {
+            head.filename()?;
+            if head.actor != actor
+                || head.uid != g.uid
+                || head.vault != g.vault
+                || head.seed != g.seed
+                || old.is_some_and(|old| head.generation < old.generation)
+            {
+                net.clear_discovery_checkpoint();
+                return Err("同步发现断点身份或水位无效".into());
+            }
             if old.is_some_and(|h| h.generation == head.generation && h != &head) {
+                net.clear_discovery_checkpoint();
                 return Err("同步提交身份发生分叉".into());
             }
             if old.is_some_and(|h| {
@@ -301,11 +338,19 @@ pub(super) async fn heads(
                         .is_none_or(|next| next.self_seq < previous.self_seq)
                 })
             }) {
+                net.clear_discovery_checkpoint();
                 return Err("同步提交的数据域覆盖水位发生回退".into());
             }
-            result.insert(actor, head);
+            result.insert(actor.clone(), head);
+        }
+        partial.insert(actor, candidate);
+        if partial.len() % 16 == 0 {
+            if let Ok(body) = serde_json::to_vec(&partial) {
+                net.save_discovery_checkpoint(&fingerprint, body);
+            }
         }
     }
+    net.clear_discovery_checkpoint();
     Ok(result)
 }
 pub(super) async fn receive_domain(
@@ -828,17 +873,9 @@ pub async fn sync(
         if g.exists(&net).await? {
             return Err("新版同步库数据暂不可见，请重试".into());
         }
-        let legacy =
-            super::dav::read_cached(cfg, secret, Some(&db.1.join("sync-cache").join(&target)))
+        remote =
+            super::legacy_import::library(cfg, secret, &g, &db.1.join("sync-cache").join(&target))
                 .await?;
-        let dav = legacy.dav.as_ref().ok_or("旧同步因果数据缺失")?;
-        for d in LIBRARY_DOMAINS {
-            let mut doc = super::migration::import_legacy(&g, &dav.doc, d)?;
-            if let Some(linked) = &dav.linked {
-                doc.join(&super::migration::import_legacy(&g, &linked.doc, d)?)?;
-            }
-            remote.insert(d, doc);
-        }
     } else {
         for d in LIBRARY_DOMAINS {
             remote.insert(

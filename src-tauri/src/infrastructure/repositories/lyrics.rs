@@ -15,7 +15,7 @@ fn default_provider() -> String {
     "lrclib".into()
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredLyrics {
     pub track_id: String,
@@ -25,6 +25,8 @@ pub struct StoredLyrics {
     pub parsed_json: String,
     pub bias_ms: i64,
     pub selected_manually: bool,
+    pub write_token: String,
+    pub account_session: String,
 }
 
 pub struct LyricsRepository;
@@ -48,11 +50,25 @@ impl LyricsRepository {
     }
 
     pub fn get(connection: &Connection, track_id: &str) -> rusqlite::Result<Option<StoredLyrics>> {
+        let account_session = super::super::database::account_session(connection)?;
         connection.query_row(
-            "SELECT track_id,provider,COALESCE(provider_lyric_id,''),raw_text,parsed_json,bias_ms,selected_manually FROM lyrics WHERE track_id=?1",
+            "SELECT track_id,provider,COALESCE(provider_lyric_id,''),raw_text,parsed_json,bias_ms,selected_manually,write_token FROM lyrics WHERE track_id=?1",
             params![track_id],
-            |row| Ok(StoredLyrics { track_id: row.get(0)?, provider: row.get(1)?, provider_lyric_id: row.get(2)?, raw_text: row.get(3)?, parsed_json: row.get(4)?, bias_ms: row.get(5)?, selected_manually: row.get(6)? }),
+            |row| Ok(StoredLyrics { track_id: row.get(0)?, provider: row.get(1)?, provider_lyric_id: row.get(2)?, raw_text: row.get(3)?, parsed_json: row.get(4)?, bias_ms: row.get(5)?, selected_manually: row.get(6)?, write_token: row.get(7)?, account_session: account_session.clone() }),
         ).optional()
+    }
+
+    pub fn complete(
+        connection: &Connection,
+        track_id: &str,
+        expected: &StoredLyrics,
+        raw: &str,
+        parsed: &str,
+    ) -> rusqlite::Result<bool> {
+        if super::super::database::account_session(connection)? != expected.account_session {
+            return Ok(false);
+        }
+        Ok(connection.execute("UPDATE lyrics SET raw_text=?5,parsed_json=?6 WHERE track_id=?1 AND provider=?2 AND COALESCE(provider_lyric_id,'')=?3 AND write_token=?4 AND raw_text=''", params![track_id,expected.provider,expected.provider_lyric_id,expected.write_token,raw,parsed])? == 1)
     }
 
     pub fn save(
@@ -69,6 +85,28 @@ impl LyricsRepository {
             params![track_id, lyrics.provider_lyric_id, lyrics.raw_text, lyrics.parsed_json, manual, lyrics.provider],
         )?;
         Self::get(connection, track_id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    pub fn set_bias_if_current(
+        connection: &Connection,
+        track_id: &str,
+        bias_ms: i64,
+        expected: &StoredLyrics,
+    ) -> rusqlite::Result<Option<StoredLyrics>> {
+        if track_id != expected.track_id
+            || super::super::database::account_session(connection)? != expected.account_session
+        {
+            return Ok(None);
+        }
+        let changed = connection.execute(
+            "UPDATE lyrics SET bias_ms=?2,updated_at=CURRENT_TIMESTAMP WHERE track_id=?1 AND provider=?3 AND COALESCE(provider_lyric_id,'')=?4 AND write_token=?5 AND bias_ms=?6 AND raw_text=?7 AND parsed_json=?8",
+            params![track_id,bias_ms.clamp(-30_000,30_000),expected.provider,expected.provider_lyric_id,expected.write_token,expected.bias_ms,expected.raw_text,expected.parsed_json],
+        )?;
+        if changed == 1 {
+            Self::get(connection, track_id)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn set_bias(
@@ -105,6 +143,91 @@ mod tests {
             )
             .unwrap();
         connection
+            .execute_batch("ALTER TABLE lyrics ADD COLUMN write_token TEXT NOT NULL DEFAULT ''; ")
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../../../migrations/0006_lyrics_guard.sql"))
+            .unwrap();
+        connection
+    }
+
+    #[test]
+    fn automatic_alignment_checks_selection_bias_content_and_account() {
+        let c = database();
+        let id = "bilibili:BV1test12345:42";
+        let selection = SaveLyricsInput { provider: "netease".into(), provider_lyric_id: "42".into(), raw_text: "[00:01]歌词".into(), parsed_json: r#"[{"timeMs":1000,"text":"歌词","words":[{"text":"歌词","startTimeMs":1000,"endTimeMs":2000}]}]"#.into() };
+        let original = LyricsRepository::save(&c, id, &selection, true).unwrap();
+        let aligned = LyricsRepository::set_bias_if_current(&c, id, 2500, &original)
+            .unwrap()
+            .unwrap();
+        assert_eq!(aligned.bias_ms, 2500);
+        assert_eq!(aligned.raw_text, original.raw_text);
+        assert_eq!(aligned.parsed_json, original.parsed_json);
+        assert_eq!(aligned.write_token, original.write_token);
+        assert!(aligned.selected_manually);
+        // Another adjustment must win over an older computation.
+        assert!(
+            LyricsRepository::set_bias_if_current(&c, id, 3000, &original)
+                .unwrap()
+                .is_none()
+        );
+        // Switching A -> B -> A must not reuse an earlier selection token.
+        let other = SaveLyricsInput {
+            provider: selection.provider.clone(),
+            provider_lyric_id: "43".into(),
+            raw_text: selection.raw_text.clone(),
+            parsed_json: selection.parsed_json.clone(),
+        };
+        LyricsRepository::save(&c, id, &other, true).unwrap();
+        let current = LyricsRepository::save(&c, id, &selection, true).unwrap();
+        assert!(
+            LyricsRepository::set_bias_if_current(&c, id, 3000, &aligned)
+                .unwrap()
+                .is_none()
+        );
+        c.execute("UPDATE account_session SET token='another-login'", [])
+            .unwrap();
+        assert!(
+            LyricsRepository::set_bias_if_current(&c, id, 3000, &current)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            LyricsRepository::get(&c, id).unwrap().unwrap().bias_ms,
+            2500
+        );
+    }
+
+    #[test]
+    fn delayed_completion_preserves_choice_bias_and_rejects_aba() {
+        let c = database();
+        let id = "bilibili:BV1test12345:42";
+        let selection = |lyric: &str| SaveLyricsInput {
+            provider: "lrclib".into(),
+            provider_lyric_id: lyric.into(),
+            raw_text: String::new(),
+            parsed_json: "[]".into(),
+        };
+        let a = LyricsRepository::save(&c, id, &selection("a"), true).unwrap();
+        LyricsRepository::set_bias(&c, id, 1200).unwrap();
+        assert!(LyricsRepository::complete(&c, id, &a, "body", "[]").unwrap());
+        assert_eq!(
+            LyricsRepository::get(&c, id).unwrap().unwrap().bias_ms,
+            1200
+        );
+        assert!(!LyricsRepository::complete(&c, id, &a, "old", "[]").unwrap());
+        let a = LyricsRepository::save(&c, id, &selection("a"), true).unwrap();
+        LyricsRepository::save(&c, id, &selection("b"), true).unwrap();
+        LyricsRepository::save(&c, id, &selection("a"), true).unwrap();
+        assert!(!LyricsRepository::complete(&c, id, &a, "old", "[]").unwrap());
+        let a = LyricsRepository::get(&c, id).unwrap().unwrap();
+        c.execute("DELETE FROM lyrics WHERE track_id=?1", [id])
+            .unwrap();
+        LyricsRepository::save(&c, id, &selection("a"), true).unwrap();
+        assert!(!LyricsRepository::complete(&c, id, &a, "old", "[]").unwrap());
+        let other = database();
+        LyricsRepository::save(&other, id, &selection("a"), true).unwrap();
+        assert!(!LyricsRepository::complete(&other, id, &a, "old", "[]").unwrap());
     }
 
     #[test]

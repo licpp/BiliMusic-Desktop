@@ -10,6 +10,8 @@ pub struct TrackInput {
     pub cid: i64,
     pub page: i32,
     pub source_title: String,
+    #[serde(default)]
+    pub source_title_context: Option<crate::domain::source_title::SourceTitleContext>,
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -36,6 +38,9 @@ pub struct TrackRecord {
     pub uploader_name: Option<String>,
     pub liked: bool,
     pub source_display_title: String,
+    pub source_video_title: String,
+    pub title_overridden: bool,
+    pub source_title_context: Option<crate::domain::source_title::SourceTitleContext>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,21 +59,51 @@ impl LibraryRepository {
         connection: &mut Connection,
         track: &TrackInput,
     ) -> rusqlite::Result<TrackRecord> {
+        let previous =
+            crate::infrastructure::repositories::source_titles::get(connection, &track.id)?;
+        let cached = track
+            .source_title_context
+            .clone()
+            .map(|mut value| {
+                if let Some(old) = &previous {
+                    if value.season.is_none() {
+                        value.season = old.season.clone()
+                    }
+                    value.chapter_context |= old.chapter_context;
+                }
+                value
+            })
+            .or(previous);
+        let canonical = cached
+            .as_ref()
+            .map(|c| c.title())
+            .unwrap_or_else(|| track.title.clone());
+        let raw = cached
+            .as_ref()
+            .map(|c| c.video_title.as_str())
+            .unwrap_or(&track.source_title);
         let transaction = connection.transaction()?;
         transaction.execute(
             "INSERT INTO source_items (id, provider, bvid, aid, cid, page, uploader_id, uploader_name, source_title)
              VALUES (?1, 'bilibili', ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET aid=excluded.aid, page=excluded.page, uploader_id=excluded.uploader_id,
                uploader_name=excluded.uploader_name, source_title=excluded.source_title, updated_at=CURRENT_TIMESTAMP",
-            params![track.id, track.bvid, track.aid, track.cid, track.page, track.uploader_id, track.uploader_name, track.source_title],
+            params![track.id, track.bvid, track.aid, track.cid, track.page, track.uploader_id, track.uploader_name, raw],
         )?;
         transaction.execute(
             "INSERT INTO tracks (id, source_item_id, title, artist, album, cover_url, duration_seconds)
              VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
                cover_url=excluded.cover_url, duration_seconds=excluded.duration_seconds, updated_at=CURRENT_TIMESTAMP",
-            params![track.id, track.title, track.artist, track.album, track.cover_url, track.duration_seconds],
+            params![track.id, canonical, track.artist, track.album, track.cover_url, track.duration_seconds],
         )?;
+        if let Some(context) = &cached {
+            crate::infrastructure::repositories::source_titles::save(
+                &transaction,
+                &track.id,
+                context,
+            )?;
+        }
         transaction.commit()?;
         Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
@@ -218,9 +253,11 @@ impl LibraryRepository {
         "SELECT t.id, s.bvid, s.aid, s.cid, s.page,
            COALESCE(NULLIF(m.title,''),t.title), COALESCE(m.artist,t.artist), COALESCE(m.album,t.album),
            COALESCE(m.cover_url,t.cover_url), t.duration_seconds, s.uploader_id, s.uploader_name,
-           CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END, t.title
+           CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END, t.title, s.source_title,
+           CASE WHEN NULLIF(m.title,'') IS NOT NULL THEN 1 ELSE 0 END,
+           sc.part_title,sc.part_count,sc.season_json,sc.chapter_context
          FROM tracks t JOIN source_items s ON s.id=t.source_item_id AND s.provider='bilibili'
-         LEFT JOIN metadata_overrides m ON m.track_id=t.id LEFT JOIN favorites f ON f.track_id=t.id"
+         LEFT JOIN metadata_overrides m ON m.track_id=t.id LEFT JOIN favorites f ON f.track_id=t.id LEFT JOIN source_title_cache sc ON sc.track_id=t.id"
     }
 
     pub(crate) fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRecord> {
@@ -239,6 +276,21 @@ impl LibraryRepository {
             uploader_name: row.get(11)?,
             liked: row.get(12)?,
             source_display_title: row.get(13)?,
+            source_video_title: row.get(14)?,
+            title_overridden: row.get(15)?,
+            source_title_context: row.get::<_, Option<String>>(16)?.map(|part_title| {
+                crate::domain::source_title::SourceTitleContext {
+                    video_title: row.get(14).unwrap_or_default(),
+                    part_title,
+                    part_count: row.get(17).unwrap_or(1),
+                    chapter_context: row.get(19).unwrap_or(false),
+                    season: row
+                        .get::<_, Option<String>>(18)
+                        .ok()
+                        .flatten()
+                        .and_then(|value| serde_json::from_str(&value).ok()),
+                }
+            }),
         })
     }
 }
@@ -264,6 +316,7 @@ mod tests {
             cid,
             page: 1,
             source_title: "来源标题".into(),
+            source_title_context: None,
             title: "原始标题".into(),
             artist: None,
             album: None,
@@ -272,6 +325,53 @@ mod tests {
             uploader_id: Some(7),
             uploader_name: Some("投稿者".into()),
         }
+    }
+
+    #[test]
+    fn chapter_context_survives_old_play_records_and_user_titles_remain_authoritative() {
+        let mut c = database();
+        let mut input = track(10);
+        input.source_title = "AI喻大华 苦命皇帝咸丰 未删减版 01谁是太子".into();
+        input.title = input.source_title.clone();
+        input.source_title_context=Some(serde_json::from_value(serde_json::json!({
+            "videoTitle":input.source_title,"partTitle":"01谁是太子","partCount":1,
+            "season":{"id":10,"uploaderId":42,"title":"AI喻大华 苦命皇帝咸丰 未删减版","coverUrl":"","uploaderName":"远哥挺乐"}
+        })).unwrap());
+        let first = LibraryRepository::upsert(&mut c, &input).unwrap();
+        assert_eq!(first.title, "01谁是太子");
+        assert_eq!(first.source_video_title, input.source_title);
+        assert!(!first.title_overridden);
+        LibraryRepository::set_favorite(&c, &input.id, true).unwrap();
+        input.source_title_context = None;
+        let played = LibraryRepository::record_play(&mut c, &input).unwrap();
+        assert_eq!(played.title, "01谁是太子");
+        assert!(played.liked);
+        assert!(played.source_title_context.unwrap().season.is_some());
+        LibraryRepository::update_metadata(
+            &c,
+            &input.id,
+            &MetadataPatch {
+                title: "我的章节".into(),
+                artist: None,
+                album: None,
+                cover_url: None,
+            },
+        )
+        .unwrap();
+        let played = LibraryRepository::record_play(&mut c, &input).unwrap();
+        assert_eq!(played.title, "我的章节");
+        assert!(played.title_overridden);
+        assert_eq!(played.source_display_title, "01谁是太子");
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            c.query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

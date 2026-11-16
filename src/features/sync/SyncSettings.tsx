@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { syncErrorMessage } from '../../services/userErrors'
 import { useSyncAttention, clearSyncAttention, reportSyncError } from '../../services/syncAttention'
 import { useState, useEffect } from 'react'
@@ -20,7 +21,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   const pending = useSyncAttention(state => state.outcome)
   const attention = useSyncAttention(state => state.library || state.statistics)
   const client = useQueryClient()
-  const status = useQuery({ queryKey: ['sync-status'], queryFn: syncStatus, enabled: inDesktopShell, retry: false })
+  const status = useQuery({ queryKey: accountQueryKey('sync-status'), queryFn: syncStatus, enabled: inDesktopShell, retry: false })
   const [config, setConfig] = useState<SyncConfig>(defaultSyncConfig)
   const [username, setUsername] = useState(''), [password, setPassword] = useState('')
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false)
@@ -41,7 +42,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
     if (result.conflicts.length) { setMessage('发现不同修改，请选择保留哪一侧。'); return }
     await refreshSyncedLibrary(client)
     setOutcome(null); setMessage('同步完成'); notify()
-    try { await invoke('listening_sync'); reportSyncError('statistics', false); await client.invalidateQueries({queryKey:['listening-statistics']}) }
+    try { await invoke('listening_sync'); reportSyncError('statistics', false); await client.invalidateQueries({queryKey:accountQueryKey('listening-statistics')}) }
     catch(e) { reportSyncError('statistics', true); setMessage(`资料已同步，听歌统计尚未完成：${syncErrorMessage(e)}`) }
     void invoke<number>('sync_hydrate_sources').then(() => refreshSyncedLibrary(client)).catch(() => undefined)
   }

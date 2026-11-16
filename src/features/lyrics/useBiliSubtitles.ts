@@ -1,12 +1,16 @@
+import { subtitleCoverageEnd } from '../../domain/subtitleCoverage'
+import { formatDuration } from '../../shared/time'
+import { accountKeyAt } from '../../services/queryKeys'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import type { TrackSource } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
-import { commandErrorMessage, getStoredLyrics, inDesktopShell, type LyricLine, type StoredLyrics } from '../../services/desktopApi'
+import { commandErrorMessage, getStoredLyrics, inDesktopShell } from '../../services/desktopApi'
+import type { LyricLine, StoredLyrics } from '../../domain/lyrics'
 import { getSubtitles, getSubtitleLines } from '../../services/mediaSources'
 import { usePlayerStore } from '../player/playerStore'
-import { storedLyricLines } from './lyricTimeline'
+import { storedLyricLines } from '../../domain/lyricTimeline'
 
 type SubtitleChoice = { language:string; label:string; ai:boolean }
 type SubtitleState = {
@@ -29,14 +33,14 @@ export function SubtitleController() {
   const current = usePlayerStore(player=>player.current)
   const [epoch,setEpoch] = useState(accountEpoch)
   const client = useQueryClient()
-  const queryKey = ['subtitle-stored-lyrics',epoch,current?.id]
+  const queryKey = accountKeyAt(epoch, 'subtitle-stored-lyrics', current?.id)
   const saved = useQuery({queryKey,queryFn:()=>getStoredLyrics(current!.id),enabled:inDesktopShell&&Boolean(current),retry:false})
   useEffect(()=>{
     const change = ()=>setEpoch(accountEpoch())
     const update = (event:Event)=>{
       const lyrics=(event as CustomEvent<StoredLyrics>).detail
       if(lyrics.trackId===current?.id&&epoch===accountEpoch()) {
-        const key=['subtitle-stored-lyrics',epoch,current.id]
+        const key=accountKeyAt(epoch, 'subtitle-stored-lyrics', current.id)
         void client.cancelQueries({queryKey:key,exact:true})
         client.setQueryData(key,lyrics)
       }
@@ -64,7 +68,7 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
   const epoch = accountEpoch()
   const key = `${epoch}:${bvid}:${cid}`
   const list = useQuery({
-    queryKey: ['bili-subtitles', epoch, bvid, cid],
+    queryKey: accountKeyAt(epoch, 'bili-subtitles', bvid, cid),
     queryFn: () => getSubtitles(bvid, cid),
     enabled: active,
     gcTime: 0,
@@ -76,7 +80,7 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
     : undefined
   const choice = selectedChoice ?? choices.find(choice => choice.ai) ?? choices[0]
   const captions = useQuery({
-    queryKey: ['bili-subtitle-lines', epoch, bvid, cid, choice?.language],
+    queryKey: accountKeyAt(epoch, 'bili-subtitle-lines', bvid, cid, choice?.language),
     queryFn: () => getSubtitleLines(bvid, cid, choice.language),
     enabled: active && Boolean(choice),
     gcTime: 0,
@@ -84,9 +88,13 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
   })
   const busy = active && (list.isPending || captions.isLoading)
   const error = list.error || captions.error
+  const duration = usePlayerStore(state => state.durationSeconds)
+  const coverageEnd = subtitleCoverageEnd(captions.data, duration)
+  const beyondCoverage = usePlayerStore(state => coverageEnd !== undefined && state.progressSeconds > coverageEnd + 1)
   let message = ''
   if (active && error) message = commandErrorMessage(error)
   else if (active && list.isSuccess && !choice) message = '这段视频暂无字幕'
+  else if (active && coverageEnd !== undefined && beyondCoverage) message = `当前字幕只加载到 ${formatDuration(coverageEnd)}`
   useEffect(() => {
     setNotice(message)
     if (!message) return

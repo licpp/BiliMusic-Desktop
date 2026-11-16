@@ -6,6 +6,7 @@ import { randomUUID, createHmac } from 'node:crypto';
 import pg from 'pg';
 import { policy } from './policy.mjs';
 import { HttpError, validateFeedback } from './validation.mjs';
+import { updaterManifest, validateUpdateDownload } from './updater.mjs';
 import { releases, resolveDownload } from './releases.mjs';
 import { initializeDownloadStats, recordDownload, getDownloadStats } from './downloads.mjs';
 
@@ -44,6 +45,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && path === '/api/health') {
       try { if (!pool) return json(503, { status:'preview', feedback:false }); await pool.query('SELECT 1'); return json(200, { status:'ok', feedback:true }); }
       catch { return json(503, { status:'unavailable', feedback:false }); }
+    }
+    if (req.method === 'GET' && path === '/api/updater') {
+      const manifest = updaterManifest();
+      if (!manifest) { res.writeHead(204, { 'Cache-Control': 'no-store' }); res.end(); return; }
+      return json(200, manifest);
+    }
+    if (req.method === 'POST' && path === '/api/update-download') {
+      if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, '请提交 JSON 格式。');
+      const chunks = []; let size = 0;
+      for await (const chunk of req) { size += chunk.length; if (size > 1024) throw new HttpError(413, '请求过长。'); chunks.push(chunk); }
+      let body; try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new HttpError(400, '请求格式不正确。'); }
+      const data = validateUpdateDownload(body, releases);
+      let recorded = false;
+      if (pool) { try { await recordDownload(pool, data.version, data.platform, data.source); recorded = true; } catch { console.error('Update download statistics unavailable'); } }
+      return json(200, { recorded });
     }
     if (req.method === 'GET' && path === '/api/releases') return json(200, releases);
     if (req.method === 'GET' && path === '/api/download-stats') {

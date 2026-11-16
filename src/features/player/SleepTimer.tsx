@@ -1,3 +1,4 @@
+import type { NativeControlAction } from './contracts'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Clock3, X, ChevronRight } from 'lucide-react'
@@ -20,7 +21,7 @@ export function SleepTimer({ open, onClose }: { open: boolean; onClose: () => vo
     const tick = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(tick)
   }, [open, sleep.deadline])
-  const action = async (command: string, value?: number) => {
+  const action = async (command: NativeControlAction, value?: number) => {
     setError(''); setBusy(true)
     try { await controlMobileAudio(command, value); onClose() }
     catch (cause) { setError(commandErrorMessage(cause)) }

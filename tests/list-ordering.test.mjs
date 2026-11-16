@@ -33,3 +33,17 @@ test('multipart videos remain grouped with ascending P numbers when reversing or
  const rows=[{id:'a2',title:'P2',source:{bvid:'a',page:2}},{id:'a1',title:'P1',source:{bvid:'a',page:1}},{id:'b',title:'B',source:{bvid:'b',page:1}}]
  assert.deepEqual(sortTracks(rows,'source:desc',{}).map(x=>x.id),['b','a1','a2'])
 })
+
+test('play counts sort numerically, zero is known, unknown/non-finite counts stay last in both directions',()=>{
+ const rows=[{id:'a',name:'a',playCount:10},{id:'b',name:'b',playCount:1000000},{id:'c',name:'c'},{id:'d',name:'d',playCount:0},{id:'e',name:'e',playCount:NaN}]
+ assert.deepEqual(sortList(rows,'plays:desc',x=>x).map(x=>x.id),['b','a','d','c','e'])
+ assert.deepEqual(sortList(rows,'plays:asc',x=>x).map(x=>x.id),['d','a','b','c','e'])
+ assert.deepEqual(rows.map(x=>x.id),['a','b','c','d','e'])
+ assert.deepEqual(sortList([{id:'b',name:'b',playCount:10},{id:'a',name:'a',playCount:10}],'plays:desc',x=>x).map(x=>x.id),['a','b'])
+})
+test('play-count order uses local BV metadata and keeps all parts together in page order',()=>{
+ const rows=[{id:'a2',title:'P2',playCount:500,source:{bvid:'a',page:2}},{id:'b',title:'B',playCount:1000,source:{bvid:'b',page:1}},{id:'a1',title:'P1',source:{bvid:'a',page:1}},{id:'c',title:'C',source:{bvid:'c',page:1}}]
+ assert.deepEqual(sortTracks(rows,'plays:desc',{}).map(x=>x.id),['b','a1','a2','c'])
+ assert.deepEqual(sortTracks(rows,'plays:desc',{}, {a:2000,b:1000}).map(x=>x.id),['a1','a2','b','c'])
+ assert.deepEqual(sortTracks(rows,'plays:asc',{}).map(x=>x.id),['a1','a2','b','c'])
+})

@@ -19,6 +19,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
   globalThis.window = { crypto: webcrypto }
   let handler; const calls = [], queuePayloads = []
   mockIPC((full, payload) => {
+    if(full==='account_session')return 'session-test'
     const command = full.split('|')[1]
     assert.ok(commands.has(command), `${command} missing from native command manifest`)
     assert.ok(permissions.has(`allow-${command.replaceAll('_','-')}`), `${command} not permitted`)

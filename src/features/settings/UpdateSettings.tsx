@@ -1,32 +1,20 @@
-import { useState } from 'react'
-import { ArrowUpCircle, ExternalLink, LoaderCircle } from 'lucide-react'
-import { commandErrorMessage } from '../../services/desktopApi'
-import { checkForUpdate, currentRelease, openUpdateDownload, type UpdateCheck } from '../../services/updates'
+import { ArrowUpCircle, Download, ExternalLink, LoaderCircle, RefreshCw } from 'lucide-react'
+import { checkUpdates, currentRelease, downloadUpdate, installUpdate, openUpdateDownload, useUpdateStore } from '../../services/updates'
 
 export function UpdateSettings() {
-  const [checking, setChecking] = useState(false)
-  const [opening, setOpening] = useState(false)
-  const [result, setResult] = useState<UpdateCheck | null>(null)
-  const [error, setError] = useState('')
-  const check = async () => {
-    if (checking) return
-    setChecking(true); setError(''); setResult(null)
-    try { setResult(await checkForUpdate()) }
-    catch (cause) { setError(commandErrorMessage(cause)) }
-    finally { setChecking(false) }
-  }
-  const download = async () => {
-    if (opening) return
-    setOpening(true); setError('')
-    try { await openUpdateDownload() }
-    catch (cause) { setError(`无法打开官网：${commandErrorMessage(cause)}`) }
-    finally { setOpening(false) }
-  }
-  const message = result?.status === 'available' ? `发现新版本 ${result.version}` : result?.status === 'current' ? '已是最新版本' : result?.status === 'ahead' ? '当前版本较新，无需更新' : result?.status === 'unsupported' ? '官网暂无适用于当前设备的安装包' : ''
+  const { phase, result, error, notice, received, total } = useUpdateStore()
+  const busy = phase !== 'idle' && phase !== 'ready'
+  const ready = phase === 'ready'
+  const message = phase === 'downloading' ? '正在下载更新…' : phase === 'verifying' ? '正在校验安装包…' : phase === 'installing' ? '正在准备安装…' : ready ? '下载完成，可以安装' : phase === 'checking' ? '正在检查最新版本…' : result?.status === 'available' ? `发现新版本 ${result.version}` : result?.status === 'current' ? '已是最新版本' : result?.status === 'ahead' ? '当前版本较新，无需更新' : result?.status === 'unsupported' ? '暂无适用于当前设备的安装包' : ''
+  const percent = total && total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
   return <section className="settings-card update-settings" aria-label="应用更新">
     <div className="settings-icon"><ArrowUpCircle /></div>
     <div><strong>应用更新</strong><small>当前版本 {currentRelease}</small></div>
-    <button type="button" disabled={checking} onClick={() => void check()}>{checking && <LoaderCircle className="spin" />}{checking ? '正在检查…' : '检查更新'}</button>
-    {(checking || message || error) && <div className="update-status" role="status" aria-live="polite"><span className={error ? 'update-error' : ''}>{error || (checking ? '正在检查最新版本…' : message)}</span>{result?.status === 'available' && <button type="button" disabled={checking || opening} onClick={() => void download()}><ExternalLink />{opening ? '正在打开…' : '前往官网下载'}</button>}</div>}
+    <button type="button" aria-disabled={busy || ready} onClick={() => void checkUpdates()}>{phase === 'checking' ? <LoaderCircle className="spin" /> : <RefreshCw/>}{phase === 'checking' ? '正在检查…' : '检查更新'}</button>
+    {(message || error) && <div className="update-status" role="status" aria-live="polite">
+      <span className={error ? 'update-error' : ''}>{error || notice || message}</span>
+      {result?.status === 'available' && (result.installable ? <button type="button" aria-disabled={busy} onClick={() => void (ready ? installUpdate() : downloadUpdate())}>{busy ? <LoaderCircle className="spin"/> : <Download/>}{busy ? phase === 'installing' ? '正在安装…' : '正在准备…' : ready ? result.platform === 'mac' || result.platform === 'windows' ? '安装并重启' : '安装更新' : '下载更新'}</button> : <button type="button" onClick={() => void openUpdateDownload().catch(() => useUpdateStore.setState({ error: '无法打开官网，请检查网络' }))}><ExternalLink/>前往官网下载</button>)}
+    </div>}
+    {(phase === 'downloading' || phase === 'verifying') && <div className="update-transfer"><progress aria-label="更新下载进度" max={100} value={percent}/><small>{percent === undefined ? '下载中' : `${percent}%`}{total ? ` · ${(received / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` : ''}</small></div>}
   </section>
 }

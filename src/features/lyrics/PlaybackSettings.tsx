@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { accountEpoch } from '../../services/accountScope'
 import { Headphones, Monitor } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -16,13 +17,13 @@ export function PlaybackSettings({ track, kind, onChanged }: {
   const client = useQueryClient()
   const supported = track.source.provider === 'bilibili'
   const options = useQuery({
-    queryKey: ['media-options', track.id],
+    queryKey: accountQueryKey('media-options', track.id),
     queryFn: () => getMediaOptions(track.source.bvid, track.source.cid),
     staleTime: 60_000,
     enabled: supported,
   })
   const preferences = useQuery({
-    queryKey: ['media-preferences'],
+    queryKey: accountQueryKey('media-preferences'),
     queryFn: getMediaPreferences,
     enabled: supported,
   })
@@ -44,10 +45,10 @@ export function PlaybackSettings({ track, kind, onChanged }: {
       const updated = await setMediaPreferences({ [field]: value })
       if(epoch!==accountEpoch())return
       saved=true
-      client.setQueryData(['media-preferences'], updated)
+      client.setQueryData(accountQueryKey('media-preferences'), updated)
       await onChanged()
     } catch (cause) {
-      if(saved && previous && epoch===accountEpoch()){try{const restored=await setMediaPreferences({[field]:previous[field]});client.setQueryData(['media-preferences'],restored)}catch{}}
+      if(saved && previous && epoch===accountEpoch()){try{const restored=await setMediaPreferences({[field]:previous[field]});client.setQueryData(accountQueryKey('media-preferences'),restored)}catch{}}
       setError(commandErrorMessage(cause))
     } finally {
       setBusy(false)

@@ -1,7 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
-const built=await build({entryPoints:['src/features/lyrics/lyricTimeline.ts'],bundle:true,write:false,format:'esm',platform:'node'})
+const built=await build({entryPoints:['src/domain/lyricTimeline.ts'],bundle:true,write:false,format:'esm',platform:'node'})
 const {floatingTimeline,floatingLinePair,floatingLineSlots,lyricScrollProgress,lyricScrollPosition,lyricAt}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 const lyrics=[{timeMs:1000,text:'保存的歌词',words:[{text:'保存的歌词',startTimeMs:1000,endTimeMs:2000}]}]
 const captions=[{timeMs:3000,endTimeMs:4500,text:'AI 字幕'},{timeMs:6000,endTimeMs:7000,text:'下一句'}]

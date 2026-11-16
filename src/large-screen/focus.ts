@@ -43,7 +43,7 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
   let lastMain: HTMLElement | undefined
   let lastPlayer: HTMLElement | undefined
   const remember = (event: FocusEvent) => { const el = event.target as HTMLElement; if (el.closest('.large-main') && !el.closest('[aria-modal="true"]')) lastMain = el; if (el.closest('.large-player-info,.large-lyrics') && !el.closest('[aria-modal="true"]')) lastPlayer = el }
-  const regionSelector = '.large-nav,.large-dock,.large-player-info,.large-lyrics,.large-player-footer,.large-resume,.large-home-shortcuts'
+  const regionSelector = '.large-nav,.large-dock,.large-player-header,.large-player-info,.large-lyrics,.large-player-footer,.large-resume,.large-home-shortcuts'
   const editable = (target: HTMLElement) => target.matches('input:not([type="range"]):not([type="checkbox"]),textarea,[contenteditable="true"]')
   const pointer = (event: PointerEvent) => { const target = event.target as HTMLElement; if (editable(target)) target.dataset.largeEditing = 'true' }
   const blur = (event: FocusEvent) => { delete (event.target as HTMLElement).dataset.largeEditing }
@@ -84,7 +84,7 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
     const main = document.querySelector<HTMLElement>('.large-main'), nav = document.querySelector<HTMLElement>('.large-nav'), dock = document.querySelector<HTMLElement>('.large-dock')
     const modal = scope !== document.querySelector('.large-shell')
     const region = current.closest<HTMLElement>(regionSelector) || (main?.contains(current) ? main : scope)
-    if (!modal && region.matches('.large-player-footer') && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    if (!modal && (region.matches('.large-player-header') || region.matches('.large-player-footer')) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       // Clipped lyric rows still have DOM rectangles, sometimes level with the
       // footer. A toolbar follows its visible controls, never those rectangles.
       const controls = elements.filter(el => region.contains(el))
@@ -96,6 +96,12 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
       const visible = items.filter(el => { const r = el.getBoundingClientRect(), area = main?.getBoundingClientRect(); return !area || r.bottom > area.top && r.top < area.bottom })
       const next = nearestRegionFocus(origin, (visible.length ? visible : items).map(el => ({ id: String(elements.indexOf(el)), ...pickRect(el) })))
       if (next !== undefined) elements[Number(next)].focus()
+    }
+    if (!modal && region.matches('.large-player-header') && event.key === 'ArrowDown') {
+      const items = elements.filter(el => el.closest('.large-player-info,.large-lyrics'))
+      const next = nextFocus(origin, items.map(el => ({ id: String(elements.indexOf(el)), ...pickRect(el) })), 'ArrowDown')
+      if (next !== undefined) elements[Number(next)].focus()
+      return
     }
     // The last rail item connects directly to the song card, regardless of how
     // many settings or list rows exist in the independently scrolling content.

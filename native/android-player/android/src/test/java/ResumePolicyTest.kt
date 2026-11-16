@@ -15,11 +15,11 @@ class ResumePolicyTest {
         assertEquals(85.0, playbackStartPosition(85.0, 0.0, policy), 0.0)
     }
 
-    @Test fun collectionsAndExplicitStartsKeepTheirExistingBehavior() {
+    @Test fun disabledAutomaticCollectionsRestartButExplicitStartsRemainIndependent() {
         val policy = AutomaticResumePolicy().apply { enabled = false }
         assertEquals(0.0, playbackStartPosition(85.0, 1800.0, policy), 0.0)
         policy.collection = true
-        assertEquals(85.0, playbackStartPosition(85.0, 120.0, policy), 0.0)
+        assertEquals(0.0, playbackStartPosition(85.0, 120.0, policy), 0.0)
         assertEquals(85.0, playbackStartPosition(85.0, 120.0, null), 0.0)
         policy.enabled = true; policy.collection = false
         assertEquals(0.0, playbackStartPosition(119.0, 120.0, policy), 0.0)

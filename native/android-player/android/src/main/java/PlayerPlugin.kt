@@ -64,6 +64,9 @@ class ResolvedArgs { var request: Long = 0; var data: String = "{}" }
 @InvokeArg
 class DownloadPathArgs { lateinit var path: String }
 
+@InvokeArg
+class InstallUpdateArgs { lateinit var path: String; lateinit var version: String }
+
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private val downloadStorage by lazy { DownloadStorage(activity.applicationContext) }
@@ -110,6 +113,21 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.reject(if (error is SecurityException) "保存文件夹的授权已失效，请在设置中重新选择下载目录"
                     else error.message ?: "保存失败，请检查文件夹权限与剩余空间")
             }
+        }
+    }
+
+    // Rust-only: no frontend command permission is exposed.
+    @Command
+    fun install_update(invoke: Invoke) {
+        val args = invoke.parseArgs(InstallUpdateArgs::class.java)
+        downloadWorker.execute {
+            try {
+                val file = ApkUpdateInstaller.prepare(activity, args.path, args.version)
+                activity.runOnUiThread {
+                    try { invoke.resolve(JSObject().put("status", ApkUpdateInstaller.launch(activity, file))) }
+                    catch (_: Exception) { invoke.reject("无法打开系统安装器，请检查安装权限或前往官网下载") }
+                }
+            } catch (error: Exception) { invoke.reject(error.message ?: "安装包校验失败") }
         }
     }
 

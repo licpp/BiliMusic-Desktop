@@ -1,5 +1,6 @@
+import { lyricDisplayText } from '../../domain/lyricDisplay'
 import { useEffect, useRef, type CSSProperties } from 'react'
-import type { LyricLine } from '../../services/desktopApi'
+import type { LyricLine } from '../../domain/lyrics'
 export function wordProgress(start:number,end:number,time:number) {
  return `${Math.max(0,Math.min(1,(time-start)/Math.max(1,end-start)))*100}%`
 }
@@ -12,6 +13,6 @@ export function WordLyric({ line, timeMs, active, clock }: { line: LyricLine; ti
   const paint=()=>{const now=clock();line.words!.forEach((word,index)=>{const value=wordProgress(word.startTimeMs,word.endTimeMs,now);if(values[index]!==value){values[index]=value;(root.current?.children[index] as HTMLElement|undefined)?.style.setProperty('--word-progress',value)}});frame=requestAnimationFrame(paint)}
   paint();return()=>cancelAnimationFrame(frame)
  },[active,line,clock])
- if (!active || !line.words?.length) return <>{line.text}</>
- return <span ref={root} className="word-lyric" aria-label={line.text}>{line.words.map((word,index) => <span key={index} className="lyric-word" aria-hidden="true" style={{'--word-progress':wordProgress(word.startTimeMs,word.endTimeMs,timeMs)} as CSSProperties}>{word.text}</span>)}</span>
+ if (!active || !line.words?.length) return <>{lyricDisplayText(line.text)}</>
+ return <span ref={root} className="word-lyric" aria-label={lyricDisplayText(line.text)}>{line.words.map((word,index) => <span key={index} className="lyric-word" aria-hidden="true" style={{'--word-progress':wordProgress(word.startTimeMs,word.endTimeMs,timeMs)} as CSSProperties}>{lyricDisplayText(word.text)}</span>)}</span>
 }

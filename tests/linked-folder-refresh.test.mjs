@@ -19,5 +19,5 @@ test('a slow pending disk read cannot overwrite fresh network contents',async()=
  const client=setup(),disk=deferred();const pending=client.fetchQuery({queryKey:linkedFolderKey(1),queryFn:()=>disk.promise}).catch(()=>{});globalThis.linkedRefresh=async()=>({videos:['fresh']});await reloadLinkedFolder(client,1);disk.resolve({videos:['stale disk']});await pending;assert.deepEqual(client.getQueryData(linkedFolderKey(1)).videos,['fresh']);client.clear()
 })
 test('account switching drops completed refresh from previous account',async()=>{
- const client=setup(),remote=deferred();globalThis.linkedRefresh=()=>remote.promise;const pending=reloadLinkedFolder(client,1);globalThis.linkedEpoch++;remote.resolve({videos:['other account']});await pending;assert.deepEqual(client.getQueryData(linkedFolderKey(1)).videos,['cached']);client.clear()
+ const client=setup(),remote=deferred();globalThis.linkedRefresh=()=>remote.promise;const oldKey=linkedFolderKey(1);const pending=reloadLinkedFolder(client,1);globalThis.linkedEpoch++;remote.resolve({videos:['other account']});await pending;assert.deepEqual(client.getQueryData(oldKey).videos,['cached']);assert.equal(client.getQueryData(linkedFolderKey(1)),undefined);client.clear()
 })

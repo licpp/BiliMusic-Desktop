@@ -10,7 +10,7 @@ test('notification and headset action-only events survive newer state revisions 
  for(const action of ['next','previous','ended','resume'])h.receive({action})
  assert.deepEqual(h.events.slice(1).map(s=>s.action),['next','previous','ended','resume'])
  globalThis.mediaIPC=async()=>({id:'old',revision:49,status:'paused',position:0})
- assert.deepEqual(await h.audio.snapshot(),sample)
+ const snapshot=await h.audio.snapshot(); for(const [key,value] of Object.entries(sample))assert.equal(snapshot[key],value); assert.equal(snapshot.engineInstanceId,'legacy')
  assert.equal(h.audio.playbackClock(),12)
 })
 test('stamped commands from an older native session are ignored, and commands do not advance the state sequence',async()=>{
@@ -22,4 +22,15 @@ test('stamped commands from an older native session are ignored, and commands do
  assert.equal(h.events.at(-1).position,10.5)
  h.receive({id:'a',revision:2,sequence:4,status:'paused',position:0})
  assert.equal(h.events.at(-1).position,10.5)
+})
+
+test('rejected snapshots cannot replay a previously delivered navigation command',async()=>{
+ const h=await setup()
+ h.receive({engineInstanceId:'service',sessionId:'song',id:'a',sourceRevision:3,sequence:5,status:'playing',position:10})
+ h.receive({engineInstanceId:'service',sessionId:'song',id:'a',sourceRevision:3,sequence:6,action:'next'})
+ globalThis.mediaIPC=async()=>({engineInstanceId:'service',sessionId:'song',id:'a',sourceRevision:2,sequence:2,status:'playing',position:1})
+ const snapshot=await h.audio.snapshot()
+ assert.equal(snapshot.action,undefined)
+ assert.equal(snapshot.position,10)
+ assert.equal(h.events.filter(e=>e.action==='next').length,1)
 })

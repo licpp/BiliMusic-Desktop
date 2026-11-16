@@ -2,7 +2,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const SECOND: u64 = 1_000;
-const MIN_GAP: u64 = 30 * SECOND;
+const MIN_GAP: u64 = 60 * SECOND;
+const RESUME_GAP: u64 = 3 * 60 * SECOND;
+const STATISTICS_VIEW_GAP: u64 = 5 * 60 * SECOND;
 const STATISTICS_INTERVAL: u64 = 15 * 60 * SECOND;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -141,7 +143,7 @@ impl Scheduler {
                 library.next_poll = library.next_poll.min(
                     library
                         .last_attempt
-                        .map_or(now, |t| t.saturating_add(MIN_GAP)),
+                        .map_or(now, |t| t.saturating_add(RESUME_GAP)),
                 );
                 // Successful statistics exchanges keep their 15-minute cadence.
                 // Resume/reconnect may wake a failed attempt, but never erase its backoff.
@@ -156,9 +158,10 @@ impl Scheduler {
             }
             Hint::Statistics => {
                 let s = &mut self.slots[1];
-                s.next_poll = s
-                    .next_poll
-                    .min(s.last_attempt.map_or(now, |t| t.saturating_add(MIN_GAP)));
+                s.next_poll = s.next_poll.min(
+                    s.last_attempt
+                        .map_or(now, |t| t.saturating_add(STATISTICS_VIEW_GAP)),
+                );
             }
             // An explicit settings action may clear auth/conflict blocking, but not a server limit.
             Hint::Configured => {
@@ -178,8 +181,8 @@ impl Scheduler {
         let gap = s.last_attempt.map_or(0, |t| t.saturating_add(MIN_GAP));
         let dirty = s.dirty_first.map(|first| {
             first
-                .saturating_add(10 * SECOND)
-                .min(s.dirty_last.saturating_add(2 * SECOND))
+                .saturating_add(30 * SECOND)
+                .min(s.dirty_last.saturating_add(10 * SECOND))
         });
         now >= gap && now >= dirty.map_or(s.next_poll, |t| t.min(s.next_poll))
     }
@@ -214,9 +217,13 @@ impl Scheduler {
             s.idle = if changed { 0 } else { s.idle.saturating_add(1) };
             let interval = match d {
                 Domain::Statistics => STATISTICS_INTERVAL,
-                Domain::Library => (30 * SECOND * (1u64 << s.idle.min(5))).min(15 * 60 * SECOND),
+                Domain::Library => (180 * SECOND * (1u64 << s.idle.min(3))).min(15 * 60 * SECOND),
             };
-            s.next_poll = now.saturating_add(interval);
+            // Positive jitter avoids synchronized devices polling together, without
+            // shortening the minimum polling cadence.
+            s.next_poll = now
+                .saturating_add(interval)
+                .saturating_add(random % (interval / 10 + 1));
         }
     }
     pub fn manual_allowed(&self, now: u64) -> bool {
@@ -244,15 +251,16 @@ mod tests {
         let mut s = Scheduler::default();
         s.start(Domain::Library, 0);
         s.finish(Domain::Library, 0, false, false, false, 0, 0);
-        for t in 31..40 {
+        for t in 61..91 {
             s.hint(Hint::Data, t * SECOND);
             assert!(!s.due(Domain::Library, t * SECOND));
         }
-        assert!(s.due(Domain::Library, 41 * SECOND));
-        s.start(Domain::Library, 41 * SECOND);
-        s.hint(Hint::Data, 42 * SECOND);
-        s.finish(Domain::Library, 43 * SECOND, false, false, false, 0, 0);
-        assert!(s.due(Domain::Library, 71 * SECOND));
+        assert!(s.due(Domain::Library, 91 * SECOND));
+        s.start(Domain::Library, 91 * SECOND);
+        s.hint(Hint::Data, 92 * SECOND);
+        s.finish(Domain::Library, 93 * SECOND, false, false, false, 0, 0);
+        assert!(!s.due(Domain::Library, 150 * SECOND));
+        assert!(s.due(Domain::Library, 151 * SECOND));
     }
     #[test]
     fn hints_cannot_bypass_backoff_or_cross_domain_server_limit() {
@@ -303,6 +311,23 @@ mod tests {
         }
         assert!(s.due(Domain::Statistics, 15 * 60 * SECOND));
         s.hint(Hint::Statistics, 60 * SECOND);
-        assert!(s.due(Domain::Statistics, 60 * SECOND));
+        assert!(!s.due(Domain::Statistics, 60 * SECOND));
+        assert!(s.due(Domain::Statistics, 300 * SECOND));
+    }
+    #[test]
+    fn repeated_lifecycle_hints_do_not_collapse_idle_polling_to_one_minute() {
+        let mut s = Scheduler::default();
+        s.start(Domain::Library, 0);
+        s.finish(Domain::Library, 0, false, false, false, 0, 0);
+        for t in 1..180 {
+            s.hint(Hint::Foreground, t * SECOND);
+            s.hint(Hint::Online, t * SECOND);
+            assert!(!s.due(Domain::Library, t * SECOND));
+        }
+        assert!(s.due(Domain::Library, 180 * SECOND));
+        s.start(Domain::Library, 180 * SECOND);
+        s.finish(Domain::Library, 180 * SECOND, false, false, false, 0, 0);
+        assert!(!s.due(Domain::Library, 899 * SECOND));
+        assert!(s.due(Domain::Library, 900 * SECOND));
     }
 }

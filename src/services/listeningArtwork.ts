@@ -1,4 +1,5 @@
-import { getVideoParts, type BiliVideoParts } from './desktopApi'
+import { getVideoParts } from './desktopApi'
+import type { BiliVideoParts } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
 
 type Job = { bvid: string; epoch: number; resolve: (detail: BiliVideoParts) => void; reject: (error: unknown) => void }

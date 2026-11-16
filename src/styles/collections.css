@@ -325,9 +325,6 @@
 @media(max-width:960px) {
  :root[data-layout="mobile"] .music-library .library-tabs { display:grid;gap:0;padding:4px;margin:0 auto 12px; }
  :root[data-layout="mobile"] .music-library .library-tabs button { padding:0 4px;font-size:14px;border:0; }
- :root[data-layout="mobile"] .listening-library { padding-top:12px; }
- :root[data-layout="mobile"] .listening-library>.listening-tabs { width:min(100%,420px);margin:0 auto 8px;padding:4px; }
- :root[data-layout="mobile"] .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) { position:static;display:flex;align-items:center;justify-content:flex-end;gap:4px;height:40px;min-height:40px;margin:0 0 4px;padding:0 4px; }
  :root[data-layout="mobile"] .music-library .download-list { padding-top:0; }
 }
 

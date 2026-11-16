@@ -7,7 +7,7 @@ import type { FloatingFrame } from '../../services/floatingLyrics'
 import { readFloatingPreferences, useFloatingPreferences, type FloatingPreferences } from '../../services/floatingLyricsPreferences'
 import { FloatingLyricsColors } from './FloatingLyricsColors'
 import { createLyricClock } from './lyricClock'
-import { lyricAt, floatingLineSlots } from './lyricTimeline'
+import { lyricAt, floatingLineSlots } from '../../domain/lyricTimeline'
 import { WordLyric } from './WordLyric'
 import { FloatingLyricMarquee } from './FloatingLyricMarquee'
 

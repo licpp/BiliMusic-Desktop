@@ -1,4 +1,4 @@
-import type { DanmakuItem } from '../../services/desktopApi'
+import type { DanmakuItem } from '../../domain/bilibili'
 
 export type DanmakuPlacement = { index: number; time: number; end: number; mode: number; y: number; width: number; height: number }
 const padding = 8, gap = 12

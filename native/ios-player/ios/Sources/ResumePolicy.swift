@@ -16,7 +16,7 @@ func playbackStartPosition(_ position: Double, duration: Double, policy: Automat
     guard position.isFinite, position >= 0 else { return 0 }
     guard let policy else { return position }
     let total = duration.isFinite && duration > 0 ? duration : policy.durationSeconds
-    if position >= 1 && policy.enabled && !policy.collection && policy.thresholdSeconds > 0 && !(total.isFinite && total > 0) { throw ResumePositionError.missingDuration }
-    let resume = policy.collection || policy.enabled && (policy.thresholdSeconds <= 0 || total.isFinite && total >= policy.thresholdSeconds)
+    if position >= 1 && policy.enabled && policy.thresholdSeconds > 0 && !(total.isFinite && total > 0) { throw ResumePositionError.missingDuration }
+    let resume = policy.enabled && (policy.thresholdSeconds <= 0 || total.isFinite && total >= policy.thresholdSeconds)
     return resume && position >= 1 && (!total.isFinite || total <= 0 || position < total - 1) ? position : 0
 }

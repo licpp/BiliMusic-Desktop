@@ -241,7 +241,7 @@ impl MediaProxy {
         }
         let mut entries = self.state.entries.write().await;
         entries.retain(|_, entry| entry.expires_at > Instant::now());
-        if let Some((id, _)) = entries.iter().find(|(_, entry)| {
+        if let Some((id, entry)) = entries.iter_mut().find(|(_, entry)| {
             entry.upgrade_gate.is_none()
                 && entry.local_path.is_none()
                 && entry.content_type == content_type
@@ -250,6 +250,15 @@ impl MediaProxy {
                     .iter()
                     .any(|url| url == &upstream_urls[0])
         }) {
+            // A re-resolved playurl may keep the primary URL while rotating its
+            // backup CDNs. Refresh the route instead of retaining stale backups.
+            if let Some(preferred) = entry.upstream_urls.first() {
+                if let Some(index) = upstream_urls.iter().position(|url| url == preferred) {
+                    upstream_urls.swap(0, index);
+                }
+            }
+            entry.upstream_urls = upstream_urls;
+            entry.expires_at = Instant::now() + ENTRY_LIFETIME;
             return self.local_url(id).await;
         }
         if entries.len() >= MAX_ENTRIES {
@@ -2109,6 +2118,42 @@ mod tests {
             b"3456"
         );
         tokio::fs::remove_file(&path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn refreshing_stream_reuses_route_but_replaces_backup_urls_and_renews_expiry() {
+        let proxy = super::MediaProxy::start().await.unwrap();
+        let url = proxy
+            .register_stream(
+                "https://cdn.test/main".into(),
+                vec!["https://cdn.test/old".into()],
+                "video/mp4".into(),
+            )
+            .await;
+        let id = url.rsplit('/').next().unwrap().to_owned();
+        proxy
+            .state
+            .entries
+            .write()
+            .await
+            .get_mut(&id)
+            .unwrap()
+            .expires_at = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let next = proxy
+            .register_stream(
+                "https://cdn.test/main".into(),
+                vec!["https://cdn.test/new".into()],
+                "video/mp4".into(),
+            )
+            .await;
+        assert_eq!(url, next);
+        let entries = proxy.state.entries.read().await;
+        let entry = &entries[&id];
+        assert_eq!(
+            entry.upstream_urls,
+            ["https://cdn.test/main", "https://cdn.test/new"]
+        );
+        assert!(entry.expires_at > std::time::Instant::now() + std::time::Duration::from_secs(60));
     }
 
     #[tokio::test]

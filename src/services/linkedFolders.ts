@@ -1,8 +1,10 @@
+import { accountQueryKey } from './queryKeys'
 import type { QueryClient } from '@tanstack/react-query'
 import { accountEpoch } from './accountScope'
-import { refreshLinkedFolder, type LinkedFolder } from './desktopApi'
+import { refreshLinkedFolder } from './desktopApi'
+import type { LinkedFolder } from '../domain/bilibili'
 
-export const linkedFolderKey = (folderId: number) => ['linked-bili-folder', folderId]
+export const linkedFolderKey = (folderId: number) => accountQueryKey('linked-bili-folder', folderId)
 
 const refreshing = new Map<string, Promise<LinkedFolder>>()
 
@@ -17,7 +19,7 @@ export function reloadLinkedFolder(client: QueryClient, folderId: number, link =
       await client.cancelQueries({ queryKey: linkedFolderKey(folderId), exact: true })
       if (epoch !== accountEpoch()) return folder
       client.setQueryData(linkedFolderKey(folderId), folder)
-      await client.invalidateQueries({ queryKey: ['playlists'] })
+      await client.invalidateQueries({ queryKey: accountQueryKey('playlists') })
     }
     return folder
   }).finally(() => refreshing.delete(key))

@@ -1,32 +1,30 @@
-import { chooseDownload } from '../downloads/downloadRequest'
-import { DownloadDialogHost } from '../downloads/DownloadDialog'
-import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
+import { accountQueryKey } from '../../services/queryKeys'
 import { useQueryClient } from '@tanstack/react-query'
-import { Download, FolderPlus, ListMusic, ListVideo, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
+import { Download,FolderPlus,ListMusic,ListVideo,Pencil,Play,Trash2 } from 'lucide-react'
+import { useEffect,useRef,useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Track } from '../../domain/track'
-import { commandErrorMessage, FAVORITES_PLAYLIST_ID, removeTrackFromPlaylist, saveLibraryTrack } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
+import { commandErrorMessage,FAVORITES_PLAYLIST_ID,removeTrackFromPlaylist,saveLibraryTrack } from '../../services/desktopApi'
+import { DownloadDialogHost } from '../downloads/DownloadDialog'
+import { chooseDownload } from '../downloads/downloadRequest'
 import { usePlayerStore } from '../player/playerStore'
-import { MetadataDialog, PlaylistPicker } from './LibraryView'
-import { chooseTrackPlaylist, showTrackMenu, useTrackActions } from './trackActionStore'
+import { MetadataDialog } from './MetadataDialog'
+import { PlaylistPicker } from './PlaylistPicker'
+import { chooseTrackPlaylist,useTrackActions } from './trackActionStore'
 
-export function PlaylistButton({ track, tracks }: { track?: Track; tracks?: Track[] }) {
-  return <button type="button" className="icon-action playlist-action" aria-label="加入歌单" title="加入歌单" onClick={(event) => { event.stopPropagation(); chooseTrackPlaylist(tracks || (track ? [track] : [])) }}><FolderPlus size={16} /></button>
-}
-export function TrackMenuButton({ track, playlistId, tracks, actions }: { track: Track; playlistId?: string; tracks?: Track[]; actions?: { openParts?: () => void; play?: () => void } }) {
-  return <button type="button" className="icon-action" aria-label="歌曲操作" title="更多操作" onClick={(event) => showTrackMenu(event, track, playlistId, tracks, actions)}><MoreHorizontal size={17} /></button>
-}
+export { PlaylistButton,TrackMenuButton } from './TrackMenuButton'
 export function TrackActionsHost() {
   const { menu, adding } = useTrackActions()
   const [editing, setEditing] = useState<Track | null>(null)
   const [error, setError] = useState('')
   const element = useRef<HTMLDivElement>(null)
+  const editRequest = useRef(0)
   const client = useQueryClient()
   useEffect(() => {
-    const clear = () => { useTrackActions.setState({ menu: null, adding: null }); setEditing(null) }
+    const clear = () => { ++editRequest.current; useTrackActions.setState({ menu: null, adding: null }); setEditing(null) }
     window.addEventListener('bilimusic-account-changing', clear)
-    return () => window.removeEventListener('bilimusic-account-changing', clear)
+    return () => { ++editRequest.current; window.removeEventListener('bilimusic-account-changing', clear) }
   }, [])
   useEffect(() => {
     const dismiss = (event: PointerEvent) => { if ((event.target as HTMLElement).closest('.track-menu-scrim')) return; if (!element.current?.contains(event.target as Node)) useTrackActions.setState({ menu: null }) }
@@ -35,8 +33,14 @@ export function TrackActionsHost() {
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape) }
   }, [menu, adding, editing])
   useEffect(() => { if (menu) element.current?.querySelector('button')?.focus() }, [menu])
-  const refresh = () => { void client.invalidateQueries({ queryKey: ['library'] }); void client.invalidateQueries({ queryKey: ['home-recent'] }); void client.invalidateQueries({ queryKey: ['playlists'] }) }
-  const edit = async (track: Track) => { useTrackActions.setState({ menu: null }); try { setEditing(await saveLibraryTrack(track)) } catch (cause) { setError(commandErrorMessage(cause)) } }
+  const refresh = () => { void client.invalidateQueries({ queryKey: accountQueryKey('library') }); void client.invalidateQueries({ queryKey: accountQueryKey('home-recent') }); void client.invalidateQueries({ queryKey: accountQueryKey('playlists') }) }
+  const edit = async (track: Track) => {
+    const epoch = accountEpoch(), request = ++editRequest.current
+    const current = () => epoch === accountEpoch() && request === editRequest.current
+    useTrackActions.setState({ menu: null })
+    try { const saved = await saveLibraryTrack(track); if (current()) setEditing(saved) }
+    catch (cause) { if (current()) setError(commandErrorMessage(cause)) }
+  }
   const remove = async (playlistId: string, track: Track) => {
     try { await removeTrackFromPlaylist(playlistId, track.id); if (playlistId === FAVORITES_PLAYLIST_ID) usePlayerStore.getState().updateTrack({ ...track, liked: false }); refresh() }
     catch (cause) { setError(commandErrorMessage(cause)) }

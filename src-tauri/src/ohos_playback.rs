@@ -13,6 +13,10 @@ pub async fn put_webdav(
     payload: &[u8],
 ) -> Result<reqwest::StatusCode, String> {
     use base64::{Engine, engine::general_purpose::STANDARD};
+    let budget = crate::sync::request_budget::for_login(url, username)?;
+    if let Some(budget) = &budget {
+        budget.admit().await?;
+    }
     let app = APP
         .lock()
         .unwrap()
@@ -22,10 +26,29 @@ pub async fn put_webdav(
         "Basic {}",
         STANDARD.encode(format!("{username}:{password}"))
     );
-    let response =
-        tauri_plugin_ohos_player::put_webdav(&app, url, authorization, STANDARD.encode(payload))
-            .await?;
+    crate::sync::traffic::bridge_started(payload.len());
+    let response = match tauri_plugin_ohos_player::put_webdav(
+        &app,
+        url,
+        authorization,
+        STANDARD.encode(payload),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            crate::sync::traffic::bridge_finished(None);
+            return Err(error);
+        }
+    };
     let status = response.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
+    crate::sync::traffic::bridge_finished(u16::try_from(status).ok().filter(|s| *s != 0));
+    if let Some(budget) = &budget {
+        budget.response(
+            status as u16,
+            crate::sync::traffic::retry_after(response.get("retryAfter").and_then(|v| v.as_str())),
+        )?;
+    }
     if status == 0 {
         let code = response
             .get("errorCode")
@@ -49,4 +72,36 @@ pub fn bilimusic_ohos_state(payload: String) {
 #[napi_derive_ohos::napi]
 pub fn bilimusic_ohos_listening(payload: String) {
     tauri_plugin_ohos_player::publish_listening(payload);
+}
+
+static RESOLVE_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[napi_derive_ohos::napi]
+pub fn bilimusic_ohos_cancel_resolve() {
+    RESOLVE_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+#[napi_derive_ohos::napi]
+pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
+    use std::sync::atomic::Ordering;
+    let token = RESOLVE_REQUEST
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+    let Some(app) = APP.lock().unwrap().clone() else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let result = match serde_json::from_str(&payload) {
+            Ok(payload) => {
+                crate::native_playback::resolve_with_guard(&app, payload, || {
+                    RESOLVE_REQUEST.load(Ordering::SeqCst) == token
+                })
+                .await
+            }
+            Err(_) => Err("无效的后台播放请求".into()),
+        };
+        if RESOLVE_REQUEST.load(Ordering::SeqCst) != token {
+            return;
+        }
+        let data = result.unwrap_or_else(|error| serde_json::json!({"error":error}));
+        let _ = tauri_plugin_ohos_player::resolved(&app, request, data.to_string()).await;
+    });
 }

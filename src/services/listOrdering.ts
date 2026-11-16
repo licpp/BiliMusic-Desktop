@@ -1,11 +1,17 @@
-export type SortRule = 'source:asc'|'source:desc'|'name:asc'|'name:desc'|'date:asc'|'date:desc'
+export type SortRule = 'source:asc'|'source:desc'|'name:asc'|'name:desc'|'date:asc'|'date:desc'|'plays:asc'|'plays:desc'
 export type ListPreference = { entity:string; displayRank?:string|null; sortRule?:SortRule|null }
-export type ListPreferences = {preferences:ListPreference[];dates:Record<string,number>}
+export type ListPreferences = {preferences:ListPreference[];dates:Record<string,number>;playCounts?:Record<string,number>}
 const collator = new Intl.Collator('zh-Hans-CN-u-co-pinyin',{numeric:true,sensitivity:'base'})
-export function sortList<T>(items:T[],rule:SortRule,info:(item:T)=>{id:string;name:string;date?:number}) {
+export function sortList<T>(items:T[],rule:SortRule,info:(item:T)=>{id:string;name:string;date?:number;playCount?:number}) {
  const [mode,direction]=rule.split(':'),sign=direction==='desc'?-1:1
  if(mode==='source')return direction==='desc'?[...items].reverse():items
  return items.map((item,index)=>({item,index,...info(item)})).sort((a,b)=>{
+  if(mode==='plays'){
+   const known=(value:number|undefined)=>value!==undefined&&Number.isFinite(value)&&value>=0
+   const ak=known(a.playCount),bk=known(b.playCount)
+   if(!ak||!bk)return ak?-1:bk?1:a.id.localeCompare(b.id)
+   return sign*(a.playCount!-b.playCount!)||a.id.localeCompare(b.id)
+  }
   if(mode==='date'){
    const ad=a.date&&a.date>0?a.date:undefined,bd=b.date&&b.date>0?b.date:undefined
    if(!ad||!bd)return ad?-1:bd?1:a.id.localeCompare(b.id)
@@ -45,9 +51,9 @@ export function rankChanges(ids:string[],preferences:ListPreference[]):ListPrefe
  return ids.flatMap(id=>next.get(id)===old.get(id)?[]:[{entity:id,displayRank:next.get(id)!}])
 }
 
-export function sortTracks<T extends {id:string;title:string;videoTitle?:string;publishedAt?:number;source:{bvid:string;page:number}}>(items:T[],rule:SortRule,dates:Record<string,number>) {
+export function sortTracks<T extends {id:string;title:string;videoTitle?:string;publishedAt?:number;playCount?:number;source:{bvid:string;page:number}}>(items:T[],rule:SortRule,dates:Record<string,number>,playCounts:Record<string,number>={}) {
  if(rule==='source:asc')return items
  const groups=new Map<string,T[]>()
  for(const item of items){const group=groups.get(item.source.bvid)||[];group.push(item);groups.set(item.source.bvid,group)}
- return sortList([...groups.values()],rule,group=>({id:group[0].source.bvid,name:group[0].videoTitle||group[0].title,date:group[0].publishedAt||dates[group[0].source.bvid]})).flatMap(group=>[...group].sort((a,b)=>a.source.page-b.source.page||a.id.localeCompare(b.id)))
+ return sortList([...groups.values()],rule,group=>({id:group[0].source.bvid,name:group[0].videoTitle||group[0].title,date:group[0].publishedAt||dates[group[0].source.bvid],playCount:playCounts[group[0].source.bvid]??group.find(t=>t.playCount!==undefined)?.playCount})).flatMap(group=>[...group].sort((a,b)=>a.source.page-b.source.page||a.id.localeCompare(b.id)))
 }

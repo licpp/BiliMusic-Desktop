@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import type { DownloadOptions } from './downloadRequest'
 import type { QueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
@@ -28,16 +29,16 @@ export async function startDownloadBatch(tracks: Track[], client: QueryClient, o
           try {
             const saved = await saveLibraryTrack(track)
             if (epoch !== accountEpoch()) break
-            void client.invalidateQueries({ queryKey: ['library'] })
+            void client.invalidateQueries({ queryKey: accountQueryKey('library') })
             const request = downloadTrack(saved, directory, options.skipExisting ?? false, options.audioId, options.exportFormat)
-            void client.invalidateQueries({ queryKey: ['downloads'] })
+            void client.invalidateQueries({ queryKey: accountQueryKey('downloads') })
             if (await request) batch.completed++
             else batch.skipped++
           } catch (cause) {
             batch.failures.push(`${track.title}：${commandErrorMessage(cause)}`)
           }
           if (epoch === accountEpoch()) useDownloadBatch.setState({ batch: { ...batch, failures: [...batch.failures] } })
-          void client.invalidateQueries({ queryKey: ['downloads'] })
+          void client.invalidateQueries({ queryKey: accountQueryKey('downloads') })
         }
       } finally {
         useDownloadBatch.setState({ busy: false })

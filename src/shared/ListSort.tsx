@@ -1,4 +1,4 @@
-import { ArrowUpDown, CalendarDays, Check, ChevronDown, ListOrdered, Type } from 'lucide-react'
+import { ArrowUpDown, CalendarDays, ChartNoAxesColumnIncreasing, Check, ChevronDown, ListOrdered, Type } from 'lucide-react'
 import { useState } from 'react'
 import { ActionMenu } from './ActionMenu'
 import { useCompactLayout } from './useCompactLayout'
@@ -9,7 +9,7 @@ import '../styles/list-sorting.css'
 
 export function useListSort(entity: string) {
   const query = useListPreferences()
-  return { rule: query.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc' as SortRule, dates: query.data?.dates || {} }
+  return { rule: query.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc' as SortRule, dates: query.data?.dates || {}, playCounts: query.data?.playCounts || {} }
 }
 
 export function ListSort({ entity }: { entity: string }) {
@@ -20,12 +20,13 @@ export function ListSort({ entity }: { entity: string }) {
     { id: 'source', label: '默认顺序', Icon: ListOrdered },
     { id: 'name', label: '名称顺序', Icon: Type },
     { id: 'date', label: '发布日期', Icon: CalendarDays },
+    { id: 'plays', label: '播放量', Icon: ChartNoAxesColumnIncreasing },
   ]
-  const orderLabel = mode === 'date' ? direction === 'desc' ? '从新到旧' : '从旧到新' : direction === 'desc' ? '倒序' : '正序'
+  const orderLabel = mode === 'date' ? direction === 'desc' ? '从新到旧' : '从旧到新' : mode === 'plays' ? direction === 'desc' ? '从高到低' : '从低到高' : direction === 'desc' ? '倒序' : '正序'
   const change = async (next: string) => {
     setBusy(true); setError('')
     try {
-      const reverse = mode === next ? direction === 'asc' ? 'desc' : 'asc' : next === 'date' ? 'desc' : 'asc'
+      const reverse = mode === next ? direction === 'asc' ? 'desc' : 'asc' : ['date','plays'].includes(next) ? 'desc' : 'asc'
       await save([{ entity, sortRule: `${next}:${reverse}` as SortRule }])
     } catch (cause) { setError(commandErrorMessage(cause)) }
     finally { setBusy(false) }

@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../services/queryKeys'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Heart, Link2, ListMusic, ListPlus, Trash2 } from 'lucide-react'
@@ -26,7 +27,7 @@ export function DownloadListButton({ tracks }: { tracks: Track[] }) {
 export function LargeTrackActions({ track, onClose, onFavorite, queue = false }: { track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean }) {
   const [page, setPage] = useState<'menu' | 'playlists'>('menu'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const client = useQueryClient(), epoch = accountEpoch(), downloading = useDownloadBatch(s => s.busy)
-  const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists, enabled: page === 'playlists' })
+  const playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists, enabled: page === 'playlists' })
   const detail = useQuery({ queryKey: ['video-detail', epoch, track.source.bvid], queryFn: () => getVideoParts(track.source.bvid), enabled: page === 'playlists' && !track.partCount })
   const capabilities = playlistCapabilities({ items: [track.resolveParts ? { kind: 'video', bvid: track.source.bvid, title: track.title } : { kind: 'track', track }] }, { [track.source.bvid]: track.partCount || detail.data?.parts.length || 0 })
   const run = async (fn: () => Promise<unknown>) => { setError(''); setBusy(true); try { await fn(); if (epoch === accountEpoch()) onClose() } catch (e) { setError(commandErrorMessage(e)) } finally { setBusy(false) } }
@@ -36,7 +37,7 @@ export function LargeTrackActions({ track, onClose, onFavorite, queue = false }:
     <button disabled={busy} onClick={() => setPage('playlists')}><ListPlus/>收藏到歌单</button>
     <button disabled={busy || downloading} onClick={() => void run(async () => { const expanded = await expandDownloads([track], epoch); if (epoch !== accountEpoch()) return; chooseDownload(expanded) })}><Download/>{downloading ? '正在下载…' : '下载歌曲'}</button>
     {queue && <button disabled={busy} onClick={() => { usePlayerStore.getState().removeFromQueue(track.id); onClose() }}><Trash2/>移出队列</button>}
-  </> : <>{playlists.data?.filter(p => p.biliFolderId ? capabilities.linked : capabilities.local).map(p => <button key={p.id} disabled={busy} onClick={() => void run(async () => { const saved = await saveLibraryTrack(track); if (epoch !== accountEpoch()) return; if (p.biliFolderId) await changeLinkedVideo(p.biliFolderId, track.source.bvid, true); else await addTrackToPlaylist(p.id, saved.id); await client.invalidateQueries({ queryKey: ['playlists'] }); await client.invalidateQueries({ queryKey: ['library'] }) })}>{p.biliFolderId ? <Link2/> : <ListMusic/>}{p.name}</button>)}{playlists.isPending && <p role="status">正在读取歌单…</p>}{(playlists.error || detail.error) && <p role="alert">{commandErrorMessage(playlists.error || detail.error)}</p>}<button onClick={() => setPage('menu')}>返回歌曲操作</button></>}{error && <p className="large-error" role="alert">{error}</p>}</div></LargeDialog>
+  </> : <>{playlists.data?.filter(p => p.biliFolderId ? capabilities.linked : capabilities.local).map(p => <button key={p.id} disabled={busy} onClick={() => void run(async () => { const saved = await saveLibraryTrack(track); if (epoch !== accountEpoch()) return; if (p.biliFolderId) await changeLinkedVideo(p.biliFolderId, track.source.bvid, true); else await addTrackToPlaylist(p.id, saved.id); await client.invalidateQueries({ queryKey: accountQueryKey('playlists') }); await client.invalidateQueries({ queryKey: accountQueryKey('library') }) })}>{p.biliFolderId ? <Link2/> : <ListMusic/>}{p.name}</button>)}{playlists.isPending && <p role="status">正在读取歌单…</p>}{(playlists.error || detail.error) && <p role="alert">{commandErrorMessage(playlists.error || detail.error)}</p>}<button onClick={() => setPage('menu')}>返回歌曲操作</button></>}{error && <p className="large-error" role="alert">{error}</p>}</div></LargeDialog>
 }
 
 async function expandDownloads(tracks: Track[], epoch: number) {

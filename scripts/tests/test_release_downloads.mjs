@@ -92,3 +92,81 @@ test('range downloads reject ignored ranges, changed entities and truncated bodi
     await assert.rejects(verifyPublicAsset(platform,channel,request),fault==='range'?/range mismatch/:fault==='etag'?/changed during/:/Incomplete/)
   }
 })
+
+const fastPackage={id:'android-large',file:'large.apk',size:700000,sha256:'b'.repeat(64)}
+const fastChannel={id:'github',url:'https://example.test/large.apk'}
+const fastReceipt={channel:'github',releaseId:1,assetId:2,name:'large.apk',size:700000,sha256:'b'.repeat(64),method:'server-sha256'}
+function publicResponse(url,{status=200,headers={}}={}) {const r=new Response(null,{status,headers});Object.defineProperty(r,'url',{value:url});return r}
+
+test('verified upload hashes need only a HEAD and never read package bytes',async()=>{
+  const {probePublicAsset}=await import('../download_release_asset.mjs')
+  const calls=[]
+  const result=await probePublicAsset(fastPackage,fastChannel,fastReceipt,async(url,options)=>{
+    calls.push(options.method);assert.equal(options.method,'HEAD')
+    return publicResponse(url,{headers:{'content-length':'700000','content-type':'application/vnd.android.package-archive','content-disposition':'attachment; filename="large.apk"'}})
+  })
+  assert.deepEqual(calls,['HEAD']);assert.equal(result.sha256,fastPackage.sha256)
+  assert.equal(result.verification,'uploaded-hash-and-public-headers');assert.deepEqual(result.uploadProof,fastReceipt)
+})
+
+test('a provider rejecting HEAD falls back to one-byte range headers',async()=>{
+  const {probePublicAsset}=await import('../download_release_asset.mjs')
+  const calls=[]
+  await probePublicAsset(fastPackage,fastChannel,fastReceipt,async(url,options)=>{
+    calls.push(options.method)
+    if(options.method==='HEAD') return publicResponse(url,{status:405})
+    assert.equal(options.headers.Range,'bytes=0-0')
+    return publicResponse(url,{status:206,headers:{'content-range':'bytes 0-0/700000','content-type':'application/vnd.android.package-archive'}})
+  })
+  assert.deepEqual(calls,['HEAD','GET'])
+})
+
+test('a matching uploaded hash cannot hide broken links, wrong sizes or apk.zip filenames',async()=>{
+  const {probePublicAsset}=await import('../download_release_asset.mjs')
+  for(const options of [{status:404},{headers:{'content-length':'699999'}},{headers:{'content-length':'700000','content-disposition':'attachment; filename="large.apk.zip"'}},{headers:{'content-length':'700000','content-type':'text/html'}}]) {
+    await assert.rejects(probePublicAsset(fastPackage,fastChannel,fastReceipt,async url=>publicResponse(url,options)))
+  }
+  let networkCalls=0
+  await assert.rejects(probePublicAsset(fastPackage,fastChannel,{...fastReceipt,sha256:'c'.repeat(64)},()=>{networkCalls++}))
+  assert.equal(networkCalls,0)
+})
+
+for(const full of [false,true]) test(`publisher uses upload proofs with explicit full-audit=${full}`,async t=>{
+  const {plan,report,preload}=await fixture(t,false)
+  const data=JSON.parse(await readFile(plan,'utf8')),proof=report+'.uploads'
+  const verifiedAssets={}
+  for(const p of data.manifest.platforms)for(const c of p.channels)verifiedAssets[c.id+':'+p.file]={channel:c.id,releaseId:1,assetId:2,name:p.file,size:p.size,sha256:p.sha256,method:c.id==='github'?'server-sha256':'downloaded-sha256'}
+  await writeFile(proof,JSON.stringify({planDigest:'a'.repeat(64),verifiedAssets}))
+  await writeFile(preload,`globalThis.fetch=async(url,options)=>{if(${full?'true':'false'}){if(options.method==='HEAD')throw Error('Audit must read bytes')}else if(options.method!=='HEAD')throw Error('Fast mode must not download package');const r=new Response(options.method==='HEAD'?null:'package',{headers:{'content-length':'7'}});Object.defineProperty(r,'url',{value:url});return r}`)
+  await run(process.execPath,['--import',preload,resolve('scripts/verify_release_downloads.mjs'),plan,report,'a'.repeat(64),'--upload-proof',proof,...(full?['--full-download']:[])])
+  const output=JSON.parse(await readFile(report,'utf8'))
+  assert.equal(output.results.length,8)
+  assert.ok(output.results.every(r=>r.verification===(full?'full-download':'uploaded-hash-and-public-headers')))
+})
+
+test('verified checkpoints resume without repeating completed public probes',async t=>{
+  const {plan,report,preload}=await fixture(t,false)
+  const data=JSON.parse(await readFile(plan,'utf8')),p=data.manifest.platforms[0],c=p.channels[0]
+  await writeFile(report+'.partial',JSON.stringify({planDigest:'a'.repeat(64),results:[{url:c.url,size:p.size,sha256:p.sha256,verification:'full-download'}]}))
+  await writeFile(preload,`globalThis.fetch=async url=>{if(url===${JSON.stringify(c.url)})throw Error('Completed probe must not repeat');const r=new Response('package');Object.defineProperty(r,'url',{value:url});return r}`)
+  await run(process.execPath,['--import',preload,resolve('scripts/verify_release_downloads.mjs'),plan,report,'a'.repeat(64)])
+  assert.equal(JSON.parse(await readFile(report,'utf8')).results.length,8)
+})
+
+test('curl header fallback handles proxy redirects without downloading a package',async()=>{
+  const {curlPublicHeaders}=await import('../download_release_asset.mjs')
+  const response=await curlPublicHeaders('https://example.test/app.apk',{method:'HEAD'},async(command,args)=>{
+    assert.equal(command,'curl');assert.ok(args.includes('--head'));assert.ok(args.includes('/dev/null'))
+    return {stdout:'HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 302\r\nlocation: https://cdn.test/app.apk\r\n\r\nHTTP/2 200\r\ncontent-length: 700000\r\ncontent-disposition: attachment; filename="app.apk"\r\n\r\nBILIMUSIC_EFFECTIVE_URL:https://cdn.test/app.apk\n'}
+  })
+  assert.equal(response.status,200);assert.equal(response.url,'https://cdn.test/app.apk');assert.equal(response.headers.get('content-length'),'700000')
+})
+
+test('curl range fallback caps body size when the provider ignores Range',async()=>{
+  const {curlPublicHeaders}=await import('../download_release_asset.mjs')
+  const response=await curlPublicHeaders('https://example.test/app.apk',{method:'GET'},async(command,args)=>{
+    assert.ok(args.includes('--range'));assert.ok(args.includes('--max-filesize'));assert.equal(args[args.indexOf('--max-filesize')+1],'1024')
+    const error=new Error('Exceeded size cap');error.code=63;error.stdout='HTTP/2 200\r\ncontent-length: 700000\r\n\r\nBILIMUSIC_EFFECTIVE_URL:https://cdn.test/app.apk\n';throw error
+  })
+  assert.equal(response.status,200);assert.equal(response.headers.get('content-length'),'700000')
+})

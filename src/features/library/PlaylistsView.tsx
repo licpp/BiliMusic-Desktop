@@ -4,7 +4,7 @@ import {useOrganizer} from '../../shared/useOrganizer'
 import { CreatorsView } from '../collections/CreatorsView'
 import { Plus } from 'lucide-react'
 import { CollectionsView } from '../collections/CollectionsView'
-import type { Playlist } from '../../services/desktopApi'
+import type { Playlist } from '../../domain/library'
 import type { Collection } from '../../services/collections'
 import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { useSwipeTabs } from '../../shared/useSwipeTabs'
@@ -35,8 +35,9 @@ export function PlaylistsView({ playlists, onOpen, onRemoved, onCreate, onImport
       {section === 'playlists' ? <>
         <div className="listening-tools hub-list-toolbar">
           <span className="hub-summary">{playlists.length} 个歌单</span>
-          <div className="hub-toolbar-actions"><button type="button" className="collection-icon" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
-          <ImportPlaylistButton onClick={onImport}/>{organizer.controls}</div>
+          <div className="hub-toolbar-actions library-action-rail">{organizer.controls}
+          {!organizer.editing && <><button type="button" className="collection-icon library-create-action" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
+          <ImportPlaylistButton onClick={onImport}/></>}</div>
         </div>
         {organizer.editing?organizer.editor:<div className="playlist-grid">{ordered.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>}
       </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/> : <CollectionsView hideHeading onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}

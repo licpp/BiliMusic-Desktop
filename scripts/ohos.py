@@ -156,6 +156,7 @@ def prepare_hap():
     ets = entry / 'src/main/ets/entryability'
     shutil.copy2(ROOT / 'platforms/ohos/EntryAbility.ets', ets / 'EntryAbility.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/PlayerPlugin.ets', ets / 'PlayerPlugin.ets')
+    shutil.copy2(ROOT / 'native/ohos-player/ohos/NativeQueue.ets', ets / 'NativeQueue.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/ResumePolicy.ets', ets / 'ResumePolicy.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/Artwork.ets', ets / 'Artwork.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/WebDAV.ets', ets / 'WebDAV.ets')
@@ -265,7 +266,7 @@ def verify_hap(target):
         stripped = APP / f'gen/ohos/entry/build/default/intermediates/stripped_native_libs/default/{abi}/libbilimusic_lib.so'
         if binary != stripped.read_bytes() or elf_loadable_sections(binary) != elf_loadable_sections(source):
             raise RuntimeError('Packaged native runtime contents differ from the build output')
-        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
+        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'bilimusicOhosResolve', 'bilimusicOhosCancelResolve', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
             if symbol.encode() not in binary:
                 raise RuntimeError(f'Native bridge export missing: {symbol}')
         if len(package.read('ets/modules.abc')) < 1000:
@@ -311,7 +312,7 @@ def main():
     elif args.action == 'check':
         run(['cargo', 'check', '--locked', '--target', triple, '--lib'], cwd=APP, env=env)
     elif args.action == 'update-lock':
-        run(['cargo', 'generate-lockfile'], cwd=APP, env=env)
+        run(['cargo', 'update', '--workspace'], cwd=APP, env=env)
         shutil.copy2(APP / 'Cargo.lock', ROOT / 'platforms/ohos/Cargo.lock')
     elif args.action == 'init':
         run(['cargo', 'tauri', 'ohos', 'init', '--ci', '--skip-targets-install'], cwd=APP, env=env)

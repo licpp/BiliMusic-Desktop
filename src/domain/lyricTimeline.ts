@@ -1,4 +1,4 @@
-import type { LyricLine, StoredLyrics } from '../../services/desktopApi'
+import type { LyricLine, StoredLyrics } from './lyrics'
 import { parseLrc } from './lrc'
 export function storedLyricLines(stored: StoredLyrics): LyricLine[] {
   try {

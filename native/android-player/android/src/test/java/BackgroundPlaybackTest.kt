@@ -18,7 +18,9 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implements
 import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.RealObject
 import org.robolectric.shadow.api.Shadow
+import org.robolectric.util.ReflectionHelpers.ClassParameter
 import org.robolectric.shadows.ShadowMediaPlayer
 import org.robolectric.shadows.ShadowMediaSession
 import org.robolectric.shadows.util.DataSource
@@ -31,7 +33,7 @@ class BackgroundPlaybackTest {
     private lateinit var profile: File
     private val requests = mutableListOf<Pair<Long, JSONObject>>()
     private val url = "http://127.0.0.1:1234/token/test"
-    private fun track(id: String) = JSONObject().put("id", id).put("title", "song $id").put("durationSeconds", 120)
+    private fun track(id: String) = JSONObject().put("id", id).put("title", "song $id").put("album", "album $id").put("durationSeconds", 120)
         .put("source", JSONObject().put("provider", "bilibili").put("bvid", "BV123").put("cid", id.toInt()).put("page", id.toInt()))
     private fun field(name: String): Any? = PlaybackService::class.java.getDeclaredField(name).apply { isAccessible = true }.get(service)
     private fun player() = field("player") as MediaPlayer
@@ -96,6 +98,7 @@ class BackgroundPlaybackTest {
         service.onStartCommand(Intent(service, PlaybackService::class.java).setAction("load").putExtra("id", "1")
             .putExtra("url", url).putExtra("position", 85.0).putExtra("automaticResume", true)
             .putExtra("resumeEnabled", true).putExtra("resumeThreshold", 600.0), 0, 1)
+        assertEquals(0.0,service.snapshot().getDouble("position"),0.0)
         shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_IO)
         assertEquals(85.0, requests.single().second.getDouble("position"), 0.0)
         ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(url), ShadowMediaPlayer.MediaInfo(120_000, 0))
@@ -118,6 +121,18 @@ class BackgroundPlaybackTest {
             Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, KeyEvent.KEYCODE_MEDIA_NEXT)))
         assertEquals(1, requests.size); assertEquals("2", requests.single().second.getJSONObject("track").getString("id"))
     }
+    @Test fun systemTitleLyricsUpdateExistingSessionAndRestoreRealSongMetadata() {
+        load()
+        val session = field("session") as MediaSession
+        fun title() = Shadow.extract<RecordingMediaSessionShadow>(session).publishedMetadata!!.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
+        FloatingLyricsOverlay.command(service,"""{"action":"update","id":"1","lines":[{"timeMs":0,"text":"正在唱的歌词"}]}""")
+        try {
+            FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":true}""")
+            assertEquals("正在唱的歌词",title())
+            assertEquals("song 1",service.snapshot().getJSONObject("track").getString("title"))
+        } finally { FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":false}""") }
+        assertEquals("song 1",title())
+    }
     @Test fun sessionPublishesMetadataAndControllerWithoutOpeningAnActivity() {
         var controller: android.media.session.MediaController? = null
         PlaybackService.controllerListener = { controller = it }; service.attachController(); load()
@@ -128,11 +143,52 @@ class BackgroundPlaybackTest {
         assertEquals("1", metadata.getString(android.media.MediaMetadata.METADATA_KEY_MEDIA_ID))
         assertTrue(session.isActive)
     }
+    @Test fun bluetoothSeesCommandsAndMetadataAtTheFirstActivation() {
+        val session = field("session") as MediaSession
+        val recording = Shadow.extract<RecordingMediaSessionShadow>(session)
+        assertTrue(recording.readyAtActivation)
+        val initial = recording.publishedPlaybackState!!
+        assertEquals(android.media.session.PlaybackState.STATE_NONE, initial.state)
+        for (action in listOf(android.media.session.PlaybackState.ACTION_PLAY, android.media.session.PlaybackState.ACTION_PAUSE,
+            android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT, android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS)) {
+            assertEquals(action, initial.actions and action)
+        }
+        load()
+        assertEquals("song 1", recording.publishedMetadata!!.getString(android.media.MediaMetadata.METADATA_KEY_TITLE))
+        assertEquals("album 1", recording.publishedMetadata!!.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM))
+        assertEquals(120_000L, recording.publishedMetadata!!.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION))
+        assertEquals(android.media.session.PlaybackState.STATE_PLAYING, recording.publishedPlaybackState!!.state)
+    }
+    @Test fun remoteTransportCallbacksWorkWithoutAWebView() {
+        load()
+        val callback = Shadow.extract<RecordingMediaSessionShadow>(field("session") as MediaSession).transportCallback!!
+        callback.onPause(); idle(); assertEquals("paused",service.snapshot().getString("status"))
+        callback.onPlay(); idle(); assertEquals("playing",service.snapshot().getString("status"))
+        callback.onSkipToNext(); reply(requests.last()); assertEquals("2",service.snapshot().getString("id"))
+        callback.onSkipToPrevious(); reply(requests.last()); assertEquals("1",service.snapshot().getString("id"))
+    }
 }
 
 @Implements(MediaSession::class)
 class RecordingMediaSessionShadow : ShadowMediaSession() {
+    @RealObject private lateinit var realSession: MediaSession
     var publishedMetadata: android.media.MediaMetadata? = null
         private set
+    var publishedPlaybackState: android.media.session.PlaybackState? = null
+        private set
+    var readyAtActivation = false
+        private set
+    var transportCallback: MediaSession.Callback? = null
+        private set
     @Implementation protected fun setMetadata(value: android.media.MediaMetadata?) { publishedMetadata = value }
+    @Implementation protected fun setPlaybackState(value: android.media.session.PlaybackState?) { publishedPlaybackState = value }
+    @Implementation protected fun setActive(value: Boolean) {
+        if (value) readyAtActivation = publishedMetadata != null && publishedPlaybackState != null && transportCallback != null
+        Shadow.directlyOn<Any?,MediaSession>(realSession, MediaSession::class.java, "setActive", ClassParameter.from(java.lang.Boolean.TYPE,value))
+    }
+    @Implementation protected fun setCallback(value: MediaSession.Callback?, handler: android.os.Handler?) {
+        transportCallback = value
+        Shadow.directlyOn<Any?,MediaSession>(realSession, MediaSession::class.java, "setCallback",
+            ClassParameter.from(MediaSession.Callback::class.java,value), ClassParameter.from(android.os.Handler::class.java,handler))
+    }
 }

@@ -7,6 +7,7 @@ struct NativeLyricLine: Decodable {
     let timeMs: Double; let endTimeMs: Double?; let text: String; let words: [NativeLyricWord]?
 }
 struct NativeLyricsRequest: Decodable {
+    var enabled: Bool? = nil
     let action: String; let id: String?; let lines: [NativeLyricLine]?; let biasMs: Double?; let subtitles: Bool?
 }
 struct NativeSavedLyrics: Decodable {
@@ -30,12 +31,19 @@ final class NotificationLyrics {
     func clear() { request=nil }
     func line(for trackID: String?, at position: Double) -> String? {
         guard let trackID,!trackID.isEmpty,let request,request.id==trackID,
-              position.isFinite,let lines=request.lines,
-              let index=lines.lastIndex(where: { $0.timeMs <= position*1000-(request.biasMs ?? 0) }) else { return nil }
-        let current=lines[index]
+              position.isFinite,let lines=request.lines else { return nil }
+        let time=position*1000-(request.biasMs ?? 0)
+        var low=0,high=lines.count
+        while low<high { let mid=(low+high)/2; if lines[mid].timeMs<=time { low=mid+1 } else { high=mid } }
+        guard low>0 else { return nil }
+        let current=lines[low-1]
         // Subtitle cues have real gaps; ordinary lyrics hold until the next line.
         if request.subtitles == true,let end=current.endTimeMs,position*1000-(request.biasMs ?? 0)>=end { return nil }
-        let text=current.text.components(separatedBy:.newlines).joined(separator:" ").trimmingCharacters(in:.whitespacesAndNewlines)
+        let text=current.text.replacingOccurrences(of:"[♪♫♬♩🎵🎶]",with:"",options:.regularExpression).components(separatedBy:.newlines).joined(separator:" ").trimmingCharacters(in:.whitespacesAndNewlines)
         return text.isEmpty ? nil : text
     }
+}
+
+func notificationMediaText(title: String, artist: String, lyric: String?, titleLyrics: Bool) -> (title: String, artist: String) {
+    return titleLyrics ? (lyric ?? title, artist) : (title, lyric ?? artist)
 }

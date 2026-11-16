@@ -396,7 +396,10 @@ pub(super) fn check_at(status: reqwest::StatusCode, operation: &str) -> Result<(
     check(status).map_err(|error| format!("{operation}失败：{error}"))
 }
 
-pub(super) fn request_error(error: &reqwest::Error, operation: &str) -> String {
+pub(super) fn request_error(error: &super::traffic::RequestError, operation: &str) -> String {
+    if let super::traffic::RequestError::Deferred(message) = error {
+        return message.clone();
+    }
     // Classify the cause, without returning request URLs, headers or server content.
     let diagnostic = format!("{error:?}").to_ascii_lowercase();
     let reason = if error.is_timeout() {
@@ -642,11 +645,9 @@ async fn put_snapshot(
     #[cfg(target_env = "ohos")]
     {
         let _ = http;
-        super::traffic::bridge_started(payload.len());
         let result =
             crate::ohos_playback::put_webdav(&url, &secret.username, &secret.password, &payload)
                 .await;
-        super::traffic::bridge_finished(result.as_ref().ok().map(|s| s.as_u16()));
         return result;
     }
     #[cfg(not(target_env = "ohos"))]

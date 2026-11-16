@@ -1,3 +1,4 @@
+import { accountQueryKey } from './queryKeys'
 import { usePlaylistImport } from './playlistImport'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryClient } from '@tanstack/react-query'
@@ -17,7 +18,7 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
     try {
       const report = await invoke<Report>('sync_background', { hint, bulkImport: ['matching','saving','waiting'].includes(usePlaylistImport.getState().job?.state || '') })
       if (stopped || switching || epoch !== accountEpoch()) return
-      if (report.statistics || report.statisticsError) await client.invalidateQueries({ queryKey: ['listening-statistics'] })
+      if (report.statistics || report.statisticsError) await client.invalidateQueries({ queryKey: accountQueryKey('listening-statistics') })
       if (stopped || switching || epoch !== accountEpoch()) return
       if (report.statistics) reportSyncError('statistics', false)
       if (report.statisticsError) reportSyncError('statistics', true)
@@ -25,7 +26,7 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
         reportSyncOutcome(report.library)
         await onLibrary(report.library)
         if (stopped || switching || epoch !== accountEpoch()) return
-        await client.invalidateQueries({ queryKey: ['sync-status'] })
+        await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
         if (stopped || switching || epoch !== accountEpoch()) return
         if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '' }))
       }

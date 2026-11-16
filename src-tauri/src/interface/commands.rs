@@ -42,6 +42,20 @@ pub struct LibrarySummary {
 }
 
 #[tauri::command]
+pub fn account_session(database: State<'_, Database>) -> Result<String, CommandError> {
+    let c = database.0.lock().map_err(CommandError::database)?;
+    crate::infrastructure::database::account_session(&c).map_err(CommandError::database)
+}
+fn check_account_session(c: &rusqlite::Connection, expected: &str) -> Result<(), CommandError> {
+    if crate::infrastructure::database::account_session(c).map_err(CommandError::database)?
+        != expected
+    {
+        return Err(CommandError::validation("ACCOUNT_SESSION_EXPIRED"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn app_health(database: State<'_, Database>) -> Result<Health, String> {
     let connection = database.0.lock().map_err(|_| "database lock poisoned")?;
     let schema_version = connection
@@ -162,12 +176,14 @@ pub fn library_recent(database: State<'_, Database>) -> Result<Vec<TrackRecord>,
 #[tauri::command]
 pub fn library_toggle_favorite(
     database: State<'_, Database>,
+    expected_account_session: String,
     track_id: String,
 ) -> Result<bool, CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     if LibraryRepository::get(&connection, &track_id)
         .map_err(CommandError::database)?
         .is_none()
@@ -180,6 +196,7 @@ pub fn library_toggle_favorite(
 #[tauri::command]
 pub fn library_update_metadata(
     database: State<'_, Database>,
+    expected_account_session: String,
     track_id: String,
     patch: MetadataPatch,
 ) -> Result<TrackRecord, CommandError> {
@@ -190,6 +207,7 @@ pub fn library_update_metadata(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     LibraryRepository::update_metadata(&connection, &track_id, &patch)
         .map_err(CommandError::database)
 }
@@ -264,6 +282,7 @@ pub fn playlists_list(database: State<'_, Database>) -> Result<Vec<PlaylistRecor
 #[tauri::command]
 pub fn playlist_create(
     database: State<'_, Database>,
+    expected_account_session: String,
     name: String,
 ) -> Result<PlaylistRecord, CommandError> {
     if name.trim().is_empty() || name.chars().count() > 80 {
@@ -273,6 +292,7 @@ pub fn playlist_create(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::create(&connection, &uuid::Uuid::new_v4().to_string(), &name)
         .map_err(CommandError::database)
 }
@@ -292,6 +312,7 @@ pub fn playlist_tracks(
 #[tauri::command]
 pub fn playlist_add_track(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
     track_id: String,
 ) -> Result<(), CommandError> {
@@ -299,6 +320,7 @@ pub fn playlist_add_track(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::add_track(&connection, &playlist_id, &track_id)
         .map_err(CommandError::database)
 }
@@ -306,6 +328,7 @@ pub fn playlist_add_track(
 #[tauri::command]
 pub fn playlist_add_tracks(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
     track_ids: Vec<String>,
     append: Option<bool>,
@@ -317,6 +340,7 @@ pub fn playlist_add_tracks(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::add_tracks(
         &connection,
         &playlist_id,
@@ -329,6 +353,7 @@ pub fn playlist_add_tracks(
 #[tauri::command]
 pub fn playlist_remove_track(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
     track_id: String,
 ) -> Result<(), CommandError> {
@@ -336,6 +361,7 @@ pub fn playlist_remove_track(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::remove_track(&connection, &playlist_id, &track_id)
         .map_err(CommandError::database)
 }
@@ -343,10 +369,12 @@ pub fn playlist_remove_track(
 #[tauri::command]
 pub fn playlist_remove_tracks(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
     track_ids: Vec<String>,
 ) -> Result<(), CommandError> {
     let mut connection = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&connection, &expected_account_session)?;
     let transaction = connection.transaction().map_err(CommandError::database)?;
     for track_id in track_ids {
         PlaylistRepository::remove_track(&transaction, &playlist_id, &track_id)
@@ -358,6 +386,7 @@ pub fn playlist_remove_tracks(
 #[tauri::command]
 pub fn playlist_delete(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
 ) -> Result<(), CommandError> {
     if playlist_id == FAVORITES_PLAYLIST_ID {
@@ -367,6 +396,7 @@ pub fn playlist_delete(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::delete(&connection, &playlist_id).map_err(CommandError::database)
 }
 
@@ -379,17 +409,19 @@ pub async fn bili_video_parts(
     if !valid_bvid(&bvid) {
         return Err(CommandError::validation("无效的 BV 号"));
     }
-    let profile = database
+    let session = database
         .0
         .lock()
         .ok()
-        .and_then(|c| c.path().map(str::to_owned));
+        .and_then(|c| crate::infrastructure::database::account_session(&c).ok());
     let detail = provider
         .video_parts(&bvid)
         .await
         .map_err(CommandError::provider)?;
     if let Ok(connection) = database.0.lock() {
-        if connection.path() == profile.as_deref() {
+        if session.is_some()
+            && crate::infrastructure::database::account_session(&connection).ok() == session
+        {
             // Cache source names separately from user edits; never create history or favorites.
             let _ = crate::sync::cache_source_titles(&connection, &detail);
         }
@@ -494,6 +526,7 @@ pub async fn bili_video_source(
     media_proxy: State<'_, MediaProxy>,
     bvid: String,
     cid: i64,
+    refresh: Option<bool>,
 ) -> Result<VideoSource, CommandError> {
     if !valid_bvid(&bvid) || cid <= 0 {
         return Err(CommandError::validation("无效的视频源标识"));
@@ -505,6 +538,9 @@ pub async fn bili_video_source(
             .map_err(|_| CommandError::database("数据库正忙"))?;
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
+    if refresh.unwrap_or(false) {
+        provider.invalidate_playback(&bvid, cid).await;
+    }
     let mut source = provider
         .video_source_with_quality(&bvid, cid, quality.video_height)
         .await
@@ -719,7 +755,7 @@ pub async fn lyrics_search(
         return Err(CommandError::validation("歌曲名不能为空"));
     }
     let key = serde_json::to_string(&(
-        "multi-source-v2",
+        "multi-source-v3",
         title.to_lowercase(),
         artist.as_deref().unwrap_or("").trim().to_lowercase(),
     ))
@@ -746,9 +782,10 @@ pub async fn lyrics_search(
         }
     }
     match provider.search(title, artist.as_deref()).await {
-        Ok(candidates) => {
-            if !candidates.is_empty() {
-                if let Ok(json) = serde_json::to_string(&candidates) {
+        Ok(result) => {
+            // Never retain a partial search as a fresh, all-source cache entry.
+            if result.complete() && !result.candidates.is_empty() {
+                if let Ok(json) = serde_json::to_string(&result.candidates) {
                     if json.len() <= 2_000_000 {
                         if let Ok(connection) = database.0.lock() {
                             let _ = LyricsRepository::cache_search(&connection, &key, &json);
@@ -756,9 +793,10 @@ pub async fn lyrics_search(
                     }
                 }
             }
+            let warning = result.warning();
             Ok(LyricSearchResult {
-                candidates,
-                warning: None,
+                candidates: result.candidates,
+                warning,
             })
         }
         Err(error) => {
@@ -813,6 +851,33 @@ pub fn lyrics_get(
 }
 
 #[tauri::command]
+pub fn lyrics_complete_selected(
+    database: State<'_, Database>,
+    track_id: String,
+    expected: StoredLyrics,
+    raw_text: String,
+    parsed_json: String,
+) -> Result<Option<StoredLyrics>, CommandError> {
+    if raw_text.len() > 2_000_000 || parsed_json.len() > 2_000_000 {
+        return Err(CommandError::validation("歌词内容过大"));
+    }
+    serde_json::from_str::<serde_json::Value>(&parsed_json)
+        .map_err(|_| CommandError::validation("歌词解析数据无效"))?;
+    let c = database
+        .0
+        .lock()
+        .map_err(|_| CommandError::database("数据库正忙"))?;
+    if crate::infrastructure::database::account_session(&c).map_err(CommandError::database)?
+        != expected.account_session
+    {
+        return Ok(None);
+    }
+    LyricsRepository::complete(&c, &track_id, &expected, &raw_text, &parsed_json)
+        .map_err(CommandError::database)?;
+    LyricsRepository::get(&c, &track_id).map_err(CommandError::database)
+}
+
+#[tauri::command]
 pub async fn lyrics_restore_selected(
     provider: State<'_, LrclibProvider>,
     lyric_provider: String,
@@ -827,6 +892,7 @@ pub async fn lyrics_restore_selected(
 #[tauri::command]
 pub fn lyrics_save(
     database: State<'_, Database>,
+    expected_account_session: String,
     track_id: String,
     lyrics: SaveLyricsInput,
     manual: Option<bool>,
@@ -843,6 +909,7 @@ pub fn lyrics_save(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     if LibraryRepository::get(&connection, &track_id)
         .map_err(CommandError::database)?
         .is_none()
@@ -865,13 +932,21 @@ pub fn lyrics_save(
 #[tauri::command]
 pub fn lyrics_set_bias(
     database: State<'_, Database>,
+    expected_account_session: String,
     track_id: String,
     bias_ms: i64,
+    expected: Option<StoredLyrics>,
 ) -> Result<StoredLyrics, CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
+    if let Some(expected) = expected {
+        return LyricsRepository::set_bias_if_current(&connection, &track_id, bias_ms, &expected)
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("歌词已变化，请重新自动对齐"));
+    }
     LyricsRepository::set_bias(&connection, &track_id, bias_ms).map_err(CommandError::database)
 }
 
@@ -1067,6 +1142,7 @@ async fn playback_plan(
 #[tauri::command]
 pub fn library_save_track(
     database: State<'_, Database>,
+    expected_account_session: String,
     track: TrackInput,
 ) -> Result<TrackRecord, CommandError> {
     validate_track(&track)?;
@@ -1074,12 +1150,14 @@ pub fn library_save_track(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     LibraryRepository::upsert(&mut connection, &track).map_err(CommandError::database)
 }
 
 #[tauri::command]
 pub fn playlist_rename(
     database: State<'_, Database>,
+    expected_account_session: String,
     playlist_id: String,
     name: String,
 ) -> Result<(), CommandError> {
@@ -1093,6 +1171,7 @@ pub fn playlist_rename(
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     PlaylistRepository::rename(&connection, &playlist_id, &name).map_err(CommandError::database)
 }
 
@@ -1487,11 +1566,11 @@ mod tests {
 }
 
 #[tauri::command]
-pub async fn app_check_update()
--> Result<crate::infrastructure::updates::UpdateRelease, CommandError> {
-    crate::infrastructure::updates::check_update()
-        .await
-        .map_err(CommandError::provider)
+pub async fn app_check_update(
+    app: tauri::AppHandle,
+    state: State<'_, crate::infrastructure::update_install::UpdateState>,
+) -> Result<crate::infrastructure::updates::UpdateRelease, CommandError> {
+    state.check(&app).await.map_err(CommandError::provider)
 }
 
 #[tauri::command]

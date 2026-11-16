@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Artwork } from '../../shared/Artwork'
@@ -17,7 +18,7 @@ export function ListeningArtwork({ id, coverUrl }: { id: string; coverUrl: strin
     return () => observer.disconnect()
   }, [])
   const missing = !coverUrl?.trim() || failed === coverUrl
-  const query = useQuery({ queryKey: ['listening-artwork', accountEpoch(), id], queryFn: async () => (await getListeningArtwork(id)) || null,
+  const query = useQuery({ queryKey: accountQueryKey('listening-artwork', id), queryFn: async () => (await getListeningArtwork(id)) || null,
     enabled: visible && missing, staleTime: 10 * 60_000, retry: false })
   return <Artwork key={query.dataUpdatedAt} elementRef={ref} src={missing && query.data ? query.data : coverUrl}
     onError={() => setFailed(coverUrl)} />

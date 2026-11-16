@@ -1,0 +1,130 @@
+[
+ {
+  "video": "BV 标题",
+  "part": "分 P 名称",
+  "count": 1,
+  "chapter": false,
+  "expected": "BV 标题"
+ },
+ {
+  "video": "BV 标题",
+  "part": "第二章",
+  "count": 2,
+  "chapter": false,
+  "expected": "第二章"
+ },
+ {
+  "video": "BV 标题",
+  "part": "  第一章  ",
+  "count": 1,
+  "chapter": true,
+  "expected": "第一章"
+ },
+ {
+  "video": "BV 标题",
+  "part": "P 1",
+  "count": 1,
+  "chapter": true,
+  "expected": "BV 标题"
+ },
+ {
+  "video": "BV 标题",
+  "part": "PART 12",
+  "count": 1,
+  "chapter": true,
+  "expected": "BV 标题"
+ },
+ {
+  "video": "BV 标题",
+  "part": "默认标题",
+  "count": 1,
+  "chapter": true,
+  "expected": "BV 标题"
+ },
+ {
+  "video": "BV 标题",
+  "part": " ",
+  "count": 4,
+  "chapter": true,
+  "expected": "BV 标题"
+ },
+ {
+  "video": "AI喻大华 苦命皇帝咸丰 未删减版 01谁是太子",
+  "part": "01谁是太子",
+  "count": 1,
+  "chapter": true,
+  "series": "AI喻大华 苦命皇帝咸丰 未删减版",
+  "expected": "01谁是太子"
+ },
+ {
+  "video": "AI喻大华 苦命皇帝咸丰 未删减版 序言",
+  "part": "P1",
+  "count": 1,
+  "chapter": true,
+  "series": "AI喻大华 苦命皇帝咸丰 未删减版",
+  "expected": "序言"
+ },
+ {
+  "video": "苦命皇帝咸丰 02连丧重臣",
+  "part": "苦命皇帝咸丰 02连丧重臣",
+  "count": 1,
+  "chapter": true,
+  "series": "苦命皇帝咸丰",
+  "expected": "02连丧重臣"
+ },
+ {
+  "video": "测试系列01第一章",
+  "part": "P1",
+  "count": 1,
+  "chapter": true,
+  "series": "测试系列",
+  "expected": "01第一章"
+ },
+ {
+  "video": "长 BV 标题",
+  "part": "Ｐ１",
+  "count": 2,
+  "chapter": true,
+  "expected": "长 BV 标题"
+ },
+ {
+  "video": "红豆",
+  "part": "红豆",
+  "count": 1,
+  "chapter": true,
+  "series": "红",
+  "expected": "红豆"
+ },
+ {
+  "video": "测试系列曲目",
+  "part": "测试系列曲目",
+  "count": 1,
+  "chapter": true,
+  "series": "测试系列",
+  "expected": "测试系列曲目"
+ },
+ {
+  "video": "测试系列",
+  "part": "P1",
+  "count": 1,
+  "chapter": true,
+  "series": "测试系列",
+  "expected": "测试系列"
+ },
+ {
+  "video": "【测试 系列】－ 第三章",
+  "part": "P1",
+  "count": 1,
+  "chapter": true,
+  "series": "测试系列",
+  "expected": "第三章"
+ },
+ {
+  "video": "测试系列 第一集",
+  "part": "独立章节",
+  "count": 1,
+  "chapter": false,
+  "series": "测试系列",
+  "expected": "测试系列 第一集"
+ }
+]

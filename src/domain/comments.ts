@@ -1,0 +1,2 @@
+export type BiliComment = { id: number; rootId: number; parentId: number; userId: number; userName: string; avatarUrl: string; message: string; emotes?: Record<string, string>; createdAt: number; likeCount: number; liked: boolean; replyCount: number; replies: BiliComment[] }
+export type CommentPage = { items: BiliComment[]; next: number; isEnd: boolean; total: number }

@@ -1,3 +1,5 @@
+import { useUpdateStore } from '../services/updates'
+import { accountQueryKey } from '../services/queryKeys'
 import { LargeDownloadDialogHost } from './DownloadDialog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -28,6 +30,7 @@ import { version } from '../../package.json'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
 export function LargeScreenApp() {
+  const updateAvailable = useUpdateStore(s => s.result?.status === 'available')
   const [filters, setFilters] = useState<Record<string, string>>({}), [searchKind, setSearchKind] = useState<'video' | 'creator'>('video')
   const [route, setRoute] = useState<Route>({ kind: 'home' }), [tab, setTab] = useState<LibraryTab>('playlists'), [query, setQuery] = useState('')
   const history = useRef<ReturnPoint[]>([]), main = useRef<HTMLElement>(null), restore = useRef<ReturnPoint | undefined>(undefined), initialFocus = useRef(false)
@@ -63,7 +66,7 @@ export function LargeScreenApp() {
     if (inDesktopShell) void getVersion().then(setAppVersion).catch(() => undefined)
     const changed = () => { history.current = []; setFilters({}); setQuery(''); setSearchKind('video'); setMenu(undefined); setQueueOpen(false); setSleep(false); setActionError(''); setRoute({ kind: 'home' }) }
     const status = (event: Event) => setMessage(String((event as CustomEvent).detail || ''))
-    const recent = () => { void client.invalidateQueries({ queryKey: ['home-recent'] }) }
+    const recent = () => { void client.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }
     window.addEventListener('bilimusic-account-changing', changed); window.addEventListener('bilimusic-sync-status', status); window.addEventListener('bilimusic-recent-changed', recent)
     return () => { window.removeEventListener('bilimusic-account-changing', changed); window.removeEventListener('bilimusic-sync-status', status); window.removeEventListener('bilimusic-recent-changed', recent) }
   }, [client])
@@ -84,7 +87,7 @@ export function LargeScreenApp() {
   const favorite = async (track: Track) => {
     if (toggling.current) return
     toggling.current = true; const epoch = accountEpoch()
-    try { const saved = await saveLibraryTrack(track); if (epoch !== accountEpoch()) return; const liked = await toggleStoredFavorite(saved.id); if (epoch !== accountEpoch()) return; usePlayerStore.getState().updateTrack({ ...track, liked }); await Promise.all([client.invalidateQueries({ queryKey: ['library'] }), client.invalidateQueries({ queryKey: ['playlists'] })]) }
+    try { const saved = await saveLibraryTrack(track); if (epoch !== accountEpoch()) return; const liked = await toggleStoredFavorite(saved.id); if (epoch !== accountEpoch()) return; usePlayerStore.getState().updateTrack({ ...track, liked }); await Promise.all([client.invalidateQueries({ queryKey: accountQueryKey('library') }), client.invalidateQueries({ queryKey: accountQueryKey('playlists') })]) }
     finally { toggling.current = false }
   }
   const favoriteCurrent = () => { if (current) void favorite(current).catch(e => setActionError(commandErrorMessage(e))) }
@@ -93,7 +96,7 @@ export function LargeScreenApp() {
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
   const active = ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
   return <div onSubmitCapture={dismissLargeKeyboard} className={`large-shell${route.kind === 'player' ? ' player-open' : route.kind === 'home' ? ' home-open' : ''}`}>
-    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{appVersion}</small></nav>
+    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && updateAvailable && !attention && <span className="update-nav-dot" aria-label="有新版本"/>}{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{appVersion}</small></nav>
     <main ref={main} className="large-main" aria-label="内容区">
       {route.kind !== 'player' && <div className="large-topbar"><button className="large-icon" aria-label="返回上一页" disabled={route.kind === 'home' && !history.current.length} onClick={() => back()}><ArrowLeft/></button><button className={attention ? 'large-sync attention' : 'large-sync'} onClick={() => navigate({ kind: 'settings' })}>{attention ? <AlertCircle/> : <Cloud/>}<span>{attention ? '同步待处理' : '账号与同步'}</span></button></div>}
       {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}
@@ -117,7 +120,7 @@ export function LargeScreenApp() {
   </div>
 }
 function LargeHome({ navigate, onMore }: { navigate: (r: Route) => void; onMore: (t: Track) => void }) {
-  const recent = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks }), playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists }), client = useQueryClient()
+  const recent = useQuery({ queryKey: accountQueryKey('home-recent'), queryFn: listRecentTracks }), playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists }), client = useQueryClient()
   useEffect(() => { void hydrateVisibleTracks(recent.data, client).catch(() => undefined) }, [recent.data, client])
   return <div className="large-home"><div className="large-home-top"><ResumeCard navigate={navigate}/><div className="large-home-shortcuts"><button onClick={() => { const liked = playlists.data?.find(p => p.isSystem); if (liked) navigate({ kind: 'playlist', playlist: liked }); else navigate({ kind: 'library' }) }}><Heart/><span><strong>我喜欢</strong></span></button><button onClick={() => navigate({ kind: 'offline' })}><Download/><span><strong>离线音乐</strong></span></button></div></div>{Boolean(playlists.data?.length) && <><div className="large-section-heading"><h2>歌单</h2><button onClick={() => navigate({ kind: 'library' })}>查看全部</button></div><div className="large-grid large-home-playlists">{playlists.data?.slice(0, 4).map(p => <Card playlist key={p.id} id={`home-playlist-${p.id}`} title={p.name} subtitle={`${p.trackCount} 首`} linked={Boolean(p.biliFolderId)} cover={p.coverUrl} onClick={() => navigate({ kind: 'playlist', playlist: p })}/>)}</div></>}{Boolean(recent.data?.length) && <><div className="large-section-heading"><h2>最近播放</h2></div><TrackRows tracks={recent.data!.slice(0, 12)} onMore={onMore}/></>}<Failure error={recent.error || playlists.error} retry={() => { void recent.refetch(); void playlists.refetch() }}/></div>
 }

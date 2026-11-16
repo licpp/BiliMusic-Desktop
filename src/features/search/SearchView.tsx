@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { chooseDownload } from '../downloads/downloadRequest'
 import { CoverCount } from '../../shared/CoverCount'
 import { PublishedDate } from '../../shared/PublishedDate'
@@ -15,7 +16,8 @@ import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
 import { getSeason, seasonTracks } from '../../services/mediaSources'
 import { adoptSeasonQueue, playbackIntent, seasonPlaybackQueue, usePlayerStore } from '../player/playerStore'
-import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite, type BiliSearchItem, type BiliVideoParts } from '../../services/desktopApi'
+import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite } from '../../services/desktopApi'
+import type { BiliSearchItem, BiliVideoParts } from '../../domain/bilibili'
 import { formatDuration } from '../../shared/time'
 import { formatPlayCount } from '../../shared/count'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
@@ -43,7 +45,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const activeRef = useRef(active)
   activeRef.current = active
   useEffect(() => () => { selection.current++; browsing.current++; downloadIntent.current++ }, [])
-  const result = useInfiniteQuery({ queryKey: ['bilibili-search', query], initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
+  const result = useInfiniteQuery({ queryKey: accountQueryKey('bilibili-search', query), initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
   const items = [...new Map(result.data?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const add = async (track: Track, favorite = false) => {
     const previous = favoriteState[track.id] ?? track.liked
@@ -52,8 +54,8 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       const stored = await saveLibraryTrack(track)
       if (favorite) { const liked = await toggleStoredFavorite(stored.id); setFavoriteState(value => ({ ...value, [track.id]: liked })); usePlayerStore.getState().updateTrack({ ...stored, liked }) }
       else enqueue([stored])
-      await client.invalidateQueries({ queryKey: ['library'] })
-      if (favorite) { await client.invalidateQueries({ queryKey: ['playlists'] }); await client.invalidateQueries({ queryKey: ['home-recent'] }) }
+      await client.invalidateQueries({ queryKey: accountQueryKey('library') })
+      if (favorite) { await client.invalidateQueries({ queryKey: accountQueryKey('playlists') }); await client.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }
       setActionError(favorite ? '已更新喜欢状态' : '已加入播放队列')
     } catch (error) { if (favorite) setFavoriteState(value => ({ ...value, [track.id]: previous })); setActionError(favorite ? `收藏失败，已恢复原状态：${commandErrorMessage(error)}` : commandErrorMessage(error)) }
   }

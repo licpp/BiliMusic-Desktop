@@ -7,3 +7,5 @@ pub mod repositories;
 pub mod updates;
 
 pub mod flac_export;
+
+pub mod update_install;

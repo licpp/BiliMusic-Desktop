@@ -36,7 +36,7 @@ test('stored resume thresholds normalize to valid minute steps and preserve both
   }
 })
 
-test('collections and multipart video identity remain exempt without exempting ordinary song queues', () => {
+test('collections and multipart video identity are detected independently of time resume', () => {
   const one = { id:'one',source:{bvid:'BV1',page:1} }
   const other = { id:'other',source:{bvid:'BV2',page:1} }
   assert.equal(policy.isCollectionPlayback(one, [one,other]), false)
@@ -57,5 +57,5 @@ test('automatic starting position uses prepared media total duration with the sa
   assert.throws(() => policy.automaticResumePosition(85, 0, policy.automaticResumePolicy(600, 0, false)), /无法读取视频总时长/)
   assert.equal(policy.automaticResumePosition(85, 0, policy.automaticResumePolicy(0, 0, false)), 85)
   assert.equal(policy.automaticResumePosition(85, 0, policy.automaticResumePolicy(null, 0, false)), 0)
-  assert.equal(policy.automaticResumePosition(85, 0, policy.automaticResumePolicy(600, 0, true)), 85)
+  assert.throws(() => policy.automaticResumePosition(85, 0, policy.automaticResumePolicy(600, 0, true)), /无法读取视频总时长/)
 })

@@ -1,6 +1,9 @@
+import { withTrackTitle } from '../../domain/sourceTitle'
+import { syncOHOSQueue } from './ohosAudio'
+import { createOperationScope } from './operationScope'
 import { prepareAudioSource } from './sourceSwitch'
 import { advanceAccountEpoch } from '../../services/accountScope'
-import { isMobile, isIOS, isAndroid } from '../../services/platform'
+import { isMobile, isIOS, isAndroid, isOHOS } from '../../services/platform'
 import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
 import { syncAndroidQueue } from './androidAudio'
 import { iosListenerAge, playIOSAudio, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
@@ -26,9 +29,10 @@ export type RepeatMode = 'off' | 'all' | 'one'
 type SleepState = { deadline: number; duration: number; expired: boolean }
 const noSleep = { deadline: 0, duration: 0, expired: false }
 export type QueueSource = { creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
-type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let audio: HTMLAudioElement | null = null
+const controlScope = createOperationScope()
 let playRequest = 0
 let requestedStartAt: number | undefined
 let initialPositionPending = false
@@ -114,16 +118,32 @@ export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Tra
   switchCollectionContext(collectionRef)
 }
 
+async function ensurePlaying() {
+  const state = usePlayerStore.getState()
+  if (!state.current || state.status !== 'paused') return
+  const valid = controlScope.begin('transport')
+  usePlayerStore.setState({ status: 'playing', error: null })
+  try {
+    if (isMobile) await controlMobileAudio('resume')
+    else if (inDesktopShell) await playerAudio().play()
+  } catch (error) {
+    if (!valid()) return
+    const snapshot = isMobile ? await snapshotMobileAudio().catch(() => null) : null
+    if (valid()) usePlayerStore.setState({ status: snapshot?.id === state.current.id ? snapshot.status as PlaybackStatus : 'paused', error: commandErrorMessage(error, '恢复播放失败') })
+  }
+}
+
 export function resetPlayerForAccount() {
   if (accountReset) return accountReset
   accountResetting = true
   flushPosition()
+  controlScope.invalidate()
   advanceAccountEpoch()
   ++queueIntent; ++playRequest;
   loadedTrackId = null
   initialPositionPending = false
   loadedCollectionRef = undefined
-  nativeHistoryId = undefined
+  nativeHistorySession = undefined
   recoveryAttempted = false
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
   usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
@@ -190,11 +210,11 @@ function playerAudio() {
 
 export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, rate: 1, resumeThresholdSeconds: 0, setResumeThreshold: value => set({ resumeThresholdSeconds: normalizeResumeThreshold(value) }), shuffled: false, repeatMode: 'off',
-  play: async (track, startAt, refreshing = false) => {
+  play: async (track, startAt, refreshing = false, checkpointAt) => {
     if (accountResetting) return
     const previous = get()
-    if (!refreshing && startAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') return
-    if (!refreshing) recoveryAttempted = false
+    if (!refreshing && startAt === undefined && checkpointAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') { await ensurePlaying(); return }
+    if (!refreshing) { recoveryAttempted = false; controlScope.invalidate() }
     const request = ++playRequest, qualityIntent = sourceSwitchRequest, seekRevision = desktopSeekRevision
     requestedStartAt = startAt
     pendingDesktopUpgrade = undefined
@@ -206,7 +226,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     initialPositionPending = false
     if (!isMobile) positionScope = playbackPositionScope()
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
-    set({ current: track, status: 'resolving', progressSeconds: startAt ?? 0, durationSeconds: track.durationSeconds, error: null, queueFeedback: undefined })
+    set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null, queueFeedback: undefined })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
     try {
       if (track.resolveParts) {
@@ -224,7 +244,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const [recordedTrack, , resumeAt] = await Promise.all([
         recordPlayedTrack(track),
         isMobile ? prepareMobileAudio(track) : Promise.resolve(),
-        startAt ?? positionWrite.then(() => readPlaybackPosition(track.id)),
+        startAt ?? checkpointAt ?? positionWrite.then(() => readPlaybackPosition(track.id)),
       ])
       if (request !== playRequest) return
       const storedTrack = { ...track, ...recordedTrack }
@@ -235,12 +255,14 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const [plan] = await Promise.all([
         getTrackPlaybackPlan(storedTrack, refreshing || previous.status === 'error'),
         isMobile ? ensureNativeReady().then(async () => {
-          if (!(isIOS || isAndroid) || request !== playRequest) return
+          if (!isMobile || request !== playRequest) return
           const state = get()
           await syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
         }) : Promise.resolve(),
       ])
       if (request !== playRequest) return
+      // Settings may change while the playback URL is resolving.
+      if (resumePolicy) resumePolicy = automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, resumePolicy.collection)
       if (desktopSeekRevision !== seekRevision) { position = get().progressSeconds; resumePolicy = undefined }
       loadedCollectionRef = get().queueSource?.collectionRef
       if (isMobile) {
@@ -252,7 +274,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const element = playerAudio()
       initialPositionPending = position > 0
       element.src = plan.url; element.playbackRate = get().rate; loadedTrackId = storedTrack.id
-      if (position > 0) position = await preparePlaybackStart(element, duration => desktopSeekRevision !== seekRevision ? get().progressSeconds : resumePolicy ? automaticResumePosition(position, duration, resumePolicy) : position, () => request === playRequest, Boolean(resumePolicy?.enabled && !resumePolicy.collection && resumePolicy.thresholdSeconds > 0 && !(resumePolicy.durationSeconds > 0)))
+      if (position > 0) position = await preparePlaybackStart(element, duration => desktopSeekRevision !== seekRevision ? get().progressSeconds : resumePolicy ? automaticResumePosition(position, duration, automaticResumePolicy(get().resumeThresholdSeconds, resumePolicy.durationSeconds, resumePolicy.collection)) : position, () => request === playRequest, Boolean(resumePolicy?.enabled && resumePolicy.thresholdSeconds > 0 && !(resumePolicy.durationSeconds > 0)))
       else element.currentTime = 0
       if (request !== playRequest) return
       initialPositionPending = false
@@ -269,7 +291,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (!recoverPlayback(error)) set({ status: 'error', error: commandErrorMessage(error, '暂时无法播放这首歌，请重试') })
     }
   },
-  playFromList: async (tracks, trackId, queueSource, startAt) => {
+  playFromList: async (tracks, trackId, queueSource, startAt, resumeCheckpoint = false) => {
     if (accountResetting) return
     const queue = uniqueTracks(tracks)
     const selected = queue.find(track => track.id === trackId)
@@ -284,13 +306,13 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       queueReversed: false, queueSource,
       ...(keepPlaying && changed ? { queueFeedback: { serial: ++queueFeedbackSerial, title: queueSource?.title } } : {}),
     })
-    if (!keepPlaying) await get().play(selected, startAt)
+    if (!keepPlaying || resumeCheckpoint) await get().play(selected, resumeCheckpoint ? undefined : startAt, false, resumeCheckpoint ? startAt : undefined)
     else {
       switchCollectionContext(queueSource?.collectionRef)
       if (startAt !== undefined && loadedTrackId === selected.id) {
         if (startAt === 0 || oldSource?.collectionRef !== queueSource?.collectionRef) get().seek(startAt)
-        if (status === 'paused') await get().toggle()
       }
+      if (status === 'paused') await ensurePlaying()
       if (selected.resolveParts) void prepareSeasonQueueEntry(selected).catch(() => undefined)
     }
   },
@@ -311,6 +333,8 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   moveInQueue: (id, direction) => { ++queueIntent; set(({ queue }) => { const next = [...queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next } }) },
   toggle: async () => {
     const { current, status } = get(); if (!current) return
+    const valid = controlScope.begin('transport')
+    const failed = (error: unknown) => { if (valid()) set({ error: commandErrorMessage(error, '无法控制播放，请重试') }) }
     // A newly opened player reads the same database checkpoint as selecting a
     // song. Only recovery of an interrupted attempt uses the live position.
     const resumeAt = () => status === 'error' ? initialPositionPending || loadedTrackId !== current.id ? requestedStartAt : Math.max(0, get().progressSeconds) : undefined
@@ -320,7 +344,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         ++playRequest
         loadedTrackId = null; initialPositionPending = false
         set({ status: 'paused' })
-        await controlMobileAudio('pause').catch(nativeError)
+        await controlMobileAudio('pause').catch(failed)
         return
       }
       if (loadedTrackId === current.id && status !== 'error') {
@@ -328,41 +352,49 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         set({ status: pausing ? 'paused' : 'playing' })
         try {
           await controlMobileAudio(pausing ? 'pause' : 'resume')
-          if (pausing) window.dispatchEvent(new Event('bilimusic-data-changed'))
+          if (valid() && pausing) window.dispatchEvent(new Event('bilimusic-data-changed'))
         }
-        catch (error) { set({ status, error: commandErrorMessage(error, '无法控制播放，请重试') }) }
+        catch (error) {
+          if (!valid()) return
+          const snapshot = await snapshotMobileAudio().catch(() => null)
+          if (!valid()) return
+          set({ status: snapshot?.id === current.id ? snapshot.status as PlaybackStatus : status, error: commandErrorMessage(error, '无法控制播放，请重试') })
+        }
         return
       }
       const nativeState = await snapshotMobileAudio().catch(() => ({} as IOSAudioState))
+      if (!valid()) return
       if (!nativeState.id || nativeState.stopped) loadedTrackId = null
       if (nativeState.id === current.id && !nativeState.stopped && status !== 'error') {
         const pausing = nativeState.status === 'playing' || nativeState.status === 'buffering'
         set({ status: pausing ? 'paused' : 'playing' })
-        await controlMobileAudio(pausing ? 'pause' : 'resume').catch(nativeError)
+        await controlMobileAudio(pausing ? 'pause' : 'resume').catch(failed)
       } else await get().play(current, resumeAt())
       return
     }
     const element = playerAudio()
     if (status === 'resolving') { ++playRequest; loadedTrackId = null; initialPositionPending = false; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
-    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => set({ status: 'error', error: '恢复播放失败' }))
+    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => { if (valid()) set({ status: 'error', error: '恢复播放失败' }) })
     else await get().play(current, resumeAt())
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
   next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null } if (fromEnded && repeatMode === 'one' && current) { await get().play(current, 0); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex], fromEnded && queue[nextIndex].id === current?.id ? 0 : undefined) },
   previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
   seek: (seconds) => {
-    desktopSeekRevision+=1; const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(nativeError); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
-  setVolume: (volume) => { const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(nativeError); else playerAudio().volume = normalized; set({ volume: normalized }) },
+    const valid = controlScope.begin('seek')
+    desktopSeekRevision+=1; const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(error => { if (valid()) nativeError(error) }); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
+  setVolume: (volume) => { const valid = controlScope.begin('volume'); const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(error => { if (valid()) nativeError(error) }); else playerAudio().volume = normalized; set({ volume: normalized }) },
   setRate: async rate => {
     if (!playbackRates.some(option => option === rate) || rate === get().rate) return
+    const valid = controlScope.begin('rate')
     const previous = get().rate
     set({ rate })
     try {
       if (isMobile && loadedTrackId) await controlMobileAudio('rate', rate)
       else if (audio) audio.playbackRate = rate
     } catch {
-      if (get().rate === rate) set({ rate: previous, error: '当前无法调整播放速度，请重试' })
+      if (valid()) set({ rate: previous, error: '当前无法调整播放速度，请重试' })
     }
   },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
@@ -373,7 +405,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage),
   merge: (persisted, initial) => {
     const saved = persisted as Partial<PlayerState> & { autoResume?: boolean }
-    const normalize = (track: Track) => ({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') })
+    const normalize = (track: Track) => withTrackTitle({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') })
     const retiredCurrent = saved.current?.id.startsWith('local:')
     const { autoResume: legacyAutoResume, ...restored } = saved
     return {
@@ -418,10 +450,13 @@ function randomOtherIndex(length: number, current: number) {
 }
 
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
-let nativeHistoryId: string | undefined
+let nativeHistorySession: string | undefined
+let nativeSession: string | undefined
 let floatingStyleRevision=0
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
   if (accountResetting) return
+  const session = state.engineInstanceId && state.sessionId ? `${state.engineInstanceId}:${state.sessionId}` : undefined
+  if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
   if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
   if (state.sleepDeadline !== undefined) {
@@ -429,17 +464,18 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
     const next = { deadline: state.sleepDeadline, duration: state.sleepDuration ?? 0, expired: Boolean(state.sleepExpired) }
     if (sleep.deadline !== next.deadline || sleep.duration !== next.duration || sleep.expired !== next.expired) usePlayerStore.setState({ sleep: next })
   }
-  if ((isIOS || isAndroid) && state.expandedEntries) {
+  if (isMobile && state.expandedEntries) {
     const current = usePlayerStore.getState()
     let queue = current.queue
     for (const [id, parts] of Object.entries(state.expandedEntries)) queue = replaceSeasonEntry(queue, id, parts)
     if (queue !== current.queue) usePlayerStore.setState({ queue })
   }
-  if ((isIOS || isAndroid) && state.track?.resolveParts && state.track.source.cid <= 0 && state.status !== 'error') return
-  if ((isIOS || isAndroid) && state.track && state.id !== usePlayerStore.getState().current?.id) {
+  if (isMobile && state.track?.resolveParts && state.track.source.cid <= 0 && state.status !== 'error') return
+  if (isMobile && state.track && state.id !== usePlayerStore.getState().current?.id) {
     const current = usePlayerStore.getState()
     if (current.current && (current.status !== 'resolving' || loadedTrackId === current.current.id) && current.queue.some(track => track.id === state.id)) {
       ++queueIntent
+      controlScope.invalidate()
       recoveryAttempted = false
       const track = state.track
       requestedStartAt = undefined
@@ -452,6 +488,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (state.action === 'resume') { void usePlayerStore.getState().toggle(); return }
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
+  if (state.action === 'ended' && state.autonomousQueue) return
   if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
   if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
   if (state.id !== usePlayerStore.getState().current?.id) return
@@ -462,8 +499,8 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (!state.stopped && state.status === 'paused' && usePlayerStore.getState().status !== 'paused') {
     window.dispatchEvent(new Event('bilimusic-data-changed'))
   }
-  if (!state.stopped && state.status === 'playing' && nativeHistoryId !== state.id) {
-    nativeHistoryId = state.id
+  if (!state.stopped && state.status === 'playing' && nativeHistorySession !== (session ?? state.id)) {
+    nativeHistorySession = session ?? state.id
     window.dispatchEvent(new Event('bilimusic-recent-changed'))
   }
   usePlayerStore.setState({ status: state.stopped && state.status === 'buffering' ? 'resolving' : state.status || 'paused', progressSeconds: state.position || 0,
@@ -516,8 +553,8 @@ if (isMobile) window.setInterval(() => {
   }
 }, 250)
 
-const syncNativeQueue = isIOS ? syncIOSQueue : syncAndroidQueue
-if (isIOS || isAndroid) usePlayerStore.subscribe((state, previous) => {
+const syncNativeQueue = isOHOS ? syncOHOSQueue : isIOS ? syncIOSQueue : syncAndroidQueue
+if (isMobile) usePlayerStore.subscribe((state, previous) => {
   if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled || state.resumeThresholdSeconds !== previous.resumeThresholdSeconds || state.queueSource !== previous.queueSource) {
     void ensureNativeReady().then(() => {
       const current = usePlayerStore.getState()
@@ -525,6 +562,13 @@ if (isIOS || isAndroid) usePlayerStore.subscribe((state, previous) => {
     }).catch(error => console.warn('BiliMusic: queue update failed', error))
   }
 })
+
+// A recreated WebView must mirror its restored/adopted queue even before the
+// user edits it. Read the native snapshot first to retain background advances.
+if (isMobile) void ensureNativeReady().then(() => {
+  const state = usePlayerStore.getState()
+  return syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
+}).catch(error => console.warn('BiliMusic: initial queue update failed', error))
 
 // Resolve first; leave the current audio playing if a new quality is unavailable.
 export async function reloadCurrentAudioSource() {
@@ -564,4 +608,10 @@ async function switchDesktopSource(url:string, valid:()=>boolean) {
     candidate.volume=latest.volume;candidate.muted=false
     usePlayerStore.setState({status:candidate.paused?'paused':'playing',progressSeconds:candidate.currentTime,error:null})
   }finally{if(audio!==candidate){candidate.pause();candidate.removeAttribute('src');candidate.load()}}
+}
+
+export async function prepareForApplicationUpdate() {
+  flushPosition()
+  flushPlayerSnapshot()
+  await positionWrite.catch(() => undefined)
 }

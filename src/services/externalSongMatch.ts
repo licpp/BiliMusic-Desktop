@@ -1,3 +1,4 @@
+import { coreSongTitle as core, containsSongTitle as containsTitle, songEditSimilarity as similarity, readableSongText as readable, songTextIdentity as compact, songVersionConflict, primarySongTitle } from '../domain/songIdentity'
 /** External playlist matching prototype. No requests or library writes happen here.
  * Scores rank evidence; they are not calibrated probabilities. Only resolved parts
  * can be automatically selected. The importer must let users review every choice.
@@ -24,63 +25,6 @@ export type SongCandidate = {
   playCount?: number
 }
 
-type Edition = 'live' | 'cover' | 'instrumental' | 'orchestral' | 'remix' | 'sped' | 'slowed' | 'remastered' | 'acoustic' | 'short' | 'cantonese' | 'mandarin'
-const editions: Record<Edition, RegExp> = {
-  live: /现场|演唱会|音乐会|\b(?:live|concert|the first take)\b/iu,
-  cover: /翻唱|翻弹|\bcover(?:ed)?\b/iu,
-  instrumental: /伴奏|纯音乐|无人声|\b(?:instrumental|off[ -]?vocal|karaoke|inst)\b\.?/iu,
-  orchestral: /管弦|交响|\b(?:orchestral|orchestra|orch)\b\.?/iu,
-  remix: /混音|重混|\b(?:remix|dj)\b/iu,
-  sped: /加速|\b(?:sped[ -]?up|nightcore)\b/iu,
-  slowed: /降速|慢速|\bslowed\b/iu,
-  remastered: /重制|重置|\bremaster(?:ed)?\b/iu,
-  acoustic: /不插电|\bacoustic\b/iu,
-  short: /片段|剪辑版|\b(?:short ver|tv size|tvサイズ)\b/iu,
-  cantonese: /粤语|粵語|\bcantonese\b/iu,
-  mandarin: /国语|國語|普通话|\bmandarin\b/iu,
-}
-
-function readable(text: string): string {
-  return text.replace(/<[^>]*>/g, ' ').replace(/&#(x[\da-f]+|\d+);/gi, (_, code: string) => {
-    const value = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code)
-    return value > 0 && value <= 0x10ffff ? String.fromCodePoint(value) : ' '
-  }).replace(/&(?:amp|quot|apos|lt|gt|nbsp);/gi, entity => ({
-    '&amp;': '&', '&quot;': '"', '&apos;': "'", '&lt;': '<', '&gt;': '>', '&nbsp;': ' ',
-  })[entity.toLowerCase()] || ' ').normalize('NFKC').toLowerCase()
-}
-
-function words(text: string): string {
-  return readable(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
-}
-const compact = (text: string) => words(text).replace(/ /g, '')
-function core(text: string): string {
-  return readable(text)
-    .replace(/[（(【\[]([^）)】\]]*)[）)】\]]/gu, (whole, label: string) =>
-      Object.values(editions).some(pattern => pattern.test(label)) || /^(?:official\s*)?(?:mv|audio|lyrics?|video)|官方|无损|音质|字幕|\b[248]k\b/iu.test(label) ? ' ' : whole)
-    .replace(/(?:\b(?:live|remix|instrumental|karaoke|cover|sped[ -]?up|slowed)\b|现场版|演唱会版|伴奏版|翻唱版|加速版|降速版)/giu, ' ').trim()
-}
-function containsTitle(candidate: string, title: string): boolean {
-  const phrase = words(title)
-  if (!phrase) return false
-  // Latin titles must match whole words: “Star” must not match “Starlight”.
-  if (/^[\x00-\x7f]+$/.test(phrase)) return ` ${words(candidate)} `.includes(` ${phrase} `)
-  return compact(candidate).includes(compact(title))
-}
-function similarity(a: string, b: string): number {
-  // Fuzzy matches are review-only. Cap input to keep batch matching bounded.
-  const left = [...compact(a)].slice(0, 160), right = [...compact(b)].slice(0, 160)
-  if (!left.length || !right.length) return 0
-  let previous = Array.from({ length: right.length + 1 }, (_, i) => i)
-  left.forEach((letter, i) => {
-    const row = [i + 1]
-    right.forEach((other, j) => row.push(Math.min(row[j] + 1, previous[j + 1] + 1, previous[j] + (letter === other ? 0 : 1))))
-    previous = row
-  })
-  return 1 - previous[right.length] / Math.max(left.length, right.length)
-}
-const artistPresent = (text: string, artist: string) => containsTitle(text, artist)
-const editionSet = (text: string) => new Set((Object.keys(editions) as Edition[]).filter(key => editions[key].test(readable(text))))
-
 export type ScoredSongCandidate = {
   candidate: SongCandidate
   score: number
@@ -106,15 +50,14 @@ export function scoreSongCandidate(song: ExternalSong, candidate: SongCandidate)
   if (titleEvidence === 'none') return { candidate, score: 0, titleEvidence, reasons: ['曲名不符'], automaticEligible: false, possibleScoreAfterDetails: 0 }
   reasons.push(titleEvidence === 'exact' ? '曲名一致' : titleEvidence === 'alias' ? '来源别名一致' : '曲名近似，需确认')
   const context = `${candidate.title} ${candidate.videoTitle || ''}`
-  const artistHits = artists.filter(artist => artistPresent(context, artist))
+  const artistHits = artists.filter(artist => containsTitle(context, artist))
   if (artists.length && artistHits.length === artists.length) { score += 25; reasons.push('标题包含全部歌手') }
   else if (artistHits.length) { score += 20; reasons.push('标题包含部分歌手') }
-  else if (artists.some(artist => artistPresent(candidate.uploaderName || '', artist))) {
+  else if (artists.some(artist => containsTitle(candidate.uploaderName || '', artist))) {
     score += 4; reasons.push('仅 UP 主名称相符，不能确认歌手')
   } else reasons.push('缺少歌手证据')
 
-  const wanted = editionSet(song.title), actual = editionSet(context)
-  const versionConflict = [...new Set([...wanted, ...actual])].some(key => wanted.has(key) !== actual.has(key))
+  const versionConflict = songVersionConflict(song.title, context)
   if (versionConflict) { score -= 30; reasons.push('原唱 / 现场 / 翻唱等版本不一致') }
   else { score += 5; reasons.push('未发现版本冲突') }
 
@@ -175,10 +118,7 @@ export function rankSongCandidates(song: ExternalSong, candidates: SongCandidate
  * fingerprint: equally long covers and undocumented live editions remain possible.
  */
 export function rankDurationFirstSongCandidates(song: ExternalSong, candidates: SongCandidate[]) {
-  const primary = song.title.replace(/[（(]([^）)]*)[）)]/gu, (whole, label: string) => {
-    const bilingual = /\p{Script=Han}/u.test(song.title.replace(whole, '')) && /^[\x00-\x7f\s]+$/.test(label)
-    return bilingual || /^\s*(?:feat\.?|ft\.?|featuring)\s/iu.test(label) ? ' ' : whole
-  }).trim()
+  const primary = primarySongTitle(song.title)
   const source = { ...song, aliases: [...(song.aliases || []).filter(alias=>!/电视剧|影视|主题曲|片头曲|片尾曲|插曲|\bOST\b/iu.test(alias)), ...(primary !== song.title ? [primary] : [])] }
   const titleContext = (candidate: SongCandidate) => `${candidate.title} ${candidate.videoTitle || ''}`
   const artists = song.artists.map(artist => artist.trim()).filter(Boolean)
@@ -191,11 +131,10 @@ export function rankDurationFirstSongCandidates(song: ExternalSong, candidates: 
     // A one-second dead zone accommodates integer-second Bilibili durations.
     const sigma = Math.max(2, duration * 0.01)
     const durationScore = delta === undefined ? 0 : 55 * Math.exp(-0.5 * (Math.max(0, delta - 1) / sigma) ** 2)
-    const artistHits = artists.filter(artist => artistPresent(titleContext(candidate), artist)).length
+    const artistHits = artists.filter(artist => containsTitle(titleContext(candidate), artist)).length
     const artistScore = artists.length && artistHits === artists.length ? 15 : artistHits ? 10 : 0
     const titleScore = evidence.titleEvidence === 'exact' ? 25 : evidence.titleEvidence === 'alias' ? 24 : 10
-    const wanted = editionSet(song.title), actualEdition = editionSet(titleContext(candidate))
-    const versionConflict = [...new Set([...wanted, ...actualEdition])].some(key => wanted.has(key) !== actualEdition.has(key))
+    const versionConflict = songVersionConflict(song.title, titleContext(candidate))
     const capturePenalty = unwantedCapture.test(`${titleContext(candidate)} ${candidate.description || ''}`) && !unwantedCapture.test(song.title) ? 20 : 0
     return { ...evidence, score: Math.max(0, durationScore + artistScore + titleScore + 5 - capturePenalty - (versionConflict ? 70 : 0)),
       durationDifference: delta, durationScore, capturePenalty, versionConflict }

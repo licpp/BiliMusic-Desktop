@@ -42,6 +42,27 @@ fn default_provider() -> String {
     "lrclib".into()
 }
 
+#[derive(Debug)]
+pub struct LyricSearchOutcome {
+    pub candidates: Vec<LyricCandidate>,
+    pub unavailable_sources: Vec<&'static str>,
+}
+
+impl LyricSearchOutcome {
+    pub fn complete(&self) -> bool {
+        self.unavailable_sources.is_empty()
+    }
+
+    pub fn warning(&self) -> Option<String> {
+        (!self.complete()).then(|| {
+            format!(
+                "{}歌词请求失败，请稍后重新搜索",
+                self.unavailable_sources.join("、")
+            )
+        })
+    }
+}
+
 pub struct LrclibProvider {
     client: Client,
     api_origin: String,
@@ -101,26 +122,33 @@ impl LrclibProvider {
         &self,
         title: &str,
         artist: Option<&str>,
-    ) -> Result<Vec<LyricCandidate>, LyricsProviderError> {
-        // Search each catalog once. A slow or unavailable source cannot exclude working sources.
+    ) -> Result<LyricSearchOutcome, LyricsProviderError> {
+        // Working sources still return results, but a missing source is not an
+        // empty catalog result and must not become a complete search cache.
         let budget = Duration::from_secs(8);
         let (primary, netease, qq) = tokio::join!(
             tokio::time::timeout(budget, self.search_primary(title, artist)),
             tokio::time::timeout(budget, self.search_fallback(title, artist)),
             tokio::time::timeout(budget, self.search_domestic("qq", title, artist))
         );
-        let mut candidates = vec![];
+        let mut outcome = LyricSearchOutcome {
+            candidates: vec![],
+            unavailable_sources: vec![],
+        };
         let mut available = false;
-        for result in [primary, netease, qq] {
-            if let Ok(Ok(found)) = result {
-                available = true;
-                candidates.extend(found)
+        for (source, result) in [("LRCLIB", primary), ("网易云", netease), ("QQ 音乐", qq)] {
+            match result {
+                Ok(Ok(found)) => {
+                    available = true;
+                    outcome.candidates.extend(found);
+                }
+                _ => outcome.unavailable_sources.push(source),
             }
         }
         if !available {
             return Err(LyricsProviderError::Unavailable);
         }
-        Ok(candidates)
+        Ok(outcome)
     }
 
     async fn search_primary(
@@ -302,9 +330,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_netease_is_reported_even_when_other_sources_work() {
+        let (provider, _, server) = fixture(0, false, true).await;
+        let result = provider.search("底色", None).await.unwrap();
+        assert_eq!(result.unavailable_sources, vec!["网易云"]);
+        assert!(!result.complete());
+        assert!(result.warning().unwrap().contains("网易云歌词请求失败"));
+        assert!(result.candidates.iter().any(|c| c.provider == "qq"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn complete_search_can_be_cached_without_a_warning() {
+        let (provider, _, server) = fixture(0, true, true).await;
+        let result = provider.search("底色", None).await.unwrap();
+        assert!(result.complete());
+        assert!(result.warning().is_none());
+        assert_eq!(result.candidates.len(), 3);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn empty_primary_does_not_hide_a_domestic_search_failure() {
+        let router =
+            Router::new().route("/api/search", get(|| async { Json(serde_json::json!([])) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut provider = LrclibProvider::new().unwrap();
+        provider.api_origin = origin.clone();
+        provider.fallback_origin = origin.clone();
+        provider.qq_origin = origin;
+        let result = provider.search("底色", None).await.unwrap();
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.unavailable_sources, vec!["网易云", "QQ 音乐"]);
+        assert!(!result.complete());
+        assert!(result.warning().is_some());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn successful_empty_netease_catalog_is_not_a_service_failure() {
+        let router = Router::new()
+            .route("/api/search", get(|| async { Json(serde_json::json!([])) }))
+            .route("/api/search/get/web", get(|| async { Json(serde_json::json!({"code":200,"result":{"songs":[]}})) }))
+            .route("/cgi-bin/musics.fcg", post(|| async { Json(serde_json::json!({"code":0,"music.search.SearchCgiService":{"code":0,"data":{"body":{"song":{"list":[]}}}}})) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut provider = LrclibProvider::new().unwrap();
+        provider.api_origin = origin.clone();
+        provider.fallback_origin = origin.clone();
+        provider.qq_origin = origin;
+        let result = provider.search("不存在的歌词", None).await.unwrap();
+        assert!(result.candidates.is_empty());
+        assert!(result.complete());
+        assert!(result.warning().is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn retries_temporary_503_before_returning_results() {
         let (provider, count, server) = fixture(1, false, false).await;
-        let results = provider.search("test", None).await.unwrap();
+        let results = provider.search("test", None).await.unwrap().candidates;
         assert_eq!(count.load(Ordering::SeqCst), 2);
         assert_eq!(results[0].provider, "lrclib");
         server.abort();
@@ -313,7 +401,7 @@ mod tests {
     #[tokio::test]
     async fn switches_provider_when_primary_stays_unavailable() {
         let (provider, count, server) = fixture(usize::MAX, true, false).await;
-        let results = provider.search("test", None).await.unwrap();
+        let results = provider.search("test", None).await.unwrap().candidates;
         assert_eq!(count.load(Ordering::SeqCst), 3);
         assert_eq!(results[0].provider, "netease");
         assert_eq!(results[0].duration, 120.0);
@@ -334,7 +422,11 @@ mod tests {
     #[tokio::test]
     async fn qq_fallback_and_domestic_supplements_restore_by_provider_id() {
         let (provider, _, server) = fixture(usize::MAX, false, true).await;
-        let results = provider.search("test", Some("artist")).await.unwrap();
+        let results = provider
+            .search("test", Some("artist"))
+            .await
+            .unwrap()
+            .candidates;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].provider, "qq");
         assert_eq!(
@@ -435,7 +527,8 @@ mod tests {
         let results = provider
             .search("Yesterday", Some("The Beatles"))
             .await
-            .unwrap();
+            .unwrap()
+            .candidates;
         assert!(
             results
                 .iter()

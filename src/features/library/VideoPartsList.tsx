@@ -11,7 +11,7 @@ import { PlayingMark } from '../../shared/PlayingMark'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { usePlayerStore, type QueueSource } from '../player/playerStore'
-import { TrackMenuButton } from './TrackActions'
+import { TrackMenuButton } from './TrackMenuButton'
 import { showTrackMenu } from './trackActionStore'
 import { BatchTrackActions, useTrackSelection } from './useTrackSelection'
 

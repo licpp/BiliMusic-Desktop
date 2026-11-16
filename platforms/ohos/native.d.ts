@@ -3,3 +3,6 @@ export const tauriOhosPluginResponse: (id: number, success: boolean, payload: st
 export const tauriOhosPluginClose: () => void;
 export const bilimusicOhosState: (payload: string) => void;
 export const bilimusicOhosListening: (payload: string) => void;
+
+export const bilimusicOhosResolve: (request: number, payload: string) => void;
+export const bilimusicOhosCancelResolve: () => void;

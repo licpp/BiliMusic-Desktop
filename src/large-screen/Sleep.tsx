@@ -1,3 +1,4 @@
+import type { NativeControlAction } from '../features/player/contracts'
 import { useEffect, useState } from 'react'
 import { usePlayerStore } from '../features/player/playerStore'
 import { controlMobileAudio } from '../features/player/mobileAudio'
@@ -8,7 +9,7 @@ import { LargeDialog } from './LargeDialog'
 export function LargeSleep({ open, onClose }: { open: boolean; onClose: () => void }) {
   const sleep = usePlayerStore(s => s.sleep), [minutes, setMinutes] = useState(30), [busy, setBusy] = useState(false), [error, setError] = useState(''), [now, setNow] = useState(Date.now())
   useEffect(() => { if (!open || !sleep.deadline) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [open, sleep.deadline])
-  const action = async (command: string, value = 0) => { setBusy(true); setError(''); try { await controlMobileAudio(command, value); onClose() } catch (e) { setError(commandErrorMessage(e)) } finally { setBusy(false) } }
+  const action = async (command: NativeControlAction, value = 0) => { setBusy(true); setError(''); try { await controlMobileAudio(command, value); onClose() } catch (e) { setError(commandErrorMessage(e)) } finally { setBusy(false) } }
   if (!open && !sleep.expired) return null
   return <LargeDialog title={sleep.expired ? '播放已定时暂停' : '定时暂停'} onClose={() => { if (sleep.expired) void action('sleepDismiss'); else onClose() }}>
     {sleep.expired ? <div className="large-options"><button disabled={busy} onClick={() => void action('sleepDismiss')}>关闭</button><button disabled={busy} onClick={() => void action('sleepRepeat')}>再听 {Math.round(sleep.duration / 60)} 分钟</button></div> : <>

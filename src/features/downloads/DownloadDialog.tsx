@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { useState } from 'react'
 import { useQuery,useQueryClient } from '@tanstack/react-query'
 import { Download, LoaderCircle, Headphones, FileAudio } from 'lucide-react'
@@ -17,7 +18,7 @@ function DownloadDialog({request}:{request:NonNullable<ReturnType<typeof useDown
  const [options,setOptions]=useState(remembered),[starting,setStarting]=useState(false),[error,setError]=useState('')
  const destination=useQuery({queryKey:androidDownloadDestinationKey,queryFn:()=>androidDownloadDestination(),enabled:isAndroid,retry:false})
  const single=request.tracks.length===1,track=request.tracks[0]
- const quality=useQuery({queryKey:['download-options',accountEpoch(),track.id],queryFn:async()=>{const cid=track.source.cid>0?track.source.cid:(await getVideoParts(track.source.bvid)).parts[0]?.cid;if(!cid)throw new Error('暂无可下载的音频');return getMediaOptions(track.source.bvid,cid)},enabled:single,retry:false,staleTime:60000})
+ const quality=useQuery({queryKey:accountQueryKey('download-options', track.id),queryFn:async()=>{const cid=track.source.cid>0?track.source.cid:(await getVideoParts(track.source.bvid)).parts[0]?.cid;if(!cid)throw new Error('暂无可下载的音频');return getMediaOptions(track.source.bvid,cid)},enabled:single,retry:false,staleTime:60000})
  const choices=single?quality.data?.audio||[]:batchChoices
  const missing=options.audioId!==0 && !choices.some(choice=>choice.id===options.audioId)
  const formatMissing=options.exportFormat==='flac'&&single&&!!quality.data&&!choices.some(choice=>choice.id===30251)

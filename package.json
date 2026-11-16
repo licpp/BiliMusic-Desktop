@@ -1,12 +1,13 @@
 {
   "name": "bilimusic-desktop",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "node --test tests/*.test.mjs",
+    "test:rust": "node scripts/rust-test.mjs",
     "test:sync": "node scripts/test-sync.mjs",
     "test:sync:stress": "node scripts/test-sync.mjs --stress",
     "preview": "vite preview",
@@ -25,7 +26,8 @@
     "ohos:build": "node scripts/ohos.mjs build",
     "dev:large-screen": "vite --mode large-screen",
     "build:large-screen": "tsc --noEmit && vite build --mode large-screen",
-    "android:large-screen": "node scripts/android-local.mjs large-screen"
+    "android:large-screen": "node scripts/android-local.mjs large-screen",
+    "build:updater": "node scripts/build-updater.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.89.0",
@@ -33,6 +35,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-store": "^2.4.4",
     "lucide-react": "^0.544.0",
+    "opencc-js": "1.4.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

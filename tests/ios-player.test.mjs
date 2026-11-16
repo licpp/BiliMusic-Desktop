@@ -14,7 +14,7 @@ const output = await build({
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
       export const getTrackPlaybackPlan = async (t,r) => globalThis.iosTest?.plan ? globalThis.iosTest.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
-    ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true' : path === './iosAudio' ? `
+    ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true; export const isOHOS = false' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
       export const playIOSAudio = async (...args) => globalThis.iosTest.plays.push(args);
       export const iosListenerAge = () => 0;
@@ -31,11 +31,11 @@ const output = await build({
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {}, dispatchEvent() {}, setInterval() { return 0 } }
+  globalThis.window = { addEventListener() {}, dispatchEvent(event) { globalThis.iosTest.events.push(event.type) }, setInterval() { return 0 } }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('iOS must not create WebView audio') } }
-  globalThis.iosTest = { controls: [], plays: [], queues: [], resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
+  globalThis.iosTest = { events: [], controls: [], plays: [], queues: [], resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
   const m = { exports: {} }; new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), m, m.exports)
   return m.exports
 }
@@ -162,4 +162,14 @@ test('iOS defers automatic duration decisions to native readiness and leaves exp
  assert.deepEqual(iosTest.plays.at(-1)[9],{enabled:true,thresholdSeconds:600,collection:false,durationSeconds:0})
  await s.getState().play({...track('2'),source:{...track('2').source,page:1}},42)
  assert.equal(iosTest.plays.at(-1)[2],42);assert.equal(iosTest.plays.at(-1)[9],undefined)
+})
+
+test('native same-track repeats refresh recents once per logical session; source switches do not duplicate it',async()=>{
+ const {usePlayerStore:s}=setup();await new Promise(setImmediate)
+ const a=track('1');await s.getState().play(a)
+ const sample={id:a.id,track:a,engineInstanceId:'native-engine',sessionId:'first-play',sourceRevision:1,status:'playing',position:1}
+ iosTest.event(sample);iosTest.event({...sample,position:2});iosTest.event({...sample,sourceRevision:2,position:3})
+ assert.equal(iosTest.events.filter(e=>e==='bilimusic-recent-changed').length,1)
+ iosTest.event({...sample,sessionId:'second-play',sourceRevision:3,position:0})
+ assert.equal(iosTest.events.filter(e=>e==='bilimusic-recent-changed').length,2)
 })

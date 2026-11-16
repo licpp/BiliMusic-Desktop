@@ -27,6 +27,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
         ids['HarmonyOS NEXT'] = 'ohos'
     if any(p['platform'] == 'Android Large Screen' for p in build['platforms']):
         ids['Android Large Screen'] = 'android-large'
+    original_names = {p['platform']: p['file'] for p in build['platforms']}
     for package in build['platforms']:
         path = build_dir / package['file']
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Build output changed: ' + path.name)
@@ -40,6 +41,8 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
         for channel in platform['channels']:
             root = {'github': 'https://github.com/licpp/BiliMusic-Desktop', 'gitee': 'https://gitee.com/yoaker/BiliMusic-Desktop'}[channel['id']]
             channel['url'] = root + '/releases/download/v' + version + '/' + name
+    from updater_artifacts import prepare_updater
+    prepare_updater(build_dir, output, build, original_names)
     build.pop('releasePublished', None)
     build.pop('websiteChanged', None)
     build.update(purpose='release publication', packageRevision=revision, packagedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())

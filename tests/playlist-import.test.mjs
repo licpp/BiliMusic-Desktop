@@ -59,3 +59,10 @@ test('分享文字自动识别五个平台，拒绝伪造后缀域名',async()=>
  for(const [url,name] of [['https://m.kugou.com/songlist/gcid_a/','酷狗音乐'],['https://www.kuwo.cn/playlist_detail/1','酷我音乐'],['https://h5.nf.migu.cn/app/v4/p/share/playlist/index.html?id=1','咪咕音乐'],['https://music.163.com/#/playlist?id=1','网易云音乐'],['https://y.qq.com/n/ryqq/playlist/1','QQ 音乐']])assert.equal(playlistLinkPlatform('分享给你 '+url),name)
  assert.equal(playlistLinkPlatform('https://m.kugou.com.evil.test/playlist/1'),undefined)
 })
+
+test('搜索词保留共用版本标记，Inst/Orch 的简化只影响召回不影响版本校验',()=>{
+ for(const edition of ['Live','Cover','Remix','Remastered','Acoustic','Sped Up','Slowed']) {
+  const song={sourceId:'version',title:`红豆 (${edition})`,artists:['王菲'],durationSeconds:240}
+  assert.match(importKeyword(song),new RegExp(edition,'i'))
+ }
+})

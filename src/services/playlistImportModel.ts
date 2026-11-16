@@ -1,3 +1,4 @@
+import { primarySongTitle, songEditions, songTextIdentity as normalized } from '../domain/songIdentity'
 import { rankDurationFirstSongCandidates, type ExternalSong, type SongCandidate } from './externalSongMatch'
 import type { Track } from '../domain/track'
 
@@ -29,13 +30,12 @@ export function parseSongList(text: string): ImportPlaylist {
 }
 
 export function importKeyword(song: ImportSong, simple = false) {
-  const primary = song.title.replace(/[（(](?:feat\.?|ft\.?|featuring)\s[^）)]*[）)]/giu,'')
+  const primary = primarySongTitle(song.title)
     .replace(/[（(][^）)]*\b(?:inst|orch)\b\.?[^）)]*[）)]/giu,'')
-    .replace(/[（(]([A-Za-z.\s]+)[）)]/g,(whole,label: string) => /live|remix|cover|instrumental/i.test(label) ? whole : '')
+    .replace(/[（(]([A-Za-z.\s]+)[）)]/g,(whole,label: string) => songEditions(label).size ? whole : '')
     .trim()
   return simple ? primary : `${primary} ${song.artists[0] || ''}`.trim()
 }
-function normalized(value: string) { return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'') }
 
 /** Choose a useful default without making near-identical uploads require review.
  * Version conflicts and clear wrong-song/wrong-duration results are still skipped.
@@ -51,7 +51,7 @@ export function chooseImportMatch(song: ImportSong, choices: ImportChoice[]): Im
     const distinctive = titleSize > 4 || (titleSize >= 3 && item.durationDifference !== undefined && item.durationDifference <= 1.5)
     const albumHit = song.album && normalized(song.album).length > 5 && context.includes(normalized(song.album))
     if (!artistHit && !distinctive && !albumHit) continue
-    const live = /\blive\b|现场|演唱会/iu.test(song.title)
+    const live = songEditions(song.title).has('live')
     const year = live ? song.album?.match(/(?:19|20)\d{2}/)?.[0] : undefined
     const actualYears: string[] = live ? `${c.title} ${c.videoTitle || ''} ${c.partTitle || ''}`.match(/(?:19|20)\d{2}/g) || [] : []
     if (year && actualYears.length && !actualYears.includes(year)) continue

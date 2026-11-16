@@ -1,10 +1,12 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { ArrowLeft, ArrowRight, Check, ChevronRight, FileText, FolderHeart, Link2, ListPlus, LoaderCircle, Minus, Music2, Pause, Play, RefreshCw, Search, Square, X } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { importFavoriteFolders, type FolderImportResult } from '../../services/biliFavoriteImport'
-import { commandErrorMessage, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, listPlaylistTracks, type Playlist } from '../../services/desktopApi'
+import { commandErrorMessage, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, listPlaylistTracks } from '../../services/desktopApi'
+import type { Playlist } from '../../domain/library'
 import { reloadLinkedFolder } from '../../services/linkedFolders'
 import { parseSongList, playlistLinkPlatform, type ImportChoice, type ImportPlaylist } from '../../services/playlistImportModel'
 import { acceptImportCandidate, bootPlaylistImport, clearPlaylistImport, commitImportTracks, findImportCandidates, loadPlaylistReview, acceptReviewCandidate, newPlaylistImport, pausePlaylistImport, runPlaylistImport, usePlaylistImport, type ImportJob } from '../../services/playlistImport'
@@ -22,7 +24,7 @@ const sources: {id:Source;title:string;description:string}[] = [
 export function ImportPlaylistButton({onClick,sidebar=false}:{onClick:()=>void;sidebar?:boolean}) {
   const state=usePlaylistImport(value=>value.job?.state)
   const running=state==='matching'||state==='waiting'||state==='saving'
-  return <button type="button" className={`playlist-import-trigger${sidebar?' sidebar-import-trigger':''}`} aria-label="导入歌单" title="导入歌单" onClick={onClick}>
+  return <button type="button" className={`playlist-import-trigger library-import-action${sidebar?' sidebar-import-trigger':''}`} aria-label="导入歌单" title="导入歌单" onClick={onClick}>
     {running?<LoaderCircle size={16} className="spin"/>:<ListPlus size={17}/>}<span>{running?'导入中':'导入'}</span>
   </button>
 }
@@ -39,8 +41,8 @@ export function ImportFavorites({onClose,onImported,reviewPlaylist}:{onClose:()=
   const [biliResults,setBiliResults]=useState<FolderImportResult[]>([])
   const copyIds=useRef(new Map<number,string>())
   const cancelled=useRef(false),manualAbort=useRef<AbortController|undefined>(undefined),dialog=useRef<HTMLDivElement>(null)
-  const account=useQuery({queryKey:['account'],queryFn:getAccountProfile,enabled:page==='bili'})
-  const folders=useQuery({queryKey:['bili-favorites',account.data?.userId],queryFn:getFavoriteFolders,enabled:page==='bili'&&Boolean(account.data?.loggedIn)})
+  const account=useQuery({queryKey:accountQueryKey('account'),queryFn:getAccountProfile,enabled:page==='bili'})
+  const folders=useQuery({queryKey:accountQueryKey('bili-favorites', account.data?.userId),queryFn:getFavoriteFolders,enabled:page==='bili'&&Boolean(account.data?.loggedIn)})
   const running=Boolean(job&&['matching','waiting','saving'].includes(job.state))
   const refresh=()=>Promise.all(['playlists','library'].map(key=>client.invalidateQueries({queryKey:[key]})))
   useEffect(()=>{

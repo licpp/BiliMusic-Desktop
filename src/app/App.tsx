@@ -1,3 +1,6 @@
+import { useUpdateStore } from '../services/updates'
+import { trackSubtitle } from '../domain/sourceTitle'
+import { accountQueryKey } from '../services/queryKeys'
 import { restoreScroll } from '../shared/restoreScroll'
 import {useOrganizer} from '../shared/useOrganizer'
 import {useListPreferences,playlistEntity} from '../services/listPreferences'
@@ -65,7 +68,7 @@ import { accountEpoch } from '../services/accountScope'
 import { AccountControl } from '../features/account/AccountControl'
 import { ImportFavorites, ImportPlaylistButton } from '../features/library/ImportFavorites'
 import { usePlaylistImport } from '../services/playlistImport'
-import type { Playlist } from '../services/desktopApi'
+import type { Playlist } from '../domain/library'
 import { PlayingMark } from '../shared/PlayingMark'
 import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
@@ -91,6 +94,7 @@ const navigation = [
 export function App() {
   useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
+  const updateAvailable = useUpdateStore(state => state.result?.status === 'available')
   const syncAttention = useSyncAttention(state => state.library || state.statistics)
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
@@ -172,16 +176,16 @@ export function App() {
   const setTheme = useThemeStore((state) => state.setTheme)
   const queryClient = useQueryClient()
   useEffect(() => {
-    const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['playlists'] }); void queryClient.invalidateQueries({ queryKey: ['library'] }) }
+    const refresh = () => { void queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }) }
     window.addEventListener('bilimusic-import-updated', refresh)
     return () => window.removeEventListener('bilimusic-import-updated', refresh)
   }, [queryClient])
-  const searchHistory = useQuery({ queryKey: ['search-history'], queryFn: listSearchHistory })
-  const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(['search-history'], []) })
-  const playlists = useQuery({ queryKey: ['playlists'], queryFn: listPlaylists })
-  const homeTracks = useQuery({ queryKey: ['home-recent'], queryFn: listRecentTracks })
+  const searchHistory = useQuery({ queryKey: accountQueryKey('search-history'), queryFn: listSearchHistory })
+  const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(accountQueryKey('search-history'), []) })
+  const playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists })
+  const homeTracks = useQuery({ queryKey: accountQueryKey('home-recent'), queryFn: listRecentTracks })
   useEffect(() => { void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined) }, [homeTracks.data, queryClient])
-  const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: ['playlists'] }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
+  const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
   const displayPreferences=useListPreferences()
   const allPlaylists = rankList(playlists.data || [FAVORITES_PLAYLIST],displayPreferences.data?.preferences||[],playlistEntity)
   const sidebarOrganizer = useOrganizer(allPlaylists.map(item => ({id:playlistEntity(item),name:item.name,coverUrl:item.coverUrl,kind:item.biliFolderId?'linked' as const:'playlist' as const})), '整理歌单')
@@ -230,8 +234,8 @@ export function App() {
       const stored = await saveLibraryTrack({ ...canonical, artist: current.artist, album: current.album })
       if (cancelled || epoch !== accountEpoch() || usePlayerStore.getState().current?.id !== current.id) return
       usePlayerStore.getState().updateTrack({ ...stored, videoTitle: canonical.videoTitle, partCount: canonical.partCount })
-      void queryClient.invalidateQueries({ queryKey: ['library'] })
-      void queryClient.invalidateQueries({ queryKey: ['home-recent'] })
+      void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') })
+      void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') })
     }).catch(() => undefined)
     return () => { cancelled = true }
   }, [current?.id, current?.partCount, current?.resolveParts, queryClient])
@@ -302,7 +306,7 @@ export function App() {
     const normalized = value.trim()
     if (!normalized) { openSearch(''); return }
     openSearch(normalized)
-    queryClient.setQueryData<string[]>(['search-history'], (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
+    queryClient.setQueryData<string[]>(accountQueryKey('search-history'), (existing = []) => [normalized, ...existing.filter((item) => item !== normalized)].slice(0, 30))
   }
   const submitSearch = (event: FormEvent) => { event.preventDefault(); if (!selectedCollection) runSearch(query) }
   const toggleCurrentFavorite = async () => {
@@ -327,9 +331,9 @@ export function App() {
         }
       }
       void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['home-recent'] }),
-        queryClient.invalidateQueries({ queryKey: ['playlists'] }),
+        queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }),
+        queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }),
+        queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }),
       ])
     } catch (error) {
       favoriteDesired.current = undefined
@@ -352,8 +356,8 @@ export function App() {
   }, [lyricsOpen,miniMode,windowReady])
   useEffect(() => {
     const refreshRecent = () => {
-      void queryClient.invalidateQueries({ queryKey: ['home-recent'] })
-      void queryClient.invalidateQueries({ queryKey: ['library', 'recent'] })
+      void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') })
+      void queryClient.invalidateQueries({ queryKey: accountQueryKey('library', 'recent') })
     }
     window.addEventListener('bilimusic-recent-changed', refreshRecent)
     return () => window.removeEventListener('bilimusic-recent-changed', refreshRecent)
@@ -474,10 +478,10 @@ export function App() {
               key={label}
               onClick={() => { setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false); libraryReturn.current = null }}
               title={label}
-              aria-label={label === '我的' && syncAttention ? `我的，${syncAttention}` : label}
+              aria-label={label === '我的' ? `我的${syncAttention ? `，${syncAttention}` : updateAvailable ? '，有新版本' : ''}` : label}
               aria-current={navIsActive(label) ? 'page' : undefined}
             >
-              <Icon size={20} />{label === '我的' && syncAttention && <span className="sync-nav-warning" aria-hidden="true">!</span>}<span className="mobile-nav-label">{label}</span>
+              <Icon size={20} />{label === '我的' && syncAttention && <span className="sync-nav-warning" aria-hidden="true">!</span>}{label === '我的' && updateAvailable && !syncAttention && <span className="update-nav-dot" aria-hidden="true"/>}<span className="mobile-nav-label">{label}</span>
             </button>
           ))}
         </nav>
@@ -486,9 +490,9 @@ export function App() {
       <aside id="library-navigation" className="library-panel" aria-label="歌单导航">
         <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
-          <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions" hidden={!playlistsExpanded}>
+          <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions library-action-rail" hidden={!playlistsExpanded}>
             {sidebarOrganizer.controls}
-            {!sidebarOrganizer.editing && <><button type="button" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
+            {!sidebarOrganizer.editing && <><button type="button" className="library-create-action" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
             <ImportPlaylistButton sidebar onClick={() => setImportOpen(true)}/></>}
           </div></div>
 
@@ -540,7 +544,7 @@ export function App() {
               <div className="hero-summary">
                 <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
                 <h2>{current?.title || '你的音乐，从这里开始'}</h2>
-                <p>{current ? `${current.artist || '歌手未知'}${current.album ? ` · ${current.album}` : ''}` : '搜索 B 站音乐，收藏喜欢的分 P，整理自己的歌单。'}</p>
+                <p>{current ? `${trackSubtitle(current)}${current.album ? ` · ${current.album}` : ''}` : '搜索 B 站音乐，收藏喜欢的分 P，整理自己的歌单。'}</p>
               </div>
               <button className="primary-action" onClick={() => { if (current) void toggle(); else if (homeTracks.data?.[0]) void usePlayerStore.getState().playFromList(homeTracks.data,homeTracks.data[0].id); else openSearch() }}>{status === 'playing' ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{current ? status === 'playing' ? '暂停播放' : '继续聆听' : homeTracks.data?.length ? '继续聆听' : '开始探索'}</button>
             </div>
@@ -585,13 +589,13 @@ export function App() {
         <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' ? queueSource.title : '接下来'}</h3></div><div className="queue-header-actions"><button disabled={queue.length < 2} onClick={reverseQueue} aria-pressed={queueReversed} aria-label={queueReversed ? '恢复原序' : '倒序播放'} title={queueReversed ? '恢复原序' : '倒序播放'}><ArrowDownUp size={16}/><span>{queueReversed ? '倒序' : '原序'}</span></button><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">{isMobile ? <ChevronDown size={20}/> : '×'}</button></div></header>
         <div className="now-card">
           <Artwork src={current?.coverUrl} className="now-art" />
-          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
+          <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
         <QueueList open={queueOpen}/>
       </aside>
 
       <footer className="player-dock">
-        <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} style={{ '--dock-swipe-x': `${dockSwipeX}px` } as CSSProperties} onPointerDown={startDockSwipe} onPointerMove={moveDockSwipe} onPointerUp={finishDockSwipe} onPointerCancel={() => { dockGesture.current = null; setDockSwipeX(0); setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => { if (suppressDockClick.current) { suppressDockClick.current = false; return }; setLyricsOpen(true) }} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? current.artist || '歌手未知' : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
+        <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} style={{ '--dock-swipe-x': `${dockSwipeX}px` } as CSSProperties} onPointerDown={startDockSwipe} onPointerMove={moveDockSwipe} onPointerUp={finishDockSwipe} onPointerCancel={() => { dockGesture.current = null; setDockSwipeX(0); setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => { if (suppressDockClick.current) { suppressDockClick.current = false; return }; setLyricsOpen(true) }} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         <div className="dock-center">
           {queueFeedback && <div className="queue-switch-notice" key={queueFeedback.serial} role="status">
             <ListMusic size={15}/><span>{queueFeedback.title ? `已切换到 ${queueFeedback.title}` : '已切换播放队列'}</span>

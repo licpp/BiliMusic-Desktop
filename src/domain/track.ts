@@ -1,3 +1,4 @@
+import type { SourceTitleContext } from './sourceTitle'
 export type TrackSource = {
   provider: 'bilibili'
   bvid: string
@@ -19,6 +20,8 @@ export type Track = {
   liked: boolean
   resolveParts?: boolean
   chapterContext?: boolean
+  sourceTitleContext?: SourceTitleContext
+  titleOverridden?: boolean
   displayTitle?: string
   videoTitle?: string
   publishedAt?: number

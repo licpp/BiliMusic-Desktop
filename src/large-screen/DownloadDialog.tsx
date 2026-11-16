@@ -1,3 +1,4 @@
+import { accountKeyAt } from '../services/queryKeys'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, FileAudio, Headphones, LoaderCircle } from 'lucide-react'
@@ -22,7 +23,7 @@ function LargeDownloadDialog({ request }: { request: NonNullable<ReturnType<type
   const [options, setOptions] = useState(rememberedDownloadOptions), [starting, setStarting] = useState(false), [error, setError] = useState('')
   const single = request.tracks.length === 1, track = request.tracks[0]
   const destination = useQuery({ queryKey: androidDownloadDestinationKey, queryFn: () => androidDownloadDestination(), enabled: isAndroid, retry: false })
-  const quality = useQuery({ queryKey: ['download-options', epoch, track.id], queryFn: async () => {
+  const quality = useQuery({ queryKey: accountKeyAt(epoch, 'download-options', track.id), queryFn: async () => {
     const cid = track.source.cid > 0 ? track.source.cid : (await getVideoParts(track.source.bvid)).parts[0]?.cid
     if (!cid) throw Error('暂无可下载的音频')
     return getMediaOptions(track.source.bvid, cid)

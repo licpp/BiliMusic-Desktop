@@ -165,6 +165,15 @@ pub async fn sync_background(
     hint: Hint,
     bulk_import: Option<bool>,
 ) -> Result<Report, String> {
+    super::v2_net::discovery_round(background_inner(app, database, state, hint, bulk_import)).await
+}
+async fn background_inner(
+    app: AppHandle,
+    database: State<'_, Database>,
+    state: State<'_, SyncState>,
+    hint: Hint,
+    bulk_import: Option<bool>,
+) -> Result<Report, String> {
     let cfg = config(&database)?;
     if cfg.uid.is_empty() || super::active(&database, &cfg.uid).is_err() {
         return Ok(Report::default());

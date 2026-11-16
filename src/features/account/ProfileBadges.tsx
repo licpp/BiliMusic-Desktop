@@ -1,5 +1,5 @@
 import { Crown, Shield } from 'lucide-react'
-import type { AccountProfile } from '../../services/desktopApi'
+import type { AccountProfile } from '../../domain/account'
 
 export function ProfileBadges({ level, vipActive }: Pick<AccountProfile, 'level' | 'vipActive'>) {
   if (level == null && !vipActive) return null

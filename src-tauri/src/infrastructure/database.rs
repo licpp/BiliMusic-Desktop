@@ -4,10 +4,16 @@ use tauri::{AppHandle, Manager};
 
 pub struct Database(pub Mutex<Connection>, pub std::path::PathBuf);
 
+pub fn account_session(c: &Connection) -> rusqlite::Result<String> {
+    c.execute_batch("CREATE TEMP TABLE IF NOT EXISTS account_session(token TEXT NOT NULL); INSERT INTO account_session SELECT lower(hex(randomblob(16))) WHERE NOT EXISTS(SELECT 1 FROM account_session);")?;
+    c.query_row("SELECT token FROM account_session", [], |r| r.get(0))
+}
+
 impl Database {
     pub fn open(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
         let data_dir = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
+        crate::sync::request_budget::initialize(&data_dir);
         let profile = std::fs::read_to_string(data_dir.join("active-profile")).unwrap_or_default();
         let path = if !profile.is_empty() && profile.bytes().all(|c| c.is_ascii_digit()) {
             data_dir.join(format!("profile-{profile}.sqlite3"))
@@ -85,6 +91,7 @@ mod tests {
             )
             .unwrap();
         let db = Database(Mutex::new(guest), dir.clone());
+        let guest_session = account_session(&db.0.lock().unwrap()).unwrap();
         db.switch(Some(42), Some("SESSDATA=test")).unwrap();
         {
             let c = db.0.lock().unwrap();
@@ -96,6 +103,8 @@ mod tests {
             c.execute("INSERT INTO playlists(id,name) VALUES('a','Account A')", [])
                 .unwrap();
         }
+        let first_a = account_session(&db.0.lock().unwrap()).unwrap();
+        assert_ne!(guest_session, first_a);
         db.switch(Some(43), Some("SESSDATA=other")).unwrap();
         assert_eq!(
             db.0.lock()
@@ -112,7 +121,12 @@ mod tests {
                 .unwrap(),
             "Account A"
         );
+        assert_ne!(first_a, account_session(&db.0.lock().unwrap()).unwrap());
         db.switch(None, None).unwrap();
+        assert_ne!(
+            guest_session,
+            account_session(&db.0.lock().unwrap()).unwrap()
+        );
         assert_eq!(
             db.0.lock()
                 .unwrap()

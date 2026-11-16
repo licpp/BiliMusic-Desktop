@@ -1,0 +1,52 @@
+package app.bilimusic.player
+
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
+
+/** Rust supplies a verified download; Android independently checks application identity. */
+internal object ApkUpdateInstaller {
+    internal fun checkedFile(cache: File, path: String): File {
+        val folder = File(cache, "updates").canonicalFile
+        val file = File(path).canonicalFile
+        require(file.parentFile == folder && file.extension == "apk" && file.isFile && file.length() > 0) { "安装包缓存已失效，请重新下载" }
+        return file
+    }
+    internal fun validateIdentity(currentPackage: String, candidatePackage: String?, currentVersion: Long,
+                                  candidateVersion: Long, expectedVersion: String, version: String?,
+                                  currentSigners: Set<String>, candidateSigners: Set<String>) {
+        require(currentPackage == candidatePackage) { "安装包与当前应用不匹配" }
+        require(version == expectedVersion && candidateVersion > currentVersion) { "安装包版本不正确，请重新检查更新" }
+        require(currentSigners.isNotEmpty() && currentSigners == candidateSigners) { "安装包签名与当前应用不一致" }
+    }
+    private fun version(info: PackageInfo): Long = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+    private fun signers(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else @Suppress("DEPRECATION") info.signatures
+        return signatures?.map { it.toCharsString() }?.toSet() ?: emptySet()
+    }
+    fun prepare(activity: Activity, path: String, expectedVersion: String): File {
+        val file = checkedFile(activity.cacheDir, path)
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+        @Suppress("DEPRECATION") val installed = activity.packageManager.getPackageInfo(activity.packageName, flags)
+        @Suppress("DEPRECATION") val candidate = activity.packageManager.getPackageArchiveInfo(file.path, flags) ?: error("无法读取安装包，请重新下载")
+        validateIdentity(activity.packageName, candidate.packageName, version(installed), version(candidate), expectedVersion,
+                         candidate.versionName, signers(installed), signers(candidate))
+        return file
+    }
+    fun launch(activity: Activity, file: File): String {
+        if (!activity.packageManager.canRequestPackageInstalls()) {
+            activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}")))
+            return "permission-required"
+        }
+        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.updates", file)
+        activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        return "installer-opened"
+    }
+}

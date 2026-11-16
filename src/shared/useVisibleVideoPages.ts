@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { accountEpoch } from '../services/accountScope'
 import { cachedVideoPages, probeVideoPages } from '../services/videoPages'
-import type { BiliVideoPart } from '../services/desktopApi'
+import type { BiliVideoPart } from '../domain/bilibili'
 
 export function useVisibleVideoPages(bvid: string, enabled: boolean) {
   const ref = useRef<HTMLDivElement>(null)

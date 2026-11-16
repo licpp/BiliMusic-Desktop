@@ -1,0 +1,7 @@
+{
+  "engineInstanceId":"engine-fixture", "sessionId":"logical-fixture", "sourceRevision":3,"sequence":8,
+  "autonomousQueue":true,"queueVersion":2,
+  "capabilities":{"autonomousQueue":true,"seamlessSourceSwitch":true,"nativeSleepTimer":true,"snapshotRebind":true},
+  "id":"bilibili:BVfixture:123","status":"playing","position":12.5,"duration":180,
+  "track":{"id":"bilibili:BVfixture:123","title":"第二章","displayTitle":"第二章","chapterContext":true,"videoTitle":"视频标题","partCount":2,"publishedAt":1790000000,"playCount":0,"artist":"示例歌手","album":"示例专辑","coverUrl":"https://example.invalid/cover.jpg","durationSeconds":180,"liked":false,"source":{"provider":"bilibili","bvid":"BVfixture","cid":123,"page":2,"aid":45,"uploaderId":67,"uploaderName":"示例 UP"}}
+}

@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
@@ -7,7 +8,7 @@ import { commandErrorMessage } from '../../services/desktopApi'
 import { parseEmotePackages } from './emotes'
 
 export function useCommentEmotes() {
-  return useQuery({ queryKey: ['comment-emotes', accountEpoch()], queryFn: async () => parseEmotePackages(await invoke('bili_comment_emotes')), staleTime: 5 * 60_000, retry: false })
+  return useQuery({ queryKey: accountQueryKey('comment-emotes'), queryFn: async () => parseEmotePackages(await invoke('bili_comment_emotes')), staleTime: 5 * 60_000, retry: false })
 }
 export function CommentEmotes({ onChoose }: { onChoose: (text: string) => void }) {
   const query = useCommentEmotes()

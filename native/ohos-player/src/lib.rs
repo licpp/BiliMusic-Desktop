@@ -90,6 +90,10 @@ pub async fn put_webdav<R: Runtime>(
     ).await.map_err(|_| "鸿蒙同步上传接口暂不可用，请重新打开应用后重试".into())
 }
 
+pub async fn resolved<R: Runtime>(app: &tauri::AppHandle<R>, request: u32, data: String) -> Result<(), String> {
+    app.state::<Native<R>>().0.run_mobile_plugin_async::<Value>("resolved",serde_json::json!({"request":request,"data":data})).await.map(|_|()).map_err(|e|e.to_string())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("ohos-player")
         .invoke_handler(tauri::generate_handler![observe])

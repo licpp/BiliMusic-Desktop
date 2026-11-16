@@ -89,6 +89,8 @@ pub struct SearchItem {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoParts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub play_count: Option<u64>,
     pub published_at: Option<u64>,
     pub bvid: String,
     pub aid: i64,
@@ -377,6 +379,8 @@ struct SearchVideo {
 #[derive(Deserialize)]
 struct DetailData {
     #[serde(default)]
+    stat: Option<VideoStats>,
+    #[serde(default)]
     pubdate: Option<u64>,
     bvid: String,
     aid: i64,
@@ -387,6 +391,12 @@ struct DetailData {
     pages: Vec<PageData>,
     #[serde(default)]
     ugc_season: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct VideoStats {
+    #[serde(default)]
+    view: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -951,6 +961,7 @@ impl BilibiliProvider {
             }
         }
         Ok(VideoParts {
+            play_count: detail.stat.and_then(|stat| stat.view),
             published_at: detail.pubdate.filter(|date| *date > 0),
             bvid: detail.bvid,
             aid: detail.aid,

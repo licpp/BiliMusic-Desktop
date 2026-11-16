@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { CommentEmotes, useCommentEmotes } from './CommentEmotes'
 import { CommentEditor, type CommentEditorHandle } from './CommentEditor'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -9,7 +10,8 @@ import { CommentBody } from './CommentBody'
 import { CommentsSurface } from './CommentsSurface'
 import { accountEpoch } from '../../services/accountScope'
 import { isMobile } from '../../services/platform'
-import { commandErrorMessage, getCommentReplies, replyComment, setCommentLike, type BiliComment } from '../../services/desktopApi'
+import { commandErrorMessage, getCommentReplies, replyComment, setCommentLike } from '../../services/desktopApi'
+import type { BiliComment } from '../../domain/comments'
 
 const drafts = new Map<string, { replying: BiliComment | null; message: string }>()
 window.addEventListener('bilimusic-account-changing', () => drafts.clear())
@@ -106,7 +108,7 @@ export const CommentsPanel = memo(function CommentsPanel({ aid, onClose, video }
         if (scope !== accountEpoch()) return
         setExpanded(value => value[target.rootId] ? { ...value, [target.rootId]: [...new Map([...value[target.rootId], ...fresh].map(item => [item.id,item])).values()] } : value)
       }
-      await Promise.all([client.invalidateQueries({ queryKey: ['comments', aid] }), client.invalidateQueries({ queryKey: ['comment-inline-reply', aid] })])
+      await Promise.all([client.invalidateQueries({ queryKey: accountQueryKey('comments', aid) }), client.invalidateQueries({ queryKey: accountQueryKey('comment-inline-reply', aid) })])
     }
     catch (cause) { setError(commandErrorMessage(cause)) }
     finally { setSending(false) }
@@ -172,7 +174,7 @@ function InlineReply({ aid, root, children }: { aid: number; root: BiliComment; 
     return () => observer.disconnect()
   }, [embedded, visible])
   const query = useQuery({
-    queryKey: ['comment-inline-reply', aid, accountEpoch(), root.rootId],
+    queryKey: accountQueryKey('comment-inline-reply', aid, root.rootId),
     queryFn: () => getCommentReplies(aid, root.rootId, 1),
     enabled: !embedded && visible,
     staleTime: 60_000,

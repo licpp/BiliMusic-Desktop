@@ -1,4 +1,4 @@
-import type { LyricCandidate, LyricLine, LyricWord } from '../../services/desktopApi'
+import type { LyricCandidate, LyricLine, LyricWord } from './lyrics'
 
 const timestamp = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]/g
 

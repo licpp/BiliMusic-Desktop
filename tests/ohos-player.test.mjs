@@ -19,6 +19,7 @@ const output = await build({
       export const avSession = globalThis.ohosTest.avSession;
       export const backgroundTaskManager = globalThis.ohosTest.background;
       export const asset = globalThis.ohosTest.asset;
+      export const preferences = {getPreferencesSync:()=>({getSync:()=>false,putSync(){},flush:async()=>{}})};
       export const fileIo = { readTextSync: () => globalThis.ohosTest.scope };
       export const util = globalThis.ohosTest.util;
     ` }))
@@ -50,7 +51,7 @@ function setup() {
   const missing = () => Object.assign(new Error('missing'), { code: 24000002 })
   const h = globalThis.ohosTest = {
     scope: '123',
-    native: { tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
+    native: { bilimusicOhosCancelResolve() {}, bilimusicOhosResolve(request,payload) { h.resolveRequests.push({request,payload:JSON.parse(payload)}) }, tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
     media: { createAVPlayer: async () => (player = new FakePlayer()) },
     avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { if(Object.hasOwn(value,"mediaImage") && value.mediaImage === undefined)throw {code:401,message:"mediaImage property value type invalid"};metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
     background: { BackgroundMode: { AUDIO_PLAYBACK: 2 }, async startBackgroundRunning() { background.push('start') }, async stopBackgroundRunning() { background.push('stop') } },
@@ -59,6 +60,7 @@ function setup() {
       async add(q) { secrets.set(key(q), q.get(tags.SECRET)) }, async query(q) { if (!secrets.has(key(q))) throw missing(); return [new Map([[tags.SECRET, secrets.get(key(q))]])] }, async remove(q) { if (!secrets.delete(key(q))) throw missing() },
     },
   }
+  h.resolveRequests=[]
   h.artworkReply = async () => ({ responseCode: 200, result: new ArrayBuffer(4) })
 
   h.http = { RequestMethod: { GET: 'GET' }, HttpDataType: { ARRAY_BUFFER: 2 }, createHttp() {
@@ -73,7 +75,7 @@ function setup() {
     const session={destroyed:false,async fetch(request) { if(request.method==='GET'){artworkRequests.push({url:request.url,options:request,request:session});const reply=await h.artworkReply(request.url);return {statusCode:reply.responseCode,body:reply.result}} uploads.push(request);return h.uploadReply(request) },close(){this.destroyed=true}};return session
   } }
   const finalCode = output.outputFiles[0].text
-  h.util = { generateRandomUUID: () => 'session', TextEncoder: Encoder, TextDecoder: { create: () => ({ decodeWithStream: b => new TextDecoder().decode(b) }) }, Base64Helper: class { decodeSync(value) { return new Uint8Array(Buffer.from(value, 'base64')) } } }
+  let uuid=0; h.util = { generateRandomUUID: () => `session-${++uuid}`, TextEncoder: Encoder, TextDecoder: { create: () => ({ decodeWithStream: b => new TextDecoder().decode(b) }) }, Base64Helper: class { decodeSync(value) { return new Uint8Array(Buffer.from(value, 'base64')) } } }
   // wantAgent is a separate named export in AbilityKit.
   h.wantAgent = { OperationType: { START_ABILITY: 1 }, WantAgentFlags: { UPDATE_PRESENT_FLAG: 1 }, async getWantAgent() { return {} } }
   const module = { exports: {} }
@@ -405,4 +407,132 @@ test('Harmony decides resume from prepared media duration and preserves pause/re
    assert.equal(h.player.currentTime,expected*1000)
   }finally{await h.plugin.destroy()}
  }
+})
+
+const nativeTracks = ['A','B','C'].map((id,i)=>({id,title:id,durationSeconds:180,source:{provider:'bilibili',bvid:`BV${id}`,cid:i+1,page:1}}))
+const mirror = (tracks=nativeTracks,repeatMode='off',version=1,extra={})=>({tracks,repeatMode,version,shuffled:false,accountSession:'opaque-account',owner:'webview',...extra})
+const drain = async()=>{for(let i=0;i<12;i++)await new Promise(setImmediate)}
+async function answer(h,request,track){await h.command('resolved',{request,data:JSON.stringify({track,url:'http://127.0.0.1:1234/'+track.id,position:0})});await drain()}
+
+test('Harmony native queue advances A -> B -> C with no frontend consumer and stops at queue end',async()=>{
+ const h=setup()
+ try {
+  await h.command('queue',mirror())
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  for(const track of nativeTracks.slice(1)) {
+   h.player.emit('completed');await drain()
+   const request=h.mock.resolveRequests.at(-1)
+   assert.equal(request.payload.track.id,track.id)
+   assert.equal(request.payload.accountSession,'opaque-account')
+   await answer(h,request.request,track)
+   assert.equal(h.events.at(-1).id,track.id)
+   assert.equal(h.events.at(-1).status,'playing')
+  }
+  assert.equal(h.mock.resolveRequests.length,2)
+  h.player.emit('completed');await drain()
+  assert.equal(h.mock.resolveRequests.length,2)
+  assert.equal(h.events.at(-1).status,'paused')
+  assert.ok(h.events.every(event=>event.action!=='ended'))
+ } finally {await h.plugin.destroy()}
+})
+test('Harmony pause/stop and removal reject late resolutions; harmless queue reordering preserves the current transition',async()=>{
+ const h=setup()
+ try {
+  await h.command('queue',mirror())
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  h.player.emit('completed');await drain()
+  const first=h.mock.resolveRequests.at(-1)
+  await h.command('control',{action:'pause'})
+  await answer(h,first.request,nativeTracks[1])
+  assert.notEqual(h.events.at(-1).status,'playing')
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  h.player.emit('completed');await drain()
+  const next=h.mock.resolveRequests.at(-1)
+  await h.command('queue',mirror([...nativeTracks].reverse(),'off',2))
+  await answer(h,next.request,nativeTracks[1])
+  assert.equal(h.events.at(-1).status,'playing')
+  const advancing=h.plugin.advance(1) // reverse order selects A, pending Rust response
+  await drain();const removed=h.mock.resolveRequests.at(-1)
+  await h.command('queue',mirror([nativeTracks[1],nativeTracks[2]],'off',3))
+  await answer(h,removed.request,nativeTracks[0]);await advancing
+  assert.equal(h.events.at(-1).status,'paused')
+ } finally {await h.plugin.destroy()}
+})
+
+test('Harmony repeat-one creates a new logical session and account replacement cancels an in-flight transition',async()=>{
+ const h=setup()
+ try {
+  await h.command('queue',mirror(nativeTracks,'one'))
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  const original=h.events.at(-1)
+  h.player.emit('completed');await drain()
+  const repeat=h.mock.resolveRequests.at(-1)
+  assert.equal(repeat.payload.restart,true)
+  await answer(h,repeat.request,nativeTracks[0])
+  assert.equal(h.events.at(-1).engineInstanceId,original.engineInstanceId)
+  assert.notEqual(h.events.at(-1).sessionId,original.sessionId)
+  const advancing=h.plugin.advance(1);await drain()
+  const request=h.mock.resolveRequests.at(-1)
+  await h.command('queue',mirror(nativeTracks,'all',2,{accountSession:'new-account'}))
+  await answer(h,request.request,nativeTracks[1]);await advancing
+  assert.equal(h.events.at(-1).status,'paused')
+ } finally {await h.plugin.destroy()}
+})
+
+test('Harmony sleep expiry and stop fence pending native resolution before late replies',async t=>{
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ const h=setup(),original=Date.now;let now=100000;Date.now=()=>now
+ try{
+  await h.command('queue',mirror())
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  await h.command('control',{action:'sleepStart',value:1})
+  h.player.emit('completed');await drain();const pending=h.mock.resolveRequests.at(-1)
+  now+=2000;t.mock.timers.tick(1000);await drain()
+  await answer(h,pending.request,nativeTracks[1]);assert.notEqual(h.events.at(-1).status,'playing')
+  await h.command('control',{action:'sleepCancel'})
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  h.player.emit('completed');await drain();const stopped=h.mock.resolveRequests.at(-1)
+  await h.command('control',{action:'stop'});await answer(h,stopped.request,nativeTracks[1])
+  assert.equal(h.events.at(-1).id,'');assert.equal(h.events.at(-1).status,'paused')
+ }finally{Date.now=original;await h.plugin.destroy()}
+})
+
+test('Harmony resolution timeout reports an error and cannot later start the expired track',async t=>{
+ t.mock.timers.enable({apis:['setInterval','setTimeout']})
+ const h=setup()
+ try{
+  await h.command('queue',mirror())
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  h.player.emit('completed');await drain();const pending=h.mock.resolveRequests.at(-1)
+  t.mock.timers.tick(25001);await drain()
+  assert.equal(h.events.at(-1).status,'error');assert.match(h.events.at(-1).error,/超时/)
+  await answer(h,pending.request,nativeTracks[1]);assert.equal(h.events.at(-1).status,'error')
+ }finally{await h.plugin.destroy()}
+})
+
+test('Harmony background transition replaces notification lyrics from shared native resolution',async()=>{
+ const h=setup()
+ try{
+  await h.command('queue',mirror())
+  await h.command('play',{...nativeTracks[0],url:'http://127.0.0.1:1234/A'})
+  h.player.emit('completed');await drain();const pending=h.mock.resolveRequests.at(-1)
+  await h.command('resolved',{request:pending.request,data:JSON.stringify({track:nativeTracks[1],url:'http://127.0.0.1:1234/B',lyrics:{rawText:'[00:00]新的歌词',lines:[{timeMs:0,text:'新的歌词'}],biasMs:0}})})
+  await drain();assert.equal(h.plugin.notificationLine(),'新的歌词');assert.equal(h.plugin.lyricId,nativeTracks[1].id)
+ }finally{await h.plugin.destroy()}
+})
+
+
+test('Harmony optional system-title lyrics preserve card artwork and restore song title when disabled or in subtitle gaps',async()=>{
+ const h=setup()
+ try{
+  await h.command('play',{...nativeTracks[0],title:'原来的歌名',artist:'演唱者',url:'http://127.0.0.1:1234/A'})
+  await h.command('lyrics',{data:JSON.stringify({action:'update',id:nativeTracks[0].id,subtitles:true,lines:[{timeMs:0,endTimeMs:2000,text:'♪ 当前歌词 ♫'}]})})
+  assert.equal(h.plugin.currentMetadata.title,'原来的歌名')
+  await h.command('lyrics',{data:JSON.stringify({action:'system-title',enabled:true})})
+  assert.equal(h.plugin.currentMetadata.title,'当前歌词');assert.equal(h.plugin.currentMetadata.artist,'演唱者')
+  h.player.currentTime=3000;await h.plugin.setMetadata(h.plugin.mediaRevision)
+  assert.equal(h.plugin.currentMetadata.title,'原来的歌名')
+  await h.command('lyrics',{data:JSON.stringify({action:'system-title',enabled:false})})
+  assert.equal(h.plugin.currentMetadata.title,'原来的歌名')
+ }finally{await h.plugin.destroy()}
 })

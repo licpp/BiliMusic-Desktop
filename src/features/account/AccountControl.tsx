@@ -1,3 +1,4 @@
+import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../../services/queryKeys'
 import { ProfileBadges } from './ProfileBadges'
 import { isMobile } from '../../services/platform'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -5,11 +6,12 @@ import { LoaderCircle, LogOut, QrCode, UserRound, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { resetPlayerForAccount } from '../player/playerStore'
 import { useEffect, useState } from 'react'
-import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr, type QrLogin } from '../../services/desktopApi'
+import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr } from '../../services/desktopApi'
+import type { QrLogin } from '../../domain/account'
 
 export function AccountControl({ expanded = false }: { expanded?: boolean }) {
   const client = useQueryClient()
-  const profile = useQuery({ queryKey: ['account'], queryFn: getAccountProfile, retry: false })
+  const profile = useQuery({ queryKey: accountQueryKey('account'), queryFn: getAccountProfile, retry: false })
   const [open, setOpen] = useState(false)
   const [qr, setQr] = useState<QrLogin | null>(null)
   const [status, setStatus] = useState('')
@@ -30,8 +32,8 @@ export function AccountControl({ expanded = false }: { expanded?: boolean }) {
               // The native command has switched the library even if the dialog was closed during this poll.
               if (!cancelled) setOpen(false)
               await resetPlayerForAccount()
-              await client.cancelQueries()
-              await client.resetQueries()
+              await client.cancelQueries(accountQueryFilter)
+              await resetAccountQueries(client)
               window.dispatchEvent(new Event('bilimusic-account-changed'))
               window.dispatchEvent(new Event('bilimusic-sync-configured'))
               return
@@ -59,11 +61,11 @@ export function AccountControl({ expanded = false }: { expanded?: boolean }) {
     if (loggingOut) return
     setLoggingOut(true)
     try {
-      await client.cancelQueries()
+      await client.cancelQueries(accountQueryFilter)
       await resetPlayerForAccount()
       await logoutBilibili()
-      await client.cancelQueries()
-      await client.resetQueries()
+      await client.cancelQueries(accountQueryFilter)
+      await resetAccountQueries(client)
       window.dispatchEvent(new Event('bilimusic-sync-configured'))
       setOpen(false)
     } catch (cause) { setStatus(commandErrorMessage(cause)) }

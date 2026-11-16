@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { chooseDownload } from './downloadRequest'
 import { invoke } from '@tauri-apps/api/core'
 import { isIOS, isAndroid } from '../../services/platform'
@@ -5,9 +6,10 @@ import { useDownloadBatch } from './downloadBatch'
 import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, Download, FolderOutput, LoaderCircle, Play, RotateCcw, Share, Trash2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
-import { commandErrorMessage, listDownloads, removeDownload, type DownloadRecord } from '../../services/desktopApi'
+import { commandErrorMessage, listDownloads, removeDownload } from '../../services/desktopApi'
+import type { DownloadRecord } from '../../domain/downloads'
 import { usePlayerStore } from '../player/playerStore'
-import { TrackMenuButton } from '../library/TrackActions'
+import { TrackMenuButton } from '../library/TrackMenuButton'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { showTrackMenu } from '../library/trackActionStore'
 
@@ -20,7 +22,7 @@ export function DownloadsView() {
   const [exporting, setExporting] = useState(false)
   const [notice, setNotice] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
-  const downloads = useQuery({ queryKey: ['downloads'], queryFn: listDownloads, refetchInterval: (query) => busy || query.state.data?.some((item) => item.status === 'queued' || item.status === 'downloading') ? 1000 : false })
+  const downloads = useQuery({ queryKey: accountQueryKey('downloads'), queryFn: listDownloads, refetchInterval: (query) => busy || query.state.data?.some((item) => item.status === 'queued' || item.status === 'downloading') ? 1000 : false })
   const playableTracks = (downloads.data || []).filter(d=>d.status==='completed').map(d=>d.track).filter((t): t is NonNullable<typeof t>=>!!t)
   const act = async (item: DownloadRecord) => {
     const track = item.track

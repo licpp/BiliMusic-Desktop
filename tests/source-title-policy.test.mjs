@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
-const text=(await build({entryPoints:['src/services/sourceTitle.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
+const text=(await build({entryPoints:['src/domain/sourceTitle.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
 const {sourceTitle}=await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`)
 test('chapter titles are consistent for single-P season members and multi-P videos',()=>{
  assert.equal(sourceTitle('长 BV 标题','四、周旋权臣',1,true),'四、周旋权臣')
@@ -18,4 +18,33 @@ test('shared track conversion uses season membership without changing BV/CID ide
  assert.equal(track.displayTitle,'四、周旋权臣');assert.equal(track.title,'四、周旋权臣')
  assert.equal(track.id,'bilibili:BV1GFRFBREe6:38410979580');assert.equal(track.chapterContext,true)
  assert.equal(toTrack({...detail,season:undefined},part).title,detail.title)
+})
+
+test('shared Rust and TypeScript source title fixtures agree', async () => {
+ const {readFile}=await import('node:fs/promises')
+ const cases=JSON.parse(await readFile('tests/fixtures/source-title.json','utf8'))
+ for(const c of cases) assert.equal(sourceTitle(c.video,c.part,c.count,c.chapter,c.series),c.expected)
+})
+
+test('series prefix removal is contextual and user titles win over all source caches',async()=>{
+ const code=(await build({entryPoints:['src/domain/sourceTitle.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
+ const {withTrackTitle,contentTitle}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+ const context={videoTitle:'AI喻大华 苦命皇帝咸丰 未删减版 01谁是太子',partTitle:'01谁是太子',partCount:1,season:{id:10,uploaderId:42,title:'AI喻大华 苦命皇帝咸丰 未删减版'}}
+ const old={id:'bilibili:BV123:1',title:context.videoTitle,displayTitle:context.videoTitle,sourceTitleContext:context}
+ assert.equal(withTrackTitle(old).title,'01谁是太子')
+ assert.equal(withTrackTitle(JSON.parse(JSON.stringify(withTrackTitle(old)))).title,'01谁是太子')
+ assert.equal(withTrackTitle({...old,title:'我的标题',titleOverridden:true}).displayTitle,'我的标题')
+ assert.equal(contentTitle({videoTitle:'在百万豪装录音棚听王菲《红豆》',partTitle:'P1',partCount:1}),'红豆')
+ assert.equal(contentTitle({videoTitle:'纪录片《红豆》',partTitle:'P1',partCount:1}),'纪录片《红豆》')
+ assert.equal(contentTitle({videoTitle:'在百万豪装录音棚听《红豆》《流年》',partTitle:'P1',partCount:1}),'在百万豪装录音棚听《红豆》《流年》')
+})
+
+test('series information is shown in mixed lists and omitted beneath the same series heading',async()=>{
+ const code=(await build({entryPoints:['src/domain/sourceTitle.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
+ const {trackSubtitle}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+ const track={artist:'',source:{uploaderName:'远哥挺乐'},sourceTitleContext:{season:{id:10,uploaderId:42,title:'苦命皇帝咸丰'}}}
+ assert.equal(trackSubtitle(track),'苦命皇帝咸丰')
+ assert.equal(trackSubtitle(track,{kind:'season',title:'苦命皇帝咸丰'}),'')
+ assert.equal(trackSubtitle(track,{collectionRef:'season:42:10'}),'')
+ assert.equal(trackSubtitle(track,{kind:'season',title:'其他合集'}),'苦命皇帝咸丰')
 })

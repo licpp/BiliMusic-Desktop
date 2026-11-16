@@ -4,6 +4,7 @@ import { media } from '@kit.MediaKit';
 import { audio } from '@kit.AudioKit';
 import { image } from '@kit.ImageKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { preferences } from '@kit.ArkData';
 import { asset } from '@kit.AssetStoreKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -14,6 +15,7 @@ import { Artwork } from './Artwork';
 import { AutomaticResumePolicy, playbackStartPosition } from './ResumePolicy';
 import { putWebDAV, WebDAVUpload } from './WebDAV';
 import native from 'libbilimusic_lib.so';
+import { NativeQueue, QueueUpdate, QueueTrack, ResolveResult, NotificationLyricLine } from './NativeQueue';
 
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
@@ -21,14 +23,16 @@ interface Args {
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
   rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
   key?: string; remove?: boolean;
-  automaticResume?: AutomaticResumePolicy;
+  automaticResume?: AutomaticResumePolicy; preserveSession?: boolean; request?: number;
 }
+interface PlaybackCapabilities {autonomousQueue: boolean; seamlessSourceSwitch: boolean; nativeSleepTimer: boolean; snapshotRebind: boolean}
 interface Snapshot {
+  capabilities: PlaybackCapabilities;
+  engineInstanceId: string; sessionId: string; sourceRevision: number; autonomousQueue: boolean; queueVersion: number; track?: QueueTrack; expandedEntries?: Record<string, QueueTrack[]>;
   id: string; status: string; position: number; duration: number; rate: number;
   sleepDeadline: number; sleepDuration: number; sleepExpired: boolean;
   stopped: boolean; error?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
 }
-interface NotificationLyricLine { timeMs: number; text: string; endTimeMs?: number }
 interface LyricsPayload { lines?: NotificationLyricLine[]; biasMs?: number; subtitles?: boolean; action: string; enabled?: boolean; id?: string; lrc?: string; fontSize?: number; locked?: boolean }
 interface LyricsResult { supported: boolean; enabled: boolean; reason?: string; fontSizeSupported?: boolean; lockSupported?: boolean }
 class EmptyResult {}
@@ -42,12 +46,65 @@ interface ListeningSample {
 // Only Harmony system APIs live here. Search, playlists, lyrics, database and
 // account/WebDAV merge logic remain in the shared React + Rust application.
 export class PlayerPlugin {
+  private engineInstanceId: string = util.generateRandomUUID(true);
+  private queue: NativeQueue = new NativeQueue();
+  private nativeRequest: number = 0;
+  private pendingResolve: ((result: ResolveResult) => void) | null = null;
+  private resolveTimer: number = -1;
+
+  private cancelResolution(): void {
+    this.nativeRequest += 1;
+    native.bilimusicOhosCancelResolve();
+    clearTimeout(this.resolveTimer);
+    const pending = this.pendingResolve; this.pendingResolve = null;
+    pending?.({error:'播放已取消'});
+  }
+  private receiveResolution(args: Args): void {
+    if (args.request !== this.nativeRequest || !this.pendingResolve) return;
+    clearTimeout(this.resolveTimer);
+    const pending = this.pendingResolve; this.pendingResolve = null;
+    pending(JSON.parse(args.data ?? '{}') as ResolveResult);
+  }
+  private async advance(direction: number, ended: boolean = false): Promise<void> {
+    if (this.sleepExpired || this.destroyed) return;
+    if (direction < 0 && (this.player?.currentTime ?? 0) > 4000) { await this.control({action:'seek',value:0}); return; }
+    const track = this.queue.target(this.id, direction, ended);
+    if (!track) { await this.control({action:'pause'}); return; }
+    this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
+    this.accountListening(true);
+    this.sessionId = util.generateRandomUUID(true);
+    const previous=this.player; this.player=null; this.pendingSeek=-1;
+    const request = this.nativeRequest;
+    this.id = track.id; this.title = track.title; this.artist = track.artist ?? ''; this.status = 'buffering'; this.error = ''; this.desiredPlaying = true;
+    this.mediaRevision += 1; this.emit();
+    try {
+      // Keep the system playback task alive across the silent resolution gap.
+      await this.startBackground();
+      await previous?.release();
+      if (request !== this.nativeRequest || !this.desiredPlaying) return;
+      const result = await new Promise<ResolveResult>((resolve) => {
+        this.pendingResolve = resolve;
+        this.resolveTimer = setTimeout(()=>{ if(request===this.nativeRequest) {native.bilimusicOhosCancelResolve();this.receiveResolution({request,data:JSON.stringify({error:'后台加载超时，请重新播放'} as ResolveResult)});} },25000);
+        native.bilimusicOhosResolve(request, JSON.stringify(this.queue.payload(track, ended)));
+      });
+      if (request !== this.nativeRequest || !this.queue.find(track.id) || !this.desiredPlaying || this.destroyed) return;
+      if (result.error || !result.track || !result.url) throw new Error(result.error ?? '后台播放地址无效');
+      this.queue.resolved(result);
+      await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
+        automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
+      await this.lyrics({action:'update',id:result.track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,lrc:result.lyrics?.lines.length ? result.lyrics.rawText : '',subtitles:false}).catch(()=>{});
+    } catch(error) {
+      if(request!==this.nativeRequest || !this.desiredPlaying) return;
+      this.error=String(error); this.status='error'; this.desiredPlaying=false; this.emit(); await this.stopBackground();
+    }
+  }
   private context: common.UIAbilityContext;
   private player: media.AVPlayer | null = null;
   private session: avSession.AVSession | null = null;
   private win: window.Window | null = null;
   private tasks: Promise<void> = Promise.resolve();
   private id: string = '';
+  private systemTitleLyrics: boolean = false;
   private title: string = 'BiliMusic';
   private artist: string = '';
   private status: string = 'paused';
@@ -103,6 +160,7 @@ export class PlayerPlugin {
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+    this.systemTitleLyrics = preferences.getPreferencesSync(context, {name:'bilimusic-media'}).getSync('lyricTitle',false) === true;
     this.timer = setInterval(() => {
       this.accountListening();
       if (this.player?.state === 'playing' && (this.status === 'playing' || this.status === 'buffering')) {
@@ -117,7 +175,7 @@ export class PlayerPlugin {
       }
       if (this.sleepingAt > 0 && Date.now() >= this.sleepingAt) {
         this.sleepingAt = 0; this.sleepExpired = true;
-        this.enqueueControl('pause');
+        this.cancelResolution(); this.enqueueControl('pause');
       }
       this.maybeUpgrade();
       this.emit();
@@ -129,7 +187,12 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
-    if (request.plugin === 'ohos-player' && request.command === 'play') { this.upgradeIntent += 1; this.pendingUpgradeUrl = ''; this.cancelSourceSwitch?.(); }
+    if (request.plugin === 'ohos-player' && request.command === 'resolved') { this.receiveResolution(JSON.parse(request.payload) as Args); native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())); return; }
+    if (request.plugin === 'ohos-player' && request.command === 'queue') {
+      try { const owner=this.queue.owner,session=this.queue.accountSession; if(this.queue.update(JSON.parse(request.payload) as QueueUpdate) && (owner!==this.queue.owner || session!==this.queue.accountSession || this.pendingResolve!==null && !this.queue.find(this.id))) { const pending=this.pendingResolve!==null; this.cancelResolution(); if(pending){this.desiredPlaying=false;this.status='paused';this.emit();} } native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())); }
+      catch(error) {native.tauriOhosPluginResponse(request.id,false,JSON.stringify({message:String(error)} as BridgeError));} return;
+    }
+    if (request.plugin === 'ohos-player' && request.command === 'play') { this.cancelResolution(); this.upgradeIntent += 1; this.pendingUpgradeUrl = ''; this.cancelSourceSwitch?.(); }
     if (request.plugin === 'ohos-player' && request.command === 'webdav_put') {
       // Uploads must not queue playback controls behind a slow connection.
       this.upload(request);
@@ -137,7 +200,7 @@ export class PlayerPlugin {
     }
     if (request.plugin === 'ohos-player' && request.command === 'control') {
       const args = JSON.parse(request.payload) as Args;
-      if (args.action === 'pause' || args.action === 'stop' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection'].includes(args.action ?? '')) {
+      if (args.action === 'pause' || args.action === 'stop' || args.action === 'prepare' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection'].includes(args.action ?? '')) {
         // A preparation promise must never delay a user's pause/stop intent.
         this.control(args).then(() => native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())))
           .catch(() => native.tauriOhosPluginResponse(request.id,false,JSON.stringify({message:'无法停止播放，请重试'} as BridgeError)));
@@ -181,7 +244,7 @@ export class PlayerPlugin {
   }
 
   private snapshot(): Snapshot {
-    return { revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
+    return { capabilities:{autonomousQueue:this.queue.accountSession.length>0,seamlessSourceSwitch:true,nativeSleepTimer:true,snapshotRebind:true},engineInstanceId:this.engineInstanceId,sessionId:this.sessionId,sourceRevision:this.mediaRevision,autonomousQueue:this.queue.accountSession.length>0,queueVersion:this.queue.version,track:this.queue.find(this.id),expandedEntries:this.queue.expanded,revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
       duration: Math.max(0, (this.player?.duration ?? 0) / 1000), rate: this.rate,
       sleepDeadline: this.sleepingAt, sleepDuration: this.sleepDuration, sleepExpired: this.sleepExpired,
       stopped: this.id.length === 0, error: this.error || undefined };
@@ -204,8 +267,14 @@ export class PlayerPlugin {
   }
 
   private async lyrics(args: LyricsPayload): Promise<LyricsResult> {
+    if (args.action === 'system-title') {
+      const store = preferences.getPreferencesSync(this.context, {name:'bilimusic-media'});
+      store.putSync('lyricTitle',args.enabled === true); await store.flush();
+      this.systemTitleLyrics = args.enabled === true; await this.setMetadata(this.mediaRevision);
+    }
     if (args.action === 'update') {
-      this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').slice(0,200000);
+      if ((args.lrc?.length ?? 0) > 16 * 1024 * 1024) throw new Error('歌词内容过大');
+      this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').replace(/[♪♫♬♩🎵🎶]/g,'');
       this.lyricLines = (args.lines ?? []).filter(line => Number.isFinite(line.timeMs) && typeof line.text === 'string');
       this.lyricBias = Number.isFinite(args.biasMs) ? args.biasMs ?? 0 : 0; this.lyricSubtitles = args.subtitles === true;
       await this.setMetadata(this.mediaRevision);
@@ -214,17 +283,18 @@ export class PlayerPlugin {
     return { supported:false,enabled:false,reason:'当前歌词自动显示在通知栏',fontSizeSupported:false,lockSupported:false };
   }
 
-  private notificationArtist(): string {
-    if (this.lyricId !== this.id || !this.player) return this.artist;
+  private notificationLine(): string | undefined {
+    if (this.lyricId !== this.id || !this.player) return undefined;
     const time = (this.pendingSeek >= 0 ? this.pendingSeek : this.player.currentTime) - this.lyricBias;
-    let active: NotificationLyricLine | undefined = undefined;
-    for (const line of this.lyricLines) { if(line.timeMs > time) break; active=line; }
-    if(!active || this.lyricSubtitles && active.endTimeMs !== undefined && time >= active.endTimeMs) return this.artist;
-    return active.text.trim().replace(/\s+/g,' ').slice(0,300) || this.artist;
+    let low = 0, high = this.lyricLines.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (this.lyricLines[mid].timeMs <= time) low = mid + 1; else high = mid; }
+    const active = low > 0 ? this.lyricLines[low - 1] : undefined;
+    if(!active || this.lyricSubtitles && active.endTimeMs !== undefined && time >= active.endTimeMs) return undefined;
+    return active.text.replace(/[♪♫♬♩🎵🎶]/g,'').trim().replace(/\s+/g,' ').slice(0,300) || undefined;
   }
 
   private enqueueControl(action: string, value: number = 0): void {
-    if (action === 'pause' || action === 'stop') { this.control({action,value}).catch(() => {}); return; }
+    if (action === 'pause' || action === 'stop' || action === 'next' || action === 'previous') { this.control({action,value}).catch(() => {}); return; }
     this.tasks = this.tasks.catch(() => {}).then(() => this.control({ action, value })).catch((error: BusinessError) => {
       this.error = String(error); this.status = 'error'; this.emit();
     });
@@ -257,8 +327,8 @@ export class PlayerPlugin {
     this.session.on('pause', () => this.enqueueControl('pause'));
     this.session.on('stop', () => this.enqueueControl('stop'));
     this.session.on('seek', position => this.enqueueControl('seek', position / 1000));
-    this.session.on('playNext', () => this.emit('next'));
-    this.session.on('playPrevious', () => this.emit('previous'));
+    this.session.on('playNext', () => { void this.advance(1); });
+    this.session.on('playPrevious', () => { void this.advance(-1); });
     await this.session.activate();
   }
 
@@ -282,11 +352,13 @@ export class PlayerPlugin {
       if (revision !== this.mediaRevision || this.destroyed || !this.session || !this.id) return;
       // Build from live authoritative state when the queued task executes. A
       // lyric update queued before image decoding must never erase that image.
-      const artist=this.notificationArtist(),duration=this.player?.duration ?? 0;
+      const currentLine=this.notificationLine();
+      const title=this.systemTitleLyrics ? currentLine ?? this.title : this.title;
+      const artist=this.systemTitleLyrics ? this.artist : currentLine ?? this.artist,duration=this.player?.duration ?? 0;
       const lyric=this.lyricId === this.id ? this.lyricText : '';
-      const signature=JSON.stringify([revision,this.id,this.title,artist,duration,this.coverRevision,lyric]);
+      const signature=JSON.stringify([revision,this.id,title,artist,duration,this.coverRevision,lyric]);
       if(signature === this.metadataSignature || Date.now() < this.metadataRetryAt) return;
-      const merged: avSession.AVMetadata = {assetId:this.id,title:this.title,artist,duration,lyric};
+      const merged: avSession.AVMetadata = {assetId:this.id,title,artist,duration,lyric};
       // Native AVSession validates property presence, not just its TS type.
       // An explicitly present undefined image rejects the entire media card.
       if(this.cover !== undefined) merged.mediaImage=this.cover;
@@ -321,7 +393,7 @@ export class PlayerPlugin {
     this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
     this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1;
     this.rate = args.rate ?? 1; this.volume = args.volume ?? 0.7;
-    this.previousPosition = -1; this.previousId = ''; this.sessionId = util.generateRandomUUID(true);
+    this.previousPosition = -1; this.previousId = ''; if(!args.preserveSession) this.sessionId = util.generateRandomUUID(true);
     const player = await media.createAVPlayer();
     if (revision !== this.mediaRevision) { await player.release(); return; }
     this.player = player;
@@ -350,7 +422,7 @@ export class PlayerPlugin {
           else if (state === 'paused') { this.accountListening(true); this.status = 'paused'; }
           else if (state === 'completed') {
             this.accountListening(true); this.status = 'paused'; this.previousPosition = -1;
-            this.emit('ended'); this.stopBackground().catch(() => {}); return;
+            this.emit(); void this.advance(1,true); return;
           }
           else if (state === 'error') {
             clearTimeout(timeout); reject(new Error('音频无法播放')); return;
@@ -406,7 +478,7 @@ export class PlayerPlugin {
     candidate.on('audioInterrupt',event=>this.audioInterrupted(candidate,event));
     candidate.on('seekDone',()=>{seekDone?.();seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
     candidate.on('stateChange',async state=>{
-      if(this.player===candidate){if(state==='playing')this.status='playing';else if(state==='paused')this.status='paused';else if(state==='completed'){this.accountListening(true);this.status='paused';this.emit('ended');return;}this.emit();return;}
+      if(this.player===candidate){if(state==='playing')this.status='playing';else if(state==='paused')this.status='paused';else if(state==='completed'){this.accountListening(true);this.status='paused';this.emit();void this.advance(1,true);return;}this.emit();return;}
       if(cancelled)return;
       try{if(state==='initialized')await candidate.prepare();else if(state==='prepared')ready?.();else if(state==='error')failed?.(new Error('新音源无法播放，已保留原音质'));}catch(error){failed?.(new Error(String(error)));}
     });
@@ -439,12 +511,15 @@ export class PlayerPlugin {
 
   private async control(args: Args): Promise<void> {
     const value = typeof args.value === 'number' ? args.value : 0;
+    if (args.action === 'pause' || args.action === 'stop') this.cancelResolution();
     if (args.action === 'pause' || args.action === 'stop' || args.action === 'resume') {
       this.resumeAfterInterruption = false; this.interruptionRevision += 1;
     }
     if (args.action === 'pause' || args.action === 'stop' || args.action === 'seek') this.upgradeIntent += 1;
     switch (args.action) {
-      case 'prepare': break;
+      case 'prepare': { this.cancelResolution(); this.cancelPreparation?.(); this.accountListening(true); this.desiredPlaying=false; const previous=this.player; this.player=null; const revision=++this.mediaRevision; await previous?.release(); if(revision!==this.mediaRevision)return; this.id=args.id ?? ''; this.status='buffering'; break; }
+      case 'next': await this.advance(1); break;
+      case 'previous': await this.advance(-1); break;
       case 'resume': this.desiredPlaying = true; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.error = ''; if (this.player) { const player=this.player; await this.startBackground(); if(this.desiredPlaying && this.player===player) await player.play(); else await this.stopBackground(); } break;
       case 'pause':
       case 'interruptionPause':
@@ -466,7 +541,10 @@ export class PlayerPlugin {
       case 'sleepStart':
         if (value < 1 || value > 10800) throw new Error('无效的定时长度');
         this.sleepDuration = value; this.sleepingAt = Date.now() + value * 1000; this.sleepExpired = false; break;
-      case 'sleepRepeat': this.sleepingAt = Date.now() + this.sleepDuration * 1000; this.sleepExpired = false; break;
+      case 'sleepRepeat':
+        if (!this.sleepExpired || this.sleepDuration <= 0 || !this.id) break;
+        this.sleepingAt = Date.now() + this.sleepDuration * 1000; this.sleepExpired = false;
+        await this.control({ action: 'resume' }); break;
       case 'sleepDismiss': this.sleepExpired = false; break;
       case 'sleepCancel': this.sleepingAt = 0; this.sleepExpired = false; break;
       case 'theme':
@@ -547,6 +625,7 @@ export class PlayerPlugin {
   }
 
   async destroy(): Promise<void> {
+    this.cancelResolution();
     this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
     this.accountListening(true); this.destroyed = true; clearInterval(this.timer); clearInterval(this.lyricTimer);
     await this.metadataTasks.catch(() => {});

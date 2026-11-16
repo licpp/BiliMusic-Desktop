@@ -71,7 +71,7 @@ test('library and statistics outcomes refresh independently', async t => {
   const f = setup(t, async () => ({ library: { changed: true, conflicts: [] }, statisticsError: 'offline' }))
   await flush()
   assert.equal(f.library.length, 1)
-  assert.deepEqual(f.invalidations, [{ queryKey: ['listening-statistics'] }, { queryKey: ['sync-status'] }])
+  assert.deepEqual(f.invalidations, [{ queryKey: ['listening-statistics', {accountSession:0}] }, { queryKey: ['sync-status', {accountSession:0}] }])
 })
 test('IPC failures do not produce a frontend retry loop', async t => {
   const f = setup(t, async () => { throw new Error('offline') }); await flush()

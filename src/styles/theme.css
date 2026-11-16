@@ -115,3 +115,16 @@ img { -webkit-user-drag: none; }
 .update-settings .update-error { color: var(--coral); }
 .update-settings .update-status button { white-space: nowrap; }
 @media (max-width: 600px) { .update-settings .update-status { grid-column: 1 / -1; } }
+.video-error { padding:16px;text-align:center;background:color-mix(in srgb,var(--panel) 94%,transparent);color:var(--ink); }
+.video-error button:disabled,.video-startup-status button:disabled { opacity:.6;cursor:wait; }
+
+.update-settings .update-transfer { grid-column:2 / -1;display:grid;gap:6px;color:var(--muted);font-size:11px; }
+.update-transfer progress { appearance:none;-webkit-appearance:none;width:100%;height:5px;border:0;border-radius:8px;overflow:hidden;background:var(--line);accent-color:var(--teal); }
+.update-transfer progress::-webkit-progress-bar { background:var(--line);border-radius:8px; }
+.update-transfer progress::-webkit-progress-value { background:var(--teal);border-radius:8px; }
+.update-transfer progress::-moz-progress-bar { background:var(--teal);border-radius:8px; }
+.update-settings > button,.update-status button { display:inline-flex;align-items:center;justify-content:center;gap:6px; }
+.update-settings button svg { width:15px;height:15px;flex:none; }
+@media(max-width:600px) { .update-settings .update-transfer { grid-column:1 / -1; } }
+.update-nav-dot { position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 2px var(--base); }
+.update-settings button[aria-disabled="true"] { opacity:.55;cursor:default; }

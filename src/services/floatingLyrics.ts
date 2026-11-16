@@ -1,14 +1,16 @@
+import { lyricDisplayText } from '../domain/lyricDisplay'
 import { readFloatingPreferences, useFloatingPreferences, type FloatingPreferences } from './floatingLyricsPreferences'
-import { parseLrc } from '../features/lyrics/lrc'
+import { parseLrc } from '../domain/lrc'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { create } from 'zustand'
 import { isMobile, isIOS, isOHOS } from './platform'
 import { accountEpoch } from './accountScope'
-import { getStoredLyrics, enrichStoredLyricLines, inDesktopShell, type LyricLine, type StoredLyrics } from './desktopApi'
+import { getStoredLyrics, enrichStoredLyricLines, inDesktopShell } from './desktopApi'
+import type { LyricLine, StoredLyrics } from '../domain/lyrics'
 import { usePlayerStore, playbackClock } from '../features/player/playerStore'
 import { useThemeStore } from './theme'
-import { storedLyricLines, systemLrc, floatingTimeline } from '../features/lyrics/lyricTimeline'
+import { storedLyricLines, systemLrc, floatingTimeline } from '../domain/lyricTimeline'
 import { subtitleScope, useSubtitleState } from '../features/lyrics/useBiliSubtitles'
 
 export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; capturedAt?:number; revision?:number }
@@ -46,16 +48,22 @@ export function startFloatingLyrics() {
   if (!inDesktopShell) return
   let revision = 0, trackKey = '', stored: StoredLyrics | null = null, lines: LyricLine[] = [], lastNative = ''
   let pending = false, dirty = false
+  let displaySource: LyricLine[] | undefined, displayLines: LyricLine[] = [], timelineRevision = 0
   const currentKey = () => `${accountEpoch()}:${usePlayerStore.getState().current?.id || ''}`
   const publish = async () => {
     if (pending) { dirty = true; return }
     const state = usePlayerStore.getState(), current = state.current, style = useFloatingPreferences.getState()
     const captions=useSubtitleState.getState()
-    const timeline=floatingTimeline(lines,stored?.biasMs||0,subtitleScope(current?.source),captions)
+    const sourceTimeline=floatingTimeline(lines,stored?.biasMs||0,subtitleScope(current?.source),captions)
+    if (sourceTimeline.lines !== displaySource) {
+      displaySource=sourceTimeline.lines; timelineRevision++
+      displayLines=displaySource.map(line=>({...line,text:lyricDisplayText(line.text),words:line.words?.map(word=>({...word,text:lyricDisplayText(word.text)}))}))
+    }
+    const timeline={...sourceTimeline,lines:displayLines}
     const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,capturedAt:Date.now()}
     if (isMobile) {
       // Native renderers read their own player's clock, even with JS suspended.
-      const signature = JSON.stringify([frame.id,frame.title,frame.lines,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
+      const signature = JSON.stringify([frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
       if (signature === lastNative) return
       lastNative = signature; pending = true
       try { await nativeLyrics({action:'update',...frame,lrc:systemLrc(frame.lines,frame.biasMs)}) }
@@ -116,5 +124,17 @@ export function startFloatingLyrics() {
     void listen('floating-lyrics-closed',()=>useFloatingLyrics.setState({enabled:false}))
     window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
   }
+  if (isMobile) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
   void load()
+}
+
+let systemTitleWrite: Promise<void> = Promise.resolve()
+export function setSystemTitleLyrics(enabled: boolean) {
+  if (!isMobile) return Promise.resolve()
+  const write = systemTitleWrite.catch(() => undefined).then(async () => {
+    await nativeLyrics({ action: 'system-title', enabled })
+    localStorage.setItem('system-title-lyrics', String(enabled))
+  })
+  systemTitleWrite = write
+  return write
 }

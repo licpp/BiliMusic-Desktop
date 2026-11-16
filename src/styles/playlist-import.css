@@ -1,5 +1,4 @@
-.playlist-import-trigger,
-.library-panel .sidebar-heading-actions .playlist-import-trigger {
+.playlist-import-trigger {
   display:inline-flex;align-items:center;justify-content:center;gap:5px;width:auto;min-width:58px;min-height:34px;
   padding:5px 8px;border:0;border-radius:8px;background:transparent;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;
 }

@@ -1,0 +1,25 @@
+/* Shared downloads component styles; layout/platform variants stay next to their controls. */
+.download-quality-dialog { width:min(480px,calc(100vw - 32px)); }
+.download-selection-summary strong { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;color:var(--ink); }
+.download-selection-summary p,.download-format-hint { margin:7px 0 20px;color:var(--muted);font-size:12px;line-height:1.6; }
+.download-option-field { display:grid;gap:10px;margin:18px 0 0;min-width:0; }
+.download-option-field > span { display:flex;align-items:center;gap:8px;color:var(--ink);font-size:13px;font-weight:550; }
+.download-option-field > span > svg { color:var(--cyan);flex:none; }
+.download-quality-options { display:grid;gap:6px; }
+.download-quality-options > label { display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:13px;cursor:pointer;background:var(--base); }
+.download-quality-options > label[data-selected="true"] { border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 7%,var(--panel));color:var(--ink); }
+.download-quality-options input { width:15px;height:15px;margin:0;accent-color:var(--cyan);flex:none; }
+.download-option-field > select { width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--base);color:var(--ink);font:inherit;font-size:13px; }
+.download-format-hint { margin:9px 0 20px; }
+.download-quality-dialog > footer { display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:20px; }
+.download-quality-dialog > footer > button { display:flex;align-items:center;gap:7px;min-height:40px;padding:9px 15px;border-radius:11px;font:inherit;font-size:13px; }
+.android-download-destination { min-width:0;margin:12px 0 18px; }
+.download-destination-row { display:flex;align-items:center;gap:12px;flex-wrap:wrap; }
+.download-destination-copy { display:grid;gap:6px;flex:1;min-width:100px; }
+.download-destination-copy strong { font-size:12px;color:var(--ink); }
+.download-destination-copy small { color:var(--muted);font-size:11px;white-space:normal;overflow-wrap:anywhere;line-height:1.5; }
+.download-destination-row > button { display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none; }
+.download-destination-hint { margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--muted); }
+.download-destination-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px; }
+.download-destination-actions:empty { display:none; }
+.download-destination-actions > button { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px; }

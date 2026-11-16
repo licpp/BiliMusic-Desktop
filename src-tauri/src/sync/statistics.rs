@@ -370,8 +370,11 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
             let fallback=names.get(&id).cloned().unwrap_or(("已移除的歌曲".into(),String::new()));
             let (title,artist,cover)=c.query_row("SELECT COALESCE(m.title,t.title),COALESCE(m.artist,t.artist,''),COALESCE(m.cover_url,t.cover_url,'') FROM tracks t LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE t.id=?1",[&id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).unwrap_or((fallback.0,fallback.1,String::new()));
             // Cached source titles also cover statistics-only songs absent from this library.
-            let title = c.query_row("SELECT COALESCE((SELECT value FROM sync_info WHERE key='source-title:'||?1),NULLIF((SELECT title FROM metadata_overrides WHERE track_id=?1),''),?2)",params![id,title],|r|r.get::<_,String>(0)).unwrap_or(title);
-            json!({"id":id,"title":title,"artist":artist,"coverUrl":cover,"seconds":seconds})
+            let context = crate::infrastructure::repositories::source_titles::get(c, &id).ok().flatten();
+            let manual: Option<String> = c.query_row("SELECT NULLIF(title,'') FROM metadata_overrides WHERE track_id=?1",[&id],|r|r.get(0)).ok().flatten();
+            let title = manual.clone().or_else(||context.as_ref().map(|ctx|ctx.title())).unwrap_or_else(||c.query_row("SELECT value FROM sync_info WHERE key='source-title:'||?1",[&id],|r|r.get::<_,String>(0)).unwrap_or(title));
+            let uploader: String = c.query_row("SELECT COALESCE(uploader_name,'') FROM source_items WHERE id=?1",[&id],|r|r.get(0)).unwrap_or_default();
+            json!({"id":id,"title":title,"artist":artist,"coverUrl":cover,"seconds":seconds,"titleOverridden":manual.is_some(),"sourceTitleContext":context,"uploaderName":uploader})
         }).collect();
         result[period] =
             json!({"seconds":seconds,"tracks":count,"days":days.len(),"plays":plays,"top":top});
@@ -1142,7 +1145,15 @@ mod tests {
     }
     fn sample(db: &Database, uid: &str, seconds: f64) {
         let c = db.0.lock().unwrap();
-        record(&c, &db.1, uid, "song", seconds, None, None).unwrap();
+        // Keep this totals test independent of the wall clock near account midnight.
+        let noon: f64 = c
+            .query_row(
+                "SELECT unixepoch(date('now','+8 hours') || ' 04:00:00')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        record(&c, &db.1, uid, "song", seconds, Some(noon), None).unwrap();
     }
     fn total(db: &Database, uid: &str) -> f64 {
         query(&db.0.lock().unwrap(), &db.1, uid).unwrap()["total"]["seconds"]

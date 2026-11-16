@@ -37,13 +37,6 @@
 .order-editor>.order-row[data-dragging="true"] .order-drag-handle { color:var(--cyan);cursor:grabbing; }
 .order-drop-slot { position:absolute;top:var(--order-slot-top);left:10px;right:10px;height:var(--order-slot-height);border:1px dashed color-mix(in srgb,var(--cyan) 50%,transparent);border-radius:10px;background:color-mix(in srgb,var(--cyan) 5%,transparent);pointer-events:none; }
 .library-panel .order-drop-slot { left:2px;right:2px;border-radius:8px; }
-.library-panel .organizer-controls { gap:2px; }
-.library-panel .organizer-controls .organizer-label,.library-panel .sidebar-heading-actions .playlist-import-trigger>span { display:none; }
-.library-panel .organizer-controls>button,.library-panel .sidebar-heading-actions .organizer-controls>button {
-  display:grid;place-items:center;flex:none;width:28px;height:28px;min-height:28px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--muted);
-}
-.library-panel .organizer-controls>button.organizer-done { color:var(--cyan);background:color-mix(in srgb,var(--cyan) 9%,transparent); }
-.library-panel .sidebar-heading-actions { flex:none; }
 .library-panel .order-editor { position:relative;padding:6px 2px;border:0;border-radius:10px;background:transparent; }
 .library-panel .order-editor>.order-editor-hint { padding:3px 7px 8px;font-size:10px; }
 .library-panel .order-editor>.order-row { min-height:48px;gap:6px;padding:5px 4px;border-radius:8px; }

@@ -1,3 +1,4 @@
+import { accountQueryKey } from '../../services/queryKeys'
 import { syncErrorMessage } from '../../services/userErrors'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -12,12 +13,12 @@ export function SyncDevices() {
   const client = useQueryClient()
   const [open, setOpen] = useState(false), [pending, setPending] = useState(''), [message, setMessage] = useState('')
   const [failed, setFailed] = useState(false)
-  const query = useQuery({ queryKey: ['sync-devices'], queryFn: () => invoke<Device[]>('sync_devices', { refresh: true }), enabled: open, retry: false, staleTime: 60_000 })
+  const query = useQuery({ queryKey: accountQueryKey('sync-devices'), queryFn: () => invoke<Device[]>('sync_devices', { refresh: true }), enabled: open, retry: false, staleTime: 60_000 })
   const retire = async (device: Device) => {
     setPending(device.id); setMessage(''); setFailed(false)
     try {
       await invoke('sync_retire_device', { deviceId: device.id })
-      client.setQueryData<Device[]>(['sync-devices'], previous => previous?.map(row => row.id === device.id ? { ...row, retired: true, status: 'retired' } : row))
+      client.setQueryData<Device[]>(accountQueryKey('sync-devices'), previous => previous?.map(row => row.id === device.id ? { ...row, retired: true, status: 'retired' } : row))
       await query.refetch()
       setMessage('设备已停用，已同步的数据会保留。')
     } catch (error) { setFailed(true); setMessage(syncErrorMessage(error)) }

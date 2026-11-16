@@ -1,18 +1,17 @@
 import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
-import { getStoredLyrics, inDesktopShell, saveStoredLyrics, searchLyrics, type LyricCandidate } from '../../services/desktopApi'
+import { getStoredLyrics, inDesktopShell, saveStoredLyrics, searchLyrics } from '../../services/desktopApi'
+import type { LyricCandidate } from '../../domain/lyrics'
 import { usePlayerStore } from '../player/playerStore'
-import { bestCandidate, candidateLines } from './lrc'
+import { bestCandidate, candidateLines } from '../../domain/lrc'
 
-import { automaticLyricQueries } from './lyricQuery'
-export { automaticLyricQuery } from './lyricQuery'
+import { songQueries, songTextIdentity, songTitleIdentity, type SongQuery } from '../../domain/songIdentity'
 
-const normalize = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '')
-export function chooseAutomaticLyrics(track: Track, candidates: LyricCandidate[]) {
-  const queries = automaticLyricQueries(track)
+export function chooseAutomaticLyrics(track: Track, candidates: LyricCandidate[], query?: SongQuery) {
+  const queries = query ? [query] : songQueries(track)
   return bestCandidate(candidates.filter(candidate => {
-    if (candidate.instrumental || !queries.some(query => normalize(candidate.trackName) === normalize(query.title) && (!query.artist || normalize(candidate.artistName) === normalize(query.artist)))) return false
-    return !track.durationSeconds || !candidate.duration || Math.abs(track.durationSeconds - candidate.duration) <= Math.max(15, track.durationSeconds * .08)
+    if (candidate.instrumental || !queries.some(query => songTitleIdentity(candidate.trackName) === songTitleIdentity(query.title) && (!query.artist || songTextIdentity(candidate.artistName) === songTextIdentity(query.artist)))) return false
+    return (!track.durationSeconds || !candidate.duration || Math.abs(track.durationSeconds - candidate.duration) <= Math.max(15, track.durationSeconds * .08)) && candidateLines(candidate).length > 0
   }), track.durationSeconds)
 }
 
@@ -21,18 +20,20 @@ export function startAutomaticLyrics() {
   const attempted = new Map<string, number>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let scheduled = ''
-  const keyFor = (track: Track) => `${accountEpoch()}:${JSON.stringify([track.id, track.title, track.artist, track.durationSeconds])}`
+  const keyFor = (track: Track) => `${accountEpoch()}:${JSON.stringify([track.id, track.title, track.artist, track.source?.uploaderName, track.durationSeconds])}`
   const run = async (track: Track, key: string) => {
     const valid = () => { const current = usePlayerStore.getState().current; return current !== null && keyFor(current) === key }
     try {
       if (await getStoredLyrics(track.id) || !valid()) return
       let candidate: LyricCandidate | undefined
-      for (const query of automaticLyricQueries(track)) {
+      for (const query of songQueries(track)) {
         if (!query.title || !valid()) return
-        const result = await searchLyrics(query.title, query.artist || undefined)
-        if (!valid()) return
-        candidate = chooseAutomaticLyrics({ ...track, ...query }, result.candidates)
-        if (candidate && candidateLines(candidate).length) break
+        try {
+          const result = await searchLyrics(query.title, query.artist || undefined)
+          if (!valid()) return
+          candidate = chooseAutomaticLyrics(track, result.candidates, query)
+          if (candidate) break
+        } catch { if (!valid()) return }
       }
       if (!candidate || !candidateLines(candidate).length) return
       // Recheck after the network request: a manual selection may have won.

@@ -1,31 +1,34 @@
-import { createNativeClock } from './nativeClock'
-import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/core'
+import type { NativeControlAction } from './contracts'
+import { normalizeNativeSnapshot } from './contracts'
+import { createSnapshotOrder } from './snapshotOrder'
+import { nativeQueueEnvelope } from './nativeQueue'
+import { addPluginListener,invoke,type PluginListener } from '@tauri-apps/api/core'
 import type { Track } from '../../domain/track'
-import type { QueueSource, RepeatMode } from './playerStore'
-import type { AutomaticResumePolicy, ResumeThreshold } from './resumePolicy'
+import { createNativeClock } from './nativeClock'
+import type { QueueSource,RepeatMode } from './playerStore'
+import type { AutomaticResumePolicy,ResumeThreshold } from './resumePolicy'
 
-export type IOSAudioState = { recoveryAttempted?: boolean; sleepDeadline?: number; sleepDuration?: number; sleepExpired?: boolean; expandedEntries?: Record<string, Track[]>; action?: 'next' | 'previous' | 'ended' | 'resume'; stopped?: boolean; floatingLyricsEnabled?: boolean; floatingLyricsFontSize?: number; floatingLyricsStyleRevision?: number; floatingLyricsLocked?: boolean; id?: string; status?: 'playing' | 'paused' | 'buffering' | 'error'; position?: number; rate?: number; duration?: number; error?: string; track?: Track; revision?: number; advancing?: boolean; sequence?: number; seekRevision?: number }
+import type { NativeAudioState as IOSAudioState, PlayerSnapshot } from './contracts'
+export type { NativeAudioState as IOSAudioState } from './contracts'
+
 let ready: Promise<unknown> | undefined
 let listener: PluginListener | undefined
-let consumer: ((state: IOSAudioState) => void) | undefined
+let consumer: ((state: PlayerSnapshot) => void) | undefined
 let listenerGeneration = 0
 let lastEventAt = performance.now()
 const clock = createNativeClock()
-let revision = -1
-let latestState: IOSAudioState | undefined
+const order = createSnapshotOrder()
 function bindIOSAudio() {
   const generation = ++listenerGeneration
   return addPluginListener<IOSAudioState>('ios-player', 'state', state => {
     if (generation !== listenerGeneration) return
-    if ((state.revision ?? 0) < revision || state.revision === latestState?.revision && state.sequence !== undefined && state.sequence < (latestState?.sequence ?? 0)) return
+    if (!order.accept(state)) return
     lastEventAt = performance.now()
-    revision = state.revision ?? 0
-    latestState = state
     clock.update(state, performance.now())
-    consumer?.(state)
+    consumer?.(normalizeNativeSnapshot(state))
   }).then(value => { listener = value; return value }).catch(error => { if (generation === listenerGeneration) ready = undefined; throw error })
 }
-export function observeIOSAudio(callback: (state: IOSAudioState) => void) {
+export function observeIOSAudio(callback: (state: PlayerSnapshot) => void) {
   consumer = callback
   if (!ready) ready = bindIOSAudio()
   return ready
@@ -33,27 +36,25 @@ export function observeIOSAudio(callback: (state: IOSAudioState) => void) {
 export async function restartIOSAudioObservation() {
   listenerGeneration += 1
   if (listener) void listener.unregister().catch(() => undefined)
-  listener = undefined; ready = undefined; revision = -1
+  listener = undefined; ready = undefined
   ready = bindIOSAudio()
   await ready
   lastEventAt = performance.now()
 }
 export const iosListenerAge = () => performance.now() - lastEventAt
 export const setIOSCollection = (id: string, collectionRef?: string) => invoke('plugin:ios-player|control', { action: 'collection', id, collectionRef })
-export const syncIOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, resumeThresholdSeconds: ResumeThreshold = 0, source?: QueueSource) => invoke('plugin:ios-player|queue', { tracks, repeatMode, shuffled, autoResume: resumeThresholdSeconds !== null, resumeThresholdSeconds, collectionPlayback: Boolean(source?.collectionRef) || source?.kind === 'season' })
+export const syncIOSQueue = async (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, resumeThresholdSeconds: ResumeThreshold = 0, source?: QueueSource) => invoke('plugin:ios-player|queue', await nativeQueueEnvelope(tracks, repeatMode, shuffled, resumeThresholdSeconds, source))
 export async function playIOSAudio(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy) {
   await ready
   await invoke('plugin:ios-player|play', { url, id: track.id, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
 }
-export const controlIOSAudio = (action: string, value = 0) => invoke('plugin:ios-player|control', { action, value })
+export const controlIOSAudio = (action: NativeControlAction, value = 0) => invoke('plugin:ios-player|control', { action, value })
 export const snapshotIOSAudio = async () => {
   const state = await invoke<IOSAudioState>('plugin:ios-player|snapshot')
-  if (latestState && ((state.revision ?? 0) < revision || state.revision === latestState.revision && state.sequence !== undefined && state.sequence < (latestState.sequence ?? 0))) return latestState
-  revision = state.revision ?? 0
-  latestState = state
+  if (!order.accept(state)) return normalizeNativeSnapshot(order.latest!)
   lastEventAt = performance.now()
   clock.update(state, performance.now())
-  return state
+  return normalizeNativeSnapshot(state)
 }
 export const prepareIOSAudio = (track: Track) => invoke('plugin:ios-player|control', { action: 'prepare', id: track.id })
 export function iosPlaybackClock() { return clock.position(performance.now()) }

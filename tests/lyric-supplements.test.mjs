@@ -1,7 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
-const output=await build({entryPoints:['src/features/lyrics/lrc.ts'],bundle:true,write:false,format:'esm',platform:'node'})
+const output=await build({entryPoints:['src/domain/lrc.ts'],bundle:true,write:false,format:'esm',platform:'node'})
 const {candidateLines,lyricSupplementModes,nextLyricSupplement}=await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`)
 const candidate={provider:'netease',id:1,trackName:'test',artistName:'artist',duration:10,syncedLyrics:'[00:00.00]credits\n[00:01.00]first\n[00:04.00]second\n[00:08.00]third',translatedLyrics:'[00:01.01]第一句\n[00:08.00]第三句',romanizedLyrics:'[00:01.00]a b\n[00:04.00]c d\n[00:08.00]e f'}
 test('翻译按时间对齐，缺行不会移位，音译独立对齐并随保存恢复',()=>{

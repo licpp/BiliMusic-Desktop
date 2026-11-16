@@ -1,4 +1,5 @@
-import type { FavoriteFolder, FavoritePage, BiliVideoParts, Playlist } from './desktopApi'
+import type { FavoriteFolder, FavoritePage, BiliVideoParts } from '../domain/bilibili'
+import type { Playlist } from '../domain/library'
 import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
 import { commandErrorMessage, isConnectionError } from './userErrors'

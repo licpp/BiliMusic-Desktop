@@ -2,15 +2,7 @@ use super::*;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeasonSummary {
-    pub id: i64,
-    pub uploader_id: i64,
-    pub title: String,
-    pub cover_url: String,
-    pub uploader_name: String,
-}
+pub use crate::domain::source_title::SeasonSummary;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Season {
@@ -206,6 +198,30 @@ pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) 
         tracks,
         unavailable: 0,
     })
+}
+
+fn parse_subtitle_lines(value: &Value) -> Vec<SubtitleLine> {
+    let mut lines = Vec::new();
+    for s in value["body"].as_array().into_iter().flatten() {
+        let from = s["from"].as_f64().unwrap_or(-1.0);
+        let to = s["to"].as_f64().unwrap_or(-1.0);
+        let content = text(s, "content");
+        if from.is_finite()
+            && to.is_finite()
+            && from >= 0.0
+            && to >= from
+            && !content.trim().is_empty()
+            && content.len() <= 4096
+        {
+            lines.push(SubtitleLine {
+                time_ms: (from * 1000.0).round() as u64,
+                end_time_ms: (to * 1000.0).round() as u64,
+                text: content,
+            });
+        }
+    }
+    lines.sort_by_key(|s| s.time_ms);
+    lines
 }
 
 impl BilibiliProvider {
@@ -524,7 +540,7 @@ impl BilibiliProvider {
         let mut bytes = Vec::new();
         while let Some(chunk) = body.next().await {
             bytes.extend_from_slice(&chunk?);
-            if bytes.len() > 4 * 1024 * 1024 {
+            if bytes.len() > 16 * 1024 * 1024 {
                 return Err(ProviderError::Api {
                     code: -1,
                     message: "字幕文件过大".into(),
@@ -535,27 +551,7 @@ impl BilibiliProvider {
             code: -1,
             message: "字幕文件无法解析".into(),
         })?;
-        let mut lines = Vec::new();
-        for s in value["body"].as_array().into_iter().flatten().take(20000) {
-            let from = s["from"].as_f64().unwrap_or(-1.0);
-            let to = s["to"].as_f64().unwrap_or(-1.0);
-            let content = text(s, "content");
-            if from.is_finite()
-                && to.is_finite()
-                && from >= 0.0
-                && to >= from
-                && !content.trim().is_empty()
-                && content.len() <= 4096
-            {
-                lines.push(SubtitleLine {
-                    time_ms: (from * 1000.0).round() as u64,
-                    end_time_ms: (to * 1000.0).round() as u64,
-                    text: content,
-                });
-            }
-        }
-        lines.sort_by_key(|s| s.time_ms);
-        Ok(lines)
+        Ok(parse_subtitle_lines(&value))
     }
     pub async fn media_options(&self, bvid: &str, cid: i64) -> Result<MediaOptions, ProviderError> {
         let dash = self.play_dash(bvid, cid, true).await?;
@@ -619,5 +615,31 @@ mod catalog_tests {
         assert!(complete_season(&partial, &summary, "BVsingle").is_none());
         let damaged = &partial["sections"][0]["episodes"][1];
         assert!(season_member(damaged, Some(damaged)).parts.is_none());
+    }
+}
+
+#[cfg(test)]
+mod subtitle_regression_tests {
+    use super::*;
+    #[test]
+    fn subtitles_keep_late_cues_in_multi_day_recordings() {
+        let body: Vec<Value> = (0..40_001).rev().map(|i| serde_json::json!({
+            "from": i as f64 * 15.5, "to": i as f64 * 15.5 + 10.0, "content": format!("第 {i} 句")
+        })).collect();
+        let lines = parse_subtitle_lines(&serde_json::json!({"body":body}));
+        assert_eq!(lines.len(), 40_001);
+        assert_eq!(lines[20_000].time_ms, 310_000_000);
+        assert_eq!(lines.last().unwrap().text, "第 40000 句");
+        assert_eq!(lines.last().unwrap().end_time_ms, 620_010_000);
+    }
+    #[test]
+    fn subtitles_filter_invalid_cues_without_truncating_valid_neighbors() {
+        let lines = parse_subtitle_lines(&serde_json::json!({"body":[
+            {"from":2,"to":1,"content":"反向"}, {"from":-1,"to":1,"content":"负数"},
+            {"from":1,"to":2,"content":"   "}, {"from":3,"to":4,"content":"正常"},
+            {"from":1,"to":2,"content":"第一句"}
+        ]}));
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "第一句");
     }
 }

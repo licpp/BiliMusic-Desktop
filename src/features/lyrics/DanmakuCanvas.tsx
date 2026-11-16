@@ -1,6 +1,6 @@
 import { danmakuX, layoutDanmaku, type DanmakuPlacement } from './danmakuLayout'
 import { memo, useEffect, useRef } from 'react'
-import type { DanmakuItem } from '../../services/desktopApi'
+import type { DanmakuItem } from '../../domain/bilibili'
 import { playbackClock, usePlayerStore } from '../player/playerStore'
 
 export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity, density }: { items: DanmakuItem[]; scale: number; opacity: number; density: number }) {

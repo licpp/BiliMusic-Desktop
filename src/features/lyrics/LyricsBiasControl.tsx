@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Clock3, X } from 'lucide-react'
+import { Clock3, X, WandSparkles, LoaderCircle } from 'lucide-react'
 
 function Step({ delta, onAdjust, disabled }: { delta: number; onAdjust: (delta: number) => void; disabled: boolean }) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -21,15 +21,16 @@ function Step({ delta, onAdjust, disabled }: { delta: number; onAdjust: (delta: 
   </button>
 }
 
-export function LyricsBiasControl({ value, enabled, error, onAdjust, onClose, onActivity }: {
-  value: number; enabled: boolean; error: boolean
+export function LyricsBiasControl({ value, enabled, error, onAdjust, onClose, onActivity, onAutoAlign, autoBusy }: {
+  value: number; enabled: boolean; error: boolean; autoBusy: boolean; onAutoAlign: () => void
   onAdjust: (delta: number) => void; onClose: () => void; onActivity: () => void
 }) {
   return <aside className="lyrics-bias expanded" aria-label="歌词时间调整" onPointerDown={onActivity} onKeyDown={onActivity}>
     <button type="button" className="bias-trigger" aria-label="关闭歌词时间调整" title="关闭" onClick={onClose}><X size={16}/></button>
-    <Step delta={500} onAdjust={onAdjust} disabled={!enabled}/>
+    <button type="button" className="bias-auto" disabled={!enabled || autoBusy} aria-label="自动对齐歌词" title="使用 AI 字幕自动对齐歌词" aria-busy={autoBusy} onClick={onAutoAlign}>{autoBusy ? <LoaderCircle size={16} className="spin"/> : <WandSparkles size={16}/>}<span>{autoBusy ? '对齐中' : '自动'}</span></button>
+    <Step delta={500} onAdjust={onAdjust} disabled={!enabled || autoBusy}/>
     <output aria-live="polite" className={error ? 'bias-save-error' : undefined} title={error ? '偏移保存失败，请重试' : '点选歌词可对齐到当前播放'}>{value > 0 ? '+' : ''}{(value / 1000).toFixed(1)}s</output>
-    <Step delta={-500} onAdjust={onAdjust} disabled={!enabled}/>
-    <button type="button" className="bias-reset" disabled={!enabled} aria-label={error ? '重试保存歌词偏移' : '重置歌词偏移'} title={error ? '保存失败，点击重试' : '重置偏移'} onClick={() => onAdjust(error ? 0 : -value)}><Clock3 size={14}/></button>
+    <Step delta={-500} onAdjust={onAdjust} disabled={!enabled || autoBusy}/>
+    <button type="button" className="bias-reset" disabled={!enabled || autoBusy} aria-label={error ? '重试保存歌词偏移' : '重置歌词偏移'} title={error ? '保存失败，点击重试' : '重置偏移'} onClick={() => onAdjust(error ? 0 : -value)}><Clock3 size={14}/></button>
   </aside>
 }
