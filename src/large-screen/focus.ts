@@ -35,8 +35,18 @@ export function nearestRegionFocus(current: FocusRect, candidates: FocusRect[]) 
 }
 
 export const focusSelector = 'button:not(:disabled),input:not(:disabled),summary,a[href],[tabindex="0"]'
+function focusVisible(el: HTMLElement) {
+  if (el.closest('[hidden],[inert],[aria-hidden="true"]') || !el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') return false
+  // Closed details can retain layout rectangles in Chromium/WebView. Only its
+  // first summary remains interactive; check every enclosing disclosure too.
+  for (let details = el.parentElement?.closest('details:not([open])'); details; details = details.parentElement?.closest('details:not([open])')) {
+    const summary = [...details.children].find(child => child.tagName === 'SUMMARY')
+    if (!summary?.contains(el)) return false
+  }
+  return true
+}
 export function focusable(root: ParentNode): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(focusSelector)].filter(el => el.tabIndex >= 0 && !el.closest('[hidden],[inert],[aria-hidden="true"]') && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden')
+  return [...root.querySelectorAll<HTMLElement>(focusSelector)].filter(el => el.tabIndex >= 0 && focusVisible(el))
 }
 
 export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
@@ -65,7 +75,7 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
     if (event.defaultPrevented || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab'].includes(event.key)) return
     if (target.matches('input[type="range"]') && !target.closest('.large-progress') && ['ArrowLeft', 'ArrowRight'].includes(event.key)) return
     if (event.key !== 'Tab' && target.matches('select')) return
-    const scopes = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"],[data-overflow-panel]')].filter(el => el.getClientRects().length)
+    const scopes = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"],[data-overflow-panel]')].filter(focusVisible)
     const scope = scopes.at(-1) || document.querySelector<HTMLElement>('.large-shell')
     if (!scope) return
     const elements = focusable(scope)
@@ -112,7 +122,10 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
       return
     }
     if (!modal && region.matches('.large-player-info') && current.dataset.focus === 'playback-seek' && event.key === 'ArrowUp') {
-      enterHeader(); return
+      const fullscreen = elements.find(el => el.dataset.focus === 'video-fullscreen' && region.contains(el))
+      if (fullscreen) fullscreen.focus()
+      else enterHeader()
+      return
     }
     if (!modal && region.matches('.large-player-header') && event.key === 'ArrowDown') {
       const items = elements.filter(el => el.closest('.large-player-info,.large-lyrics'))

@@ -202,7 +202,7 @@ test('player header stays in toolbar order and the video window has an exit to b
  const back=el('player-back',header,24,24,150),video=el('player-video',header,800,24),queue=el('queue',header,900,24)
  // A scrolled lyric can geometrically overlap the header. It must not intercept left/right.
  const lyric=el('lyric',lyrics,550,20,400,300)
- const fullscreen=el('video-fullscreen',info,360,300,60,48,{'data-focus-left':'player-back','data-focus-up':'player-video'})
+ const fullscreen=el('video-fullscreen',info,360,300,60,48,{'data-focus-left':'player-back','data-focus-up':'player-back'})
  const elements=[back,video,queue,lyric,fullscreen]
  const shell={querySelectorAll:()=>elements},main={contains:()=>true,getBoundingClientRect:()=>({top:0,bottom:700})}
  globalThis.document={querySelectorAll:()=>[],querySelector:s=>s==='.large-shell'?shell:s==='.large-main'?main:null,addEventListener:(name,fn)=>handlers.set(name,fn),removeEventListener(){}}
@@ -215,11 +215,11 @@ test('player header stays in toolbar order and the video window has an exit to b
   assert.equal(press(queue,'ArrowLeft'),'player-video')
   assert.equal(press(back,'ArrowRight'),'player-video')
   assert.equal(press(fullscreen,'ArrowLeft'),'player-back')
-  assert.equal(press(fullscreen,'ArrowUp'),'player-video')
+  assert.equal(press(fullscreen,'ArrowUp'),'player-back')
   assert.equal(press(back,'ArrowDown'),'video-fullscreen')
   assert.equal(press(back,'ArrowLeft'),'player-back')
  } finally {cleanup();Object.assign(globalThis,original)}
  // Verify the real JSX declares the same exit, rather than testing a fixture-only link.
  const player=await readFile('src/large-screen/Player.tsx','utf8')
- assert.match(player,/data-focus="video-fullscreen" data-focus-left="player-back"/)
+ assert.match(player,/data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back"/)
 })

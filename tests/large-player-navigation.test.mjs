@@ -6,7 +6,7 @@ const load = async path => {
   const { outputFiles } = await build({ entryPoints: [path], bundle: true, write: false, format: 'esm' })
   return import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 }
-const { installDirectionalFocus } = await load('src/large-screen/focus.ts')
+const { installDirectionalFocus, focusable } = await load('src/large-screen/focus.ts')
 const { progressKeyAction } = await load('src/large-screen/playerNavigation.ts')
 
 function fixture(run) {
@@ -70,9 +70,57 @@ test('fullscreen or modal scopes do not escape into the background player header
   fixture(h => {
     h.video.focus()
     const close = h.el('modal-close', h.info, 100, 100)
-    const modal = { getClientRects: () => [{}], querySelectorAll: () => [close, h.progress] }
+    const modal = { closest: () => null, getClientRects: () => [{}], querySelectorAll: () => [close, h.progress] }
     h.setScopes([modal])
     assert.equal(h.press(h.progress, 'ArrowUp'), 'modal-close')
+  })
+})
+test('video progress up visits fullscreen before the header, while cover mode has no extra stop', () => {
+  fixture(h => {
+    const fullscreen = h.el('video-fullscreen', h.info, 470, 350)
+    fullscreen.getAttribute = name => name === 'data-focus-up' ? 'player-back' : null
+    h.setElements([h.back, h.video, h.queue, fullscreen, h.progress, h.play, h.first])
+    assert.equal(h.press(h.progress, 'ArrowUp'), 'video-fullscreen')
+    assert.equal(h.press(fullscreen, 'ArrowUp'), 'player-back')
+    h.setElements([h.back, h.video, h.queue, h.progress, h.play, h.first])
+    assert.equal(h.press(h.progress, 'ArrowUp'), 'player-back')
+    h.video.focus()
+    assert.equal(h.press(h.progress, 'ArrowUp'), 'player-video')
+  })
+})
+test('closed settings disclosures exclude retained rectangles, including nested summaries', () => {
+  fixture(h => {
+    const disclosure = (parentElement = null) => ({
+      open: false, parentElement, children: [],
+      closest() { return this.open ? this.parentElement?.closest() : this },
+    })
+    const outer = disclosure(), inner = disclosure(outer)
+    const summary = h.el('resume-summary', h.info, 100, 100)
+    const nested = h.el('nested-summary', h.info, 100, 150)
+    const range = h.el('resume-range', h.info, 100, 210)
+    const system = h.el('system-title', h.info, 100, 270)
+    const cache = h.el('cache-summary', h.info, 100, 330)
+    const hiddenClear = h.el('cache-clear', h.info, 100, 370)
+    const theme = h.el('theme', h.info, 700, 420)
+    summary.parentElement = outer; nested.parentElement = inner; range.parentElement = inner
+    outer.children = [{ tagName: 'SUMMARY', contains: el => el === summary }]
+    inner.children = [{ tagName: 'SUMMARY', contains: el => el === nested }]
+    const cacheDetails = disclosure(); cache.parentElement = cacheDetails; hiddenClear.parentElement = cacheDetails
+    cacheDetails.children = [{ tagName: 'SUMMARY', contains: el => el === cache }]
+    const controls = [summary, nested, range, system, cache, hiddenClear, theme]
+    const visible = () => focusable({ querySelectorAll: () => controls })
+    assert.deepEqual(visible().map(el => el.id), ['resume-summary', 'system-title', 'cache-summary', 'theme'])
+    h.setElements(controls)
+    assert.equal(h.press(summary, 'ArrowDown'), 'system-title')
+    assert.equal(h.press(system, 'ArrowDown'), 'cache-summary')
+    assert.equal(h.press(cache, 'ArrowDown'), 'theme')
+    assert.equal(h.press(theme, 'ArrowUp'), 'cache-summary')
+    outer.open = true
+    assert.ok(visible().includes(nested)); assert.ok(!visible().includes(range))
+    inner.open = true
+    assert.ok(visible().includes(range))
+    outer.open = false
+    assert.ok(!visible().includes(nested)); assert.ok(!visible().includes(range))
   })
 })
 test('progress editing consumes left/right but releases up/down without committing a seek', () => {
