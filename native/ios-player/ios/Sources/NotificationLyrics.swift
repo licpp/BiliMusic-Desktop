@@ -44,6 +44,6 @@ final class NotificationLyrics {
     }
 }
 
-func notificationMediaText(title: String, artist: String, lyric: String?, titleLyrics: Bool) -> (title: String, artist: String) {
-    return titleLyrics ? (lyric ?? title, artist) : (title, lyric ?? artist)
+func notificationMediaText(title: String, artist: String, lyric: String?) -> (title: String, artist: String) {
+    return (title, lyric ?? artist)
 }

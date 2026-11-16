@@ -44,7 +44,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>
       <ResumeSettings/>
-      {isMobile && <SystemTitleLyricsSettings/>}
+      {isMobile && !isIOS && <SystemTitleLyricsSettings/>}
       {!isIOS && !isOHOS && <FloatingLyricsSettings/>}
       {!isMobile && <ShortcutSettings/>}
     </div></section>

@@ -124,13 +124,13 @@ export function startFloatingLyrics() {
     void listen('floating-lyrics-closed',()=>useFloatingLyrics.setState({enabled:false}))
     window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
   }
-  if (isMobile) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
+  if (isMobile && !isIOS) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
   void load()
 }
 
 let systemTitleWrite: Promise<void> = Promise.resolve()
 export function setSystemTitleLyrics(enabled: boolean) {
-  if (!isMobile) return Promise.resolve()
+  if (!isMobile || isIOS) return Promise.resolve()
   const write = systemTitleWrite.catch(() => undefined).then(async () => {
     await nativeLyrics({ action: 'system-title', enabled })
     localStorage.setItem('system-title-lyrics', String(enabled))

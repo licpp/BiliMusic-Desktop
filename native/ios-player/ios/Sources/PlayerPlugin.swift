@@ -117,7 +117,6 @@ class PlayerPlugin: Plugin {
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private let notificationLyrics = NotificationLyrics()
-    private var systemTitleLyrics = UserDefaults.standard.bool(forKey: "bilimusic-system-title-lyrics")
     private weak var webview: WKWebView?
     private let artworkCache = NSCache<NSString, UIImage>()
     private var artworkTask: URLSessionDataTask?
@@ -413,11 +412,6 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(LyricsArgs.self)
         guard args.data.utf8.count <= 48 * 1024 * 1024, let data=args.data.data(using:.utf8), let request=try? JSONDecoder().decode(NativeLyricsRequest.self,from:data) else { invoke.reject("歌词内容无效");return }
         onMain { [self] in
-            if request.action == "system-title" {
-                systemTitleLyrics = request.enabled == true
-                UserDefaults.standard.set(systemTitleLyrics, forKey: "bilimusic-system-title-lyrics")
-                nowPlaying()
-            }
             if request.action == "update" {
                 notificationLyrics.update(request)
                 nowPlaying()
@@ -811,7 +805,7 @@ class PlayerPlugin: Plugin {
         lastNowPlayingStatus = state.status
         lastNowPlayingID = id
         lastNowPlayingLyric = notificationLyrics.line(for:id,at:state.position)
-        let text = notificationMediaText(title: state.track?.title ?? "BiliMusic", artist: state.track?.artist ?? "歌手未知", lyric: lastNowPlayingLyric, titleLyrics: systemTitleLyrics)
+        let text = notificationMediaText(title: state.track?.title ?? "BiliMusic", artist: state.track?.artist ?? "歌手未知", lyric: lastNowPlayingLyric)
         var info: [String: Any] = [MPMediaItemPropertyTitle: text.title, MPMediaItemPropertyArtist: text.artist, MPNowPlayingInfoPropertyExternalContentIdentifier: id,
                                   MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? Double(playbackRate) : 0.0]
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }
