@@ -1,3 +1,5 @@
+import io
+import tarfile
 """Validate a multi-platform bundle before any publishing credentials are used."""
 import hashlib
 import json
@@ -95,6 +97,35 @@ def apk_manifest(raw):
     return result
 
 
+def package_id(package):
+    platform = package['platform']
+    arch = package.get('architecture') or ('arm64' if platform == 'macOS' else 'x64')
+    if platform == 'Linux':
+        return 'linux-' + arch + ('-deb' if package['file'].endswith('.deb') else '-appimage')
+    if platform == 'macOS':
+        return 'mac-intel' if arch == 'x64' else 'mac'
+    if platform == 'Windows':
+        return 'windows-arm64' if arch == 'arm64' else 'windows'
+    return {'iOS': 'ios', 'Android': 'android', 'HarmonyOS NEXT': 'ohos', 'Android Large Screen': 'android-large'}[platform]
+
+
+def license_name(package, packages):
+    if sum(p['platform'] == package['platform'] for p in packages) > 1:
+        return 'THIRD_PARTY_LICENSES-' + package_id(package) + '.json'
+    return 'THIRD_PARTY_LICENSES-' + package['platform'].replace(' ', '-') + '.json'
+
+
+def compatible_package_source(platform, built, release):
+    changed = command(['git', 'diff', '--name-only', built, release]).splitlines()
+    common = ('scripts/', 'tests/')
+    allowed = ('native/android-player/',) if platform != 'Android' else ()
+    if platform == 'Android Large Screen':
+        allowed += ('src/large-screen/',)
+    if platform == 'iOS':
+        allowed += ('native/ios-player/', 'src/large-screen/', 'src/features/settings/SettingsView.tsx', 'src/services/floatingLyrics.ts')
+    return bool(changed) and all(n.startswith(common + allowed) for n in changed)
+
+
 def verify_native(path, platform, version, certificate):
     if platform == 'macOS':
         command(['hdiutil', 'verify', str(path)])
@@ -106,7 +137,8 @@ def verify_native(path, platform, version, certificate):
                 require(info['CFBundleIdentifier'] == 'app.resonance.desktop', 'Unexpected macOS identity')
                 require(info['CFBundleShortVersionString'] == version, 'Unexpected macOS version')
                 binary = app / 'Contents/MacOS' / info['CFBundleExecutable']
-                require(command(['lipo', '-archs', str(binary)]) == 'arm64', 'Expected Apple Silicon app')
+                expected_arch = 'x86_64' if '_x64' in path.name or '_intel' in path.name.lower() else 'arm64'
+                require(command(['lipo', '-archs', str(binary)]) == expected_arch, 'Unexpected macOS architecture')
                 command(['codesign', '--verify', '--deep', '--strict', str(app)])
             finally:
                 command(['hdiutil', 'detach', mount])
@@ -150,6 +182,22 @@ def verify_native(path, platform, version, certificate):
             binary = archive.read('libs/arm64-v8a/libbilimusic_lib.so')
             require(binary[:4] == b'\x7fELF' and int.from_bytes(binary[18:20], 'little') == 183, 'Expected ARM64 Harmony binary')
             require(len(archive.read('ets/modules.abc')) > 1000, 'Harmony bytecode missing')
+    elif platform == 'Linux':
+        expected_arch = 'arm64' if '_arm64' in path.name else 'amd64'
+        if path.suffix == '.deb':
+            members = command(['ar', 't', str(path)]).splitlines()
+            require('debian-binary' in members, 'Invalid Debian archive')
+            control = next((n for n in members if n.startswith('control.tar')), None)
+            require(control, 'Debian control archive missing')
+            raw = subprocess.check_output(['ar', 'p', str(path), control])
+            with tarfile.open(fileobj=io.BytesIO(raw), mode='r:*') as archive:
+                member = next(m for m in archive.getmembers() if m.name.removeprefix('./') == 'control')
+                fields = archive.extractfile(member).read().decode()
+            require('Package: bili-music\n' in fields and 'Version: ' + version + '\n' in fields and 'Architecture: ' + expected_arch + '\n' in fields, 'Debian identity/version/architecture mismatch')
+        else:
+            raw = path.read_bytes()[:64]
+            require(raw[:4] == b'\x7fELF' and raw[8:11] == b'AI\x02', 'Expected AppImage type 2')
+            require(int.from_bytes(raw[18:20], 'little') == (183 if expected_arch == 'arm64' else 62), 'Unexpected AppImage architecture')
     elif platform == 'Windows':
         raw = path.read_bytes()
         require(raw[:2] == b'MZ', 'Expected Windows executable')
@@ -171,17 +219,15 @@ def validate_bundle(bundle, native_verifier=verify_native):
     version, source = build['version'], build['source']
     require(manifest['version'] == version, 'Build and manifest versions differ')
     require(len(source) == 40 and all(c in '0123456789abcdef' for c in source), 'Invalid source commit')
-    ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows'}
-    if any(p['platform'] == 'HarmonyOS NEXT' for p in build['platforms']):
-        ids['HarmonyOS NEXT'] = 'ohos'
-    if any(p['platform'] == 'Android Large Screen' for p in build['platforms']):
-        ids['Android Large Screen'] = 'android-large'
-    require(len(build['platforms']) == len(ids) and {p['platform'] for p in build['platforms']} == set(ids), 'Expected distinct built platforms, including every declared edition')
+    packages = build['platforms']
+    require({'macOS', 'iOS', 'Android', 'Windows'} <= {p['platform'] for p in packages}, 'Expected core release platforms')
+    ids = [package_id(p) for p in packages]
+    require(len(ids) == len(set(ids)), 'Expected distinct built platforms, including every declared edition')
     manifest_ids = [p['id'] for p in manifest['platforms']]
-    require(len(manifest_ids) == len(set(manifest_ids)) and set(manifest_ids) in (set(ids.values()), set(ids.values()) | {'ohos'}), 'Expected four release platforms with optional retained Harmony test package')
-    if 'ohos' in manifest_ids and 'HarmonyOS NEXT' not in ids:
+    require(len(manifest_ids) == len(set(manifest_ids)) and set(manifest_ids) in (set(ids), set(ids) | {'ohos'}), 'Expected release platforms with optional retained Harmony test package')
+    if 'ohos' in manifest_ids and 'ohos' not in ids:
         harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
-        require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Four-platform publication must preserve the existing Harmony package')
+        require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Publication must preserve the existing Harmony package')
         require(re.fullmatch(r'\d+\.\d+\.\d+', harmony.get('version', '')) and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
     certificate = build['validation'].get('androidCertificateSha256')
     assets = []
@@ -191,23 +237,20 @@ def validate_bundle(bundle, native_verifier=verify_native):
         path = bundle / name
         require(package['version'] == version, 'Mixed build sources or versions')
         if package['source'] != source:
-            # An Android-only follow-up can reuse other accepted packages if
-            # every changed path is irrelevant to those native app sources.
-            require(package['platform'] != 'Android' and re.fullmatch(r'[a-f0-9]{40}', package['source']), 'Mixed build sources or versions')
-            changed = command(['git', 'diff', '--name-only', package['source'], source]).splitlines()
-            require(changed and all(n.startswith(('native/android-player/', 'scripts/', 'tests/')) for n in changed), 'Mixed build sources or versions')
+            require(re.fullmatch(r'[a-f0-9]{40}', package['source']) and compatible_package_source(package['platform'], package['source'], source), 'Mixed build sources or versions')
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Package digest mismatch: ' + name)
-        entry = next(p for p in manifest['platforms'] if p['id'] == ids[package['platform']])
+        entry = next(p for p in manifest['platforms'] if p['id'] == package_id(package))
         require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
         require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
         native_verifier(path, package['platform'], version, certificate)
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': True})
     sums = ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
     require((bundle / 'SHA256SUMS.txt').read_text() == sums, 'SHA256SUMS does not match packages')
-    for platform in ids:
-        data = json.loads((bundle / ('THIRD_PARTY_LICENSES-' + platform.replace(' ', '-') + '.json')).read_text())
-        require(data['version'] == version and data['sourceCommit'] == next(p['source'] for p in build['platforms'] if p['platform'] == platform), 'Dependency notices source mismatch')
-    for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + ['THIRD_PARTY_LICENSES-' + p.replace(' ', '-') + '.json' for p in ids]:
+    notices = list(dict.fromkeys(license_name(p, packages) for p in packages))
+    for package in packages:
+        data = json.loads((bundle / license_name(package, packages)).read_text())
+        require(data['version'] == version and data['sourceCommit'] == package['source'], 'Dependency notices source mismatch')
+    for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + notices:
         path = bundle / name
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': False})
     from updater_artifacts import updater_assets
@@ -217,4 +260,4 @@ def validate_bundle(bundle, native_verifier=verify_native):
     notes = (bundle / 'RELEASE_NOTES.md').read_text()
     require(source in notes, 'Release notes must pin the package source commit')
     return {'version': version, 'source': source, 'tag': 'v' + version, 'manifest': manifest, 'previous': previous,
-            'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}), 'ciRuns': build.get('ciRuns', {}), 'platformSources': {p['platform']: p['source'] for p in build['platforms']}, 'revision': build.get('packageRevision', source[:7])}
+            'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}), 'ciRuns': build.get('ciRuns', {}), 'platformSources': {**{p['platform']: p['source'] for p in build['platforms']}, **{package_id(p): p['source'] for p in build['platforms']}}, 'revision': build.get('packageRevision', source[:7])}

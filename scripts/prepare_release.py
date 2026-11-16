@@ -7,7 +7,7 @@ import re
 import shutil
 import urllib.request
 from pathlib import Path
-from release_packages import digest, require
+from release_packages import digest, require, package_id, license_name
 
 
 def prepare(build_dir, template, notes_path, output, revision, previous):
@@ -22,12 +22,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
     require(tuple(map(int, version.split('.'))) >= tuple(map(int, previous['version'].split('.'))), 'Refusing a version downgrade')
     require(any(h['version'] == version for h in candidate['history']), 'Release history entry missing')
     output.mkdir(parents=True, exist_ok=True)
-    ids = {'macOS': 'mac', 'iOS': 'ios', 'Android': 'android', 'Windows': 'windows'}
-    if any(p['platform'] == 'HarmonyOS NEXT' for p in build['platforms']):
-        ids['HarmonyOS NEXT'] = 'ohos'
-    if any(p['platform'] == 'Android Large Screen' for p in build['platforms']):
-        ids['Android Large Screen'] = 'android-large'
-    original_names = {p['platform']: p['file'] for p in build['platforms']}
+    original_names = {package_id(p): p['file'] for p in build['platforms']}
     for package in build['platforms']:
         path = build_dir / package['file']
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Build output changed: ' + path.name)
@@ -36,7 +31,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
         name = prefix + revision + '_' + path.name[len(prefix):]
         shutil.copy2(path, output / name)
         package['file'] = name
-        platform = next(p for p in candidate['platforms'] if p['id'] == ids[package['platform']])
+        platform = next(p for p in candidate['platforms'] if p['id'] == package_id(package))
         platform.update(version=version, file=name, size=package['bytes'], sha256=package['sha256'], status='available')
         for channel in platform['channels']:
             root = {'github': 'https://github.com/licpp/BiliMusic-Desktop', 'gitee': 'https://gitee.com/yoaker/BiliMusic-Desktop'}[channel['id']]
@@ -46,7 +41,7 @@ def prepare(build_dir, template, notes_path, output, revision, previous):
     build.pop('releasePublished', None)
     build.pop('websiteChanged', None)
     build.update(purpose='release publication', packageRevision=revision, packagedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
-    for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + ['THIRD_PARTY_LICENSES-' + p.replace(' ', '-') + '.json' for p in ids]:
+    for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + list(dict.fromkeys(license_name(p, build['platforms']) for p in build['platforms'])):
         shutil.copy2(build_dir / name, output / name)
     for name in ['android-bridge-acl.json', 'ios-bridge-acl.json']:
         if (build_dir / name).exists():

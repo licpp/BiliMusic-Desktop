@@ -1,3 +1,4 @@
+import { detectedDownloadFamily, downloadFamily, downloadVariant, groupDownloads, preferredDownloadFamily } from './download-options.js';
 const $ = selector => document.querySelector(selector);
 if (location.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(location.hostname)) {
   const note = document.createElement('p'); note.className='transport-note';
@@ -24,6 +25,7 @@ function platformIcon(platform) {
     'android-large': 'M3 4h18v13H3ZM8 21h8M12 17v4M16 8l4 3-4 3Z',
     ios: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM10 5h4M11 19h2',
     ohos: 'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2ZM9 9h6M9 13h6M11 19h2',
+    linux: 'M8 17V9a4 4 0 0 1 8 0v8M8 11l-3 7 4 3 3-2 3 2 4-3-3-7M10 9h.01M14 9h.01M10 12l2 1 2-1',
   };
   const path = document.createElementNS(svg.namespaceURI,'path'); path.setAttribute('d', paths[platform] || paths.ios); svg.append(path); icon.append(svg);
   return icon;
@@ -75,6 +77,56 @@ function renderReleaseHistory(manifest) {
   $('#past-releases').hidden = previous.length === 0;
   section.hidden = false;
 }
+function renderDownloadPanel(group, item, panel) {
+  panel.replaceChildren();
+  panel.setAttribute('aria-labelledby', `download-tab-${group.id}`);
+  const article = element('article', null, 'download-card');
+  const header = element('header', null, 'download-card-header');
+  const badge = group.id === 'ios' ? '自签版' : group.id === 'ohos' ? '测试版 · 未签名' : group.id === 'linux' ? '测试版' : '';
+  header.append(element('p', item.requirements, 'download-requirements'));
+  if (badge) header.append(element('span', badge, 'download-badge'));
+  article.append(header);
+  const variants = element('div', null, 'download-variants');
+  if (group.items.length > 2) variants.classList.add('download-variants-many');
+  if (group.items.length > 1) {
+    variants.setAttribute('role', 'group'); variants.setAttribute('aria-label', `${group.name} 安装包`);
+    for (const variant of group.items) {
+      const button = element('button', downloadVariant(variant), 'download-variant'); button.type = 'button';
+      button.setAttribute('aria-pressed', String(variant.id === item.id));
+      button.addEventListener('click', () => {
+        renderDownloadPanel(group, variant, panel);
+        panel.querySelector(`.download-variant[data-variant="${CSS.escape(variant.id)}"]`)?.focus({ preventScroll: true });
+      });
+      button.dataset.variant = variant.id; variants.append(button);
+    }
+  } else variants.append(element('span', item.architecture, 'download-architecture'));
+  article.append(variants);
+  if (item.status !== 'available') article.append(element('p', '即将推出', 'coming-soon'));
+  else {
+    const body = element('div', null, 'download-body');
+    const version = element('div', null, 'download-build');
+    const count = element('span', '累计下载 —', 'platform-download-count'); count.dataset.downloadCount = item.id;
+    version.append(element('strong', `v${item.version || releaseManifest.version}`), element('span', `${(item.size / 1048576).toFixed(1)} MB`), count);
+    body.append(version); article.append(body);
+    const channels = element('div', null, 'channel-buttons');
+    for (const channel of item.channels) {
+      const button = element('button', channel.name + (channel.recommended ? ' · 国内推荐' : ''), 'button' + (channel.recommended ? ' recommended' : ''));
+      button.type = 'button'; button.dataset.platform = item.id; button.dataset.source = channel.id;
+      button.setAttribute('aria-label', `${item.name} ${downloadVariant(item)} ${channel.name} 下载${channel.recommended ? '（国内推荐）' : ''}`);
+      button.disabled = !channel.url; if (!channel.url) button.textContent = `${channel.name} · 准备中`;
+      channels.append(button);
+    }
+    article.append(channels);
+    const utilities = element('div', null, 'download-utilities');
+    const checksum = element('details', null, 'checksum'); checksum.append(element('summary', 'SHA-256 校验值'), element('code', item.sha256)); utilities.append(checksum);
+    if (group.id === 'ios' || group.id === 'ohos') {
+      const guide = element('a', group.id === 'ios' ? '自签安装说明 ↗' : '签名与安装说明 ↗', 'download-guide'); guide.href = group.id === 'ios' ? '/ios.html' : '/harmony.html'; utilities.append(guide);
+    }
+    article.append(utilities);
+  }
+  panel.append(article);
+  if (latestDownloadStats) renderDownloadStats(latestDownloadStats);
+}
 async function loadDownloads() {
   const target = $('#download-platforms');
   try {
@@ -84,46 +136,37 @@ async function loadDownloads() {
     $('#release-notes').href = releaseManifest.releaseNotes;
     renderReleaseHistory(releaseManifest);
     $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
-    for (const item of releaseManifest.platforms) {
-      const article = element('article', null, 'download-card');
-      const header = element('header', null, 'download-card-header');
-      const heading = element('div', null, 'download-heading');
-      const title = element('div', null, 'download-title'); title.append(element('h3',item.name));
-      if (item.id === 'ios') title.append(element('span','自签版','download-badge'));
-      if (item.id === 'ohos') title.append(element('span','测试版 · 未签名','download-badge'));
-      heading.append(title,element('p',item.architecture,'download-architecture'));
-      header.append(platformIcon(item.id),heading); article.append(header);
-      if (item.status !== 'available') article.append(element('span','Coming soon','coming-soon'));
-      else {
-        const body = element('div',null,'download-body');
-        const version = element('div',null,'download-build');
-        const count = element('span','累计下载 —','platform-download-count');
-        count.dataset.downloadCount = item.id;
-        version.append(element('strong',`v${item.version || releaseManifest.version}`),element('span',`${(item.size / 1048576).toFixed(1)} MB`),count);
-        body.append(version,element('p',item.requirements,'download-requirements')); article.append(body);
-        const channels = element('div', null, 'channel-buttons');
-        for (const channel of item.channels) {
-          const button = element('button',channel.name + (channel.recommended ? ' · 国内推荐' : ''),'button' + (channel.recommended ? ' recommended' : ''));
-          button.type='button'; button.dataset.platform=item.id; button.dataset.source=channel.id;
-          button.setAttribute('aria-label',`${item.name} ${channel.name} 下载${channel.recommended ? '（国内推荐）' : ''}`);
-          button.disabled=!channel.url; if (!channel.url) button.textContent=`${channel.name} · 准备中`;
-          channels.append(button);
-        }
-        article.append(channels);
-        const utilities = element('div',null,'download-utilities');
-        const checksum = element('details',null,'checksum'); checksum.append(element('summary','查看 SHA-256 校验值'),element('code',item.sha256));
-        utilities.append(checksum);
-        if (item.id === 'ios') {
-          const guide=element('a','自签安装说明 ↗','download-guide'); guide.href='/ios.html'; utilities.append(guide);
-        }
-        if (item.id === 'ohos') {
-          const guide=element('a','签名与安装说明 ↗','download-guide'); guide.href='/harmony.html'; utilities.append(guide);
-        }
-        article.append(utilities);
-      }
-      target.append(article);
+    const groups = groupDownloads(releaseManifest.platforms);
+    const detected = detectedDownloadFamily(navigator.userAgent, navigator.maxTouchPoints);
+    const recommended = groups.find(group => group.id === detected && group.items.some(item => item.status === 'available'));
+    const pickerHeading = element('div', null, 'download-picker-heading');
+    pickerHeading.append(element('strong', '选择设备平台'));
+    if (recommended) pickerHeading.append(element('span', `本机推荐：${recommended.name}`, 'download-device-hint'));
+    const tabs = element('div', null, 'download-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '下载平台');
+    const panel = element('div', null, 'download-panel'); panel.id = 'download-platform-panel'; panel.setAttribute('role', 'tabpanel');
+    function select(group, focus = false) {
+      for (const tab of tabs.children) { const active = tab.dataset.family === group.id; tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1; }
+      const tab = [...tabs.children].find(tab => tab.dataset.family === group.id);
+      if (focus) tab.focus({ preventScroll: true });
+      renderDownloadPanel(group, group.items.find(item => item.status === 'available') || group.items[0], panel);
     }
-    if (latestDownloadStats) renderDownloadStats(latestDownloadStats);
+    for (const group of groups) {
+      const tab = element('button', null, 'download-tab'); tab.type = 'button'; tab.id = `download-tab-${group.id}`; tab.dataset.family = group.id;
+      tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', panel.id);
+      const label = element('span', group.name, 'download-tab-name');
+      if (group.id === 'linux') label.append(element('small', '测试版'));
+      if (group === recommended) label.append(element('small', '推荐', 'download-recommended-label'));
+      tab.append(platformIcon(group.id), label);
+      tab.addEventListener('click', () => select(group));
+      tab.addEventListener('keydown', event => {
+        const index = groups.indexOf(group), next = event.key === 'ArrowRight' ? (index + 1) % groups.length : event.key === 'ArrowLeft' ? (index + groups.length - 1) % groups.length : event.key === 'Home' ? 0 : event.key === 'End' ? groups.length - 1 : -1;
+        if (next >= 0) { event.preventDefault(); select(groups[next], true); }
+      });
+      tabs.append(tab);
+    }
+    target.append(pickerHeading, tabs, panel);
+    const initial = preferredDownloadFamily(groups, navigator.userAgent, navigator.maxTouchPoints);
+    if (initial) select(initial);
   } catch {
     target.replaceChildren(element('p','下载信息暂时无法加载，请稍后重试。'));
     const retry=element('button','重新加载','button'); retry.type='button'; retry.dataset.retry='true'; target.append(retry);
@@ -149,7 +192,9 @@ async function openPolicy(downloadPlatform) {
   $('#confirm-download').disabled = true;
   $('#confirm-download').dataset.loaded = 'false';
   $('#confirm-download').textContent = '同意并下载';
-  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${platform.item.id === 'mac' ? 'macOS 使用临时签名，尚未经过 Apple 公证，首次打开可能需在隐私与安全性中单独允许。' : platform.item.id === 'ios' ? 'iOS 下载的是未签名 IPA，必须使用自己的 Apple ID 自行签名后安装，不是 App Store 版本。' : platform.item.id === 'ohos' ? '鸿蒙下载的是未签名 HAP 测试包，真机需使用自己的华为开发者账号和包含本机 UDID 的 Profile 签名后安装，不能直接点击安装，也不是华为应用市场版本。' : platform.item.id === 'android' ? 'Android 仅支持 ARM64，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。'}下载前请确认来源与校验值。` : '';
+  const family = platform && downloadFamily(platform.item);
+  const installation = family === 'mac' ? 'macOS 安装包尚未经过 Apple 公证。' : family === 'ios' ? 'IPA 需自行签名安装。' : family === 'ohos' ? '未签名 HAP 测试包，需自行签名安装。' : family === 'linux' ? 'Linux 测试版，尚未完成完整设备验收。' : family === 'android' || family === 'android-large' ? 'ARM64 APK，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。';
+  $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${installation}` : '';
   if(platform?.item.id==='android' && platform.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);

@@ -5,7 +5,7 @@ import plistlib
 import shutil
 import tarfile
 from pathlib import Path
-from release_packages import require, digest
+from release_packages import require, digest, package_id
 
 KEY = Path(__file__).resolve().parents[1] / 'src-tauri/update-public-key.txt'
 
@@ -30,7 +30,9 @@ def prepare_updater(build_dir, output, build, original_names):
         if kind not in ('macOS', 'Windows'):
             continue
         if kind == 'macOS':
-            archives = list(build_dir.glob('*.app.tar.gz'))
+            original = original_names.get(package_id(package), original_names.get(kind))
+            exact = build_dir / original.replace('.dmg', '.app.tar.gz') if original and original.endswith('.dmg') else None
+            archives = [exact] if exact and exact.is_file() else list(build_dir.glob('*.app.tar.gz'))
             require(len(archives) <= 1, 'Ambiguous macOS OTA archives')
             if not archives:
                 continue
@@ -41,10 +43,10 @@ def prepare_updater(build_dir, output, build, original_names):
                 data = plistlib.loads(tar.extractfile(info).read())
                 require(data.get('CFBundleIdentifier') == 'app.resonance.desktop' and data.get('CFBundleShortVersionString') == build['version'], 'OTA app identity/version mismatch')
             name = package['file'].removesuffix('.dmg') + '.app.tar.gz'
-            source, target = archive, 'darwin-aarch64'
+            source, target = archive, 'darwin-x86_64' if package.get('architecture') == 'x64' else 'darwin-aarch64'
         else:
-            source = build_dir / original_names[kind]
-            name, target = package['file'], 'windows-x86_64'
+            source = build_dir / original_names.get(package_id(package), original_names.get(kind))
+            name, target = package['file'], 'windows-aarch64' if package.get('architecture') == 'arm64' else 'windows-x86_64'
         sig = Path(str(source) + '.sig')
         require(kind != 'macOS' or sig.is_file(), 'macOS OTA signature missing')
         if not sig.is_file():
@@ -66,7 +68,7 @@ def updater_assets(bundle, version):
     if not path.exists():
         return None, []
     manifest = json.loads(path.read_text())
-    require(manifest['version'] == version and set(manifest['platforms']) <= {'darwin-aarch64', 'windows-x86_64'}, 'Invalid OTA release version/platform')
+    require(manifest['version'] == version and set(manifest['platforms']) <= {'darwin-aarch64', 'darwin-x86_64', 'windows-x86_64', 'windows-aarch64'}, 'Invalid OTA release version/platform')
     names = {'updater.json': False}
     for entry in manifest['platforms'].values():
         prefix = 'https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v' + version + '/'

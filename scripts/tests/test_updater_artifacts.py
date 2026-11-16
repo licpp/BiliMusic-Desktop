@@ -1,4 +1,7 @@
 import base64
+import io
+import tarfile
+import plistlib
 import hashlib
 import json
 import sys
@@ -31,6 +34,26 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual({a['name'] for a in assets}, {'updater.json', 'BiliMusic_0.3.5_test_setup.exe', 'BiliMusic_0.3.5_test_setup.exe.sig'})
             (output / 'BiliMusic_0.3.5_test_setup.exe').write_bytes(b'corrupt')
             with self.assertRaisesRegex(ValueError, 'archive changed'): updater_assets(output, '0.3.5')
+
+    def test_both_desktop_architectures_get_their_own_signed_assets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);out=root/'out';out.mkdir();packages=[];original={}
+            for kind,arch in [('macOS','arm64'),('macOS','x64'),('Windows','x64'),('Windows','arm64')]:
+                id=('mac' if arch=='arm64' else 'mac-intel') if kind=='macOS' else ('windows' if arch=='x64' else 'windows-arm64')
+                name=f'BiliMusic_0.3.5_{arch}_{kind}'+('.dmg' if kind=='macOS' else '.exe')
+                target='stable-'+name;original[id]=name;packages.append(dict(platform=kind,architecture=arch,file=target))
+                (root/name).write_bytes(arch.encode());(out/target).write_bytes(arch.encode())
+                source=root/name
+                if kind=='macOS':
+                    source=root/name.replace('.dmg','.app.tar.gz')
+                    data=plistlib.dumps(dict(CFBundleIdentifier='app.resonance.desktop',CFBundleShortVersionString='0.3.5'))
+                    with tarfile.open(source,'w:gz') as tar:
+                        member=tarfile.TarInfo('BiliMusic.app/Contents/Info.plist');member.size=len(data);tar.addfile(member,io.BytesIO(data))
+                Path(str(source)+'.sig').write_text(self.signature())
+            feed=prepare_updater(root,out,dict(version='0.3.5',platforms=packages),original)
+            self.assertEqual(set(feed['platforms']),{'darwin-aarch64','darwin-x86_64','windows-x86_64','windows-aarch64'})
+            self.assertEqual(len({p['url'] for p in feed['platforms'].values()}),4)
+            self.assertEqual(updater_assets(out,'0.3.5')[0],feed)
 
     def test_unsigned_build_produces_empty_feed_and_cannot_reuse_an_old_ota(self):
         with tempfile.TemporaryDirectory() as folder:
