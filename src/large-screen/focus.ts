@@ -42,7 +42,8 @@ export function focusable(root: ParentNode): HTMLElement[] {
 export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
   let lastMain: HTMLElement | undefined
   let lastPlayer: HTMLElement | undefined
-  const remember = (event: FocusEvent) => { const el = event.target as HTMLElement; if (el.closest('.large-main') && !el.closest('[aria-modal="true"]')) lastMain = el; if (el.closest('.large-player-info,.large-lyrics') && !el.closest('[aria-modal="true"]')) lastPlayer = el }
+  let lastHeader: HTMLElement | undefined
+  const remember = (event: FocusEvent) => { const el = event.target as HTMLElement; if (el.closest('.large-main') && !el.closest('[aria-modal="true"]')) lastMain = el; if (el.closest('.large-player-info,.large-lyrics') && !el.closest('[aria-modal="true"]')) lastPlayer = el; if (el.closest('.large-player-header') && !el.closest('[aria-modal="true"]')) lastHeader = el }
   const regionSelector = '.large-nav,.large-dock,.large-player-header,.large-player-info,.large-lyrics,.large-player-footer,.large-resume,.large-home-shortcuts'
   const editable = (target: HTMLElement) => target.matches('input:not([type="range"]):not([type="checkbox"]),textarea,[contenteditable="true"]')
   const pointer = (event: PointerEvent) => { const target = event.target as HTMLElement; if (editable(target)) target.dataset.largeEditing = 'true' }
@@ -97,6 +98,22 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
       const next = nearestRegionFocus(origin, (visible.length ? visible : items).map(el => ({ id: String(elements.indexOf(el)), ...pickRect(el) })))
       if (next !== undefined) elements[Number(next)].focus()
     }
+    const enterHeader = () => {
+      const items = elements.filter(el => el.closest('.large-player-header'))
+      if (lastHeader?.isConnected && items.includes(lastHeader)) lastHeader.focus()
+      else transfer(items)
+    }
+    if (!modal && region.matches('.large-lyrics') && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      // Lyric rows scroll independently: nearby controls need not overlap the
+      // selected line vertically. Always provide a route out of this column.
+      const media = elements.filter(el => el.closest('.large-player-info'))
+      if (event.key === 'ArrowLeft' && media.length) transfer(media)
+      else enterHeader()
+      return
+    }
+    if (!modal && region.matches('.large-player-info') && current.dataset.focus === 'playback-seek' && event.key === 'ArrowUp') {
+      enterHeader(); return
+    }
     if (!modal && region.matches('.large-player-header') && event.key === 'ArrowDown') {
       const items = elements.filter(el => el.closest('.large-player-info,.large-lyrics'))
       const next = nextFocus(origin, items.map(el => ({ id: String(elements.indexOf(el)), ...pickRect(el) })), 'ArrowDown')
@@ -140,8 +157,10 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
       if (event.key === 'ArrowDown' && region.matches('.large-player-info,.large-lyrics')) {
         transfer(elements.filter(el => el.closest('.large-player-footer'))); return
       }
-      // A player column returns to the shared header at its top, without
-      // crossing into the lyric column or falling into the navigation rail.
+      if (event.key === 'ArrowUp' && region.matches('.large-player-info,.large-lyrics')) {
+        enterHeader(); return
+      }
+      // Other nested regions return to their containing page's controls.
       const parent = elements.filter(el => main.contains(el) && !el.closest(regionSelector)).map(el => ({ id: String(elements.indexOf(el)), ...pickRect(el) }))
       next = nextRowFocus(origin, parent, event.key as 'ArrowUp' | 'ArrowDown')
     }

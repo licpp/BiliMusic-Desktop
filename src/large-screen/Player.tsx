@@ -4,6 +4,7 @@ import { trackSubtitle } from '../domain/sourceTitle'
 import { accountQueryKey, accountKeyAt } from '../services/queryKeys'
 import { createPortal } from 'react-dom'
 import { fitMediaFrame, centeredLyricScroll } from './playerLayout'
+import { progressKeyAction } from './playerNavigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText } from 'lucide-react'
@@ -51,9 +52,12 @@ export function LargeProgress() {
   }, [draft])
   return <div className={`large-progress${draft !== null ? ' adjusting' : ''}`}><SeekRange duration={duration} trackKey={id} onSeek={seconds => { usePlayerStore.getState().seek(seconds); setDraft(null) }} data-focus="playback-seek" aria-label="播放进度" aria-valuetext={`${formatDuration(draft ?? position)}，${draft === null ? '按确定调整进度' : '左右调整，确定保存，返回取消'}`} min={0} max={Math.max(1, duration)} value={Math.min(duration, draft ?? position)} disabled={!duration} onBlur={() => setDraft(null)}
     onKeyDown={e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (draft === null) setDraft(position); else { usePlayerStore.getState().seek(draft); setDraft(null) } }
-      else if (draft !== null && ['Escape', 'BrowserBack'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); setDraft(null) }
-      else if (draft !== null && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') setDraft(Math.max(0, Math.min(duration, draft + (e.key === 'ArrowRight' ? 1 : -1) * (e.repeat ? 15 : 5)))) }
+      const action = progressKeyAction(e.key, draft, position, duration, e.repeat)
+      if (!action) return
+      if (action.kind === 'leave') { setDraft(null); return }
+      e.preventDefault(); e.stopPropagation()
+      if (action.kind === 'seek') { usePlayerStore.getState().seek(action.value); setDraft(null) }
+      else setDraft(action.value)
     }} onValueChange={value => { if (draft !== null) setDraft(value); else usePlayerStore.getState().seek(value) }}/><div><span>{formatDuration(draft ?? position)}</span><span>{draft !== null ? '确定保存 · 返回取消' : ''}</span><span>{formatDuration(duration)}</span></div></div>
 }
 
