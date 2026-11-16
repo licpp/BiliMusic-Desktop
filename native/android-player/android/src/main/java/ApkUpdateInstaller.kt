@@ -10,6 +10,10 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.io.File
 
+// Manifest merging keys providers by class name. Keep OTA cache access separate
+// from Tauri's general FileProvider and its own authority/path configuration.
+class ApkUpdateProvider : FileProvider()
+
 /** Rust supplies a verified download; Android independently checks application identity. */
 internal object ApkUpdateInstaller {
     internal fun checkedFile(cache: File, path: String): File {
