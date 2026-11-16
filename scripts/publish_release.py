@@ -609,6 +609,9 @@ def local_main(args):
                 report = json.loads((bundle / 'release-report.json').read_text())
                 raise RuntimeError(report.get('lastFailure', {}).get('message', 'Remote workflow failed; rerun to resume'))
         run_phase('stage')
+        if getattr(args, 'stage_only', False):
+            print(json.dumps({'stage': 'stagedOnly', 'status': 'ready for activation'}), flush=True)
+            return
         previous_bundle = Path(args.previous_bundle).resolve() if args.previous_bundle else bundle.parent / ('BiliMusic-' + plan['previous']['version'] + '-release')
         subprocess.run(['node', str(Path(__file__).with_name('backup_release_metadata.mjs')), str(bundle / 'release-report.json'), str(bundle), str(previous_bundle)], check=True)
         metadata_proof = json.loads((bundle / 'metadata-backup-proof.json').read_text())
@@ -653,6 +656,7 @@ if __name__ == '__main__':
     parser.add_argument('--ssh-user', default='root')
     parser.add_argument('--site-root', default='/opt/bilimusic-site')
     parser.add_argument('--plan-only', action='store_true')
+    parser.add_argument('--stage-only', action='store_true', help='Upload and verify binaries without activating release or website')
     parser.add_argument('--site-filing-pending', action='store_true', help='Publish verified site configuration while explicitly recording public access pending ICP filing')
     parser.add_argument('--full-download-audit', action='store_true', help='Audit every public installer by downloading and hashing it again')
     parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')

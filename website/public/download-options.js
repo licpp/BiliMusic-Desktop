@@ -1,6 +1,7 @@
 const names = { mac: 'macOS', windows: 'Windows', android: 'Android', 'android-large': '车机 / TV', ios: 'iOS', ohos: '鸿蒙 NEXT', linux: 'Linux' };
 export function downloadFamily(item) {
   const id = item.id.toLowerCase();
+  if (id === 'android-large') return 'android';
   if (id.startsWith('linux')) return 'linux';
   if (id.startsWith('mac')) return 'mac';
   if (id.startsWith('windows')) return 'windows';
@@ -17,6 +18,7 @@ export function groupDownloads(items) {
 }
 export function downloadVariant(item) {
   const family = downloadFamily(item);
+  if (family === 'android') return item.id === 'android-large' ? '车机 / TV' : '手机 / 平板';
   const file = item.file || '';
   const intel = /intel|x86_64|x64/i.test(`${item.id} ${item.architecture} ${file}`);
   const arch = family === 'mac' ? (intel ? 'Intel' : 'Apple Silicon') : /arm64|aarch64/i.test(`${item.id} ${item.architecture} ${file}`) ? 'ARM64' : 'x64';

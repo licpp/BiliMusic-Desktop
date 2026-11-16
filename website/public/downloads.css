@@ -17,7 +17,7 @@
 .download-tab[aria-selected="true"]:hover { color:#17291e;background:#c8e2d4; }
 .download-tab-name { white-space:nowrap;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px;line-height:1.5; }
 .download-tab small { position:absolute;top:5px;right:5px;padding:1px 4px;border:1px solid currentColor;border-radius:4px;font-size:8px;line-height:1.5;font-weight:500;white-space:nowrap; }
-.download-tab .download-recommended-label { left:5px;right:auto;background:#b7d6c71c; }
+.download-tab .download-recommended-label { display:none; }
 .download-tab[aria-selected="true"] .download-recommended-label { background:#17291e12; }
 .download-icon { display:grid;place-items:center;flex:none;width:44px;height:44px;border-radius:11px;background:#b7d6c70d;color:var(--mint); }
 .download-icon svg { width:24px;height:24px; }
@@ -48,9 +48,13 @@
 .download-card .coming-soon { grid-area:channels; }
 @media(max-width:760px) {
   .download-picker-heading { padding:16px 14px 0; }
-  .download-tabs { grid-auto-flow:row;grid-template-columns:repeat(4,minmax(0,1fr));padding:12px 14px 16px;gap:7px; }
-  .download-tab { min-height:82px;padding:23px 3px 10px;font-size:11px;gap:6px; }
-  .download-tab .download-icon svg { width:23px;height:23px; }
+  .download-tabs { grid-auto-flow:row;grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 14px 16px;gap:6px; }
+  .download-tab { flex-direction:column;justify-content:center;min-height:70px;padding:10px 4px;font-size:12px;gap:7px;border-color:transparent;background:#b7d6c708;border-radius:7px;font-weight:500; }
+  .download-tab[aria-selected="true"] { font-weight:650;box-shadow:none; }
+  .download-tab-name { justify-content:center;gap:4px; }
+  .download-tab small { position:static;border:0;background:#b7d6c710;border-radius:4px;padding:1px 5px;color:var(--mint);font-size:9px; }
+  .download-tab[aria-selected="true"] small { background:#17291e12;color:inherit; }
+  .download-tab .download-icon,.download-tab .download-icon svg { width:21px;height:21px; }
   .download-variants-many { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
   .download-variants-many .download-variant { padding-inline:5px;line-height:1.4; }
   .download-variant { min-height:44px;padding:8px 12px;font-size:12px; }
@@ -70,8 +74,8 @@
 @media(max-width:380px) {
   .download-tabs { padding-inline:10px;gap:6px; }
   .download-picker-heading { padding-inline:10px; }
-  .download-tab { font-size:10px; }
-  .download-tab small { font-size:7px; }
+  .download-tab { padding-inline:3px;font-size:11px;gap:7px; }
+  .download-tab small { font-size:9px; }
   .download-build { gap:5px 10px; }
   .download-card .platform-download-count { margin-left:0;flex-basis:100%; }
 }
