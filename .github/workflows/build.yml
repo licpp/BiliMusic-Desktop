@@ -183,7 +183,7 @@ jobs:
           test "$(dpkg-deb -f "$deb" Version)" = 0.3.5
           ! ldd "$binary" | grep 'not found'
           set +e
-          timeout 18s dbus-run-session -- xvfb-run -a "$binary" > linux-launch.log 2>&1
+          timeout 18s xvfb-run -a dbus-run-session -- "$binary" > linux-launch.log 2>&1
           status=$?
           set -e
           cat linux-launch.log

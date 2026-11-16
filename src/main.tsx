@@ -1,3 +1,4 @@
+import './shared/runtimeCompatibility'
 import { startUpdateChecks } from './services/updates'
 import { installAccountQueryScope } from './services/queryKeys'
 import { FloatingLyricsUnlockWindow } from './features/lyrics/FloatingLyricsUnlockWindow'
