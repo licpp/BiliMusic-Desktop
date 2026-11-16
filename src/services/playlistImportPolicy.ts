@@ -5,6 +5,12 @@ export const IMPORT_DETAIL_INTERVAL = 500
 function message(error: unknown) {
   return typeof error === 'string' ? error : error && typeof error === 'object' && 'message' in error ? String(error.message) : ''
 }
+export function validImportBvid(value: unknown): value is string {
+  return typeof value === 'string' && /^BV[A-Za-z0-9]{10}$/.test(value)
+}
+export function isUnavailableImportCandidate(error: unknown) {
+  return /-404|-62002|不存在|已删除|不可见|无权限|无效的\s*BV\s*号/i.test(message(error))
+}
 export function isImportRateLimit(error: unknown) {
   if (error && typeof error === 'object' && 'code' in error && error.code === 'bili_rate_limited') return true
   const text = message(error)

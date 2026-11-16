@@ -3,7 +3,7 @@
   "productName": "BiliMusic",
   "version": "0.3.5",
   "identifier": "app.resonance.desktop",
-  "plugins": { "updater": {} },
+  "plugins": { "updater": { "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxODM3RDgzNTI0NDQ3Q0QKUldUTlIwUlNnMzJEUWJMeWVBQzZEdXU5UDR4bCtYLzBvOWM4eXVhS3ZVaWYwRWh0N1A1ZE1QRnUK" } },
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

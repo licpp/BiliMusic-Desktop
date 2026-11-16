@@ -7,7 +7,7 @@ import { toTrack } from './collectionTrack'
 import { chooseImportMatch, importKeyword, type ImportChoice, type ImportPlaylist, type ImportSong } from './playlistImportModel'
 import { rankDurationFirstSongCandidates } from './externalSongMatch'
 import type { Track } from '../domain/track'
-import { ImportRequestPolicy, isImportRateLimit } from './playlistImportPolicy'
+import { ImportRequestPolicy, isImportRateLimit, isUnavailableImportCandidate, validImportBvid } from './playlistImportPolicy'
 
 export type ImportRow = { order?:number; song: ImportSong; status:'pending'|'matched'|'missing'|'saved'; candidates:ImportChoice[]; chosen?:ImportChoice; message?:string }
 export type ImportJob = { id:string; scope:string; name:string; source:string; rows:ImportRow[]; playlistId:string; state:'ready'|'matching'|'paused'|'waiting'|'saving'|'done'; message:string; retries:number; retryAt?:number }
@@ -170,20 +170,20 @@ export async function findImportCandidates(song:ImportSong,signal:AbortSignal,ma
   for(const keyword of [...new Set(queries)]) {
     const result=await search(keyword,signal,Boolean(manualKeyword))
     // Search duration is a coarse priority only; never import until actual parts are fetched.
-    const provisional=rankDurationFirstSongCandidates(song,result.map(item=>({bvid:item.bvid,title:item.title,uploaderName:item.uploaderName,durationSeconds:item.durationSeconds,partCount:1,description:item.description})))
+    const provisional=rankDurationFirstSongCandidates(song,result.filter(item=>validImportBvid(item.bvid)).map(item=>({bvid:item.bvid,title:item.title,uploaderName:item.uploaderName,durationSeconds:item.durationSeconds,partCount:1,description:item.description})))
     const selected=provisional.ranked.slice(0,3).filter(item=>{if(seen.has(item.candidate.bvid))return false;seen.add(item.candidate.bvid);return true})
     for(const item of selected){
       try {
         const detail=await videoDetail(item.candidate.bvid,signal)
         if(signal.aborted)throw abortError()
-        choices.push(...detail.parts.map(part=>{
+        if(detail.bvid!==item.candidate.bvid)continue
+        choices.push(...detail.parts.filter(part=>Number.isSafeInteger(part.cid)&&part.cid>0).map(part=>{
           const track=toTrack(detail,part)
           return {track,evidence:{bvid:detail.bvid,cid:part.cid,title:track.title,videoTitle:detail.title,partTitle:part.title,
             description:result.find(row=>row.bvid===detail.bvid)?.description,uploaderName:detail.uploaderName,durationSeconds:part.durationSeconds,partCount:detail.parts.length,detailsVerified:true}}
         }))
       }catch(error){
-        const message=typeof error==='object'&&error&&'message'in error?String(error.message):String(error)
-        if(signal.aborted||limited(error)||!/-404|-62002|不存在|已删除|不可见|无权限/.test(message))throw error
+        if(signal.aborted||limited(error)||!isUnavailableImportCandidate(error))throw error
       }
       if(!manualKeyword && chooseImportMatch(song,choices))break
     }
