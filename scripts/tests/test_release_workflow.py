@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import threading
+import tarfile
 import unittest
 import zipfile
 import urllib.error
@@ -18,6 +19,49 @@ from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_large_upload_timeout_scales_with_payload_size(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p=Publisher({'version':'0.3.5','source':'a'*40,'revision':'stable','repos':{'github':'owner/repo'}},{'github':'TOKEN'},folder)
+            p.opener=Mock();response=MagicMock();response.__enter__.return_value.read.return_value=b'{}';p.opener.open.return_value=response
+            p.api('github','https://uploads.github.com/repos/owner/repo/releases/1/assets?name=large.AppImage','POST',binary=b'x'*(24*1024*1024))
+            self.assertGreater(p.opener.open.call_args.kwargs['timeout'],180)
+
+    def test_documentation_archive_is_reproducible_and_keeps_each_verified_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'assets').mkdir();assets=[]
+            for name,data in [('THIRD_PARTY_LICENSES-mac.json',b'license'*1000),('app.sig',b'signature'),('updater.json',b'feed')]:
+                (root/'assets'/name).write_bytes(data)
+                assets.append(dict(name=name,size=len(data),sha256=hashlib.sha256(data).hexdigest(),binary=False))
+            p=Publisher(dict(version='0.3.5',source='a'*40,revision='stable',assets=assets),{},root)
+            first=p.documentation_bundle();second=p.documentation_bundle()
+            self.assertEqual(first,second)
+            with tarfile.open(root/'assets'/first['name']) as archive:
+                self.assertEqual(set(archive.getnames()),{'THIRD_PARTY_LICENSES-mac.json','app.sig'})
+                self.assertEqual(archive.extractfile('app.sig').read(),b'signature')
+            (root/'assets/app.sig').write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError,'Documentation input changed'):p.documentation_bundle()
+
+    def test_null_remote_asset_digest_uses_download_hash_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p=Publisher({'version':'0.3.5','source':'a'*40,'revision':'stable','repos':{'github':'owner/repo','gitee':'owner/repo'}},{'github':'TOKEN','gitee':'TOKEN'},folder)
+            p.opener=Mock();response=MagicMock();response.__enter__.return_value.read.return_value=b'package';p.opener.open.return_value=response
+            for channel in ['github','gitee']:
+                result=p.download_attachment(channel,{'id':1},{'id':2,'size':7,'digest':None})
+                self.assertEqual(result['sha256'],hashlib.sha256(b'package').hexdigest())
+                self.assertEqual(result['size'],7)
+
+    def test_only_empty_prerelease_upload_placeholders_are_removed(self):
+        for prerelease,state,size,should_delete in [(True,'starter',0,True),(False,'starter',0,False),(True,'uploaded',1,False)]:
+            with tempfile.TemporaryDirectory() as folder:
+                root=Path(folder);(root/'assets').mkdir();(root/'assets/test.apk').write_bytes(b'apk')
+                asset={'name':'test.apk','size':3,'sha256':hashlib.sha256(b'apk').hexdigest(),'binary':True}
+                p=Publisher({'version':'0.3.5','source':'a'*40,'revision':'stable'},{},root)
+                existing={'name':'test.apk','id':1,'state':state,'size':size}
+                p.list_assets=Mock(side_effect=[[existing],[dict(existing,id=2,state='uploaded',size=3)]])
+                p.delete_asset=Mock();p.api=Mock();p.asset_matches=Mock(return_value=True)
+                p.stage_asset('github',{'id':1,'prerelease':prerelease},asset)
+                self.assertEqual(p.delete_asset.called,should_delete)
+
     def test_ci_artifact_redirect_does_not_forward_api_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             publisher = Publisher({'version': '0.3.3', 'source': 'a' * 40, 'revision': 'stable', 'repos': {'github': 'owner/repo'}}, {'github': 'PRIVATE-TOKEN'}, directory)

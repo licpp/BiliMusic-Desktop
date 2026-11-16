@@ -19,3 +19,8 @@ test('desktop update feed is absent until a signed package has been published', 
     writeFileSync(file, '<html>blocked</html>'); assert.equal(updaterManifest(file), null);
   } finally { rmSync(folder, { recursive:true }); }
 });
+
+test('OTA counts for desktop architectures remain separate', () => {
+  const releases={version:'0.3.5',platforms:['mac','mac-intel','windows','windows-arm64'].map(id=>({id,status:'available'}))};
+  for(const platform of ['mac','mac-intel','windows','windows-arm64']) assert.equal(validateUpdateDownload({version:'0.3.5',platform,source:'ota'},releases).platform,platform);
+});

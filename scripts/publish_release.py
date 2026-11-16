@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import threading
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
 import zipfile
 from pathlib import Path
@@ -207,7 +208,8 @@ class Publisher:
         if body is not None:
             headers['Content-Length'] = str(len(body))
         try:
-            with self.opener.open(urllib.request.Request(url, data=body, headers=headers, method=method), timeout=180) as response:
+            upload_timeout = max(180, min(900, 60 + len(body or b'') / (128 * 1024)))
+            with self.opener.open(urllib.request.Request(url, data=body, headers=headers, method=method), timeout=upload_timeout) as response:
                 raw = response.read()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as error:
@@ -287,7 +289,7 @@ class Publisher:
         path = f'/releases/assets/{existing["id"]}' if channel == 'github' else f'/releases/{release["id"]}/attach_files/{existing["id"]}/download'
         url = self.base(channel) + path
         request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + self.secrets[channel], 'User-Agent': 'BiliMusic-release-workflow', 'Accept': 'application/octet-stream'})
-        expected = {'size': existing['size'], 'sha256': existing.get('digest', '').removeprefix('sha256:') or None}
+        expected = {'size': existing['size'], 'sha256': (existing.get('digest') or '').removeprefix('sha256:') or None}
         try:
             with self.opener.open(request, timeout=60) as response:
                 data = response.read(expected['size'] + 1)
@@ -309,6 +311,11 @@ class Publisher:
         for attempt in range(3):
             try:
                 existing = next((a for a in self.list_assets(channel, release) if a['name'] == asset['name']), None)
+                # A cancelled GitHub upload can leave an empty starter entry.
+                # Remove only that unusable placeholder in an unpublished release.
+                if existing and channel == 'github' and release.get('prerelease') and existing.get('state') == 'starter' and existing['size'] == 0:
+                    self.delete_asset(channel, release, existing)
+                    existing = None
                 if existing and self.asset_matches(channel, release, existing, asset):
                     return
                 if existing:
@@ -392,8 +399,24 @@ class Publisher:
                         continue
                     if channel == 'github' and existing.get('digest') == 'sha256:' + asset['sha256']:
                         continue
-                    originals.append({'channel': channel, 'name': existing['name'], 'id': existing['id'], 'size': existing['size'], 'sha256': existing.get('digest', '').removeprefix('sha256:') or None, 'url': self.public_url(channel, existing['name'])})
+                    originals.append({'channel': channel, 'name': existing['name'], 'id': existing['id'], 'size': existing['size'], 'sha256': (existing.get('digest') or '').removeprefix('sha256:') or None, 'url': self.public_url(channel, existing['name'])})
             self.record('originalMetadata', originals)
+
+    def documentation_bundle(self):
+        members = [a for a in self.plan['assets'] if not a['binary'] and a['name'] not in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')]
+        if not members:
+            return None
+        path = self.work / 'assets' / 'RELEASE_DOCUMENTS.tar.xz'
+        with tarfile.open(path, 'w:xz', preset=6) as archive:
+            for asset in sorted(members, key=lambda a: a['name']):
+                data = (self.work / 'assets' / asset['name']).read_bytes()
+                require(len(data) == asset['size'] and hashlib.sha256(data).hexdigest() == asset['sha256'], 'Documentation input changed')
+                info = tarfile.TarInfo(asset['name']); info.size = len(data); info.mode = 0o644
+                archive.addfile(info, io.BytesIO(data))
+        raw = path.read_bytes()
+        self.record('documentationBundle', {'name': path.name, 'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                                           'members': [{k: a[k] for k in ('name', 'size', 'sha256')} for a in members]})
+        return {'name': path.name, 'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(), 'binary': False}
 
     def finish_release(self):
         verification = json.loads((self.work / 'download-verification.json').read_text())
@@ -412,13 +435,16 @@ class Publisher:
                     require(receipt and match.get('uploadProof') == receipt and receipt['sha256'] == package['sha256'] and receipt['size'] == package['size'], 'Upload digest proof missing or changed')
         self.record('downloads', downloads)
         releases = {channel: self.release(channel) for channel in ('github', 'gitee')}
+        documents = self.documentation_bundle()
         def upload_metadata(channel):
             release = releases[channel]
+            if channel == 'gitee' and documents:
+                self.stage_asset(channel, release, documents)
             for asset in self.plan['assets']:
-                if not asset['binary']:
+                if not asset['binary'] and (channel != 'gitee' or not documents or asset['name'] in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')):
                     self.stage_asset(channel, release, asset)
             title = next(line[2:] for line in self.plan['notes'].splitlines() if line.startswith('# '))
-            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'], 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
+            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + ('\n许可及独立签名文件收录于 `RELEASE_DOCUMENTS.tar.xz`。\n' if documents else ''), 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(upload_metadata, releases))
         self.record('releaseMetadata', {'channels': ['github', 'gitee'], 'assets': len(self.plan['assets'])})
