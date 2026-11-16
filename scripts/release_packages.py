@@ -106,6 +106,8 @@ def package_id(package):
         return 'mac-intel' if arch == 'x64' else 'mac'
     if platform == 'Windows':
         return 'windows-arm64' if arch == 'arm64' else 'windows'
+    if platform == 'Android Large Screen' and arch == 'armv7':
+        return 'android-large-armv7'
     return {'iOS': 'ios', 'Android': 'android', 'HarmonyOS NEXT': 'ohos', 'Android Large Screen': 'android-large'}[platform]
 
 
@@ -126,7 +128,7 @@ def compatible_package_source(platform, built, release):
     return bool(changed) and all(n.startswith(common + allowed) for n in changed)
 
 
-def verify_native(path, platform, version, certificate):
+def verify_native(path, platform, version, certificate, architecture='arm64'):
     if platform == 'macOS':
         command(['hdiutil', 'verify', str(path)])
         with tempfile.TemporaryDirectory(prefix='bilimusic-release-mac-') as mount:
@@ -169,7 +171,11 @@ def verify_native(path, platform, version, certificate):
             expected_id = 'app.bilimusic.large' if platform == 'Android Large Screen' else 'app.bilimusic.mobile'
             require(manifest['package'] == expected_id and manifest['versionName'] == version and manifest['versionCode'] == major * 1000000 + minor * 10000 + patch * 100, 'Android identity/versionCode mismatch')
             libraries = [x for x in archive.infolist() if x.filename.endswith('.so')]
-            require(libraries and all(x.filename.startswith('lib/arm64-v8a/') and x.file_size < 30 * 1024 * 1024 for x in libraries), 'Unexpected Android native libraries')
+            abi = {'arm64': 'arm64-v8a', 'armv7': 'armeabi-v7a'}.get(architecture)
+            require(abi and libraries and all(x.filename.startswith(f'lib/{abi}/') and x.file_size < 30 * 1024 * 1024 for x in libraries), 'Unexpected Android native libraries')
+            for library in libraries:
+                raw = archive.read(library.filename)
+                require(raw[:6] == (b'\x7fELF\x01\x01' if architecture == 'armv7' else b'\x7fELF\x02\x01') and struct.unpack_from('<H', raw, 18)[0] == (40 if architecture == 'armv7' else 183), 'Android ELF architecture mismatch')
             dex = b''.join(archive.read(x.filename) for x in archive.infolist() if x.filename.endswith('.dex'))
             for name in ['PlayerPlugin', 'PlayArgs', 'ControlArgs', 'SecretArgs']:
                 require(('Lapp/bilimusic/player/' + name + ';').encode() in dex, 'Android bridge removed: ' + name)
@@ -242,7 +248,7 @@ def validate_bundle(bundle, native_verifier=verify_native):
         entry = next(p for p in manifest['platforms'] if p['id'] == package_id(package))
         require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
         require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
-        native_verifier(path, package['platform'], version, certificate)
+        native_verifier(path, package['platform'], version, certificate, package.get('architecture', 'arm64'))
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': True})
     sums = ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
     require((bundle / 'SHA256SUMS.txt').read_text() == sums, 'SHA256SUMS does not match packages')

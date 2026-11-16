@@ -4,11 +4,13 @@ import { homedir } from 'node:os'
 import { join, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { androidTarget } from './android-target.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const task = process.argv[2] ?? 'doctor'
 if (!['doctor', 'init', 'build', 'test', 'dev', 'large-screen'].includes(task)) throw new Error('Use: npm run android:local -- doctor|init|build|test|dev|large-screen [arguments]')
 const extras = process.argv.slice(3)
+const selected = ['doctor', 'build', 'large-screen'].includes(task) ? androidTarget(extras) : androidTarget()
 const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(homedir(), 'Library/Android/sdk')
 const jdkRoot = join(homedir(), 'Library/Java/JavaVirtualMachines')
 const candidates = [process.env.BILIMUSIC_ANDROID_JAVA_HOME, process.env.JAVA_HOME,
@@ -43,8 +45,8 @@ function check() {
   if (missing.length) throw new Error(`Android components missing:\n${missing.join('\n')}`)
   const rust = spawnSync('rustup', ['target', 'list', '--installed'], { cwd: root, env, encoding: 'utf8' })
   if (rust.error) throw rust.error
-  if (rust.status !== 0 || !rust.stdout.split(/\r?\n/).includes('aarch64-linux-android')) throw new Error('Run rustup target add aarch64-linux-android first.')
-  console.log(`JDK: ${java}\nSDK: ${sdk}\nNDK: ${ndk}\nRust: aarch64-linux-android`)
+  if (rust.status !== 0 || !rust.stdout.split(/\r?\n/).includes(selected.rust)) throw new Error(`Run rustup target add ${selected.rust} first.`)
+  console.log(`JDK: ${java}\nSDK: ${sdk}\nNDK: ${ndk}\nRust: ${selected.rust}`)
 }
 
 check()
@@ -58,7 +60,7 @@ if (task === 'doctor') {
   const generated = join(root, 'src-tauri/gen/android')
   if (task === 'init' || !existsSync(join(generated, 'gradlew'))) run('npm', ['run', 'android:init'])
   else if (task === 'build' || task === 'dev') run('node', ['scripts/android-prepare.mjs'])
-  if (task === 'build') run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', 'aarch64', ...extras])
+  if (task === 'build') run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', selected.target, ...selected.args])
   if (task === 'dev') run('npm', ['run', 'tauri', '--', 'android', 'dev', ...extras])
   if (task === 'test') run(join(generated, 'gradlew'), [':tauri-plugin-android-player:testReleaseUnitTest', '--no-daemon', ...extras], generated)
 }

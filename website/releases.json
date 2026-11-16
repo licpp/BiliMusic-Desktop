@@ -131,7 +131,7 @@
       "id": "android-large",
       "name": "大屏版",
       "status": "available",
-      "architecture": "Android 车机 / TV · ARM64",
+      "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.3.5",
       "file": "BiliMusic_0.3.5_stable_Android_LargeScreen_arm64.apk",
@@ -150,6 +150,31 @@
           "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.5/BiliMusic_0.3.5_stable_Android_LargeScreen_arm64.apk"
         }
       ]
+    },
+    {
+      "id": "android-large-armv7",
+      "name": "车机 / TV · 32 位",
+      "status": "available",
+      "architecture": "ARMv7 · 32 位",
+      "requirements": "Android 8+ · 支持触控与遥控器",
+      "version": "0.3.5",
+      "file": "BiliMusic_0.3.5_stable_Android_LargeScreen_armv7-test.apk",
+      "size": 11902001,
+      "sha256": "60f9d1bb6b73972a17bd2562483d7acae79985468b3159c457386ecadfe060bc",
+      "channels": [
+        {
+          "id": "gitee",
+          "name": "Gitee",
+          "recommended": true,
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.3.5/BiliMusic_0.3.5_stable_Android_LargeScreen_armv7-test.apk"
+        },
+        {
+          "id": "github",
+          "name": "GitHub",
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.5/BiliMusic_0.3.5_stable_Android_LargeScreen_armv7-test.apk"
+        }
+      ],
+      "note": "适用于仅支持 32 位应用的车机 / TV。"
     },
     {
       "id": "ios",

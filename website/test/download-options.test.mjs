@@ -24,6 +24,16 @@ test('the initial tab follows the device without choosing an unpublished platfor
 test('Android editions share one platform tab while preserving separate installer identities', () => {
   const group=groupDownloads(items).find(group=>group.id==='android');
   assert.deepEqual(group.items.map(item=>item.id),['android','android-large']);
-  assert.deepEqual(group.items.map(downloadVariant),['手机 / 平板','车机 / TV']);
+  assert.deepEqual(group.items.map(downloadVariant),['手机 / 平板','车机 / TV · 64 位']);
   assert.notEqual(group.items[0].channels[0].url,group.items[1].channels[0].url);
+});
+
+test('32-bit large-screen APK stays in Android with a distinct architecture label', () => {
+  const armv7=item('android-large-armv7','ARMv7 · 32 位','BiliMusic_armv7.apk');
+  const groups=groupDownloads([...items,armv7]);
+  assert.equal(groups.length,6);
+  assert.equal(groups.find(group=>group.id==='android').items.at(-1),armv7);
+  assert.equal(downloadVariant(armv7),'车机 / TV · 32 位');
+  assert.equal(downloadVariant(items[6]),'iPhone / iPad');
+  assert.equal(downloadVariant(items[7]),'未签名 HAP');
 });

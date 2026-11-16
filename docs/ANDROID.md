@@ -23,6 +23,16 @@ npm run android:local -- build   # 首次自动生成工程，再构建 Release 
 npm run android:local -- test    # 原生播放器与界面组件单元测试
 ```
 
+大屏版共用同一套界面与播放器，按系统 ABI 分别构建，不把两套原生库塞进同一个 APK：
+
+```sh
+npm run android:large-screen                  # ARM64，适用于 arm64-v8a 系统
+rustup target add armv7-linux-androideabi
+npm run android:large-screen -- --target armv7 # 32 位 ARM，适用于 armeabi-v7a 系统
+```
+
+输出位于 `artifacts/BiliMusic-版本号-Android-LargeScreen/`，文件名分别包含 `arm64` 或 `armv7`。最低系统版本均为 Android 8.0；系统位数与 Android 版本分别判断，64 位处理器上的 32 位系统需使用 ARMv7 包。两个架构沿用相同应用 ID、版本号及发布签名，属于同一应用。构建完成不代表已经发布或经过车机／TV 真机验收。
+
 默认 SDK 在 `~/Library/Android/sdk`，JDK 在 `~/Library/Java/JavaVirtualMachines/`。自定义位置可设置 `ANDROID_HOME`、`NDK_HOME`、`BILIMUSIC_ANDROID_JAVA_HOME`。本地 Release 包仍需签名；要覆盖官网版本，必须沿用原发布签名。
 
 ```sh

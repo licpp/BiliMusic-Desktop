@@ -3,9 +3,11 @@ import { cp, mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { androidTarget } from './android-target.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const workspace = join(root, 'artifacts/build/large-screen/source')
+const selected = androidTarget(process.argv.slice(2))
+const workspace = join(root, 'artifacts/build/large-screen/source', selected.label)
 const cache = join(root, 'artifacts/build/large-screen/cargo')
 const config = 'src-tauri/tauri.large-screen.conf.json'
 const env = { ...process.env, CARGO_TARGET_DIR: cache }
@@ -24,10 +26,10 @@ await symlink(join(root, 'node_modules'), join(workspace, 'node_modules'), 'dir'
 run('npm', ['run', 'tauri', '--', 'icon', 'assets/android/icon.json', '--output', 'src-tauri/.android-icons'])
 run('npm', ['run', 'tauri', '--', 'android', 'init', '--ci', '--skip-targets-install', '--config', config])
 run('node', ['scripts/android-prepare.mjs', '--large-screen'])
-run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', 'aarch64', '--config', config, ...process.argv.slice(2)])
+run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', selected.target, '--config', config, ...selected.args])
 const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const outputs = join(workspace, 'src-tauri/gen/android/app/build/outputs/apk')
 async function packages(dir) { const entries = await readdir(dir, { withFileTypes: true }); return (await Promise.all(entries.map(e => e.isDirectory() ? packages(join(dir, e.name)) : e.name.endsWith('.apk') ? [join(dir, e.name)] : []))).flat() }
 const destination = join(root, `artifacts/BiliMusic-${version}-Android-LargeScreen`)
 await mkdir(destination, { recursive: true })
-for (const apk of await packages(outputs)) { const target = join(destination, `BiliMusic_${version}_Android_LargeScreen_arm64${apk.includes('/debug/') ? '-debug' : '-unsigned'}.apk`); await cp(apk, target); console.log(`Large-screen APK: ${target}`) }
+for (const apk of await packages(outputs)) { const target = join(destination, `BiliMusic_${version}_Android_LargeScreen_${selected.label}${apk.includes('/debug/') ? '-debug' : '-unsigned'}.apk`); await cp(apk, target); console.log(`Large-screen APK: ${target}`) }

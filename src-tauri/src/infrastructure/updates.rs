@@ -72,6 +72,7 @@ pub fn allowed_download(url: &str) -> bool {
 pub fn platform_id(os: &str, arch: &str, large: bool) -> Option<&'static str> {
     match (os, arch) {
         ("android", "aarch64") => Some(if large { "android-large" } else { "android" }),
+        ("android", "arm") if large => Some("android-large-armv7"),
         ("ios", "aarch64") => Some("ios"),
         ("macos", "aarch64") => Some("mac"),
         ("windows", "x86_64") => Some("windows"),
@@ -268,5 +269,18 @@ mod tests {
             .is_none()
         );
         assert!(parse_manifest(b"<html>ICP</html>", "macos", "aarch64").is_err());
+    }
+    #[test]
+    fn armv7_updates_never_offer_an_arm64_package() {
+        let package = |id: &str| serde_json::json!({"id":id,"status":"available","file":format!("{id}.apk"),"size":10,"sha256":"a".repeat(64),"channels":[{"id":"github","url":format!("https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.3.5/{id}.apk")} ]});
+        let only64 = serde_json::json!({"version":"0.3.5","platforms":[package("android-large")]});
+        let (_, selected) = parse_selection(&serde_json::to_vec(&only64).unwrap(), "android", "arm", true).unwrap();
+        assert!(selected.is_none());
+        let both = serde_json::json!({"version":"0.3.5","platforms":[package("android-large"),package("android-large-armv7")]});
+        let bytes = serde_json::to_vec(&both).unwrap();
+        for (arch, expected) in [("arm", "android-large-armv7"), ("aarch64", "android-large")] {
+            assert_eq!(parse_selection(&bytes, "android", arch, true).unwrap().1.unwrap().platform, expected);
+        }
+        assert!(parse_selection(&bytes, "android", "arm", false).unwrap().1.is_none());
     }
 }

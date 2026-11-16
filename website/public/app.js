@@ -82,28 +82,32 @@ function renderDownloadPanel(group, item, panel) {
   panel.setAttribute('aria-labelledby', `download-tab-${group.id}`);
   const article = element('article', null, 'download-card');
   const header = element('header', null, 'download-card-header');
-  const badge = group.id === 'ios' ? '自签版' : group.id === 'ohos' ? '测试版 · 未签名' : group.id === 'linux' ? '测试版' : '';
+  const badge = group.id === 'ios' ? '自签版' : group.id === 'ohos' ? '测试版 · 未签名' : group.id === 'linux' ? '测试版' : item.id === 'android-large-armv7' ? '兼容测试版' : '';
   header.append(element('p', item.requirements, 'download-requirements'));
   if (badge) header.append(element('span', badge, 'download-badge'));
   article.append(header);
   const variants = element('div', null, 'download-variants');
   if (group.items.length > 2) variants.classList.add('download-variants-many');
-  if (group.items.length > 1) {
-    variants.setAttribute('role', 'group'); variants.setAttribute('aria-label', `${group.name} 安装包`);
-    for (const variant of group.items) {
-      const button = element('button', downloadVariant(variant), 'download-variant'); button.type = 'button';
-      button.setAttribute('aria-pressed', String(variant.id === item.id));
-      button.addEventListener('click', () => {
-        renderDownloadPanel(group, variant, panel);
-        panel.querySelector(`.download-variant[data-variant="${CSS.escape(variant.id)}"]`)?.focus({ preventScroll: true });
-      });
-      button.dataset.variant = variant.id; variants.append(button);
+  if (group.id === 'android') variants.classList.add('download-variants-android');
+  variants.setAttribute('role', 'group'); variants.setAttribute('aria-label', `${group.name} 安装包`);
+  for (const variant of group.items) {
+    const button = element('button', downloadVariant(variant), 'download-variant'); button.type = 'button';
+    if (group.id === 'android' && variant.id.startsWith('android-large')) {
+      button.replaceChildren(element('span', '车机 / TV'), element('span', variant.id.endsWith('-armv7') ? '32 位' : '64 位', 'download-variant-arch'));
+      button.setAttribute('aria-label', downloadVariant(variant));
     }
-  } else variants.append(element('span', item.architecture, 'download-architecture'));
+    button.setAttribute('aria-pressed', String(variant.id === item.id));
+    button.addEventListener('click', () => {
+      renderDownloadPanel(group, variant, panel);
+      panel.querySelector(`.download-variant[data-variant="${CSS.escape(variant.id)}"]`)?.focus({ preventScroll: true });
+    });
+    button.dataset.variant = variant.id; variants.append(button);
+  }
   article.append(variants);
   if (item.status !== 'available') article.append(element('p', '即将推出', 'coming-soon'));
   else {
     const body = element('div', null, 'download-body');
+    if (item.note) body.append(element('p', item.note, 'download-package-note'));
     const version = element('div', null, 'download-build');
     const count = element('span', '累计下载 —', 'platform-download-count'); count.dataset.downloadCount = item.id;
     version.append(element('strong', `v${item.version || releaseManifest.version}`), element('span', `${(item.size / 1048576).toFixed(1)} MB`), count);
@@ -193,7 +197,7 @@ async function openPolicy(downloadPlatform) {
   $('#confirm-download').dataset.loaded = 'false';
   $('#confirm-download').textContent = '同意并下载';
   const family = platform && downloadFamily(platform.item);
-  const installation = family === 'mac' ? 'macOS 安装包尚未经过 Apple 公证。' : family === 'ios' ? 'IPA 需自行签名安装。' : family === 'ohos' ? '未签名 HAP 测试包，需自行签名安装。' : family === 'linux' ? 'Linux 测试版，尚未完成完整设备验收。' : family === 'android' || family === 'android-large' ? 'ARM64 APK，使用固定签名。' : 'Windows 安装包尚未取得发布者签名。';
+  const installation = family === 'mac' ? 'macOS 安装包尚未经过 Apple 公证。' : family === 'ios' ? 'IPA 需自行签名安装。' : family === 'ohos' ? '未签名 HAP 测试包，需自行签名安装。' : family === 'linux' ? 'Linux 测试版，尚未完成完整设备验收。' : family === 'android' ? 'APK 使用固定签名。' : 'Windows 安装包尚未取得发布者签名。';
   $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${installation}` : '';
   if(platform?.item.id==='android' && platform.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
   const content = $('#policy-content'); content.replaceChildren();

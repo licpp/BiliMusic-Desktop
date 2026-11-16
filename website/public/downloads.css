@@ -28,10 +28,12 @@
 .download-badge { padding:2px 7px;border-radius:4px;background:#b7d6c716;color:var(--mint);font-size:10px;white-space:nowrap; }
 .download-card .download-requirements { margin:0;font-size:12px;line-height:1.7;color:#b7c9bd; }
 .download-variants { display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;grid-area:variants; }
-.download-variant { min-height:32px;padding:5px 12px;border:1px solid #45564b;border-radius:7px;background:transparent;color:#a6b7aa;font-size:11px; }
+.download-variant { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 12px;border:1px solid #45564b;border-radius:7px;background:transparent;color:#a6b7aa;font-size:11px; }
+.download-variant-arch { white-space:nowrap; }
 .download-variant[aria-pressed="true"] { color:var(--mint);border-color:#b7d6c77a;background:#b7d6c711; }
 .download-variant:hover { color:var(--text);border-color:#b7d6c77a; }
 .download-card .download-architecture { margin:0;font-size:11px;line-height:1.7;color:#a6b7aa; }
+.download-card .download-package-note { margin:0 0 6px;color:#a6b7aa;font-size:11px;line-height:1.7; }
 .download-body { min-width:0;grid-area:build; }
 .download-build { display:flex;align-items:center;flex-wrap:wrap;gap:5px 14px;font-size:11px;color:#a6b7aa;line-height:1.6; }
 .download-build strong { font-weight:500;color:#dce7df; }
@@ -55,8 +57,10 @@
   .download-tab small { position:static;border:0;background:#b7d6c710;border-radius:4px;padding:1px 5px;color:var(--mint);font-size:9px; }
   .download-tab[aria-selected="true"] small { background:#17291e12;color:inherit; }
   .download-tab .download-icon,.download-tab .download-icon svg { width:21px;height:21px; }
-  .download-variants-many { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .download-variants-many { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch; }
   .download-variants-many .download-variant { padding-inline:5px;line-height:1.4; }
+  .download-variants-android.download-variants-many { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .download-variants-android .download-variant { flex-direction:column;gap:2px; }
   .download-variant { min-height:44px;padding:8px 12px;font-size:12px; }
   .download-grid .download-card .channel-buttons .button { min-height:46px;height:auto;padding:12px 10px;font-size:12px; }
   .download-card .checksum summary,.download-guide { display:flex;align-items:center;min-height:36px; }

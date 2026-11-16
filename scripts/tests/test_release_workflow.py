@@ -240,7 +240,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         from release_packages import package_id, license_name
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); version, source = '0.3.5', 'a' * 40
-            specs = [('macOS','arm64','.dmg'),('macOS','x64','.dmg'),('Windows','x64','.exe'),('Windows','arm64','.exe'),('Android','arm64','.apk'),('Android Large Screen','arm64','.apk'),('iOS','arm64','.ipa'),('HarmonyOS NEXT','arm64','.hap')] + [('Linux',a,e) for a in ['x64','arm64'] for e in ['.AppImage','.deb']]
+            specs = [('macOS','arm64','.dmg'),('macOS','x64','.dmg'),('Windows','x64','.exe'),('Windows','arm64','.exe'),('Android','arm64','.apk'),('Android Large Screen','arm64','.apk'),('Android Large Screen','armv7','.apk'),('iOS','arm64','.ipa'),('HarmonyOS NEXT','arm64','.hap')] + [('Linux',a,e) for a in ['x64','arm64'] for e in ['.AppImage','.deb']]
             packages = []
             for platform, arch, extension in specs:
                 name = f'BiliMusic_{version}_{platform.replace(" ", "_")}_{arch}{extension}'; data = name.encode()
@@ -253,9 +253,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
             for name in ['THIRD_PARTY_NOTICES.md','qrc-codec-MIT.txt','notes.md']:(root/name).write_text('# BiliMusic 0.3.5')
             output=prepare(root,dict(version=version,platforms=entries,history=[{'version':version}]),root/'notes.md',root/'publish','stable',{'version':'0.3.4'})
             plan=validate_bundle(output,Mock())
-            self.assertEqual(len([a for a in plan['assets'] if a['binary']]),12)
-            self.assertEqual(len({p['id'] for p in plan['manifest']['platforms']}),12)
-            self.assertEqual(len({p['file'] for p in plan['manifest']['platforms']}),12)
+            self.assertEqual(len([a for a in plan['assets'] if a['binary']]),13)
+            self.assertEqual(len({p['id'] for p in plan['manifest']['platforms']}),13)
+            self.assertEqual(len({p['file'] for p in plan['manifest']['platforms']}),13)
             self.assertIn('mac-intel',plan['platformSources']);self.assertIn('linux-arm64-deb',plan['platformSources'])
 
     def test_six_platform_bundle_includes_a_separate_large_screen_package(self):
