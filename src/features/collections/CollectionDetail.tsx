@@ -64,7 +64,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   }, [item.bvid, refreshProgress, saved])
   const [resuming, setResuming] = useState(false)
   const resumeVersion = useRef(0)
-  useEffect(() => () => { resumeVersion.current++ }, [item.bvid])
+  useEffect(() => { setResuming(false); return () => { resumeVersion.current++ } }, [item.bvid])
   const forceRefresh = useRef(false)
   const q=useQuery({queryKey:accountQueryKey('collection-detail', item.bvid),queryFn:async()=>{
     if(reference){

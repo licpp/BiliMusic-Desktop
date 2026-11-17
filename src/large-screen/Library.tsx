@@ -160,7 +160,7 @@ export function LargeCollection({ item, onMore, navigate, filterState }: { filte
   const source = { ...collectionContext(query.data?.title || item.title, item.bvid, Boolean(season), query.data?.tracks.length || 0), visibilityManaged: Boolean(scope) }
   const [playError, setPlayError] = useState('')
   const playVersion = useRef(0)
-  useEffect(() => () => { playVersion.current++ }, [item.bvid])
+  useEffect(() => { setPlayError(''); return () => { playVersion.current++ } }, [item.bvid])
   const play = async (resume = false) => {
     const epoch = accountEpoch(), intent = playbackIntent(), version = ++playVersion.current
     const current = () => version === playVersion.current && epoch === accountEpoch() && intent === playbackIntent()
