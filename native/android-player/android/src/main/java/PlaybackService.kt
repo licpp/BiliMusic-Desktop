@@ -117,6 +117,11 @@ class PlaybackService : Service() {
     fun resolved(request: Long, result: JSONObject) {
         if (request != nativeRequest || !resolvingNative) return
         if (resolveProfile != currentProfile()) { fail("播放账号已变更，请重新播放"); return }
+        if (result.optBoolean("skip")) {
+            val next = queue.skip(result.optString("entryId"))
+            if (next == null) { control("pause"); cancelResolution() } else resolveTrack(next)
+            return
+        }
         if (result.has("error")) { fail(result.getString("error")); return }
         val url = result.optString("url")
         val uri = android.net.Uri.parse(url)
@@ -132,6 +137,7 @@ class PlaybackService : Service() {
             .putExtra("id", track.getString("id")).putExtra("title", track.optString("title"))
             .putExtra("artist", track.optString("artist")).putExtra("coverUrl", track.optString("coverUrl"))
             .putExtra("url", url).putExtra("upgradeUrl", result.optString("upgradeUrl").takeIf { it.startsWith("http://127.0.0.1:") })
+            .putExtra("loudnessGainDb", result.optDouble("loudnessGainDb", 0.0))
             .putExtra("position", result.optDouble("position", 0.0)).putExtra("volume", volume.toDouble())
             .putExtra("rate", playbackRate.toDouble()).putExtra("playing", true).putExtra("collectionRef", queue.collectionRef)
             .putExtra("nativeRecovery", recoveryAttempted)
@@ -203,6 +209,28 @@ class PlaybackService : Service() {
     private var lastPosition = 0.0
     private var lastDuration = 0.0
     private var playbackRate = 1f
+    private var outputGain = OutputGain()
+    private var focusDucked = false
+    private var outputRamp: Runnable? = null
+    fun configureLoudness(enabled: Boolean, revision: Long) {
+        if (outputGain.configure(enabled,revision)) applyOutput(true)
+    }
+    private fun applyOutput(smooth: Boolean = false) {
+        outputRamp?.let { handler.removeCallbacks(it) }; outputRamp = null
+        outputGain.transition(SystemClock.elapsedRealtime(),smooth)
+        val media=player ?: return
+        val ramp=object:Runnable {
+            override fun run() {
+                if (player !== media) return
+                val now=SystemClock.elapsedRealtime()
+                val level=outputGain.level(volume,if(focusDucked) .2f else 1f,now)
+                media.setVolume(level,level)
+                if(outputGain.active(now)) handler.postDelayed(this,20)
+                else outputRamp=null
+            }
+        }
+        outputRamp=ramp;ramp.run()
+    }
     private var volume = .7f
     private var artwork: Bitmap? = null
     private var artworkUrl: String? = null
@@ -250,9 +278,9 @@ class PlaybackService : Service() {
                 when (change) {
                     AudioManager.AUDIOFOCUS_LOSS -> control("pause")
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> { focusResume.interrupted(status == "playing" || status == "buffering"); pause() }
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player?.setVolume(volume * .2f, volume * .2f)
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> { focusDucked=true; applyOutput() }
                     AudioManager.AUDIOFOCUS_GAIN -> {
-                        player?.setVolume(volume, volume)
+                        focusDucked=false;applyOutput()
                         if (focusResume.regained()) control("resume")
                     }
                 }
@@ -311,6 +339,7 @@ class PlaybackService : Service() {
                 id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
                 artist = intent.getStringExtra("artist") ?: ""; requestedStartPosition = intent.getDoubleExtra("position", 0.0)
         lastPosition = 0.0; lastDuration = 0.0
+                queue.observe(id)
                 nativeTrack = queue.find(id)
                 prepareArtwork(intent.getStringExtra("coverUrl"))
                 updateMetadata()
@@ -344,8 +373,11 @@ class PlaybackService : Service() {
         listeningProfile = profilePath?.let { runCatching { java.io.File(it).readText() }.getOrDefault("") }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
         id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
+        queue.observe(id)
         nativeTrack = queue.find(id) ?: nativeTrack?.takeIf { it.optString("id") == id }
-        artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).toFloat()
+        artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).coerceIn(0.0,1.0).toFloat()
+        if(intent.hasExtra("loudnessEnabled")) outputGain.configure(intent.getBooleanExtra("loudnessEnabled",false),intent.getLongExtra("loudnessRevision",0))
+        outputGain.plan(intent.getDoubleExtra("loudnessGainDb",0.0))
         prepareArtwork(intent.getStringExtra("coverUrl"))
         requestedStartPosition = intent.getDoubleExtra("position", 0.0)
         lastPosition = 0.0; lastDuration = 0.0
@@ -364,7 +396,7 @@ class PlaybackService : Service() {
             media.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
             media.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK)
-            media.setVolume(volume, volume)
+            applyOutput()
             val resumePolicy = if (intent.getBooleanExtra("automaticResume", false)) AutomaticResumePolicy().apply {
                 enabled = intent.getBooleanExtra("resumeEnabled", true)
                 thresholdSeconds = intent.getDoubleExtra("resumeThreshold", 0.0)
@@ -435,7 +467,7 @@ class PlaybackService : Service() {
         sourceCandidate?.release();sourceCandidate=null
         val reply=sourceReply;sourceReply=null;reply?.invoke(message)
     }
-    fun switchSource(url:String,expectedId:String,reply:(String?)->Unit) {
+    fun switchSource(url:String,expectedId:String,gainDb:Double?=null,reply:(String?)->Unit) {
         pendingUpgradeUrl = null
         cancelSourceSwitch()
         val original=player
@@ -452,7 +484,7 @@ class PlaybackService : Service() {
             sourceTimeout?.let{handler.removeCallbacks(it)};sourceTimeout=null
             prepared=true;seeking=false;playbackRevision+=1;listeningPosition=null
             lastPosition=candidate.currentPosition/1000.0;lastDuration=candidate.duration/1000.0
-            bindMedia(candidate,0.0);candidate.setVolume(volume,volume);resetPlaybackWatchdog()
+            bindMedia(candidate,0.0);gainDb?.let { outputGain.plan(it) };applyOutput();resetPlaybackWatchdog()
             original.release()
             if(shouldPlay){startAtRate(candidate);status="playing"}else{status="paused"}
             publish();val completion=sourceReply;sourceReply=null;completion?.invoke(null)
@@ -559,7 +591,7 @@ class PlaybackService : Service() {
                 playbackRate = rate
                 publish()
             }
-            "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); player?.setVolume(volume, volume) }
+            "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); applyOutput() }
             "stop" -> { cancelResolution(); pendingUpgradeUrl = null;focusResume.cancel();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
@@ -676,6 +708,7 @@ class PlaybackService : Service() {
         return builder.build()
     }
     override fun onDestroy() {
+        outputRamp?.let { handler.removeCallbacks(it) };outputRamp=null
         cancelResolution()
         cancelSourceSwitch()
         FloatingLyricsOverlay.detach()

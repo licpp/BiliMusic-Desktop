@@ -1,4 +1,4 @@
-import { trackSubtitle, hasSeriesHeading, withoutSeriesPrefix } from '../../domain/sourceTitle'
+import { trackSubtitle, hasSeriesHeading, knownArtist, withoutSeriesPrefix } from '../../domain/sourceTitle'
 import { useQueryClient } from '@tanstack/react-query'
 import { hydrateSourceTitles } from '../../services/sourceTitles'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -76,7 +76,7 @@ function QueueTrack({ track, active, label, groupIndex, groupCount, child = fals
   const title = track.displayTitle || track.title
   const source = usePlayerStore(state=>state.queueSource)
   const season = track.sourceTitleContext?.season
-  const subtitle = season && !hasSeriesHeading(track,source) ? trackSubtitle(track) : undefined
+  const subtitle = knownArtist(track) || (season && !hasSeriesHeading(track,source) ? trackSubtitle(track) : undefined)
   const { ref, pages } = useVisibleVideoPages(track.source.bvid, observe && Boolean(track.resolveParts) && track.partCount === undefined)
   useEffect(() => {
     if (observe && track.resolveParts && track.partCount === undefined && pages?.length) void prepareSeasonQueueEntry(track).catch(() => undefined)

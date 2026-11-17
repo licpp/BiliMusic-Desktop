@@ -3,9 +3,10 @@ import type { MouseEvent } from 'react'
 import type { Track } from '../../domain/track'
 import type { PlaylistSelection } from './playlistSelection'
 
-type Menu = { track: Track; x: number; y: number; playlistId?: string; tracks?: Track[]; openParts?: () => void; play?: () => void }
+export type TrackMenuActions = { visibilityScope?: string; openParts?: () => void; play?: () => void; replaceVideo?: () => void }
+type Menu = TrackMenuActions & { track: Track; x: number; y: number; playlistId?: string; tracks?: Track[]; openParts?: () => void; play?: () => void }
 export const useTrackActions = create<{ menu: Menu | null; adding: PlaylistSelection | null }>(() => ({ menu: null, adding: null }))
-export function showTrackMenu(event: MouseEvent, track: Track, playlistId?: string, tracks?: Track[], actions?: Pick<Menu, 'openParts' | 'play'>) {
+export function showTrackMenu(event: MouseEvent, track: Track, playlistId?: string, tracks?: Track[], actions?: TrackMenuActions) {
   event.preventDefault(); event.stopPropagation()
   useTrackActions.setState({ menu: { track, x: event.clientX, y: event.clientY, playlistId, tracks, ...actions } })
 }

@@ -4,7 +4,10 @@ import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 const output = await build({
   entryPoints: ['src/features/player/playerStore.ts'], bundle: true, write: false, format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
-  plugins: [{ name: 'ios-boundary', setup(b) {
+  plugins: [{name:'visibility-boundary',setup(b){
+    b.onResolve({filter:/services\/contentVisibility$/},()=>({path:'visibility',namespace:'visibility-test'}))
+    b.onLoad({filter:/.*/,namespace:'visibility-test'},()=>({contents:`import {create} from 'zustand'; export const useContentVisibility=create(()=>({session:'test-session',rules:[]})); export const ensureVisibility=async()=>{};`}))
+  }},{ name: 'ios-boundary', setup(b) {
     b.onResolve({ filter: /services\/desktopApi$/ }, () => ({ path: 'api', namespace: 'mock' }))
     b.onResolve({ filter: /services\/platform$/ }, () => ({ path: 'platform', namespace: 'mock' }))
     b.onResolve({ filter: /^\.\/(mobileAudio|iosAudio)$/ }, args => ({ path: args.path, namespace: 'mock' }))
@@ -15,7 +18,7 @@ const output = await build({
       export const getTrackPlaybackUrl = t => globalThis.iosTest.resolve(t);
       export const getTrackPlaybackPlan = async (t,r) => globalThis.iosTest?.plan ? globalThis.iosTest.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true; export const isOHOS = false' : path === './iosAudio' ? `
-      export const syncIOSQueue = async (...args) => globalThis.iosTest.queues.push(args);
+      export const syncIOSQueue = async (...args) => { globalThis.iosTest.queues.push(args); if(globalThis.iosTest.queueDelay) await globalThis.iosTest.queueDelay; };
       export const playIOSAudio = async (...args) => globalThis.iosTest.plays.push(args);
       export const iosListenerAge = () => 0;
       export const restartIOSAudioObservation = async () => {};
@@ -172,4 +175,31 @@ test('native same-track repeats refresh recents once per logical session; source
  assert.equal(iosTest.events.filter(e=>e==='bilimusic-recent-changed').length,1)
  iosTest.event({...sample,sessionId:'second-play',sourceRevision:3,position:0})
  assert.equal(iosTest.events.filter(e=>e==='bilimusic-recent-changed').length,2)
+})
+test('mobile foreground transport shares the autonomous native shuffle history and ignores echoed actions', async()=>{
+ const {usePlayerStore:s}=setup()
+ await s.getState().playFromList([track('1'),track('2')],'1')
+ iosTest.event({id:'1',status:'playing',position:12,capabilities:{autonomousQueue:true}})
+ const plays=iosTest.plays.length
+ await s.getState().next();await s.getState().previous()
+ assert.deepEqual(iosTest.controls.slice(-2),[['next'],['previous']])
+ assert.equal(iosTest.plays.length,plays)
+ const controls=iosTest.controls.length
+ iosTest.event({id:'1',action:'next',autonomousQueue:true})
+ assert.equal(iosTest.controls.length,controls)
+})
+test('mobile next waits for the latest shuffle mode mirror before asking native to select',async()=>{
+ const {usePlayerStore:s}=setup()
+ await s.getState().playFromList([track('1'),track('2')],'1')
+ iosTest.event({id:'1',status:'playing',capabilities:{autonomousQueue:true}})
+ let release
+ iosTest.queueDelay=new Promise(resolve=>{release=resolve})
+ s.getState().toggleShuffle()
+ await Promise.resolve()
+ const pending=s.getState().next()
+ await Promise.resolve()
+ assert.ok(!iosTest.controls.some(row=>row[0]==='next'))
+ release();await pending
+ assert.equal(iosTest.queues.at(-1)[2],true)
+ assert.equal(iosTest.controls.at(-1)[0],'next')
 })

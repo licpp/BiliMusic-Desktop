@@ -1,7 +1,9 @@
+import { HideAction } from '../shared/VisibilityControls'
+import { useVisibilityRules } from '../services/contentVisibility'
 import { accountQueryKey } from '../services/queryKeys'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Heart, Link2, ListMusic, ListPlus, Trash2 } from 'lucide-react'
+import { Download, Heart, Link2, ListMusic, ListPlus, RefreshCw, Trash2 } from 'lucide-react'
 import type { Track } from '../domain/track'
 import { addTrackToPlaylist, changeLinkedVideo, getVideoParts, listPlaylists, saveLibraryTrack, commandErrorMessage } from '../services/desktopApi'
 import { usePlayerStore } from '../features/player/playerStore'
@@ -24,7 +26,8 @@ export function DownloadListButton({ tracks }: { tracks: Track[] }) {
   }}><Download/>{busy || preparing ? '准备下载…' : '下载'}</button>{error && <p className="large-error" role="alert">{error}</p>}</>
 }
 
-export function LargeTrackActions({ track, onClose, onFavorite, queue = false }: { track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean }) {
+export function LargeTrackActions({ track, onClose, onFavorite, queue = false, visibilityScope, replaceVideo }: { replaceVideo?:()=>void; visibilityScope?:string; track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean }) {
+  const visibilityRules=useVisibilityRules()
   const [page, setPage] = useState<'menu' | 'playlists'>('menu'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const client = useQueryClient(), epoch = accountEpoch(), downloading = useDownloadBatch(s => s.busy)
   const playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists, enabled: page === 'playlists' })
@@ -34,6 +37,8 @@ export function LargeTrackActions({ track, onClose, onFavorite, queue = false }:
   return <LargeDialog title={page === 'menu' ? track.displayTitle || track.title : '收藏到歌单'} onClose={onClose}><div className="large-action-list">{page === 'menu' ? <>
     {!track.resolveParts && <button disabled={busy} onClick={() => void run(() => onFavorite(track))}><Heart/>{track.liked ? '取消喜欢' : '喜欢'}</button>}
     <button disabled={busy} onClick={() => { usePlayerStore.getState().enqueue([track]); onClose() }}><ListMusic/>加入播放队列</button>
+    {replaceVideo&&<button disabled={busy} onClick={()=>{onClose();replaceVideo()}}><RefreshCw/>更换视频</button>}
+    {visibilityScope && <HideAction track={track} scope={visibilityScope} rules={visibilityRules} onDone={onClose}/>}
     <button disabled={busy} onClick={() => setPage('playlists')}><ListPlus/>收藏到歌单</button>
     <button disabled={busy || downloading} onClick={() => void run(async () => { const expanded = await expandDownloads([track], epoch); if (epoch !== accountEpoch()) return; chooseDownload(expanded) })}><Download/>{downloading ? '正在下载…' : '下载歌曲'}</button>
     {queue && <button disabled={busy} onClick={() => { usePlayerStore.getState().removeFromQueue(track.id); onClose() }}><Trash2/>移出队列</button>}

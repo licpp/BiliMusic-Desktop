@@ -14,7 +14,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   readCollectionProgress,
@@ -256,10 +256,12 @@ export function CreatorPage({
   }, [inputQuery])
   const [tab, setTab] = useState<'videos' | 'seasons'>('videos')
   const activeTab = inputQuery ? 'videos' : tab
-  const [parts, setParts] =
-    useState<Awaited<ReturnType<typeof getVideoParts>>>()
+  const epoch = accountEpoch()
+  // A -> B -> A is a new browsing session: cached responses may supply data,
+  // but only the current session's explicit choice can open an inline panel.
+  const partsScope = useMemo(() => ({}), [epoch, mid, inputQuery, activeTab])
+  const [partsChoice, setPartsChoice] = useState<{scope:object;bvid:string}>()
   const [error, setError] = useState('')
-  const partsRequest = useRef(0)
   const videoResult = useInfiniteQuery({
     queryKey: accountQueryKey('creator-catalog', mid, 'videos', keyword),
     initialPageParam: 1,
@@ -279,8 +281,8 @@ export function CreatorPage({
         : undefined,
   })
   const result = activeTab === 'videos' ? videoResult : seasonResult
-  const videos =
-    videoResult.data?.pages.flatMap((page) => page.data.list?.vlist || []) || []
+  const videos = [...new Map((videoResult.data?.pages.flatMap((page) => page.data.list?.vlist || []) || [])
+    .map(video => [video.bvid, video])).values()]
   const seasons =
     seasonResult.data?.pages.flatMap(
       (page) => page.data.items_lists?.seasons_list || [],
@@ -298,7 +300,21 @@ export function CreatorPage({
     },
     tracks: videos.map(creatorVideoRow),
   })
-  useEffect(() => { partsRequest.current++; setParts(undefined); setError('') }, [keyword, mid])
+  const expandedBvid = !settling && activeTab === 'videos' && partsChoice?.scope === partsScope &&
+    videos.some(video => video.bvid === partsChoice.bvid) ? partsChoice.bvid : undefined
+  const partsQuery = useQuery({
+    queryKey: accountQueryKey('creator-video-parts', mid, expandedBvid),
+    queryFn: () => getVideoParts(expandedBvid!),
+    enabled: Boolean(expandedBvid),
+    retry: false,
+  })
+  const parts = expandedBvid ? partsQuery.data : undefined
+  const partTracks = parts?.parts.map(part => toTrack(parts,part)) || []
+  const queueSource = {
+    kind: 'season' as const, title:item.title, collectionRef:item.bvid, creatorMid:mid,
+    creatorPage:videoResult.data?.pages.length || 1,creatorTotal:totalVideos || 0,creatorKeyword:keyword,
+  }
+  useEffect(() => { setError('') }, [keyword, mid])
   const resumeButton = followed && checkpoint.data && (
     <button
       className="creator-resume"
@@ -406,10 +422,7 @@ export function CreatorPage({
           { id: 'seasons', label: '合集' },
         ]}
         value={tab}
-        onChange={(value) => {
-          setParts(undefined)
-          setTab(value)
-        }}
+        onChange={setTab}
         idPrefix="creator"
         panelId="creator-content"
         label="UP 主内容"
@@ -426,21 +439,18 @@ export function CreatorPage({
             totalCount={totalVideos}
             locateCurrent
             tracks={queue}
-            queueSource={{
-              kind: 'season',
-              title: item.title,
-              collectionRef: item.bvid,
-              creatorMid: mid,
-              creatorPage: videoResult.data?.pages.length || 1,
-              creatorTotal: totalVideos || 0,
-              creatorKeyword: keyword,
-            }}
+            queueSource={queueSource}
             onOpenParts={(track) => {
-              const request = ++partsRequest.current
-              void getVideoParts(track.source.bvid)
-                .then(detail => { if (request === partsRequest.current) setParts(detail) })
-                .catch(cause => { if (request === partsRequest.current) setError(commandErrorMessage(cause)) })
+              setPartsChoice(previous => previous?.scope === partsScope && previous.bvid === track.source.bvid
+                ? undefined : {scope:partsScope,bvid:track.source.bvid})
             }}
+            renderDetails={track => track.source.bvid === expandedBvid && <section className="collection-nested-parts creator-inline-parts" aria-label={`${track.title}的选集`} data-expanded-for={track.source.bvid}>
+              <header><button type="button" className="collection-flat-button" onClick={() => setPartsChoice(undefined)}><ChevronDown size={16}/>收起选集</button></header>
+              {partsQuery.isPending && <p className="batch-message" role="status">正在读取选集…</p>}
+              {partsQuery.isError && <p className="inline-error" role="alert">{commandErrorMessage(partsQuery.error)}<button type="button" className="collection-flat-button" onClick={() => void partsQuery.refetch()}>重试</button></p>}
+              {parts && (partTracks.length ? <VideoPartsList tracks={partTracks}
+                playbackTracks={seasonPlaybackQueue(queue,partTracks[0],partTracks)} queueSource={queueSource}/> : <p className="batch-message">暂无可播放的分 P</p>)}
+            </section>}
           />
         ) : (
           seasons.map((season) => (
@@ -462,33 +472,6 @@ export function CreatorPage({
             </button>
           ))
         ))}
-        {parts && parts.parts.length > 0 && (
-          <div>
-            <button
-              className="collection-flat-button"
-              onClick={() => setParts(undefined)}
-            >
-              收起选集
-            </button>
-            <VideoPartsList
-              tracks={parts.parts.map((part) => toTrack(parts, part))}
-              playbackTracks={seasonPlaybackQueue(
-                queue,
-                toTrack(parts, parts.parts[0]),
-                parts.parts.map((part) => toTrack(parts, part)),
-              )}
-              queueSource={{
-                kind: 'season',
-                title: item.title,
-                collectionRef: item.bvid,
-                creatorMid: mid,
-                creatorPage: videoResult.data?.pages.length || 1,
-                creatorTotal: totalVideos || 0,
-              creatorKeyword: keyword,
-              }}
-            />
-          </div>
-        )}
         {!settling && result.hasNextPage && (
           <LoadMore
             label="加载更多"

@@ -1,5 +1,5 @@
 import { accountQueryKey } from '../../services/queryKeys'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Captions, Heart, ListMusic, Maximize2, Pause, Play, SkipBack, SkipForward, Volume2, X } from 'lucide-react'
@@ -9,6 +9,7 @@ import { setMiniPlayerPanel } from '../../services/immersiveWindow'
 import { parseLrc } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
 import { RangeControl } from '../../shared/RangeControl'
+import { useMarquee } from '../../shared/useMarquee'
 import { formatDuration } from '../../shared/time'
 import { usePlayerStore } from './playerStore'
 
@@ -83,13 +84,9 @@ function MiniLyric({visible}:{visible:boolean}){
   return <MarqueeText text={line||(track?track.artist||'歌手未知':'选择歌曲，开始聆听')}/>
 }
 function MarqueeText({text,title=false}:{text:string;title?:boolean}){
-  const element=useRef<HTMLDivElement>(null)
-  const [overflow,setOverflow]=useState(false)
-  useEffect(()=>{
-    const measure=()=>{const node=element.current,span=node?.firstElementChild?.firstElementChild;if(node&&span)setOverflow(span.getBoundingClientRect().width-parseFloat(getComputedStyle(span).paddingRight||'0')>node.clientWidth+1)}
-    measure();const observer=new ResizeObserver(measure);if(element.current)observer.observe(element.current);return()=>observer.disconnect()
-  },[text])
-  return <div ref={element} className={`mini-marquee${title?' mini-track-title':''}${overflow?' scrolling':''}`} title={text} data-tauri-drag-region><div key={text} className="mini-marquee-track" data-tauri-drag-region style={{'--marquee-duration':`${Math.max(10,text.length*.3)}s`} as CSSProperties}><span data-tauri-drag-region>{text}</span>{overflow&&<span aria-hidden="true" data-tauri-drag-region>{text}</span>}</div></div>
+  const element=useRef<HTMLDivElement>(null),track=useRef<HTMLDivElement>(null),copy=useRef<HTMLSpanElement>(null)
+  const overflow=useMarquee(element,track,copy,text,true,30,true)
+  return <div ref={element} className={`mini-marquee${title?' mini-track-title':''}${overflow?' scrolling':''}`} title={text} data-tauri-drag-region><div ref={track} className="mini-marquee-track" data-tauri-drag-region><span ref={copy} data-tauri-drag-region>{text}</span><span className="mini-marquee-repeat" aria-hidden="true" data-tauri-drag-region>{text}</span></div></div>
 }
 function MiniProgress(){
   const position=usePlayerStore(state=>state.progressSeconds)

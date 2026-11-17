@@ -1,4 +1,5 @@
 import '../shared/runtimeCompatibility'
+import '../styles/components/content-visibility.css'
 import { startFloatingLyrics } from '../services/floatingLyrics'
 import { startUpdateChecks } from '../services/updates'
 import { installAccountQueryScope } from '../services/queryKeys'

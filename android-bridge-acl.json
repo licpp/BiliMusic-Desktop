@@ -1,0 +1,12 @@
+{
+  "verified": true,
+  "plugin": "android-player",
+  "commands": [
+    "play",
+    "queue",
+    "control",
+    "snapshot",
+    "register_listener",
+    "remove_listener"
+  ]
+}

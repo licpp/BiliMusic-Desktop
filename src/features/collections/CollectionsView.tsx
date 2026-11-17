@@ -10,11 +10,10 @@ import { rankList,sortList } from '../../services/listOrdering'
 import { useListPreferences } from '../../services/listPreferences'
 import { parseSeasonReference } from '../../services/mediaSources'
 import { isMobile } from '../../services/platform'
-import { Artwork } from '../../shared/Artwork'
 import { ListSort,useListSort } from '../../shared/ListSort'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import { useOrganizer } from '../../shared/useOrganizer'
-import { LibraryEntry } from '../library/LibraryEntry'
+import { LibraryArtworkEntry } from '../library/LibraryArtworkEntry'
 import { PlaylistEntry } from '../library/PlaylistEntry'
 import { FolderEditor,FolderMenu } from './CollectionFolderControls'
 import { CollectionMenu } from './CollectionMenu'
@@ -65,28 +64,28 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
     {folders.filter(item => matches(item.name)).map(folder => {
       const contents = items.filter(item => item.folderId === folder.id)
       const onOpen = () => onOpenFolder(folder.id)
-      return <LibraryEntry coverBadge="folder" key={folder.id} title={folder.name} subtitle={`${contents.length} 个收藏`} sidebar={sidebar}
-        cover={<Artwork src={contents[0]?.coverUrl} adaptAspect fallback={<Folder aria-hidden="true"/>}/>}
+      return <LibraryArtworkEntry gallery={!sidebar} coverBadge="folder" key={folder.id} title={folder.name} subtitle={`${contents.length} 个收藏`} sidebar={sidebar}
+        coverUrl={contents[0]?.coverUrl} artwork={{ fallback: <Folder aria-hidden="true"/> }}
         dropFolderId={folder.id} onOpen={onOpen}
         menu={position => <FolderMenu folder={folder} contextPosition={position} onOpen={onOpen}
           onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)}/>}/>
     })}
     {linkedFolders.filter(item => matches(item.name)).map(item => <PlaylistEntry
-      key={item.id} playlist={item} sidebar={sidebar} onOpen={() => onOpenLinked(item.id)} onRemoved={() => onLinkedRemoved(item.id)}
+      key={item.id} playlist={item} sidebar={sidebar} gallery={!sidebar} onOpen={() => onOpenLinked(item.id)} onRemoved={() => onLinkedRemoved(item.id)}
     />)}
   </> : null
   const toggle = () => setExpanded(previous => {
     localStorage.setItem('collection-expanded', String(!previous))
     return !previous
   })
-  const entries = <div className="collection-entries">
+  const entries = <div className={`collection-entries${sidebar ? '' : ' library-gallery'}`}>
     {children}
     {visibleItems.map(item => {
       const title = item.title || `合集 ${item.bvid}`
       const onOpen = () => onSelect(item)
       const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
-      return <LibraryEntry key={item.bvid} title={title} subtitle={item.uploaderName || (parseSeasonReference(item.bvid) ? '打开查看视频' : '打开查看分 P')} sidebar={sidebar}
-        cover={<Artwork src={item.coverUrl} adaptAspect/>} onOpen={onOpen}
+      return <LibraryArtworkEntry gallery={!sidebar} key={item.bvid} title={title} subtitle={item.uploaderName || (parseSeasonReference(item.bvid) ? '打开查看视频' : '打开查看分 P')} sidebar={sidebar}
+        coverUrl={item.coverUrl} onOpen={onOpen}
         drag={canMove && !isMobile ? { folderId: item.folderId, onMove: target => move.mutate({ item, target }) } : undefined}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
     })}

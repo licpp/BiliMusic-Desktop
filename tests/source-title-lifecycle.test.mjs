@@ -5,7 +5,7 @@ import {createRequire} from 'node:module'
 const compiled=await build({stdin:{contents:"export * from './src/services/sourceTitles';export {fromStoredTrack,recordPlayedTrack} from './src/services/desktopApi';export {advanceAccountEpoch} from './src/services/accountScope'",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'title-boundaries',setup(b){
  b.onResolve({filter:/player\/playerStore$/},()=>({path:'store',namespace:'mock'}))
  b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'core',namespace:'mock'}))
- b.onLoad({filter:/.*/,namespace:'mock'},({path})=>({contents:path==='store'?`export const usePlayerStore={getState:()=>globalThis.titleState,setState:patch=>Object.assign(globalThis.titleState,typeof patch==='function'?patch(globalThis.titleState):patch)};`:`export const isTauri=()=>true;export const invoke=(...args)=>globalThis.titleIpc(...args);`}))
+ b.onLoad({filter:/.*/,namespace:'mock'},({path})=>({contents:path==='store'?`export const usePlayerStore={getState:()=>globalThis.titleState,setState:patch=>Object.assign(globalThis.titleState,typeof patch==='function'?patch(globalThis.titleState):patch)};`:`export const isTauri=()=>true;export const invoke=(command,...args)=>command==='playlist_import_contexts'?Promise.resolve([]):globalThis.titleIpc(command,...args);`}))
 }}]})
 const module={exports:{}};new Function('require','module','exports',compiled.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports)
 const api=module.exports
@@ -35,14 +35,16 @@ test('cache hydration repairs old queue and current titles without changing queu
 
 test('late source cache responses cannot undo a new edit or an account ABA',async()=>{
  globalThis.window=new EventTarget()
- for(const change of ['edit','account']) {
+ for(const change of ['edit','cover','account']) {
   const track=old(),pending=deferred();globalThis.titleState={current:track,queue:[track]}
   globalThis.titleIpc=()=>pending.promise
   const work=api.hydrateSourceTitles([track.id],client,true)
   if(change==='edit'){const edited={...track,title:'刚刚改名',displayTitle:'刚刚改名',titleOverridden:true};titleState.current=edited;titleState.queue=[edited]}
+  else if(change==='cover'){const edited={...track,coverUrl:'https://custom.test/new.jpg'};titleState.current=edited;titleState.queue=[edited]}
   else{api.advanceAccountEpoch();api.advanceAccountEpoch()}
   pending.resolve(stored);await work
   assert.equal(titleState.current.title,change==='edit'?'刚刚改名':track.title)
+  if(change==='cover')assert.equal(titleState.current.coverUrl,'https://custom.test/new.jpg')
  }
 })
 
@@ -55,4 +57,14 @@ test('current song outside the queue is repaired and a failed stored read preser
  let calls=0;globalThis.titleIpc=async()=>{calls++;throw new Error('database unavailable')}
  await api.hydrateSourceTitles([track.id],client,true)
  assert.equal(calls,1);assert.equal(titleState.current,track)
+})
+
+test('source hydration repairs legacy first-frame artwork in unsaved queues and preserves custom artwork',async()=>{
+ for(const coverUrl of ['http://bili.test/first.jpg','https://music.test/album.jpg']) {
+  const track={...old(),coverUrl};globalThis.titleState={current:track,queue:[track]}
+  globalThis.titleIpc=async cmd=>cmd==='sync_current_track'?null:{bvid:track.source.bvid,title:context.videoTitle,coverUrl:'https://bili.test/cover.jpg',parts:[{cid:track.source.cid,page:1,title:context.partTitle,durationSeconds:240,coverUrl:'https://bili.test/cover.jpg',firstFrameUrl:'https://bili.test/first.jpg'}]}
+  await api.hydrateSourceTitles([track.id],client,true)
+  const expected=coverUrl.includes('first.jpg')?'https://bili.test/cover.jpg':coverUrl
+  assert.equal(titleState.current.coverUrl,expected);assert.equal(titleState.queue[0].coverUrl,expected)
+ }
 })

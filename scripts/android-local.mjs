@@ -1,3 +1,4 @@
+import { syncMobileVersion } from './mobile-version.mjs'
 // Project-scoped Android environment; does not change the shell's global Java.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -49,6 +50,7 @@ function check() {
   console.log(`JDK: ${java}\nSDK: ${sdk}\nNDK: ${ndk}\nRust: ${selected.rust}`)
 }
 
+if (task === 'build' || task === 'large-screen') await syncMobileVersion()
 check()
 if (task === 'doctor') {
   run(join(java, 'bin/java'), ['-version'])

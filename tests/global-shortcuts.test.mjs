@@ -31,7 +31,7 @@ function setup({windows=true,mac=false,native=true,listenFails=false}={}) {
 const ok=(registered=[])=>({registered,errors:[]})
 test('global shortcuts are off by default and unsupported clients never call registration',async()=>{
  const client=setup();client.syncGlobalShortcuts(bindings());
- assert.deepEqual(client.requests[0].args,{enabled:false,bindings:[]});client.requests[0].resolve(ok());await tick()
+ assert.deepEqual(client.requests[0].args,{enabled:false,bindings:[],suspended:false});client.requests[0].resolve(ok());await tick()
  for(const options of [{windows:false},{native:false}]) {
   const other=setup(options);other.syncGlobalShortcuts(bindings(),true);assert.equal(other.requests.length,0)
  }
@@ -109,22 +109,48 @@ test('global mode is opt-in, persisted and rejects Enter aliases without breakin
  assert.equal(saved.get('bilimusic-global-shortcuts-v1'),'true')
  assert.equal(instantiate(storeCode).useShortcutStore.getState().globalEnabled,true)
 })
-test('macOS global settings preserve distinct Enter keys and migrate only the reserved show key',()=>{
+test('macOS migrates missing show without discarding existing bindings and allows moving it',()=>{
  const saved=new Map(),target=new EventTarget()
  Object.defineProperty(globalThis,'navigator',{value:{userAgent:'Macintosh'},configurable:true})
  globalThis.localStorage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)}
  globalThis.window=target
  let {useShortcutStore}=instantiate(storeCode)
- assert.equal(useShortcutStore.getState().globalEnabled,false)
  useShortcutStore.getState().setBinding('toggle',key('Enter',{ctrl:false,meta:true}))
  useShortcutStore.getState().setBinding('next',key('NumpadEnter',{ctrl:false,meta:true}))
  assert.equal(useShortcutStore.getState().setGlobalEnabled(true),undefined)
- assert.match(useShortcutStore.getState().setBinding('previous',key('KeyQ',{alt:true})),/唤出/)
- const map={...useShortcutStore.getState().bindings,previous:key('KeyQ',{alt:true})}
+ assert.match(useShortcutStore.getState().setBinding('previous',key('KeyQ',{alt:true})),/打开窗口/)
+ const map={...useShortcutStore.getState().bindings,previous:key('KeyQ',{alt:true})};delete map.show
  saved.set('bilimusic-shortcuts-v1',JSON.stringify({version:1,bindings:map}))
  useShortcutStore=instantiate(storeCode).useShortcutStore
- assert.equal(useShortcutStore.getState().globalEnabled,true)
- assert.equal(useShortcutStore.getState().bindings.previous,null)
+ assert.equal(useShortcutStore.getState().bindings.show,null)
+ assert.equal(useShortcutStore.getState().bindings.previous.code,'KeyQ')
  assert.equal(useShortcutStore.getState().bindings.toggle.code,'Enter')
  assert.equal(useShortcutStore.getState().bindings.next.code,'NumpadEnter')
+ assert.equal(useShortcutStore.getState().setBinding('show',key('KeyB',{meta:true,ctrl:false,shift:true})),undefined)
+ assert.equal(useShortcutStore.getState().bindings.show.code,'KeyB')
+})
+test('show registers independently of playback and recording temporarily releases it without clearing configuration',async()=>{
+ const client=setup(),keys={...bindings(),show:key('KeyQ',{alt:true})}
+ client.syncGlobalShortcuts(keys,false)
+ assert.equal(client.requests[0].args.enabled,false)
+ assert.deepEqual(client.requests[0].args.bindings,[{action:'show',...keys.show}])
+ client.requests[0].resolve(ok(['show']));await tick()
+ client.suspendGlobalShortcuts(true)
+ assert.deepEqual(client.requests[1].args,{bindings:[],enabled:false,suspended:true})
+ client.requests[1].resolve(ok());await tick()
+ client.suspendGlobalShortcuts(false)
+ assert.deepEqual(client.requests[2].args.bindings,[{action:'show',...keys.show}])
+ client.requests[2].resolve({registered:[],errors:[{action:'show',message:'打开窗口快捷键已被占用'}]});await tick()
+ assert.match(client.useGlobalShortcutStatus.getState().errors.show,/占用/)
+ client.syncGlobalShortcuts({...keys,show:null},false)
+ assert.deepEqual(client.requests[3].args.bindings,[])
+ client.requests[3].resolve(ok());await tick()
+})
+test('a failed JS playback listener leaves native window opening registered',async()=>{
+ const client=setup({listenFails:true});client.listenGlobalShortcuts(()=>{})
+ client.syncGlobalShortcuts({...bindings(),show:key('KeyQ',{alt:true})},true);await tick()
+ client.requests[0].resolve(ok(['show','next']));await tick()
+ assert.deepEqual(client.requests[1].args.bindings,[{action:'show',...key('KeyQ',{alt:true})}])
+ client.requests[1].resolve(ok(['show']));await tick()
+ assert.match(client.useGlobalShortcutStatus.getState().error,/无法接收/)
 })

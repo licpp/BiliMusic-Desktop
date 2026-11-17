@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {readFile} from 'node:fs/promises'
 import {dirname} from 'node:path'
+import {importEntryCommand} from './fixtures/import-entry-store.mjs'
+globalThis.throughputCommand=importEntryCommand
 
 // Both variants execute the production importer. The control changes only the
 // worker count; API timings and request pacing stay identical.
@@ -15,7 +17,7 @@ for(const concurrency of [1,2]){
    export const inDesktopShell=true;export const commandErrorMessage=e=>String(e);export const listPlaylistTracks=async()=>[];
    export const searchBilibili=keyword=>globalThis.throughputFixture.search(keyword);
    export const getVideoParts=bvid=>globalThis.throughputFixture.detail(bvid);
-  `:path.endsWith('accountScope')?'export const accountEpoch=()=>0':`export const invoke=async(command,args)=>{if(command==='playlist_import_scope')return 'benchmark';if(command==='playlist_import_archive')return null;if(command==='playlist_import_commit'){globalThis.throughputFixture.commits.push(args);return {id:args.playlistId,name:args.name}};throw new Error(command)}`}))
+  `:path.endsWith('accountScope')?'export const accountEpoch=()=>0':`export const invoke=async(command,args)=>{if(command==='playlist_import_scope')return 'benchmark';const entryResult=globalThis.throughputCommand(globalThis.throughputFixture,command,args);if(entryResult!==undefined)return entryResult;if(command==='playlist_import_archive')return null;if(command==='playlist_import_commit'){globalThis.throughputFixture.commits.push(args);return {id:args.playlistId,name:args.name}};throw new Error(command)}`}))
  }}]})
  variants.set(concurrency,compiled.outputFiles[0].text)
 }
@@ -23,9 +25,9 @@ const flush=()=>new Promise(setImmediate)
 async function scenario(t,concurrency,latency){
  t.mock.timers.enable({apis:['Date','setTimeout'],now:1_000_000})
  globalThis.window=new EventTarget()
- const f=globalThis.throughputFixture={searches:[],details:0,commits:[]}
+ const f=globalThis.throughputFixture={scope:'benchmark',searches:[],details:0,commits:[]}
  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
- const hit=i=>({bvid:`BV1GJ411x7h${i}`,title:`Artist - Song ${i}`,durationSeconds:269,uploaderName:'UP',description:''})
+ const hit=i=>({bvid:`BV1GJ411x7h${i}`,title:`Artist - Song ${i}`,durationSeconds:269,playCount:100000,uploaderName:'UP',description:''})
  f.search=async keyword=>{const i=Number(keyword.match(/Song (\d)/)[1]);f.searches.push(Date.now());await sleep(latency);return {items:[hit(i)]}}
  f.detail=async bvid=>{f.details++;await sleep(600);const i=Number(bvid.at(-1));return {...hit(i),aid:1,coverUrl:'',uploaderId:1,parts:[{cid:100+i,page:1,title:`Song ${i}`,durationSeconds:269,coverUrl:''}]}}
  const api=await import(`data:text/javascript;base64,${Buffer.from(variants.get(concurrency)+`\n// latency fixture: ${latency}`).toString('base64')}`)

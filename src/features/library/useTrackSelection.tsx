@@ -1,6 +1,7 @@
+import { BatchMatchButton } from './BatchMatchButton'
 import { accountEpoch } from '../../services/accountScope'
 import { useState } from 'react'
-import { Download, FolderPlus, ListPlus } from 'lucide-react'
+import { Download, EyeOff, FolderPlus, ListPlus } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { useDownloadBatch } from '../downloads/downloadBatch'
@@ -26,9 +27,11 @@ export function useTrackSelection(tracks: Track[]) {
   }
 }
 
-export function BatchTrackActions({ selection, total, onRemove }: {
+export function BatchTrackActions({ selection, total, onRemove, onHide, allowAutoMatch = false }: {
   selection: ReturnType<typeof useTrackSelection>
   total: number
+  allowAutoMatch?: boolean
+  onHide?: (tracks: Track[]) => Promise<void>
   onRemove?: (tracks: Track[]) => Promise<void>
 }) {
   const { selected, all, exit } = selection
@@ -54,6 +57,8 @@ export function BatchTrackActions({ selection, total, onRemove }: {
           chooseDownload(selected)
         } catch (cause) { setMessage(commandErrorMessage(cause)) }
       }}><Download size={16}/>下载所选</button>}
+      {allowAutoMatch && <BatchMatchButton tracks={selected}/>}
+      {onHide && <button disabled={!selected.length || removing} onClick={async()=>{setRemoving(true);try{await onHide(selected)}catch(e){setMessage(commandErrorMessage(e))}finally{setRemoving(false)}}}><EyeOff size={16}/>隐藏所选</button>}
       {onRemove && <button disabled={!selected.length || removing} onClick={() => setConfirmRemove(true)}>移除所选</button>}
       <button onClick={exit} disabled={removing}>完成</button>
     </div>

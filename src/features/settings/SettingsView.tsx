@@ -1,3 +1,4 @@
+import { LoudnessSettings } from './LoudnessSettings'
 import { SystemTitleLyricsSettings } from './SystemTitleLyricsSettings'
 import { accountQueryKey } from '../../services/queryKeys'
 import { WindowCloseSettings } from './WindowCloseSettings'
@@ -43,7 +44,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     </div></section>
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>
-      <ResumeSettings/>
+      <ResumeSettings/><LoudnessSettings/>
       {isMobile && !isIOS && <SystemTitleLyricsSettings/>}
       {!isIOS && !isOHOS && <FloatingLyricsSettings/>}
       {!isMobile && <ShortcutSettings/>}

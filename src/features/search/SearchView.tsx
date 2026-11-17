@@ -1,4 +1,5 @@
 import { accountQueryKey } from '../../services/queryKeys'
+import { canManageVisibility, videoScope } from '../../domain/contentVisibility'
 import { chooseDownload } from '../downloads/downloadRequest'
 import { CoverCount } from '../../shared/CoverCount'
 import { PublishedDate } from '../../shared/PublishedDate'
@@ -7,9 +8,9 @@ import { SegmentedTabs } from '../../shared/SegmentedTabs'
 import { isMobile } from '../../services/platform'
 import { MobilePartsPage } from '../library/MobilePartsPage'
 import { toTrack } from '../../services/collectionTrack'
-import type { Collection } from '../../services/collections'
+import { listCollections, type Collection, type Collections } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, CircleAlert, Download, Heart, Link2, ListPlus, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import type { Track } from '../../domain/track'
@@ -38,6 +39,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const [downloadResolving,setDownloadResolving]=useState<string>()
   const downloadIntent=useRef(0)
   const client = useQueryClient()
+  useQuery({ queryKey: accountQueryKey('collections'), queryFn: listCollections, enabled: active })
   const play = usePlayerStore((state) => state.playFromList)
   const enqueue = usePlayerStore((state) => state.enqueue)
   const selection = useRef(0)
@@ -99,13 +101,15 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
         if (request !== selection.current || before !== playbackIntent()) return
         const selected = tracks[0]
         if (!selected) { setActionError('暂无可播放内容'); return }
-        void play(tracks, selected.id, { kind: 'video', title: detail.title, collectionRef: detail.bvid })
+        const saved = () => client.getQueryData<Collections>(accountQueryKey('collections'))?.items ?? []
+        void play(tracks, selected.id, { kind: 'video', title: detail.title, collectionRef: detail.bvid, visibilityManaged: canManageVisibility(videoScope(detail.bvid), saved(), tracks) })
         const intent = playbackIntent()
         if (useSeason && detail.season) {
           const { uploaderId, id } = detail.season
           void getSeason(uploaderId, id).then(season => {
             if (epoch !== accountEpoch() || request !== selection.current) return
-            adoptSeasonQueue(intent, selected.id, seasonPlaybackQueue(seasonTracks(season), selected, tracks), season.summary.title, `season:${uploaderId}:${id}`)
+            const reference = `season:${uploaderId}:${id}`
+            adoptSeasonQueue(intent, selected.id, seasonPlaybackQueue(seasonTracks(season), selected, tracks), season.summary.title, reference, canManageVisibility(reference, saved()))
           }).catch(() => undefined)
         }
       }

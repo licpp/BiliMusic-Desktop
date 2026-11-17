@@ -5,7 +5,7 @@ import {createRequire} from 'node:module'
 import {readFile} from 'node:fs/promises'
 import React from 'react'
 import {renderToStaticMarkup} from 'react-dom/server'
-const stubComponents=['WindowCloseSettings','ShortcutSettings','FloatingLyricsSettings','UpdateSettings','PlaybackCacheSettings','ResumeSettings','SyncSettings','AndroidDownloadDestinationField','SettingsDisclosure']
+const stubComponents=['WindowCloseSettings','ShortcutSettings','FloatingLyricsSettings','UpdateSettings','PlaybackCacheSettings','ResumeSettings','LoudnessSettings','SyncSettings','AndroidDownloadDestinationField','SettingsDisclosure']
 const mocks={
  platform:`export const isIOS=globalThis.titleLyricsTestPlatform==='ios';export const isAndroid=globalThis.titleLyricsTestPlatform==='android';export const isOHOS=globalThis.titleLyricsTestPlatform==='ohos';export const isMobile=isIOS||isAndroid||isOHOS;`,
  query:'export const useQuery=()=>({});',keys:'export const accountQueryKey=(...args)=>args;',

@@ -1,3 +1,4 @@
+import { mobileVersion } from './mobile-version.mjs'
 import { readdir, mkdir, mkdtemp, cp, rm, readFile, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -5,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 const root = resolve(import.meta.dirname, '..')
 const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version
+const expected = mobileVersion(version)
 const output = resolve(process.argv[2] || join(root, 'src-tauri/target/ios-unsigned'))
 const archives = []
 async function find(dir) {
@@ -34,7 +36,7 @@ try {
   // resource. It is already linked into the executable and has no runtime use.
   await rm(join(app, 'libapp.a'), { force: true })
   const plist = JSON.parse(run('plutil', ['-convert', 'json', '-o', '-', join(app, 'Info.plist')]))
-  if (plist.CFBundleShortVersionString !== version || plist.CFBundleIdentifier !== 'app.bilimusic.ios') throw new Error('iOS bundle identity/version mismatch')
+  if (plist.CFBundleShortVersionString !== expected.nativeVersion || plist.CFBundleVersion !== expected.iosBundleVersion || plist.CFBundleIdentifier !== 'app.bilimusic.ios') throw new Error('iOS bundle identity/version mismatch')
   if (!plist.CFBundleSupportedPlatforms?.includes('iPhoneOS')) throw new Error('A real-device build is required, not a simulator')
   if (!plist.UIBackgroundModes?.includes('audio')) throw new Error('Background audio capability is missing')
   const arch = run('lipo', ['-archs', join(app, plist.CFBundleExecutable)])
@@ -51,6 +53,6 @@ try {
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const source = run('git', ['-C', root, 'rev-parse', 'HEAD'])
   await writeFile(join(output, 'SHA256SUMS.txt'), `${sha256}  ${filename}\n`)
-  await writeFile(join(output, 'build-info.json'), JSON.stringify({ version, source, signed: false, platform: 'iOS', architecture: arch, minimumSystemVersion: plist.MinimumOSVersion, bytes: bytes.length, sha256 }, null, 2) + '\n')
+  await writeFile(join(output, 'build-info.json'), JSON.stringify({ version, nativeVersion: plist.CFBundleShortVersionString, buildNumber: plist.CFBundleVersion, bundleId: plist.CFBundleIdentifier, source, signed: false, platform: 'iOS', architecture: arch, minimumSystemVersion: plist.MinimumOSVersion, bytes: bytes.length, sha256 }, null, 2) + '\n')
   console.log(JSON.stringify({ path, bytes: bytes.length, sha256, source }))
 } finally { await rm(temp, { recursive: true, force: true }) }

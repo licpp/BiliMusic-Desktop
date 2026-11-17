@@ -257,47 +257,114 @@ fn decoded_lyric(value: &Value) -> Option<String> {
     if !raw.lines().any(|line| line.trim_start().starts_with('[')) {
         return None;
     }
-    Some(
-        raw.replace("&#58;", ":")
-            .replace("&#10;", "\n")
-            .replace("&#13;", "")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&"),
-    )
+    Some(raw)
+}
+
+// Validate the entire element and every attribute. QQ sometimes leaves literal
+// quotes inside LyricContent: accepting the first attribute alone silently
+// returns a valid-looking but truncated lyric.
+fn qq_xml_content(raw: &str) -> Option<String> {
+    let mut reader = quick_xml::Reader::from_str(raw);
+    let mut found = None;
+    let mut depth = 0usize;
+    loop {
+        let node = match reader.read_event().ok()? {
+            quick_xml::events::Event::Start(node) => {
+                depth += 1;
+                node
+            }
+            quick_xml::events::Event::Empty(node) => node,
+            quick_xml::events::Event::End(_) => {
+                depth = depth.checked_sub(1)?;
+                continue;
+            }
+            quick_xml::events::Event::Eof => return (depth == 0).then_some(found).flatten(),
+            _ => continue,
+        };
+        for attribute in node.attributes() {
+            let attribute = attribute.ok()?;
+            if attribute.key.as_ref() == b"LyricContent" {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(std::str::from_utf8(&attribute.value).ok()?.to_owned());
+            }
+        }
+    }
+}
+
+fn qq_lyric_content(raw: &str) -> Option<String> {
+    if let Some(content) = qq_xml_content(raw) {
+        return Some(content);
+    }
+    // Recover only QQ's single-lyric QRC wrapper. LyricContent is its final
+    // attribute; the closing element, rather than a quote in the lyric text,
+    // gives its boundary. Reparse the repaired document to reject incomplete
+    // wrappers and avoid returning partial content on other XML failures.
+    let (before_end, _) = raw.rsplit_once("</LyricInfo>")?;
+    let close = before_end.rfind("/>")?;
+    if !before_end[close + 2..].trim().is_empty() {
+        return None;
+    }
+    let (prefix, _) = raw.split_once("LyricContent=")?;
+    if raw.matches("LyricContent=").count() != 1 || !prefix.contains("<QrcInfos>") {
+        return None;
+    }
+    let value_start = prefix.len() + "LyricContent=".len();
+    let quote = raw[value_start..].chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let before_close = raw[..close].trim_end();
+    if before_close.as_bytes().last().copied() != Some(quote as u8) {
+        return None;
+    }
+    let value_end = before_close.len() - 1;
+    if value_end <= value_start {
+        return None;
+    }
+    let content = &raw[value_start + 1..value_end];
+    let repaired = format!(
+        "{}{}{}",
+        &raw[..value_start + 1],
+        quick_xml::escape::escape(content),
+        &raw[value_end..]
+    );
+    qq_xml_content(&repaired)?;
+    Some(content.to_owned())
+}
+
+fn unescape_qq_text(raw: &str) -> String {
+    // Decode once, preserving literal ampersands and unknown entities from QQ.
+    // In particular, &amp;quot; must remain &quot;, not become a literal quote.
+    let mut result = String::with_capacity(raw.len());
+    let mut remaining = raw;
+    while let Some(index) = remaining.find('&') {
+        result.push_str(&remaining[..index]);
+        remaining = &remaining[index..];
+        let entity_end = remaining.bytes().take(16).position(|byte| byte == b';');
+        if let Some(end) = entity_end {
+            let entity = &remaining[..=end];
+            if let Ok(decoded) = quick_xml::escape::unescape(entity) {
+                result.push_str(&decoded);
+                remaining = &remaining[end + 1..];
+                continue;
+            }
+        }
+        result.push('&');
+        remaining = &remaining[1..];
+    }
+    result.push_str(remaining);
+    result
 }
 
 fn normalize_qq_lyric(raw: &str) -> Option<String> {
-    let mut content = raw.to_owned();
-    if raw.trim_start().starts_with('<') {
-        let mut reader = quick_xml::Reader::from_str(raw);
-        let mut found = None;
-        loop {
-            match reader.read_event() {
-                Ok(
-                    quick_xml::events::Event::Start(node) | quick_xml::events::Event::Empty(node),
-                ) => {
-                    for attribute in node.attributes().flatten() {
-                        if attribute.key.as_ref() == b"LyricContent" {
-                            found = attribute
-                                .decode_and_unescape_value(reader.decoder())
-                                .ok()
-                                .map(|s| s.into_owned());
-                            break;
-                        }
-                    }
-                    if found.is_some() {
-                        break;
-                    }
-                }
-                Ok(quick_xml::events::Event::Eof) | Err(_) => break,
-                _ => {}
-            }
-        }
-        content = found?;
-    }
+    let content = if raw.trim_start().starts_with('<') {
+        qq_lyric_content(raw)?
+    } else {
+        raw.to_owned()
+    };
+    let content = unescape_qq_text(&content);
     let mut lines = vec![];
     for line in content.lines() {
         let line = line.trim();
@@ -403,6 +470,51 @@ pub async fn qq_lyrics(client: &Client, origin: &str, id: i64) -> Result<MusicLy
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn qq_qrc_literal_quotes_do_not_truncate_later_lyrics() {
+        let content = "[ti:test]\n[0,1000]credit \"producer\"(0,1000)\n[1000,1000]first \"word\"(1000,1000)\n[241000,1000]final(241000,1000)";
+        let xml = format!(
+            "<?xml version=\"1.0\"?><QrcInfos><LyricInfo LyricCount=\"1\"><Lyric_1 LyricType=\"1\" LyricContent=\"{content}\"/>\n</LyricInfo></QrcInfos>"
+        );
+        assert!(qq_xml_content(&xml).is_none());
+        let normalized = decoded_lyric(&json!(STANDARD.encode(&xml))).unwrap();
+        assert_eq!(normalized.lines().count(), 4);
+        assert!(normalized.contains("credit \"producer\""));
+        assert!(normalized.contains("first \"word\""));
+        assert!(normalized.ends_with("[04:01.000]<04:01.000>final<04:02.000>"));
+    }
+
+    #[test]
+    fn qq_qrc_entities_are_decoded_once_before_line_conversion() {
+        let content = "[1000,1000]a &quot;quote&quot; &amp; (live)(1000,1000)&#10;[2000,1000]&amp;quot; &#x65E5;(2000,1000)";
+        for quote in ['\'', '"'] {
+            let xml = format!(
+                "<Lyric_1 LyricContent={quote}{content}{quote} LyricType={quote}1{quote}/>"
+            );
+            let normalized = decoded_lyric(&json!(xml)).unwrap();
+            assert_eq!(normalized.lines().count(), 2);
+            assert!(normalized.contains("a \"quote\" & (live)"));
+            assert!(normalized.contains("&quot; 日"));
+        }
+        assert_eq!(
+            decoded_lyric(&json!("[00:01.00]R&B &unknown; &#58;")),
+            Some("[00:01.00]R&B &unknown; :".into())
+        );
+    }
+
+    #[test]
+    fn qq_qrc_recovery_rejects_incomplete_or_ambiguous_wrappers() {
+        for xml in [
+            "<QrcInfos><LyricInfo><Lyric_1 LyricContent=\"[0,1000]bad \"quote\"日/></LyricInfo></QrcInfos>",
+            "<Lyric_1 LyricContent=\"[0,1000]bad \"quote\"(0,1000)\"/>",
+            "<QrcInfos><LyricInfo><Lyric_1 LyricContent=\"[0,1000]bad \"quote\"(0,1000)",
+            "<QrcInfos><LyricInfo><Lyric_1 LyricContent=\"[0,1000]bad \"quote\"(0,1000)\"/></LyricInfo>",
+            "<QrcInfos><LyricInfo><Lyric_1 LyricContent=\"[0,1000]bad \"quote\"(0,1000)\"/><Lyric_2 LyricContent=\"[1000,1000]other(1000,1000)\"/></LyricInfo></QrcInfos>",
+        ] {
+            assert!(decoded_lyric(&json!(xml)).is_none());
+        }
+    }
+
     #[test]
     fn both_netease_song_shapes_and_qq_text_encoding_are_supported() {
         let song=netease_song(&json!({"id":42,"name":"曲名","dt":256000,"ar":[{"name":"歌手"}],"al":{"name":"专辑","picUrl":"http://p1.music.126.net/cover.jpg"}})).unwrap();

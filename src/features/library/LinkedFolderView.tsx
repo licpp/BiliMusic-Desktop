@@ -166,11 +166,11 @@ function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, 
 }
 
 function LinkedVideoParts({ bvid, queue, title }: { bvid: string; queue: import('../../domain/track').Track[]; title: string }) {
-  const detail = useQuery({ queryKey: ['collection-parts', bvid], queryFn: () => getVideoParts(bvid) })
+  const detail = useQuery({ queryKey: accountQueryKey('collection-parts', bvid), queryFn: () => getVideoParts(bvid) })
   if (detail.isLoading) return <p className="batch-message">正在加载分 P…</p>
   if (detail.error) return <p role="alert" className="inline-error">{commandErrorMessage(detail.error)}</p>
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
   const tracks = video.parts.map(part => toTrack(video, part))
-  return <VideoPartsList locateCurrent queueSource={{ kind: 'season', title }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
+  return <VideoPartsList savedContainer locateCurrent queueSource={{ kind: 'season', title }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
 }

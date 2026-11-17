@@ -1,3 +1,4 @@
+import { useLoudnessSettings } from '../../services/loudness'
 import type { NativeControlAction } from './contracts'
 import { normalizeNativeSnapshot } from './contracts'
 import { createSnapshotOrder } from './snapshotOrder'
@@ -31,12 +32,12 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
     if (!ready) ready = (bind ? bind(receive) : addPluginListener<State>(plugin, 'state', receive)).catch((error) => { ready = undefined; throw error })
     return ready
   }
-  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy) {
+  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0) {
     await ready
-    await invoke(`plugin:${plugin}|play`, { url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
+    await invoke(`plugin:${plugin}|play`, { loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
   }
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
-  const control = (action: NativeControlAction, value = 0) => invoke(`plugin:${plugin}|control`, { action, value })
+  const control = (action: NativeControlAction, value = 0, settingsRevision?: number) => invoke(`plugin:${plugin}|control`, { action, value, ...(settingsRevision !== undefined ? {settingsRevision} : {}) })
   const snapshot = async () => {
     const state = await invoke<State>(`plugin:${plugin}|snapshot`)
     if (!order.accept(state)) return normalizeNativeSnapshot(order.latest!)

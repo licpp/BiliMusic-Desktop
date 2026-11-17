@@ -29,6 +29,17 @@ pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize
     }
     for part in &video.parts {
         let id = format!("bilibili:{}:{}", video.bvid, part.cid);
+        changed += crate::infrastructure::repositories::source_artwork::remember(
+            c,
+            &id,
+            if video.cover_url.is_empty() {
+                &part.cover_url
+            } else {
+                &video.cover_url
+            },
+            &part.first_frame_url,
+        )
+        .map_err(|e| e.to_string())?;
         let previous = crate::infrastructure::repositories::source_titles::get(c, &id)
             .map_err(|e| e.to_string())?;
         let context = crate::domain::source_title::SourceTitleContext {
@@ -60,8 +71,24 @@ pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize
         changed += c.execute("INSERT INTO sync_info(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value<>excluded.value", params![key,title]).map_err(|e|e.to_string())?;
     }
     c.execute("INSERT INTO sync_info(key,value) VALUES(?1,strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [format!("source-title-chapter-v3-checked:{}",video.bvid)]).map_err(|e|e.to_string())?;
+    if !video.cover_url.is_empty() {
+        c.execute("INSERT INTO sync_info(key,value) VALUES(?1,'1') ON CONFLICT(key) DO UPDATE SET value='1'",[format!("source-artwork-v1-checked:{}",video.bvid)]).map_err(|e|e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(changed)
+}
+
+// Older cache entries lack canonical artwork and need one public metadata refresh.
+fn cache_is_fresh(c: &rusqlite::Connection, bvid: &str) -> bool {
+    c.query_row(
+        "SELECT CAST(value AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)-604800
+         FROM sync_info WHERE key=?1
+         AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-published:'||?2)
+         AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-plays:'||?2)
+         AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-artwork-v1-checked:'||?2 AND value='1')",
+        params![format!("source-title-chapter-v3-checked:{bvid}"), bvid],
+        |r| r.get::<_, bool>(0),
+    ).unwrap_or(false)
 }
 
 pub(super) async fn hydrate(
@@ -93,7 +120,7 @@ pub(super) async fn hydrate(
     for bvid in videos {
         let fresh = {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
-            c.query_row("SELECT CAST(value AS INTEGER)>CAST(strftime('%s','now') AS INTEGER)-604800 FROM sync_info WHERE key=?1 AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-published:'||?2) AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-plays:'||?2)",params![format!("source-title-chapter-v3-checked:{bvid}"),bvid],|r|r.get::<_,bool>(0)).unwrap_or(false)
+            cache_is_fresh(&c, &bvid)
         };
         if fresh {
             continue;
@@ -118,6 +145,70 @@ mod tests {
     use crate::infrastructure::repositories::library::{
         LibraryRepository, MetadataPatch, TrackInput,
     };
+    #[test]
+    fn legacy_metadata_cache_refreshes_artwork_once_and_keeps_its_expiry() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        let bvid = "BV1na4y1V7so";
+        c.execute(
+            "INSERT INTO sync_info(key,value) VALUES(?1,strftime('%s','now'))",
+            [format!("source-title-chapter-v3-checked:{bvid}")],
+        )
+        .unwrap();
+        for field in ["source-published", "source-plays"] {
+            c.execute(
+                "INSERT INTO sync_info(key,value) VALUES(?1,'0')",
+                [format!("{field}:{bvid}")],
+            )
+            .unwrap();
+        }
+        assert!(!cache_is_fresh(&c, bvid));
+        let id = format!("bilibili:{bvid}:1108732833");
+        c.execute(
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili',?2,1108732833)",
+            params![id, bvid],
+        )
+        .unwrap();
+        c.execute("INSERT INTO tracks(id,source_item_id,title,cover_url) VALUES(?1,?1,'旧标题','https://bili.test/first.jpg')", [&id]).unwrap();
+        let video = VideoParts {
+            play_count: Some(100),
+            published_at: Some(1),
+            bvid: bvid.into(),
+            aid: 1,
+            title: "官方标题".into(),
+            cover_url: "https://bili.test/cover.jpg".into(),
+            uploader_name: "安州牧".into(),
+            uploader_id: 1,
+            season: None,
+            parts: vec![crate::infrastructure::providers::bilibili::VideoPart {
+                cid: 1108732833,
+                page: 1,
+                title: "第一集".into(),
+                duration_seconds: 17325,
+                cover_url: "https://bili.test/cover.jpg".into(),
+                first_frame_url: "https://bili.test/first.jpg".into(),
+            }],
+        };
+        assert!(save(&c, &video).unwrap() > 0);
+        assert!(cache_is_fresh(&c, bvid));
+        assert_eq!(
+            LibraryRepository::get(&c, &id)
+                .unwrap()
+                .unwrap()
+                .cover_url
+                .as_deref(),
+            Some("https://bili.test/cover.jpg")
+        );
+        assert_eq!(save(&c, &video).unwrap(), 0);
+        c.execute(
+            "UPDATE sync_info SET value=CAST(strftime('%s','now') AS INTEGER)-604801 WHERE key=?1",
+            [format!("source-title-chapter-v3-checked:{bvid}")],
+        )
+        .unwrap();
+        assert!(!cache_is_fresh(&c, bvid));
+        assert!(!cache_is_fresh(&c, "BV1vW4y1i7qL"));
+    }
+
     #[test]
     fn canonical_metadata_repairs_old_names_without_changing_identity_or_manual_title() {
         let mut c = rusqlite::Connection::open_in_memory().unwrap();

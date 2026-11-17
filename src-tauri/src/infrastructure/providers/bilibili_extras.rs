@@ -9,6 +9,14 @@ pub struct Season {
     pub summary: SeasonSummary,
     pub tracks: Vec<SeasonTrack>,
     pub unavailable: usize,
+    pub sections: Vec<SeasonSection>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeasonSection {
+    pub id: String,
+    pub title: String,
+    pub bvids: Vec<String>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +130,48 @@ fn episodes(raw: &Value) -> impl Iterator<Item = &Value> {
         .flat_map(|section| section["episodes"].as_array().into_iter().flatten())
 }
 
+// Section order and episode order belong to the uploader, not publication time.
+// Keep membership separate from videos so multi-P expansion cannot lose it.
+fn season_sections(raw: &Value, tracks: &[SeasonTrack]) -> Vec<SeasonSection> {
+    let available: std::collections::HashSet<_> = tracks.iter().map(|t| t.bvid.as_str()).collect();
+    let mut ids = std::collections::HashSet::new();
+    raw["sections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, section)| {
+            let mut id = section["id"]
+                .as_i64()
+                .filter(|id| *id > 0)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| format!("section-{index}"));
+            if !ids.insert(id.clone()) {
+                id = format!("{id}-{index}");
+                ids.insert(id.clone());
+            }
+            let title = text(section, "title");
+            let mut seen = std::collections::HashSet::new();
+            let bvids = section["episodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|episode| text(episode, "bvid"))
+                .filter(|bvid| available.contains(bvid.as_str()) && seen.insert(bvid.clone()))
+                .collect();
+            SeasonSection {
+                id,
+                title: if title.trim().is_empty() {
+                    "默认分类".into()
+                } else {
+                    title
+                },
+                bvids,
+            }
+        })
+        .collect()
+}
+
 fn season_member(archive: &Value, episode: Option<&Value>) -> SeasonTrack {
     let bvid = text(archive, "bvid");
     let arc = episode.map(|ep| &ep["arc"]).unwrap_or(&Value::Null);
@@ -173,6 +223,37 @@ fn season_member(archive: &Value, episode: Option<&Value>) -> SeasonTrack {
     }
 }
 
+fn paged_season_tracks(mut archives: Vec<Value>, raw: Option<&Value>) -> (Vec<SeasonTrack>, usize) {
+    let known: HashMap<_, _> = if let Some(raw) = raw {
+        episodes(raw)
+            .enumerate()
+            .map(|(i, episode)| (text(episode, "bvid"), (i, episode)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    archives.sort_by_key(|archive| {
+        known
+            .get(&text(archive, "bvid"))
+            .map_or(usize::MAX, |entry| entry.0)
+    });
+    let mut seen = std::collections::HashSet::new();
+    let mut unavailable = 0;
+    let tracks: Vec<_> = archives
+        .iter()
+        .filter_map(|archive| {
+            let bvid = text(archive, "bvid");
+            if bvid.is_empty() {
+                unavailable += 1;
+                return None;
+            }
+            seen.insert(bvid.clone())
+                .then(|| season_member(archive, known.get(&bvid).map(|entry| entry.1)))
+        })
+        .collect();
+    (tracks, unavailable)
+}
+
 pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) -> Option<Season> {
     let total = raw["ep_count"]
         .as_u64()
@@ -195,6 +276,7 @@ pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) 
     }
     Some(Season {
         summary: summary.clone(),
+        sections: season_sections(raw, &tracks),
         tracks,
         unavailable: 0,
     })
@@ -438,33 +520,7 @@ impl BilibiliProvider {
             let data: Value = self.get_data(page_url(page)).await?;
             archives.extend(data["archives"].as_array().into_iter().flatten().cloned());
         }
-        let known: HashMap<_, _> = if matching {
-            episodes(raw)
-                .enumerate()
-                .map(|(i, episode)| (text(episode, "bvid"), (i, episode)))
-                .collect()
-        } else {
-            HashMap::new()
-        };
-        archives.sort_by_key(|archive| {
-            known
-                .get(&text(archive, "bvid"))
-                .map_or(usize::MAX, |entry| entry.0)
-        });
-        let mut seen = std::collections::HashSet::new();
-        let mut unavailable = 0;
-        let tracks: Vec<_> = archives
-            .iter()
-            .filter_map(|archive| {
-                let bvid = text(archive, "bvid");
-                if bvid.is_empty() {
-                    unavailable += 1;
-                    return None;
-                }
-                seen.insert(bvid.clone())
-                    .then(|| season_member(archive, known.get(&bvid).map(|entry| entry.1)))
-            })
-            .collect();
+        let (tracks, unavailable) = paged_season_tracks(archives, matching.then_some(raw));
         if summary.cover_url.is_empty() || summary.cover_url.contains("viedeo_material_default") {
             if let Some(first) = tracks.first() {
                 summary.cover_url = first.cover_url.clone();
@@ -472,6 +528,11 @@ impl BilibiliProvider {
         }
         let season = Season {
             summary,
+            sections: if matching {
+                season_sections(raw, &tracks)
+            } else {
+                Vec::new()
+            },
             tracks,
             unavailable,
         };
@@ -583,6 +644,95 @@ impl BilibiliProvider {
 mod catalog_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sections_preserve_uploader_order_in_both_complete_and_paged_catalogs() {
+        let raw = json!({"ep_count":3,"sections":[
+            {"id":90,"title":"西汉","episodes":[
+                {"bvid":"BVB","aid":2,"cid":22,"title":"汉匈之战","pages":[{"cid":22,"page":1,"part":"汉匈之战","duration":20}]},
+                {"bvid":"BVA","aid":1,"cid":11,"title":"从何时起","pages":[{"cid":11,"page":1,"part":"从何时起","duration":10}]}]},
+            {"id":10,"title":"汉末三国","episodes":[
+                {"bvid":"BVC","aid":3,"cid":33,"title":"三国","pages":[{"cid":33,"page":1,"part":"三国","duration":30}]}]}
+        ]});
+        let summary = SeasonSummary {
+            id: 1,
+            uploader_id: 2,
+            title: "中国通史".into(),
+            cover_url: String::new(),
+            uploader_name: String::new(),
+        };
+        let full = complete_season(&raw, &summary, "BVA").unwrap();
+        assert_eq!(
+            full.tracks
+                .iter()
+                .map(|t| t.bvid.as_str())
+                .collect::<Vec<_>>(),
+            ["BVB", "BVA", "BVC"]
+        );
+        assert_eq!(
+            full.sections
+                .iter()
+                .map(|s| s.title.as_str())
+                .collect::<Vec<_>>(),
+            ["西汉", "汉末三国"]
+        );
+        assert_eq!(full.sections[0].bvids, ["BVB", "BVA"]);
+        assert_eq!(full.sections[0].id, "90");
+        // Partial inline detail must still classify and order paginated archives.
+        let mut partial = raw.clone();
+        partial["sections"][0]["episodes"][0]["pages"] = json!([]);
+        assert!(complete_season(&partial, &summary, "BVA").is_none());
+        let archives = vec![
+            json!({"bvid":"BVC","title":"三国"}),
+            json!({"bvid":"BVA","title":"从何时起"}),
+            json!({"bvid":"BVB","title":"汉匈之战"}),
+            json!({"bvid":"BVA"}),
+            json!({}),
+        ];
+        let (tracks, unavailable) = paged_season_tracks(archives, Some(&partial));
+        assert_eq!(unavailable, 1);
+        assert_eq!(
+            tracks.iter().map(|t| t.bvid.as_str()).collect::<Vec<_>>(),
+            ["BVB", "BVA", "BVC"]
+        );
+        assert_eq!(
+            serde_json::to_value(season_sections(&partial, &tracks)).unwrap(),
+            serde_json::to_value(full.sections).unwrap()
+        );
+    }
+
+    #[test]
+    fn section_membership_excludes_unavailable_videos_and_keeps_unclassified_ones_in_all() {
+        let raw = json!({"sections":[
+            {"id":1,"title":"  ","episodes":[{"bvid":"A"},{"bvid":"A"},{"bvid":"removed"}]},
+            {"id":1,"title":"空分类","episodes":[]},
+            {"episodes":[{"bvid":"B"}]}
+        ]});
+        let (tracks, _) = paged_season_tracks(
+            vec![
+                json!({"bvid":"X"}),
+                json!({"bvid":"B"}),
+                json!({"bvid":"A"}),
+            ],
+            Some(&raw),
+        );
+        assert_eq!(
+            tracks.iter().map(|t| t.bvid.as_str()).collect::<Vec<_>>(),
+            ["A", "B", "X"]
+        );
+        let sections = season_sections(&raw, &tracks);
+        assert_eq!(sections[0].title, "默认分类");
+        assert_eq!(sections[0].bvids, ["A"]);
+        assert!(sections[1].bvids.is_empty());
+        assert_ne!(sections[0].id, sections[1].id);
+        assert_eq!(sections[2].bvids, ["B"]);
+        assert!(season_sections(&Value::Null, &tracks).is_empty());
+        let (plain, _) = paged_season_tracks(vec![json!({"bvid":"B"}), json!({"bvid":"A"})], None);
+        assert_eq!(
+            plain.iter().map(|t| t.bvid.as_str()).collect::<Vec<_>>(),
+            ["B", "A"]
+        );
+    }
 
     #[test]
     fn complete_snapshot_distinguishes_single_and_multi_part_videos() {

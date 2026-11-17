@@ -1,10 +1,14 @@
+import { projectSeasonRows, trackHidden, videoScope, visibilityChange } from '../../domain/contentVisibility'
+import { saveVisibility, useVisibilityRules } from '../../services/contentVisibility'
+import { VisibilityControls } from '../../shared/VisibilityControls'
+import { useManagedVisibilityScope } from '../../shared/useManagedVisibilityScope'
 import { CoverCount } from '../../shared/CoverCount'
 import { PublishedDate } from '../../shared/PublishedDate'
 import { Artwork } from '../../shared/Artwork'
 import { formatAudienceCount } from '../../shared/count'
 import { isMobile } from '../../services/platform'
-import { useMemo, useRef, type ReactNode } from 'react'
-import { ListChecks, Play } from 'lucide-react'
+import { Fragment, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Eye, ListChecks, Play } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { formatDuration } from '../../shared/time'
 import { PlayingMark } from '../../shared/PlayingMark'
@@ -15,7 +19,11 @@ import { TrackMenuButton } from './TrackMenuButton'
 import { showTrackMenu } from './trackActionStore'
 import { BatchTrackActions, useTrackSelection } from './useTrackSelection'
 
-export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, videoCollection = false, locateCurrent = false, onOpenParts, playbackTracks = tracks, queueSource, totalCount }: {
+export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, renderDetails, videoCollection = false, locateCurrent = false, onOpenParts, playbackTracks = tracks, queueSource, totalCount, managementTracks=tracks, savedContainer = false, toolbar, listHeader }: {
+  toolbar?: { primary: ReactNode; actions: ReactNode }
+  listHeader?: ReactNode
+  savedContainer?: boolean
+  managementTracks?:Track[]
   totalCount?: number
   videoCollection?: boolean
   locateCurrent?: boolean
@@ -25,7 +33,18 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
   tracks: Track[]
   visibleTracks?: Track[]
   renderActions?: (track: Track) => ReactNode
+  renderDetails?: (track: Track) => ReactNode
 }) {
+  const rules = useVisibilityRules()
+  const [shownScope,setShownScope] = useState<string>(), [visibilityError,setVisibilityError] = useState('')
+  const candidateScope = videoCollection ? queueSource?.collectionRef?.startsWith('season:') ? queueSource.collectionRef : undefined : tracks[0] ? videoScope(tracks[0].source.bvid) : undefined
+  const scope = useManagedVisibilityScope(candidateScope, tracks, queueSource?.collectionRef, savedContainer)
+  const playbackSource = queueSource ? { ...queueSource, visibilityManaged: Boolean(scope) } : undefined
+  const rowHidden=(track:Track)=>Boolean(scope && (videoCollection ? !projectSeasonRows([track],playbackTracks,scope,rules).length : trackHidden(track,scope,rules)))
+  const manage = Boolean(scope && shownScope === scope)
+  const rawVisible = visibleTracks
+  visibleTracks = !scope || manage ? rawVisible : videoCollection ? projectSeasonRows(rawVisible,playbackTracks,scope,rules) : rawVisible.filter(t=>!trackHidden(t,scope,rules))
+  const change = async (selected:Track[], hidden:boolean) => { if(!scope)return;setVisibilityError('');try{await saveVisibility(selected.flatMap(t=>!hidden && videoCollection && !rules.some(r=>r.scope===scope&&r.target===t.source.bvid&&r.hidden) ? rules.filter(r=>r.scope===videoScope(t.source.bvid)&&r.hidden).map(r=>({...r,hidden:false})) : [visibilityChange(t,scope,hidden)]))}catch(e){setVisibilityError(String(e))} }
   const currentId = usePlayerStore(state => state.current?.id)
   const currentBvid = usePlayerStore(state => state.current?.source.bvid)
   const root = useRef<HTMLDivElement>(null)
@@ -34,21 +53,32 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
   useLocateCurrentRow(root, locateCurrent, activeTrack?.id)
   const byId = useMemo(() => new Map(playbackTracks.map(track => [track.id, track])), [playbackTracks])
   const selection = useTrackSelection(videoCollection ? visibleTracks.map(track => byId.get(track.id) ?? track) : visibleTracks)
-  if (!visibleTracks.length) return null
+  if (!toolbar && (!tracks.length || (!visibleTracks.length && !scope))) return null
+  const listActions = <div className="video-parts-actions">{scope && <VisibilityControls scope={scope} rules={rules} shown={manage} exitLabel={toolbar ? '完成' : undefined} onShow={shown=>setShownScope(shown ? scope : undefined)} tracks={managementTracks} hiddenCount={tracks.filter(rowHidden).length}/>}<button type="button" className="collection-flat-button" aria-label="多选" title="多选" disabled={!visibleTracks.length} onClick={selection.enter}><ListChecks size={16}/><span>多选</span></button></div>
   return <div className="parts-list video-parts-list" ref={root}>
-    {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} /> :
+    {visibilityError && <p role="alert" className="inline-error">{visibilityError}</p>}
+    {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} onHide={scope ? async selected=>{await change(selected,true);selection.exit()} : undefined}/> :
+      toolbar ? <div className="collection-detail-toolbar collection-unified-toolbar" data-managing={manage || undefined} role="toolbar" aria-label="合集播放与列表操作">
+        <div className="collection-play-actions">{toolbar.primary}</div>
+        <div className="collection-list-actions">{listActions}{toolbar.actions}</div>
+      </div> :
       <div className="video-parts-toolbar">
         <span>{totalCount ?? visibleTracks.length} {videoCollection || (tracks.length === 1 && tracks[0].partCount === 1) ? '个视频' : '个分 P'}</span>
-        <button type="button" className="collection-flat-button" onClick={selection.enter}><ListChecks size={16}/>多选</button>
+        {listActions}
       </div>}
-    {visibleTracks.map((track, index) => <VideoPartsRow key={track.id} track={track} index={index}
-      active={track.id === activeTrack?.id} videoCollection={videoCollection} selecting={selection.selecting}
+    {listHeader}
+    {tracks.length > 0 && !visibleTracks.length && <p className="batch-message">{scope && rawVisible.length ? '内容已隐藏，可在管理隐藏中恢复。' : '没有匹配的内容'}</p>}
+    {visibleTracks.map((track, index) => <Fragment key={track.id}><VideoPartsRow track={track} index={index}
+      hidden={rowHidden(track)} visibilityScope={scope} restore={()=>void change([track],false)} active={track.id === activeTrack?.id} videoCollection={videoCollection} selecting={selection.selecting}
       checked={selection.ids.has(track.id)} onSelect={() => selection.toggle(track.id)}
-      actionTrack={byId.get(track.id) ?? track} playbackTracks={playbackTracks} queueSource={queueSource} onOpenParts={onOpenParts} renderActions={renderActions}/>)}
+      actionTrack={byId.get(track.id) ?? track} playbackTracks={playbackTracks} queueSource={playbackSource} onOpenParts={onOpenParts} renderActions={renderActions}/>
+      {!selection.selecting && renderDetails?.(track)}
+    </Fragment>)}
   </div>
 }
 
-function VideoPartsRow({ track, index, active, videoCollection, selecting, checked, onSelect, actionTrack, playbackTracks, queueSource, onOpenParts, renderActions }: {
+function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, videoCollection, selecting, checked, onSelect, actionTrack, playbackTracks, queueSource, onOpenParts, renderActions }: {
+  visibilityScope?: string; hidden:boolean; restore:()=>void;
   track: Track; index: number; active: boolean; videoCollection: boolean; selecting: boolean; checked: boolean
   onSelect: () => void; actionTrack: Track; playbackTracks: Track[]; queueSource?: QueueSource
   onOpenParts?: (track: Track) => void; renderActions?: (track: Track) => ReactNode
@@ -57,10 +87,10 @@ function VideoPartsRow({ track, index, active, videoCollection, selecting, check
   const count = track.partCount ?? pages?.length
   const openParts = onOpenParts && (count ?? 0) > 1 ? () => onOpenParts(track) : undefined
   const play = () => void usePlayerStore.getState().playFromList(playbackTracks, track.id, queueSource)
-  const actions = { openParts, play }
+  const actions = { openParts, play, visibilityScope }
   const duration = track.durationSeconds || (count === 1 ? pages?.[0]?.durationSeconds : undefined)
   const label = videoCollection ? index + 1 : track.partCount === 1 ? '视频' : `P${track.source.page}`
-  return <div ref={ref} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${videoCollection ? ' video-with-cover' : ''}${selecting ? '' : ' playing-row'}`}
+  return <div ref={ref} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${videoCollection ? ' video-with-cover' : ''}${selecting ? '' : ' playing-row'}${hidden?' visibility-hidden':''}`}
     onContextMenu={event => {
       event.preventDefault()
       event.stopPropagation()
@@ -72,9 +102,10 @@ function VideoPartsRow({ track, index, active, videoCollection, selecting, check
       <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={checked} onChange={onSelect}/>
       <span>{label}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
     </label> : <>
-      <button type="button" className="video-part-play" aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
+      <button type="button" className="video-part-play" disabled={hidden} aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
         <span className="video-part-index">{videoCollection ? <><Artwork src={track.coverUrl}/><CoverCount count={count}/></> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta">{videoCollection && <PublishedDate value={track.publishedAt}/>}{videoCollection && track.playCount !== undefined && <small className="video-part-views">{formatAudienceCount(track.playCount)} 次播放</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
       </button>
+      {hidden && <button type="button" className="visibility-restore" onClick={restore}><Eye size={16}/>恢复</button>}
       {!isMobile && renderActions?.(track)}
       <TrackMenuButton track={actionTrack} tracks={playbackTracks} actions={actions}/>
     </>}

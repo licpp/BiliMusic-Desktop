@@ -218,9 +218,7 @@ mod tests {
     #[test]
     fn playlist_add_is_idempotent_and_remove_is_scoped() {
         let mut connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
         let track = TrackInput {
             id: "bilibili:BVTEST00001:1".into(),
             bvid: "BVTEST00001".into(),
@@ -395,21 +393,47 @@ impl PlaylistRepository {
         if playlist_id == FAVORITES_PLAYLIST_ID {
             return LibraryRepository::set_favorite(connection, track_id, false);
         }
-        connection.execute(
-            "DELETE FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
-            params![playlist_id, track_id],
-        )?;
-        connection.execute(
-            "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
-            params![playlist_id],
-        )?;
-        Ok(())
+        connection.execute_batch("SAVEPOINT playlist_remove")?;
+        let result = (|| {
+            super::imported_entries::remove(connection, playlist_id, Some(track_id))
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+            connection.execute(
+                "DELETE FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
+                params![playlist_id, track_id],
+            )?;
+            connection.execute(
+                "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                params![playlist_id],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => connection.execute_batch("RELEASE playlist_remove"),
+            Err(e) => {
+                let _ = connection
+                    .execute_batch("ROLLBACK TO playlist_remove; RELEASE playlist_remove");
+                Err(e)
+            }
+        }
     }
 
     pub fn delete(connection: &Connection, id: &str) -> rusqlite::Result<()> {
         Self::ensure_custom(id)?;
-        connection.execute("DELETE FROM playlists WHERE id=?1", params![id])?;
-        Ok(())
+        connection.execute_batch("SAVEPOINT playlist_delete")?;
+        let result = (|| {
+            super::imported_entries::remove(connection, id, None)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+            connection.execute("DELETE FROM playlists WHERE id=?1", params![id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => connection.execute_batch("RELEASE playlist_delete"),
+            Err(e) => {
+                let _ = connection
+                    .execute_batch("ROLLBACK TO playlist_delete; RELEASE playlist_delete");
+                Err(e)
+            }
+        }
     }
 
     pub fn rename(connection: &Connection, id: &str, name: &str) -> rusqlite::Result<()> {

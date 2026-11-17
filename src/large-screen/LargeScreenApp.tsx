@@ -1,4 +1,5 @@
 import { useUpdateStore } from '../services/updates'
+import { useVisibilityRules } from '../services/contentVisibility'
 import { accountQueryKey } from '../services/queryKeys'
 import { LargeDownloadDialogHost } from './DownloadDialog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -30,11 +31,12 @@ import { version } from '../../package.json'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
 export function LargeScreenApp() {
+  useVisibilityRules()
   const updateAvailable = useUpdateStore(s => s.result?.status === 'available')
   const [filters, setFilters] = useState<Record<string, string>>({}), [searchKind, setSearchKind] = useState<'video' | 'creator'>('video')
   const [route, setRoute] = useState<Route>({ kind: 'home' }), [tab, setTab] = useState<LibraryTab>('playlists'), [query, setQuery] = useState('')
   const history = useRef<ReturnPoint[]>([]), main = useRef<HTMLElement>(null), restore = useRef<ReturnPoint | undefined>(undefined), initialFocus = useRef(false)
-  const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean }>(), [sleep, setSleep] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean; visibilityScope?:string; replaceVideo?:()=>void }>(), [sleep, setSleep] = useState(false)
   const current = usePlayerStore(s => s.current), queue = usePlayerStore(s => s.queue)
   const attention = useSyncAttention(s => s.library || s.statistics), [message, setMessage] = useState(''), [actionError, setActionError] = useState('')
   const [appVersion, setAppVersion] = useState(version), client = useQueryClient(), toggling = useRef(false)
@@ -91,7 +93,7 @@ export function LargeScreenApp() {
     finally { toggling.current = false }
   }
   const favoriteCurrent = () => { if (current) void favorite(current).catch(e => setActionError(commandErrorMessage(e))) }
-  const showMenu = (track: Track) => setMenu({ track })
+  const showMenu = (track: Track, visibilityScope?:string, replaceVideo?:()=>void) => setMenu({ track, visibilityScope, replaceVideo })
   const filterKey = route.kind === 'folder' ? `folder:${route.id}` : route.kind === 'playlist' ? `playlist:${route.playlist.id}` : route.kind === 'collection' ? `collection:${route.item.bvid}` : `library:${tab}`
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
   const active = ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
@@ -102,7 +104,7 @@ export function LargeScreenApp() {
       {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}
       {route.kind === 'library' && <LargeLibrary filterState={filterState} tab={tab} setTab={setTab} navigate={navigate}/>}
       {route.kind === 'folder' && <LargeLibrary filterState={filterState} key={route.id} tab={tab} setTab={setTab} navigate={navigate} folder={route}/>}
-      {route.kind === 'playlist' && <LargePlaylist filterState={filterState} key={route.playlist.id} playlist={route.playlist} onMore={showMenu} navigate={navigate}/>}
+      {route.kind === 'playlist' && <LargePlaylist filterState={filterState} key={route.playlist.id} playlist={route.playlist} onMore={(track,replaceVideo)=>showMenu(track,undefined,replaceVideo)} navigate={navigate}/>}
       {route.kind === 'collection' && <LargeCollection filterState={filterState} key={route.item.bvid} item={route.item} onMore={showMenu} navigate={navigate}/>}
       {route.kind === 'creator' && <LargeCreator route={route} navigate={navigate} replace={setRoute}/>}
       {route.kind === 'search' && <LargeSearch kind={searchKind} setKind={setSearchKind} query={query} setQuery={setQuery} navigate={navigate}/>}
@@ -112,7 +114,7 @@ export function LargeScreenApp() {
     </main>
     {route.kind !== 'player' && <footer className="large-dock"><button className="large-dock-song" data-focus="dock-song" disabled={!current} onClick={() => navigate({ kind: 'player' })}><Artwork adaptAspect src={current?.coverUrl}/><span><strong>{current?.displayTitle || current?.title || '让音乐开始'}</strong><small>{current?.artist || current?.source.uploaderName || '选择一首喜欢的歌'}</small></span></button><LargeControls/><div className="large-dock-actions"><button aria-label="定时暂停" onClick={() => setSleep(true)} disabled={!current}>定时</button><button onClick={() => setQueueOpen(true)} aria-label={`播放队列，${queue.length}首`}><ListMusic/><span>队列</span><small>{queue.length}</small></button></div></footer>}
     {queueOpen && <LargeQueue onClose={() => setQueueOpen(false)} onMore={track => setMenu({ track, queue: true })}/>}
-    {menu && <LargeTrackActions key={menu.track.id} track={menu.track} queue={menu.queue} onClose={() => setMenu(undefined)} onFavorite={favorite}/>}
+    {menu && <LargeTrackActions key={menu.track.id} track={menu.track} visibilityScope={menu.visibilityScope} replaceVideo={menu.replaceVideo} queue={menu.queue} onClose={() => setMenu(undefined)} onFavorite={favorite}/>}
     <LargeDownloadDialogHost/>
     <LargeKeyboardBar/>
     <LargeSleep open={sleep} onClose={() => setSleep(false)}/>

@@ -1,4 +1,5 @@
 mod source_titles;
+pub mod visibility;
 pub(crate) use source_titles::save as cache_source_titles;
 pub mod actor;
 pub mod background;
@@ -104,6 +105,7 @@ impl Default for Config {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
+    pub visibility_error: Option<String>,
     pub config: Config,
     pub last_success: Option<String>,
     pub records: usize,
@@ -222,6 +224,14 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
         storage::export(&c, &cfg.uid, cfg.history)?
     };
     Ok(Status {
+        visibility_error: c
+            .query_row(
+                "SELECT value FROM visibility_runtime WHERE key='sync_error'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?,
         config: cfg,
         last_success: last,
         records: snap.records.len(),
@@ -857,3 +867,5 @@ mod playback_gate_tests {
         assert!(state.account_gate.try_lock().is_ok());
     }
 }
+
+pub mod import_entries;

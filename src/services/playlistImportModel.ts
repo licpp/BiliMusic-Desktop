@@ -1,8 +1,9 @@
-import { primarySongTitle, songEditions, songTextIdentity as normalized } from '../domain/songIdentity'
-import { rankDurationFirstSongCandidates, type ExternalSong, type SongCandidate } from './externalSongMatch'
+import { primarySongTitle, recognizeSong, songEditions, songTextIdentity as normalized } from '../domain/songIdentity'
+import { rankImportSongCandidates, type SongCandidate } from './externalSongMatch'
 import type { Track } from '../domain/track'
 
-export type ImportSong = ExternalSong & { sourceId: string; album?: string; coverUrl?: string }
+import type { ImportSong } from '../domain/importedEntry'
+export type { ImportSong } from '../domain/importedEntry'
 export type ImportPlaylist = { name: string; source: 'netease' | 'qq' | 'kugou' | 'kuwo' | 'migu' | 'text'; songs: ImportSong[]; reportedCount: number; unavailableCount: number }
 export type ImportChoice = { track: Track; evidence: SongCandidate }
 
@@ -30,7 +31,7 @@ export function parseSongList(text: string): ImportPlaylist {
 }
 
 export function importKeyword(song: ImportSong, simple = false) {
-  const primary = primarySongTitle(song.title)
+  const primary = (recognizeSong(song).queries[0]?.title || primarySongTitle(song.title))
     .replace(/[（(][^）)]*\b(?:inst|orch)\b\.?[^）)]*[）)]/giu,'')
     .replace(/[（(]([A-Za-z.\s]+)[）)]/g,(whole,label: string) => songEditions(label).size ? whole : '')
     .trim()
@@ -41,10 +42,10 @@ export function importKeyword(song: ImportSong, simple = false) {
  * Version conflicts and clear wrong-song/wrong-duration results are still skipped.
  */
 export function chooseImportMatch(song: ImportSong, choices: ImportChoice[]): ImportChoice | undefined {
-  const scored = rankDurationFirstSongCandidates(song,choices.map(choice=>choice.evidence)).ranked
+  const scored = rankImportSongCandidates(song,choices.map(choice=>choice.evidence)).ranked
   for (const item of scored) {
     const c = item.candidate
-    if (!c.detailsVerified || !c.cid || item.versionConflict || item.titleEvidence === 'fuzzy') continue
+    if (!item.automaticEligible || !c.detailsVerified || !c.cid || item.versionConflict || item.titleEvidence === 'fuzzy') continue
     const context = normalized(`${c.title} ${c.videoTitle || ''} ${c.partTitle || ''} ${c.description || ''}`)
     const artistHit = song.artists.some(artist => context.includes(normalized(artist)))
     const titleSize = normalized(importKeyword(song,true)).length
@@ -56,9 +57,9 @@ export function chooseImportMatch(song: ImportSong, choices: ImportChoice[]): Im
     const actualYears: string[] = live ? `${c.title} ${c.videoTitle || ''} ${c.partTitle || ''}`.match(/(?:19|20)\d{2}/g) || [] : []
     if (year && actualYears.length && !actualYears.includes(year)) continue
     const duration = song.durationSeconds || 0
-    if (duration && (item.durationDifference === undefined || item.durationDifference > Math.max(live ? 20 : 6, duration * (live ? 0.08 : 0.025)))) continue
+    if (duration && item.durationDifference !== undefined && item.durationDifference > Math.max(live ? 90 : 45, duration * (live ? .4 : .3))) continue
     if (!duration && (!artistHit || item.capturePenalty > 0)) continue
-    const choice = choices.find(choice=>choice.track.source.bvid === c.bvid && choice.track.source.cid === c.cid)
+    const choice = choices.find(choice=>choice.track.source.bvid === c.bvid && choice.track.source.cid === c.cid && choice.evidence.bvid===c.bvid && choice.evidence.cid===c.cid)
     if (choice) return choice
   }
 }

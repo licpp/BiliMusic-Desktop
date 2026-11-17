@@ -21,6 +21,14 @@ test('Harmony mirror is atomic, rejects stale owners and isolates expanded parts
 test('Harmony repeat, shuffle, manual wrap and part context match the shared queue policy',()=>{
  const q=new NativeQueue();q.update(mirror());assert.equal(q.target('c',1,true),undefined);assert.equal(q.target('c',1,false).id,'a');assert.equal(q.target('a',-1,false).id,'c')
  q.update(mirror({version:2,repeatMode:'one'}));assert.equal(q.target('b',1,true).id,'b');assert.equal(q.payload(b,true).restart,true)
- q.update(mirror({version:3,repeatMode:'all',shuffled:true}));for(const random of [0,.3,.99])assert.notEqual(q.target('b',1,true,random).id,'b')
+ q.update(mirror({version:3,repeatMode:'all',shuffled:true}));for(const random of [0,.3,.99])assert.notEqual(q.target('b',1,true).id,'b')
  const p=track('p',{partCount:2});assert.equal(q.payload(p,false).collectionPlayback,true)
+})
+test('Harmony visibility origins survive lazy resolution and an old WebView mirror, while explicit additions stay explicit',()=>{
+ const q=new NativeQueue(),entry=track('entry',{resolveParts:true})
+ const update=mirror({tracks:[entry,c],entryOrigins:{entry:['season:1:2'],c:['']}})
+ q.update(update);q.resolved({entryId:'entry',parts:[a,b]})
+ assert.deepEqual(q.payload(a,false).visibilityScopes,['season:1:2']);assert.deepEqual(q.payload(c,false).visibilityScopes,[''])
+ q.update({...update,version:2});assert.deepEqual(q.payload(b,false).visibilityScopes,['season:1:2'])
+ assert.equal(q.skip('a').id,'b');assert.equal(q.skip('b').id,'c');assert.equal(q.skip('c'),undefined);assert.equal(q.tracks.length,0)
 })

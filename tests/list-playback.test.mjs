@@ -17,3 +17,16 @@ test('play visible results uses only the supplied visible collection',async()=>{
  const result=await prepareListPlayback([row(2)],undefined,async()=>{throw Error('unneeded')},()=>true)
  assert.deepEqual(result.queue,[row(2)]);assert.equal(result.trackId,row(2).id)
 })
+test('hidden resume chooses the next original part or wraps, starting at zero',async()=>{
+ const entries=[row(1),row(2),row(3)]
+ let result=await prepareListPlayback(entries,{bvid:'BV123',cid:2,positionMs:42000},async()=>[],()=>true,t=>t.source.cid!==2)
+ assert.equal(result.trackId,row(3).id);assert.equal(result.startAt,0);assert.equal(result.queue.length,3)
+ result=await prepareListPlayback(entries,{bvid:'BV123',cid:3,positionMs:42000},async()=>[],()=>true,t=>t.source.cid===1)
+ assert.equal(result.trackId,row(1).id);assert.equal(result.startAt,0)
+ assert.equal(await prepareListPlayback(entries,{bvid:'BV123',cid:2,positionMs:42000},async()=>[],()=>true,()=>false),null)
+})
+test('a hidden whole BV checkpoint skips its lazy expansion without a network request',async()=>{
+ const first=row(0,true),second={...row(5),id:'bilibili:BVnext:5',source:{provider:'bilibili',bvid:'BVnext',cid:5}}
+ const result=await prepareListPlayback([first,second],{bvid:'BV123',cid:2,positionMs:60000},async()=>{throw Error('must not request a hidden BV')},()=>true,t=>t.source.bvid!=='BV123')
+ assert.equal(result.trackId,second.id);assert.equal(result.startAt,0)
+})

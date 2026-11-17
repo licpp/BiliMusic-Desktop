@@ -1,8 +1,14 @@
+import { listVisibilityOrigins, entryAllowed, orderedQueueTarget, visibleCheckpoint, packQueueBase,unpackQueueBase,type VisibilityOrigin } from '../../domain/contentVisibility'
+import { ensureVisibility, useContentVisibility } from '../../services/contentVisibility'
+import { ShuffleDeck, type ShuffleState } from '../../domain/shuffle'
+import { useLoudnessSettings } from '../../services/loudness'
+import { createOutputGain, outputVolume, safeGainDb } from './outputGain'
 import { withTrackTitle } from '../../domain/sourceTitle'
+import { sourceTrack } from '../../domain/importedPresentation'
 import { syncOHOSQueue } from './ohosAudio'
 import { createOperationScope } from './operationScope'
 import { prepareAudioSource } from './sourceSwitch'
-import { advanceAccountEpoch } from '../../services/accountScope'
+import { accountEpoch, advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS, isAndroid, isOHOS } from '../../services/platform'
 import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
 import { syncAndroidQueue } from './androidAudio'
@@ -10,7 +16,7 @@ import { iosListenerAge, playIOSAudio, restartIOSAudioObservation, syncIOSQueue,
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
-import { getTrackPlaybackUrl, getTrackPlaybackPlan, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
+import { getTrackPlaybackPlan, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
 import { videoDetailFromTrack } from '../../services/mediaSources'
 import { getVideoPages } from '../../services/videoPages'
 import { getVideoParts } from '../../services/desktopApi'
@@ -28,10 +34,33 @@ export const playbackRates = [0.75, 1, 1.25, 1.5, 1.75, 2] as const
 export type RepeatMode = 'off' | 'all' | 'one'
 type SleepState = { deadline: number; duration: number; expired: boolean }
 const noSleep = { deadline: 0, duration: 0, expired: false }
-export type QueueSource = { creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
-type PlayerState = { queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+export type QueueSource = { visibilityManaged?: boolean; entryOrder?:string[]; entryOrigins?: Record<string, VisibilityOrigin[]>; creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
+type PlayerState = { queueBase?: Track[]; queueOrigins?: Record<string,VisibilityOrigin[]>; shuffleState?: ShuffleState; queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number, originPlayback?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
+let shuffleDeck = new ShuffleDeck()
+const shuffleItems = (tracks: Track[]) => tracks.map(track => ({ id:track.id, artist:track.artist ?? '', bvid:track.source.bvid }))
+let nativeAutonomousQueue = false
+let nativeQueuePending: Promise<unknown> = Promise.resolve()
 let audio: HTMLAudioElement | null = null
+let trackGainDb = 0
+const desktopGain = createOutputGain()
+let gainTimer: ReturnType<typeof setTimeout> | undefined
+function applyDesktopOutput(smooth = false) {
+  clearTimeout(gainTimer)
+  desktopGain.set(useLoudnessSettings.getState().enabled ? trackGainDb : 0, smooth)
+  const element = audio
+  const tick = () => {
+    if (!element || element !== audio) return
+    element.volume = outputVolume(usePlayerStore.getState().volume, desktopGain.current())
+    if (desktopGain.active()) gainTimer = setTimeout(tick, 20)
+  }
+  tick()
+}
+export async function applyLoudnessSetting() {
+  const setting = useLoudnessSettings.getState()
+  if (isMobile) await controlMobileAudio('loudness', setting.enabled ? 1 : 0, setting.revision)
+  else applyDesktopOutput(true)
+}
 const controlScope = createOperationScope()
 let playRequest = 0
 let requestedStartAt: number | undefined
@@ -92,7 +121,9 @@ export async function prepareSeasonQueueEntry(entry: Track) {
   const intent = playbackIntent()
   const parts = await resolveSeasonEntry(entry)
   if (parts.length && intent === playbackIntent()) {
-    usePlayerStore.setState(({ queue }) => ({ queue: replaceSeasonEntry(queue, entry.id, parts) }))
+    const state=usePlayerStore.getState(),origins=state.queueOrigins?.[entry.id]??['']
+    usePlayerStore.setState({queueBase:replaceSeasonEntry(state.queueBase??state.queue,entry.id,parts),queueOrigins:{...state.queueOrigins,...Object.fromEntries(parts.map(part=>[part.id,origins]))}})
+    reprojectVisibility()
   }
   return parts[0]
 }
@@ -106,15 +137,18 @@ export function seasonPlaybackQueue(tracks: Track[], selected: Track, parts: Tra
   return [...tracks.slice(0, index), ...parts, ...(end < 0 ? [] : tracks.slice(end))]
 }
 
-export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Track[], title: string, collectionRef?: string) {
+export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Track[], title: string, collectionRef?: string, visibilityManaged?: boolean) {
   const state = usePlayerStore.getState()
   if (intent !== queueIntent || state.current?.id !== selectedId || !tracks.some(track => track.id === selectedId)) return
   usePlayerStore.setState({
+    queueBase:tracks,
+    queueOrigins:Object.fromEntries(tracks.map(track=>[track.id,listVisibilityOrigins(track,{collectionRef,visibilityManaged})])),
     queue: tracks.map(track => track.id === selectedId ? { ...track, ...state.current!, partCount: track.partCount ?? state.current!.partCount } : track),
     queueReversed: false,
-    queueSource: { kind: 'season', title, collectionRef },
+    queueSource: { kind: 'season', title, collectionRef, visibilityManaged },
     ...(state.queueFeedback ? { queueFeedback: { ...state.queueFeedback, title } } : {}),
   })
+  reprojectVisibility()
   switchCollectionContext(collectionRef)
 }
 
@@ -146,7 +180,7 @@ export function resetPlayerForAccount() {
   nativeHistorySession = undefined
   recoveryAttempted = false
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
-  usePlayerStore.setState({ sleep: noSleep, current: null, queue: [], queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
+  usePlayerStore.setState({ shuffleState:undefined, sleep: noSleep, current: null, queue: [],queueBase:[],queueOrigins:{}, queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
   flushPlayerSnapshot()
   accountReset = (async () => {
     // Stop native playback immediately, even if saving the old position fails.
@@ -204,14 +238,21 @@ function bindAudioEvents(element:HTMLAudioElement) {
   })
 }
 function playerAudio() {
-  if(!audio){audio=new Audio();audio.preload='metadata';audio.volume=usePlayerStore.getState().volume;bindAudioEvents(audio)}
+  if(!audio){audio=new Audio();audio.preload='metadata';audio.volume=outputVolume(usePlayerStore.getState().volume, useLoudnessSettings.getState().enabled ? trackGainDb : 0);bindAudioEvents(audio)}
   return audio
 }
 
 export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, rate: 1, resumeThresholdSeconds: 0, setResumeThreshold: value => set({ resumeThresholdSeconds: normalizeResumeThreshold(value) }), shuffled: false, repeatMode: 'off',
-  play: async (track, startAt, refreshing = false, checkpointAt) => {
+  play: async (track, startAt, refreshing = false, checkpointAt, originPlayback = false) => {
+    track = withTrackTitle(track)
     if (accountResetting) return
+    const visibilityEpoch=accountEpoch()
+    if(!useContentVisibility.getState().session) await ensureVisibility()
+    if (accountResetting || visibilityEpoch!==accountEpoch()) return
+    if (!originPlayback && !refreshing) set(state=>({queueOrigins:{...state.queueOrigins,[track.id]:['']}}))
+    const eligible = (candidate:Track) => entryAllowed(candidate,get().queueOrigins?.[candidate.id] ?? [''],useContentVisibility.getState().rules)
+    if (!refreshing && !eligible(track)) { await get().next(); return }
     const previous = get()
     if (!refreshing && startAt === undefined && checkpointAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') { await ensurePlaying(); return }
     if (!refreshing) { recoveryAttempted = false; controlScope.invalidate() }
@@ -231,11 +272,16 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     try {
       if (track.resolveParts) {
         if (isMobile && previous.current) await controlMobileAudio('pause').catch(() => undefined)
-        const parts = await resolveSeasonEntry(track).catch(() => [])
+        const parts = await resolveSeasonEntry(track)
         if (request !== playRequest) return
         if (parts.length) {
-          set({ queue: replaceSeasonEntry(get().queue, track.id, parts) })
-          track = parts[0]
+          const origins = get().queueOrigins?.[track.id] ?? ['']
+          const queueOrigins = {...get().queueOrigins,...Object.fromEntries(parts.map(part=>[part.id,origins]))}
+          const queueBase = replaceSeasonEntry(get().queueBase ?? get().queue,track.id,parts)
+          const visible = parts.filter(part=>entryAllowed(part,origins,useContentVisibility.getState().rules))
+          set({queueOrigins,queueBase,queue:replaceSeasonEntry(get().queue,track.id,visible,true)})
+          if (!visible.length) { await get().next(); return }
+          track = visible[0]
           set({ current: track, durationSeconds: track.durationSeconds })
         } else if (track.source.cid <= 0) {
           throw new Error('无法读取合集中的这个视频')
@@ -251,7 +297,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
       let resumePolicy = startAt === undefined ? automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, isCollectionPlayback(track, get().queue, get().queueSource)) : undefined
       let position = Number.isFinite(resumeAt) ? Math.max(0, resumeAt) : 0
-      set({ current: storedTrack, queue, durationSeconds: storedTrack.durationSeconds, progressSeconds: desktopSeekRevision !== seekRevision ? get().progressSeconds : 0 })
+      set({ current: storedTrack, queue, queueBase:uniqueTracks([...(get().queueBase??queue).map(item=>item.id===storedTrack.id?storedTrack:item),storedTrack]), durationSeconds: storedTrack.durationSeconds, progressSeconds: desktopSeekRevision !== seekRevision ? get().progressSeconds : 0 })
       const [plan] = await Promise.all([
         getTrackPlaybackPlan(storedTrack, refreshing || previous.status === 'error'),
         isMobile ? ensureNativeReady().then(async () => {
@@ -261,6 +307,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         }) : Promise.resolve(),
       ])
       if (request !== playRequest) return
+      if (!refreshing && !eligible(storedTrack)) { reprojectVisibility(); await get().next(); return }
       // Settings may change while the playback URL is resolving.
       if (resumePolicy) resumePolicy = automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, resumePolicy.collection)
       if (desktopSeekRevision !== seekRevision) { position = get().progressSeconds; resumePolicy = undefined }
@@ -268,11 +315,12 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (isMobile) {
         loadedTrackId = storedTrack.id
         initialPositionPending = position > 0
-        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy)
+        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy, plan.loudnessGainDb)
         return
       }
       const element = playerAudio()
       initialPositionPending = position > 0
+      trackGainDb = safeGainDb(plan.loudnessGainDb); applyDesktopOutput()
       element.src = plan.url; element.playbackRate = get().rate; loadedTrackId = storedTrack.id
       if (position > 0) position = await preparePlaybackStart(element, duration => desktopSeekRevision !== seekRevision ? get().progressSeconds : resumePolicy ? automaticResumePosition(position, duration, automaticResumePolicy(get().resumeThresholdSeconds, resumePolicy.durationSeconds, resumePolicy.collection)) : position, () => request === playRequest, Boolean(resumePolicy?.enabled && resumePolicy.thresholdSeconds > 0 && !(resumePolicy.durationSeconds > 0)))
       else element.currentTime = 0
@@ -293,9 +341,20 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   },
   playFromList: async (tracks, trackId, queueSource, startAt, resumeCheckpoint = false) => {
     if (accountResetting) return
-    const queue = uniqueTracks(tracks)
-    const selected = queue.find(track => track.id === trackId)
+    const visibilityEpoch=accountEpoch()
+    if(!useContentVisibility.getState().session) await ensureVisibility()
+    if (accountResetting || visibilityEpoch!==accountEpoch()) return
+    const queueBase = uniqueTracks(tracks)
+    if(!queueBase.some(t=>t.id===trackId))return
+    const origins = (track:Track) => listVisibilityOrigins(track, queueSource)
+    const queueOrigins = Object.fromEntries(queueBase.map(track=>[track.id,origins(track)]))
+    const queue = queueBase.filter(track=>entryAllowed(track,origins(track),useContentVisibility.getState().rules))
+    const choice = visibleCheckpoint(queueBase,trackId,track=>entryAllowed(track,origins(track),useContentVisibility.getState().rules))
+    const selected = choice.track
     if (!selected) return
+    // A rule can arrive between preparing a resume command and replacing the queue.
+    // The replacement song must never inherit the hidden checkpoint's timestamp.
+    if (!choice.same) { startAt=0; resumeCheckpoint=false }
     ++queueIntent
     const { current, status, queue: oldQueue, queueSource: oldSource } = get()
     const keepPlaying = selected.id === current?.id && status !== 'error' && (loadedTrackId === current.id || status === 'resolving')
@@ -303,10 +362,10 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       oldSource?.title !== queueSource?.title || oldQueue.length !== queue.length || oldQueue.some((track, index) => track.id !== queue[index].id)
     set({
       queue: current ? queue.map(item => item.id === current.id ? { ...item, ...current, resolveParts: item.resolveParts } : item) : queue,
-      queueReversed: false, queueSource,
+      queueReversed: false, queueSource, queueBase, queueOrigins,
       ...(keepPlaying && changed ? { queueFeedback: { serial: ++queueFeedbackSerial, title: queueSource?.title } } : {}),
     })
-    if (!keepPlaying || resumeCheckpoint) await get().play(selected, resumeCheckpoint ? undefined : startAt, false, resumeCheckpoint ? startAt : undefined)
+    if (!keepPlaying || resumeCheckpoint) await get().play(selected, resumeCheckpoint ? undefined : startAt, false, resumeCheckpoint ? startAt : undefined,true)
     else {
       switchCollectionContext(queueSource?.collectionRef)
       if (startAt !== undefined && loadedTrackId === selected.id) {
@@ -317,20 +376,20 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     }
   },
   playAll: async (tracks) => { if (tracks[0]) await get().playFromList(tracks, tracks[0].id) },
-  enqueue: (tracks) => { ++queueIntent; set(({ queue }) => ({ queue: uniqueTracks([...queue, ...tracks]) })) },
+  enqueue: (tracks) => { ++queueIntent; set(state=>({queue:uniqueTracks([...state.queue,...tracks]),queueBase:uniqueTracks([...(state.queueBase??state.queue),...tracks]),queueOrigins:{...state.queueOrigins,...Object.fromEntries(tracks.map(t=>[t.id,['']]))}})) },
   removeFromQueue: (id) => get().removeQueueRows([id]),
   removeQueueRows: (ids) => {
     ++queueIntent
     const removing = new Set(ids)
-    set(({ queue }) => ({ queue: queue.filter(track => !removing.has(track.id)) }))
+    set(state=>({queue:state.queue.filter(track=>!removing.has(track.id)),queueBase:(state.queueBase??state.queue).filter(track=>!removing.has(track.id))}))
   },
   moveQueueRows: (ids, direction, byVideo) => {
     ++queueIntent
-    set(({ queue }) => ({ queue: moveQueueTracks(queue, ids, direction, byVideo) }))
+    set(state=>{const queue=moveQueueTracks(state.queue,ids,direction,byVideo);return {queue,queueBase:reorderVisibleBase(state.queueBase??state.queue,queue)}})
   },
-  clearQueue: () => { ++queueIntent; switchCollectionContext(); set({ queue: [], queueReversed: false, queueSource: undefined }) },
-  reverseQueue: () => { ++queueIntent; set(({ queue, queueReversed }) => ({ queue: [...queue].reverse(), queueReversed: !queueReversed })) },
-  moveInQueue: (id, direction) => { ++queueIntent; set(({ queue }) => { const next = [...queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next } }) },
+  clearQueue: () => { ++queueIntent; switchCollectionContext(); set({ queue: [], queueBase:[],queueOrigins:{},queueReversed: false, queueSource: undefined }) },
+  reverseQueue: () => { ++queueIntent; set(state=>({queue:[...state.queue].reverse(),queueBase:[...(state.queueBase??state.queue)].reverse(),queueReversed:!state.queueReversed})) },
+  moveInQueue: (id, direction) => { ++queueIntent; set(state => { const next = [...state.queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next,queueBase:reorderVisibleBase(state.queueBase??state.queue,next) } }) },
   toggle: async () => {
     const { current, status } = get(); if (!current) return
     const valid = controlScope.begin('transport')
@@ -379,12 +438,35 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     else await get().play(current, resumeAt())
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
-  next: async (fromEnded = false) => { const { current, queue, shuffled, repeatMode } = get(); if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null } if (fromEnded && repeatMode === 'one' && current) { await get().play(current, 0); return } if (!queue.length) { set({ status: 'paused' }); return } if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length - 1]?.id) { set({ status: 'paused' }); return } const index = current ? queue.findIndex((track) => track.id === current.id) : -1; const nextIndex = shuffled && queue.length > 1 ? randomOtherIndex(queue.length, index) : (index + 1) % queue.length; await get().play(queue[nextIndex], fromEnded && queue[nextIndex].id === current?.id ? 0 : undefined) },
-  previous: async () => { const { current, queue, progressSeconds } = get(); if (progressSeconds > 4) { get().seek(0); return } if (!queue.length) return; const index = current ? queue.findIndex((track) => track.id === current.id) : 0; await get().play(queue[(index - 1 + queue.length) % queue.length]) },
+  next: async (fromEnded = false) => {
+    if (accountResetting) return
+    if (isMobile && nativeAutonomousQueue && !fromEnded) { await nativeTransport('next'); return }
+    const { current, queue, shuffled, repeatMode } = get()
+    if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null }
+    if (fromEnded && repeatMode === 'one' && current && queue.some(t=>t.id===current.id)) { await get().play(current, 0,false,undefined,true); return }
+    if (!queue.length) { set({ status:'paused' }); return }
+    if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length-1]?.id) { set({ status:'paused' }); return }
+    const id = shuffled ? shuffleDeck.target(shuffleItems(queue), current?.id ?? '', 1) : orderedQueueTarget((get().queueBase??queue).map(t=>t.id),queue.map(t=>t.id),current?.id??'',1,!fromEnded || repeatMode==='all')
+    const track = queue.find(item => item.id === id)
+    if (shuffled) set({ shuffleState:shuffleDeck.snapshot() })
+    if (track) await get().play(track, fromEnded && track.id === current?.id ? 0 : undefined,false,undefined,true)
+    else if(fromEnded)set({status:'paused'})
+  },
+  previous: async () => {
+    if (accountResetting) return
+    if (isMobile && nativeAutonomousQueue) { await nativeTransport('previous'); return }
+    const { current, queue, progressSeconds, shuffled } = get()
+    if (progressSeconds > 4) { get().seek(0); return }
+    if (!queue.length) return
+    const id = shuffled ? shuffleDeck.target(shuffleItems(queue),current?.id ?? '',-1) : orderedQueueTarget((get().queueBase??queue).map(t=>t.id),queue.map(t=>t.id),current?.id??'',-1,true)
+    if (shuffled) set({ shuffleState:shuffleDeck.snapshot() })
+    const track = queue.find(item => item.id === id)
+    if (track) await get().play(track,undefined,false,undefined,true)
+  },
   seek: (seconds) => {
     const valid = controlScope.begin('seek')
     desktopSeekRevision+=1; const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(error => { if (valid()) nativeError(error) }); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
-  setVolume: (volume) => { const valid = controlScope.begin('volume'); const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(error => { if (valid()) nativeError(error) }); else playerAudio().volume = normalized; set({ volume: normalized }) },
+  setVolume: (volume) => { const valid = controlScope.begin('volume'); const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(error => { if (valid()) nativeError(error) }); else { playerAudio(); set({ volume: normalized }); applyDesktopOutput(); return }; set({ volume: normalized }) },
   setRate: async rate => {
     if (!playbackRates.some(option => option === rate) || rate === get().rate) return
     const valid = controlScope.begin('rate')
@@ -400,27 +482,34 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
   cycleRepeat: () => set(({ repeatMode }) => ({ shuffled:false, repeatMode: repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off' })),
   cyclePlaybackMode: () => set(({ shuffled, repeatMode }) => shuffled ? { shuffled:false, repeatMode:'off' } : repeatMode === 'off' ? { shuffled:false, repeatMode:'all' } : repeatMode === 'all' ? { shuffled:false, repeatMode:'one' } : { shuffled:true, repeatMode:'all' }),
-  updateTrack: (track) => set(({ current, queue }) => ({ current: current?.id === track.id ? track : current, queue: queue.map(item => item.id === track.id ? { ...item, ...track, resolveParts: item.resolveParts } : item) })),
+  updateTrack: (track) => set(({ current, queue,queueBase }) => {
+    const update = (item:Track) => item.id === track.id ? withTrackTitle({ ...sourceTrack(item), ...sourceTrack(track), importedEntry:item.importedEntry, resolveParts:item.resolveParts }) : item
+    return { queueBase:queueBase?.map(update), current:current ? update(current) : null, queue:queue.map(update) }
+  }),
 }), {
   name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage),
   merge: (persisted, initial) => {
-    const saved = persisted as Partial<PlayerState> & { autoResume?: boolean }
+    const saved = persisted as Partial<PlayerState> & { autoResume?: boolean;queueOrder?:string[];hiddenQueueTracks?:Track[] }
+    shuffleDeck = new ShuffleDeck(Math.random, saved.shuffleState)
     const normalize = (track: Track) => withTrackTitle({ ...track, coverUrl: track.coverUrl?.replace(/^http:\/\//, 'https://') })
     const retiredCurrent = saved.current?.id.startsWith('local:')
-    const { autoResume: legacyAutoResume, ...restored } = saved
+    const { autoResume: legacyAutoResume, queueOrder,hiddenQueueTracks,...restored } = saved
+    const queue=Array.isArray(saved.queue)?saved.queue.filter(track=>!track.id.startsWith('local:')).map(normalize):initial.queue
+    const queueBase=Array.isArray(saved.queueBase)?saved.queueBase.filter(track=>!track.id.startsWith('local:')).map(normalize):unpackQueueBase(queue,queueOrder,hiddenQueueTracks?.map(normalize))
     return {
       ...initial, ...restored,
       resumeThresholdSeconds: saved.resumeThresholdSeconds !== undefined ? normalizeResumeThreshold(saved.resumeThresholdSeconds) : legacyAutoResume === false ? null : initial.resumeThresholdSeconds,
       repeatMode: saved.shuffled ? 'all' : saved.repeatMode || initial.repeatMode,
       current: saved.current && !retiredCurrent ? normalize(saved.current) : initial.current,
-      queue: Array.isArray(saved.queue) ? saved.queue.filter(track => !track.id.startsWith('local:')).map(normalize) : initial.queue,
+      queue,queueBase,
+      queueOrigins:saved.queueOrigins ?? Object.fromEntries(queueBase.map(track=>[track.id,listVisibilityOrigins(track,saved.queueSource)])),
       ...(retiredCurrent ? { progressSeconds: 0, durationSeconds: 0 } : {}),
     }
   },
-  partialize: ({ current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => {
+  partialize: ({ queueBase,queueOrigins,shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => {
     urgentSnapshot = queue !== snapshotQueue || current?.id !== snapshotCurrent
     snapshotQueue = queue; snapshotCurrent = current?.id
-    return { current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }
+    return { ...packQueueBase(queue,queueBase??queue),queueOrigins,shuffleState:isMobile ? undefined : shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }
   },
 }))
 
@@ -436,6 +525,11 @@ function flushPosition(notify = false) {
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.hidden) flushPosition() })
 usePlayerStore.subscribe((state, previous) => {
   if (state.current?.id !== previous.current?.id && typeof sessionStorage !== 'undefined') sessionStorage.removeItem('lyrics-subtitles-override')
+  if (state.shuffled !== previous.shuffled || !state.queue.length) shuffleDeck.reset()
+  if ((!isMobile || !nativeAutonomousQueue) && state.shuffled && (state.queue !== previous.queue || state.current?.id !== previous.current?.id || !previous.shuffled)) {
+    shuffleDeck.observe(shuffleItems(state.queue),state.current?.id ?? '')
+    usePlayerStore.setState({ shuffleState:shuffleDeck.snapshot() })
+  }
   if (isMobile) return
   if (state.status === 'paused' && previous.status !== 'paused' && state.current?.id === previous.current?.id) flushPosition(true)
   else if (state.status === 'playing' && (previous.status !== 'playing' ||
@@ -444,17 +538,23 @@ usePlayerStore.subscribe((state, previous) => {
 
 function uniqueTracks(tracks: Track[]) { return [...new Map(tracks.map((track) => [track.id, track])).values()] }
 
-function randomOtherIndex(length: number, current: number) {
-  const offset = 1 + Math.floor(Math.random() * (length - 1))
-  return (Math.max(0, current) + offset) % length
-}
 
+async function nativeTransport(action:'next'|'previous') {
+  const valid=controlScope.begin('transport')
+  try {
+    // Mode/queue mirrors must settle before native chooses from its shuffle deck.
+    let pending:Promise<unknown>
+    do { pending=nativeQueuePending;await pending } while(valid() && pending!==nativeQueuePending)
+    if(valid()) await controlMobileAudio(action)
+  } catch(error) { if(valid()) nativeError(error) }
+}
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
 let nativeHistorySession: string | undefined
 let nativeSession: string | undefined
 let floatingStyleRevision=0
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
   if (accountResetting) return
+  nativeAutonomousQueue = state.capabilities?.autonomousQueue ?? state.autonomousQueue ?? false
   const session = state.engineInstanceId && state.sessionId ? `${state.engineInstanceId}:${state.sessionId}` : undefined
   if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
@@ -466,9 +566,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   }
   if (isMobile && state.expandedEntries) {
     const current = usePlayerStore.getState()
-    let queue = current.queue
-    for (const [id, parts] of Object.entries(state.expandedEntries)) queue = replaceSeasonEntry(queue, id, parts)
-    if (queue !== current.queue) usePlayerStore.setState({ queue })
+    let queueBase = current.queueBase ?? current.queue
+    let queueOrigins = {...current.queueOrigins}
+    for (const [id,parts] of Object.entries(state.expandedEntries)) {
+      const origins = queueOrigins[id] ?? ['']
+      queueOrigins = {...queueOrigins,...Object.fromEntries(parts.map(part=>[part.id,origins]))}
+      queueBase = replaceSeasonEntry(queueBase,id,parts,true)
+    }
+    if (queueBase !== current.queueBase) {usePlayerStore.setState({queueBase,queueOrigins});reprojectVisibility()}
   }
   if (isMobile && state.track?.resolveParts && state.track.source.cid <= 0 && state.status !== 'error') return
   if (isMobile && state.track && state.id !== usePlayerStore.getState().current?.id) {
@@ -477,7 +582,8 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
       ++queueIntent
       controlScope.invalidate()
       recoveryAttempted = false
-      const track = state.track
+      const queued = current.queue.find(item => item.id === state.id)
+      const track = withTrackTitle({ ...state.track, ...(queued?.titleOverridden ? queued : {}), importedEntry: queued?.importedEntry })
       requestedStartAt = undefined
       initialPositionPending = state.status === 'buffering'
       usePlayerStore.setState({ current: track, queue: current.queue.map(item => item.id === track.id ? track : item), progressSeconds: 0 })
@@ -486,6 +592,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   }
   if (state.action && state.id && state.id !== usePlayerStore.getState().current?.id) return
   if (state.action === 'resume') { void usePlayerStore.getState().toggle(); return }
+  if (nativeAutonomousQueue && ['next','previous','ended'].includes(state.action ?? '')) return
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
   if (state.action === 'ended' && state.autonomousQueue) return
@@ -513,7 +620,7 @@ function ensureNativeReady() {
     .then(async () => onNativeState(await snapshotMobileAudio()))
     .catch(error => { nativeReady = undefined; throw error })
 }
-void ensureNativeReady().catch(nativeError)
+void ensureNativeReady().then(() => applyLoudnessSetting()).catch(nativeError)
 let reconciliationPending = false
 let foregroundPending = false
 async function reconcileMobilePlayback(rebind = false, foreground = false) {
@@ -553,22 +660,32 @@ if (isMobile) window.setInterval(() => {
   }
 }, 250)
 
-const syncNativeQueue = isOHOS ? syncOHOSQueue : isIOS ? syncIOSQueue : syncAndroidQueue
+const nativeQueueWriter = isOHOS ? syncOHOSQueue : isIOS ? syncIOSQueue : syncAndroidQueue
+const syncNativeQueue: typeof nativeQueueWriter = (tracks,mode,shuffled,threshold,source) => nativeQueueWriter(tracks,mode,shuffled,threshold,{...source,kind:source?.kind??'video',title:source?.title??'',entryOrigins:usePlayerStore.getState().queueOrigins,entryOrder:(usePlayerStore.getState().queueBase??tracks).map(t=>t.id)})
+function reorderVisibleBase(base:Track[],queue:Track[]) { const ids=new Set(queue.map(t=>t.id));let i=0;return base.map(track=>ids.has(track.id)?queue[i++]:track) }
+function reprojectVisibility() {
+  const state = usePlayerStore.getState(), rules = useContentVisibility.getState().rules
+  const base = state.queueBase ?? state.queue
+  const queue = base.filter(track=>entryAllowed(track,state.queueOrigins?.[track.id]??[''],rules))
+  if (queue.length!==state.queue.length || queue.some((track,i)=>track.id!==state.queue[i]?.id)) usePlayerStore.setState({queue})
+}
+useContentVisibility.subscribe((state,previous)=>{if(state.rules!==previous.rules && state.session) reprojectVisibility()})
 if (isMobile) usePlayerStore.subscribe((state, previous) => {
   if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled || state.resumeThresholdSeconds !== previous.resumeThresholdSeconds || state.queueSource !== previous.queueSource) {
-    void ensureNativeReady().then(() => {
+    nativeQueuePending = ensureNativeReady().then(() => {
       const current = usePlayerStore.getState()
       return syncNativeQueue(current.queue, current.repeatMode, current.shuffled, current.resumeThresholdSeconds, current.queueSource)
-    }).catch(error => console.warn('BiliMusic: queue update failed', error))
+    })
+    void nativeQueuePending.catch(error => console.warn('BiliMusic: queue update failed', error))
   }
 })
 
 // A recreated WebView must mirror its restored/adopted queue even before the
 // user edits it. Read the native snapshot first to retain background advances.
-if (isMobile) void ensureNativeReady().then(() => {
+if (isMobile) { nativeQueuePending = ensureNativeReady().then(() => {
   const state = usePlayerStore.getState()
   return syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
-}).catch(error => console.warn('BiliMusic: initial queue update failed', error))
+});void nativeQueuePending.catch(error => console.warn('BiliMusic: initial queue update failed', error)) }
 
 // Resolve first; leave the current audio playing if a new quality is unavailable.
 export async function reloadCurrentAudioSource() {
@@ -578,10 +695,11 @@ export async function reloadCurrentAudioSource() {
   if (!track || loadedTrackId!==track.id) return
   const request=playRequest,seekRevision=desktopSeekRevision
   const valid=()=>request===playRequest&&seekRevision===desktopSeekRevision&&switchRequest===sourceSwitchRequest&&usePlayerStore.getState().current?.id===track.id
-  const url=await getTrackPlaybackUrl(track,true,true)
+  const plan=await getTrackPlaybackPlan(track,true,true)
+  const url=plan.url
   if(!valid())return
-  if(isMobile){const state=usePlayerStore.getState();await playMobileAudio(track,url,playbackClock(),state.volume,state.status==='playing'||state.status==='buffering',loadedCollectionRef,state.rate,true);return}
-  await switchDesktopSource(url,valid)
+  if(isMobile){const state=usePlayerStore.getState();await playMobileAudio(track,url,playbackClock(),state.volume,state.status==='playing'||state.status==='buffering',loadedCollectionRef,state.rate,true,undefined,undefined,plan.loudnessGainDb);return}
+  await switchDesktopSource(url,valid,plan.loudnessGainDb)
 }
 
 function maybeUpgradeDesktop() {
@@ -593,7 +711,7 @@ function maybeUpgradeDesktop() {
   if(valid())void switchDesktopSource(pending.url,valid).catch(()=>undefined)
 }
 
-async function switchDesktopSource(url:string, valid:()=>boolean) {
+async function switchDesktopSource(url:string, valid:()=>boolean, gainDb = trackGainDb) {
   const candidate=await prepareAudioSource(url,playbackClock,valid,usePlayerStore.getState().rate)
   try{
     if(!valid())return
@@ -605,7 +723,7 @@ async function switchDesktopSource(url:string, valid:()=>boolean) {
     const latest=usePlayerStore.getState();if(latest.status!=='playing'&&latest.status!=='buffering')candidate.pause()
     const previous=audio;bindAudioEvents(candidate);audio=candidate
     previous?.pause();previous?.removeAttribute('src');previous?.load()
-    candidate.volume=latest.volume;candidate.muted=false
+    trackGainDb=safeGainDb(gainDb);applyDesktopOutput();candidate.muted=false
     usePlayerStore.setState({status:candidate.paused?'paused':'playing',progressSeconds:candidate.currentTime,error:null})
   }finally{if(audio!==candidate){candidate.pause();candidate.removeAttribute('src');candidate.load()}}
 }

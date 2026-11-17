@@ -1,0 +1,9 @@
+[
+  {"order":["1","2","3","4"],"visible":["1","2","4"],"current":"3","direction":1,"ended":true,"repeat":"off","result":"4"},
+  {"order":["1","2","3","4"],"visible":["1","2","4"],"current":"3","direction":-1,"ended":false,"repeat":"off","result":"2"},
+  {"order":["1","2","3","4"],"visible":["1","2"],"current":"4","direction":1,"ended":true,"repeat":"off","result":null},
+  {"order":["1","2","3","4"],"visible":["1","2"],"current":"4","direction":1,"ended":false,"repeat":"off","result":"1"},
+  {"order":["1","2","3","4"],"visible":["1","2"],"current":"4","direction":1,"ended":true,"repeat":"all","result":"1"},
+  {"order":["1","2","3","4"],"visible":["1","2","4"],"current":"3","direction":1,"ended":true,"repeat":"one","result":"4"},
+  {"order":["1","2","3","4"],"visible":[],"current":"3","direction":1,"ended":true,"repeat":"all","result":null}
+]

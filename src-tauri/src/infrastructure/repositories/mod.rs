@@ -9,4 +9,9 @@ pub mod collections;
 
 pub mod list_preferences;
 
+pub mod source_artwork;
 pub mod source_titles;
+
+pub mod loudness;
+
+pub mod imported_entries;

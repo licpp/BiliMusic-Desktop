@@ -34,12 +34,11 @@ html[data-mini-player],html[data-mini-player] body,html[data-mini-player] #root 
 .mini-volume-panel small { font-size:10px;min-width:28px;color:var(--muted); }
 .mini-marquee { min-width:0;overflow:hidden;white-space:nowrap;font-size:11px;line-height:1.5;color:var(--muted); }
 .mini-marquee.mini-track-title { font-size:13px;font-weight:600;color:var(--ink); }
-.mini-marquee-track { display:flex;width:max-content; }
+.mini-marquee-track { display:flex;gap:30px;width:max-content; }
 .mini-marquee-track>span { flex-shrink:0; }
-.mini-marquee.scrolling .mini-marquee-track>span { padding-right:30px; }
-.mini-marquee.scrolling .mini-marquee-track { animation:mini-marquee var(--marquee-duration) linear infinite; }
-.mini-player:hover .mini-marquee-track { animation-play-state:paused; }
-@keyframes mini-marquee { 0%,12% { transform:translateX(0); } 90%,100% { transform:translateX(-50%); } }
+.mini-marquee-repeat { display:none; }
+.mini-marquee.scrolling .mini-marquee-repeat { display:block; }
+.mini-marquee.scrolling .mini-marquee-track { will-change:transform; }
 .mini-queue { grid-column:1/-1;align-self:stretch;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:8px;padding:8px 2px 0;border-top:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent; }
 .mini-queue>header { display:flex;align-items:center;justify-content:space-between;padding:2px 9px 8px;color:var(--muted);font-size:11px; }
 .mini-queue>header small { font-size:10px;color:var(--faint); }
@@ -50,7 +49,6 @@ html[data-mini-player],html[data-mini-player] body,html[data-mini-player] #root 
 .mini-player .mini-queue>button[aria-current="true"] { color:var(--cyan);background:color-mix(in srgb,var(--cyan) 8%,transparent); }
 .mini-queue>p { text-align:center;font-size:12px;color:var(--muted); }
 @media(min-width:1000px) { .mini-player { inset:auto 24px 24px auto;width:480px;height:72px;box-shadow:0 12px 50px #0003; }.mini-player[data-queue-open] { height:304px; } }
-@media(prefers-reduced-motion:reduce) { .mini-marquee.scrolling .mini-marquee-track { animation:none; } }
 /* Header actions share the same plain icon treatment as playback controls. */
 .topbar-actions > button,.app-shell .lyrics-actions > button { display:grid;place-items:center;width:36px;height:36px;min-width:36px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);box-shadow:none; }
 .app-shell .lyrics-actions > .lyrics-subtitle-toggle[aria-pressed] { padding:0;border:0;background:transparent;box-shadow:none; }

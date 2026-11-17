@@ -49,18 +49,19 @@ test('shortcut conflicts, reserved keys, clearing and persistence are checked co
 })
 
 
-test('playback shortcuts except space are global, and Ctrl+Alt+Q stays reserved for opening the app',()=>{
- const bindings=defaultShortcuts(false)
+test('show is configurable and its default never steals a legacy user mapping',()=>{
+ const bindings=defaultShortcuts(false),custom={code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false}
  assert.equal(globalShortcutBinding('toggle',bindings.toggle),undefined)
  assert.equal(globalShortcutBinding('listSearch',bindings.listSearch),undefined)
- assert.deepEqual(globalShortcutBinding('previous',bindings.previous),{action:'previous',code:'ArrowLeft',ctrl:true,alt:false,shift:false,meta:false})
- assert.equal(globalShortcutBinding('volumeUp',{code:'ArrowUp',ctrl:false,alt:false,shift:false,meta:false}),undefined)
- assert.match(shortcutProblem({code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false},bindings,'toggle',true),/唤出软件/)
- const mac=defaultShortcuts(true),custom={code:'KeyQ',ctrl:true,alt:true,shift:false,meta:false}
- mac.toggle=custom
- assert.equal(shortcutProblem(custom,mac,'toggle',false),undefined)
- assert.deepEqual(readShortcuts(JSON.stringify({version:1,bindings:mac}),true,false),mac)
- assert.equal(readShortcuts(JSON.stringify({version:1,bindings:mac}),true,true).toggle,null)
+ assert.deepEqual(globalShortcutBinding('show',bindings.show),{action:'show',...custom})
+ assert.match(shortcutProblem(custom,bindings,'toggle',true),/打开窗口/)
+ bindings.show=null
+ assert.equal(shortcutProblem(custom,bindings,'toggle',true),undefined)
+ const legacy={...bindings,toggle:custom};delete legacy.show
+ const restored=readShortcuts(JSON.stringify({version:1,bindings:legacy}),false,true)
+ assert.deepEqual(restored.toggle,custom);assert.equal(restored.show,null)
+ assert.equal(shortcutProblem({code:'KeyJ',ctrl:false,alt:false,shift:false,meta:false},defaultShortcuts(),'show',true).includes('组合键'),true)
+ assert.match(shortcutProblem({code:'MouseBack',ctrl:true,alt:false,shift:false,meta:false},defaultShortcuts(),'show',true),/鼠标侧键/)
 })
 test('Windows global Enter aliases conflict while window-only and numpad digits stay distinct',async()=>{
  const {globalShortcutConflict}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)

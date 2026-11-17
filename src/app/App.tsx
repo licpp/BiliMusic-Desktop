@@ -23,6 +23,7 @@ import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
 import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useVisibilityRules } from '../services/contentVisibility'
 import { version as appVersion } from '../../package.json'
 import { listen } from '@tauri-apps/api/event'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -54,7 +55,7 @@ import {
 import { usePlayerStore } from '../features/player/playerStore'
 import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
 import { useShortcutStore } from '../services/shortcuts'
-import { listenGlobalShortcuts, syncGlobalShortcuts } from '../services/globalShortcuts'
+import { listenGlobalShortcuts, syncGlobalShortcuts, showMainWindow } from '../services/globalShortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
@@ -87,11 +88,12 @@ const navigation = [
   { label: '此刻', icon: Home },
   { label: '搜索', icon: Search },
   { label: '音乐库', icon: Library },
-  { label: '歌单', icon: ListMusic },
+  { label: '收藏库', icon: ListMusic },
   { label: '我的', icon: UserRound },
 ]
 
 export function App() {
+  useVisibilityRules()
   useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
   const updateAvailable = useUpdateStore(state => state.result?.status === 'available')
@@ -194,7 +196,7 @@ export function App() {
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined || activeCreatorFolder!==undefined
   const searchActive = activeNav === '搜索' && !selectedCollection
-  const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '歌单'))
+  const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '收藏库'))
   useEffect(resetCollection, [activeNav])
 
   const openLibraryPage = (nav: string) => {
@@ -202,7 +204,7 @@ export function App() {
     setLyricsOpen(false)
     if (nav === activeNav) return
     if (!libraryDetail) {
-      const origin = activeNav === '搜索' ? (compact ? '此刻' : '歌单') : activeNav
+      const origin = activeNav === '搜索' ? (compact ? '此刻' : '收藏库') : activeNav
       libraryReturn.current = { nav: origin, scroll: contentScroll.current?.scrollTop || 0 }
     }
     setActiveNav(nav)
@@ -211,7 +213,7 @@ export function App() {
   const closeLibraryPage = () => {
     const origin = libraryReturn.current
     libraryReturn.current = null
-    setActiveNav(origin?.nav || (compact ? '此刻' : '歌单'))
+    setActiveNav(origin?.nav || (compact ? '此刻' : '收藏库'))
     requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = origin?.scroll || 0 })
   }
   const openPlaylist = (id: string) => openLibraryPage(`playlist:${id}`)
@@ -415,10 +417,11 @@ export function App() {
       if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
       const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
       if (!shortcut) return
-      if (event.repeat && ['toggle','next','previous','refreshSync'].includes(shortcut)) { event.preventDefault();return }
+      if (event.repeat && ['show','toggle','next','previous','refreshSync'].includes(shortcut)) { event.preventDefault();return }
       if(run(shortcut))event.preventDefault()
     }
     const run=(shortcut:ShortcutAction)=>{
+      if(shortcut==='show'){void showMainWindow();return true}
       if(shortcut==='refreshSync'){window.dispatchEvent(new Event('bilimusic-refresh-requested'));return true}
       if(shortcut==='listSearch'){
         const search=new Event('bilimusic-list-search',{cancelable:true});window.dispatchEvent(search);return search.defaultPrevented
@@ -472,7 +475,7 @@ export function App() {
           <Waves size={23} strokeWidth={2.5} />
         </button>
         <nav className="rail-nav">
-          {navigation.filter(item=>!compact||(item.label!=='歌单' && item.label!=='关注')).map(({ label, icon: Icon }) => (
+          {navigation.filter(item=>!compact||(item.label!=='收藏库' && item.label!=='关注')).map(({ label, icon: Icon }) => (
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
@@ -487,7 +490,7 @@ export function App() {
         </nav>
       </aside>
 
-      <aside id="library-navigation" className="library-panel" aria-label="歌单导航">
+      <aside id="library-navigation" className="library-panel" aria-label="收藏库导航">
         <header className="library-brand"><h1>BiliMusic</h1></header>
         <section>
           <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions library-action-rail" hidden={!playlistsExpanded}>
@@ -536,7 +539,7 @@ export function App() {
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
           activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
-          activeNav === '歌单' || libraryDetail ? hub :
+          activeNav === '收藏库' || libraryDetail ? hub :
           activeNav === '关注' ? <CreatorsView followed onOpen={openCollection} onOpenFolder={openCreatorFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
           activeNav === '我的' ? <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/> : activeNav === '搜索' ? null : <>
           <section className="hero">
@@ -612,7 +615,7 @@ export function App() {
         setImportOpen(false)
         setRematchPlaylist(undefined)
         setHubSection('playlists')
-        libraryReturn.current = { nav: compact ? '此刻' : '歌单', scroll: 0 }
+        libraryReturn.current = { nav: compact ? '此刻' : '收藏库', scroll: 0 }
         setActiveNav(`playlist:${id}`)
         requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = 0 })
       }} onClose={() => {setImportOpen(false);setRematchPlaylist(undefined)}} />}

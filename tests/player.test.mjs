@@ -4,9 +4,12 @@ import { createRequire } from 'node:module'
 import { build } from 'esbuild'
 
 const output = await build({
-  entryPoints: ['src/features/player/playerStore.ts'], bundle: true, write: false,
+  stdin: {contents:"export * from './src/features/player/playerStore'; export {useContentVisibility} from './src/services/contentVisibility'; export {setLoudnessPreference,useLoudnessSettings} from './src/services/loudness'",resolveDir:process.cwd()}, bundle: true, write: false,
   format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
-  plugins: [{ name: 'desktop-boundary', setup(builder) {
+  plugins: [{name:'visibility-boundary',setup(b){
+    b.onResolve({filter:/services\/contentVisibility$/},()=>({path:'visibility',namespace:'visibility-test'}))
+    b.onLoad({filter:/.*/,namespace:'visibility-test'},()=>({contents:`import {create} from 'zustand'; export const useContentVisibility=create(()=>({session:'test-session',rules:[]})); export const ensureVisibility=async()=>{};`}))
+  }},{ name: 'desktop-boundary', setup(builder) {
     builder.onResolve({ filter: /services\/desktopApi$/ }, () => ({ path: 'desktop-api', namespace: 'test' }))
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, args => /(?:^|[\\/])playbackPosition\.ts$/.test(args.importer) ? { path: 'position-api', namespace: 'test' } : undefined)
     builder.onLoad({ filter: /.*/, namespace: 'test' }, ({path}) => ({ contents: path === 'position-api' ? `
@@ -44,7 +47,7 @@ function setup(snapshot) {
   globalThis.testApi = { writes:[], positions:new Map(snapshot?.state?.current ? [[snapshot.state.current.id,snapshot.state.progressSeconds || 0]] : []), record: async track => { globalThis.testApi.trackDuration=track.durationSeconds; return track }, resolve: async track => `local://${track.id}` }
   const module = { exports: {} }
   new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports)
-  return { store: module.exports.usePlayerStore, audio, listeners, storage }
+  return { store: module.exports.usePlayerStore, audio, listeners, storage, module: module.exports }
 }
 const track = id => ({ id, source: { provider: 'bilibili', bvid: 'BVTEST00001', cid: Number(id), page: 1 }, title: id, durationSeconds: 120, liked: false })
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
@@ -435,4 +438,143 @@ test('collection resume re-evaluates settings even when its saved track is alrea
  await store.getState().playFromList([current],current.id,{kind:'season',title:'合集'},84,true)
  assert.equal(audio[0].currentTime,0)
  listeners.pagehide()
+})
+
+
+test('loudness is applied before desktop playback, preserves user volume and resets for missing metadata', async () => {
+  const h=setup(),{store,audio,listeners}=h
+  h.module.setLoudnessPreference(true)
+  testApi.plan=async()=>({url:'local://normalized',loudnessGainDb:-6})
+  await store.getState().play(track('1'))
+  assert.ok(Math.abs(audio[0].volume-.7*Math.pow(10,-6/20))<1e-9)
+  assert.equal(store.getState().volume,.7)
+  store.getState().setVolume(.4)
+  assert.ok(Math.abs(audio[0].volume-.4*Math.pow(10,-6/20))<1e-9)
+  assert.equal(store.getState().volume,.4)
+  testApi.plan=async()=>({url:'local://no-measurement'})
+  await store.getState().play(track('2'))
+  assert.equal(audio[0].volume,.4)
+  listeners.pagehide()
+})
+
+test('late gain plans cannot change a newer track, and latest toggle wins during resolution', async () => {
+  const h=setup(),{store,audio,listeners}=h
+  h.module.setLoudnessPreference(true)
+  const old=deferred(),entered=deferred()
+  testApi.plan=async t=>{if(t.id==='1'){entered.resolve();return old.promise}return {url:'local://new',loudnessGainDb:-3}}
+  const pending=store.getState().play(track('1'));await entered.promise
+  await store.getState().play(track('2'))
+  old.resolve({url:'local://old',loudnessGainDb:-18});await pending
+  assert.ok(Math.abs(audio[0].volume-.7*Math.pow(10,-3/20))<1e-9)
+  const next=deferred(),wait=deferred()
+  testApi.plan=async()=>{wait.resolve();return next.promise}
+  const loading=store.getState().play(track('3'));await wait.promise
+  h.module.setLoudnessPreference(false);await h.module.applyLoudnessSetting()
+  next.resolve({url:'local://disabled',loudnessGainDb:-12});await loading
+  assert.equal(audio[0].volume,.7)
+  assert.equal(store.getState().status,'playing')
+  listeners.pagehide()
+})
+
+test('prepared quality candidates stay silent and commit only one fresh gain', async () => {
+  const h=setup(),{store,audio,listeners}=h
+  h.module.setLoudnessPreference(true)
+  testApi.plan=async()=>({url:'local://first',loudnessGainDb:-6})
+  await store.getState().play(track('1'))
+  testApi.plan=async()=>({url:'local://quality',loudnessGainDb:-9})
+  const switching=h.module.reloadCurrentAudioSource()
+  await switching
+  assert.equal(audio.length,2)
+  assert.equal(audio[0].paused,true)
+  assert.equal(audio[1].muted,false)
+  assert.ok(Math.abs(audio[1].volume-.7*Math.pow(10,-9/20))<1e-9)
+  assert.equal(store.getState().volume,.7)
+  listeners.pagehide()
+})
+test('desktop shuffle consumes a round once, goes back through real history and restores the pending deck',async()=>{
+ const {store:s,listeners,storage}=setup()
+ const queue=Array.from({length:10},(_,i)=>track(String(i+1)))
+ await s.getState().playFromList(queue,'1');s.getState().toggleShuffle()
+ const heard=['1']
+ for(let i=1;i<10;i++){await s.getState().next();heard.push(s.getState().current.id)}
+ assert.equal(new Set(heard).size,10)
+ await s.getState().previous();assert.equal(s.getState().current.id,heard.at(-2))
+ await s.getState().next();assert.equal(s.getState().current.id,heard.at(-1))
+ listeners.pagehide()
+ const persisted=JSON.parse(storage.get('resonance-player-v1'))
+ const expected=persisted.state.shuffleState
+ const restored=setup(persisted)
+ assert.deepEqual(restored.store.getState().shuffleState,expected)
+ await restored.store.getState().previous();assert.equal(restored.store.getState().current.id,heard.at(-2))
+ restored.listeners.pagehide()
+})
+
+test('hidden queue projection preserves its base and explicit enqueue while the audible song finishes',async()=>{
+ const {store,module}=setup();const visibility=module.useContentVisibility
+ const rule=cid=>({scope:'video:BVTEST00001',target:`cid:${cid}`,hidden:true})
+ visibility.setState({rules:[rule(1)]})
+ await store.getState().playFromList([track('1'),track('2'),track('3')],'1',{kind:'season',title:'season',collectionRef:'season:1:2'})
+ assert.equal(store.getState().current.id,'2');assert.deepEqual(store.getState().queue.map(t=>t.id),['2','3']);assert.equal(store.getState().queueBase.length,3)
+ visibility.setState({rules:[rule(1),rule(2)]})
+ assert.equal(store.getState().current.id,'2');assert.equal(store.getState().status,'playing')
+ await store.getState().next();assert.equal(store.getState().current.id,'3')
+ store.getState().enqueue([track('2')]);assert.ok(store.getState().queue.some(t=>t.id==='2'))
+ visibility.setState({rules:[rule(1),rule(2),{scope:'season:1:2',target:'BVTEST00001',hidden:true}]})
+ assert.deepEqual(store.getState().queue.map(t=>t.id),['2'])
+ visibility.setState({rules:[]});assert.equal(store.getState().queue.length,3)
+ store.getState().removeFromQueue('1');visibility.setState({rules:[rule(2)]});visibility.setState({rules:[]});assert.equal(store.getState().queue.some(t=>t.id==='1'),false)
+})
+test('a rule received during source resolution skips the hidden candidate before audio starts',async()=>{
+ const {store,module,audio}=setup();const pending=deferred()
+ testApi.resolve=async t=>{if(t.id==='1')await pending.promise;return `local://${t.id}`}
+ const playing=store.getState().playFromList([track('1'),track('2')],'1',{kind:'video',title:'video',collectionRef:'BVTEST00001'})
+ await new Promise(setImmediate)
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:1',hidden:true}]})
+ pending.resolve();await playing
+ assert.equal(store.getState().current.id,'2');assert.equal(audio[0].src,'local://2');assert.equal(audio[0].plays,1)
+})
+test('single repeat stops when every automatic candidate is hidden',async()=>{
+ const {store,module}=setup()
+ await store.getState().playFromList([track('1')],'1',{kind:'video',title:'video',collectionRef:'BVTEST00001'})
+ store.setState({repeatMode:'one'})
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:1',hidden:true}]})
+ await store.getState().next(true);assert.equal(store.getState().status,'paused');assert.equal(store.getState().queue.length,0)
+})
+test('a newly hidden resume checkpoint picks the next source row at zero, then wraps',async()=>{
+ const {store,module,audio}=setup()
+ const source={kind:'video',title:'video',collectionRef:'BVTEST00001'}
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:2',hidden:true}]})
+ await store.getState().playFromList([track('1'),track('2'),track('3')],'2',source,85,true)
+ assert.equal(store.getState().current.id,'3');assert.equal(audio[0].currentTime,0)
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:3',hidden:true}]})
+ await store.getState().playFromList([track('1'),track('2'),track('3')],'3',source,85,true)
+ assert.equal(store.getState().current.id,'1');assert.equal(audio[0].currentTime,0)
+})
+test('hiding an audible middle row preserves the next position, and hiding the last row ends playback',async()=>{
+ const {store,module}=setup(),rows=['1','2','3','4'].map(track)
+ await store.getState().playFromList(rows,'3',{kind:'video',title:'video'})
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:3',hidden:true}]})
+ await store.getState().next(true);assert.equal(store.getState().current.id,'4')
+ module.useContentVisibility.setState({rules:[3,4].map(cid=>({scope:'video:BVTEST00001',target:`cid:${cid}`,hidden:true}))})
+ await store.getState().next(true);assert.equal(store.getState().status,'paused');assert.equal(store.getState().current.id,'4')
+})
+
+test('unmanaged search playback and late season adoption ignore old hiding rules and survive restart',async()=>{
+ const {store,module,listeners,storage}=setup(),rows=['1','2','3'].map(track)
+ module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:1',hidden:true}]})
+ await store.getState().playFromList(rows,'1',{kind:'video',title:'search',collectionRef:'BVTEST00001',visibilityManaged:false})
+ assert.equal(store.getState().current.id,'1');assert.equal(store.getState().queue.length,3)
+ module.adoptSeasonQueue(module.playbackIntent(),'1',rows,'season','season:1:2',false)
+ assert.equal(store.getState().queue.length,3)
+ assert.deepEqual(store.getState().queueOrigins['1'],[''])
+ module.useContentVisibility.setState({rules:[{scope:'season:1:2',target:'BVTEST00001',hidden:true}]})
+ assert.equal(store.getState().queue.length,3)
+ listeners.pagehide()
+ const persisted=JSON.parse(storage.get('resonance-player-v1'))
+ delete persisted.state.queueOrigins
+ const restored=setup(persisted)
+ restored.module.useContentVisibility.setState({rules:[{scope:'season:1:2',target:'BVTEST00001',hidden:true}]})
+ assert.equal(restored.store.getState().queue.length,3)
+ assert.deepEqual(restored.store.getState().queueOrigins['1'],[''])
+ restored.listeners.pagehide()
 })

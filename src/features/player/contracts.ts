@@ -9,5 +9,5 @@ export function normalizeNativeSnapshot(state: NativeAudioState): PlayerSnapshot
     capabilities: state.capabilities ?? { autonomousQueue: state.autonomousQueue === true, seamlessSourceSwitch: false, nativeSleepTimer: false, snapshotRebind: false } }
 }
 
-export type NativeControlAction = 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'seek' | 'rate' | 'volume' | 'sleepStart' | 'sleepRepeat' | 'sleepDismiss' | 'sleepCancel' | 'videoFullscreen' | 'keyboard' | 'keepAwake' | 'largeScreen'
+export type NativeControlAction = 'loudness' | 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'seek' | 'rate' | 'volume' | 'sleepStart' | 'sleepRepeat' | 'sleepDismiss' | 'sleepCancel' | 'videoFullscreen' | 'keyboard' | 'keepAwake' | 'largeScreen'
 export type ControlCommand = { action: NativeControlAction; value?: number }

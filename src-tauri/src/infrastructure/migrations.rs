@@ -1,7 +1,7 @@
 //! One transactional entry point for fresh, account and guest databases.
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-const VERSION: i64 = 7;
+const VERSION: i64 = 10;
 
 pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -80,6 +80,24 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES(7); PRAGMA user_version=7;",
         )?;
     }
+    if version < 8 {
+        c.execute_batch(include_str!("../../migrations/0008_loudness_cache.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(8); PRAGMA user_version=8;",
+        )?;
+    }
+    if version < 9 {
+        c.execute_batch(include_str!("../../migrations/0009_visibility.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(9); PRAGMA user_version=9;",
+        )?;
+    }
+    if version < 10 {
+        c.execute_batch(include_str!("../../migrations/0010_import_entries.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(10); PRAGMA user_version=10;",
+        )?;
+    }
     tx.commit()
 }
 
@@ -150,8 +168,11 @@ mod tests {
     fn newer_migration_log_is_rejected_even_if_legacy_marker_was_reset() {
         let c = Connection::open_in_memory().unwrap();
         migrate(&c).unwrap();
-        c.execute_batch("INSERT INTO schema_migrations(version) VALUES(8); PRAGMA user_version=1;")
-            .unwrap();
+        c.execute_batch(&format!(
+            "INSERT INTO schema_migrations(version) VALUES({}); PRAGMA user_version=1;",
+            VERSION + 1
+        ))
+        .unwrap();
         assert!(migrate(&c).is_err());
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
@@ -234,12 +255,13 @@ mod tests {
     #[test]
     fn newer_database_is_rejected_without_changes() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("PRAGMA user_version=8").unwrap();
+        c.execute_batch(&format!("PRAGMA user_version={}", VERSION + 1))
+            .unwrap();
         assert!(migrate(&c).is_err());
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            8
+            VERSION + 1
         );
         assert_eq!(
             c.query_row(

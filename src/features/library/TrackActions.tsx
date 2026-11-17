@@ -1,6 +1,8 @@
+import { HideAction } from '../../shared/VisibilityControls'
+import { useVisibilityRules } from '../../services/contentVisibility'
 import { accountQueryKey } from '../../services/queryKeys'
 import { useQueryClient } from '@tanstack/react-query'
-import { Download,FolderPlus,ListMusic,ListVideo,Pencil,Play,Trash2 } from 'lucide-react'
+import { Download,FolderPlus,ListMusic,ListVideo,Pencil,Play,RefreshCw,Trash2 } from 'lucide-react'
 import { useEffect,useRef,useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Track } from '../../domain/track'
@@ -16,6 +18,7 @@ import { chooseTrackPlaylist,useTrackActions } from './trackActionStore'
 export { PlaylistButton,TrackMenuButton } from './TrackMenuButton'
 export function TrackActionsHost() {
   const { menu, adding } = useTrackActions()
+  const visibilityRules = useVisibilityRules()
   const [editing, setEditing] = useState<Track | null>(null)
   const [error, setError] = useState('')
   const element = useRef<HTMLDivElement>(null)
@@ -51,7 +54,9 @@ export function TrackActionsHost() {
       <small>{menu.track.title}</small>
       <button role="menuitem" onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
       {menu.openParts && <button role="menuitem" onClick={() => { useTrackActions.setState({ menu: null }); menu.openParts?.() }}><ListVideo size={15}/>查看选集</button>}
+      {menu.replaceVideo && <button role="menuitem" onClick={() => { const replace=menu.replaceVideo; useTrackActions.setState({ menu: null }); replace?.() }}><RefreshCw size={15}/>更换视频</button>}
       <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
+      {menu.visibilityScope && <HideAction track={menu.track} scope={menu.visibilityScope} rules={visibilityRules} onDone={()=>useTrackActions.setState({menu:null})}/>}
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />收藏到歌单…</button>
       {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); chooseDownload([track]) }}><Download size={15} />下载歌曲</button>}
       <button role="menuitem" onClick={() => void edit(menu.track)}><Pencil size={15} />编辑歌曲信息</button>

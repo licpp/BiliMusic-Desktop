@@ -549,13 +549,14 @@ pub async fn bili_video_source(
         .ensure_running()
         .await
         .map_err(|_| CommandError::provider("本机视频服务恢复失败，请稍后重试"))?;
-    source.video_url = media_proxy
+    let url = media_proxy
         .register_stream(
             source.video_url,
             std::mem::take(&mut source.backup_urls),
             source.mime_type.clone(),
         )
         .await;
+    source.video_url = media_proxy.platform_video_url(url, &source.codecs).await;
     Ok(source)
 }
 
@@ -754,8 +755,9 @@ pub async fn lyrics_search(
     if title.is_empty() {
         return Err(CommandError::validation("歌曲名不能为空"));
     }
+    // v4 refreshes QQ candidates cached before the complete QRC parsing fix.
     let key = serde_json::to_string(&(
-        "multi-source-v3",
+        "multi-source-v4",
         title.to_lowercase(),
         artist.as_deref().unwrap_or("").trim().to_lowercase(),
     ))
@@ -974,12 +976,14 @@ pub struct PlaybackPlan {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrade_url: Option<String>,
+    pub loudness_gain_db: f64,
 }
 impl PlaybackPlan {
-    fn direct(url: String) -> Self {
+    fn direct(url: String, loudness_gain_db: f64) -> Self {
         Self {
             url,
             upgrade_url: None,
+            loudness_gain_db,
         }
     }
 }
@@ -1013,6 +1017,7 @@ pub async fn track_playback_plan(
     media_proxy: State<'_, MediaProxy>,
     track_id: String,
     refresh: Option<bool>,
+    prefer_online: Option<bool>,
 ) -> Result<PlaybackPlan, CommandError> {
     playback_plan(
         database,
@@ -1020,8 +1025,8 @@ pub async fn track_playback_plan(
         media_proxy,
         track_id,
         refresh,
-        None,
-        true,
+        prefer_online,
+        !prefer_online.unwrap_or(false),
     )
     .await
 }
@@ -1039,7 +1044,7 @@ async fn playback_plan(
         .ensure_running()
         .await
         .map_err(|_| CommandError::provider("本机音频服务恢复失败，请稍后重试"))?;
-    let (track, paths) = {
+    let (track, paths, mut loudness_gain_db, account_session) = {
         let connection = database
             .0
             .lock()
@@ -1053,7 +1058,18 @@ async fn playback_plan(
             .map_err(CommandError::database)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CommandError::database)?;
-        (track, paths)
+        let gain = crate::infrastructure::repositories::loudness::LoudnessRepository::get(
+            &connection,
+            &track.bvid,
+            track.cid,
+        )
+        .ok()
+        .flatten()
+        .map(|d| d.gain_db())
+        .unwrap_or(0.0);
+        let account_session = crate::infrastructure::database::account_session(&connection)
+            .map_err(CommandError::database)?;
+        (track, paths, gain, account_session)
     };
     for path in paths
         .into_iter()
@@ -1064,7 +1080,10 @@ async fn playback_plan(
             .await
             .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
         {
-            return Ok(PlaybackPlan::direct(media_proxy.register_local(path).await));
+            return Ok(PlaybackPlan::direct(
+                media_proxy.register_local(path).await,
+                loudness_gain_db,
+            ));
         }
     }
     let quality = {
@@ -1090,7 +1109,12 @@ async fn playback_plan(
             media_proxy.cached_audio(&track_id, quality.audio_id).await
         };
         if let Some(url) = cached {
-            return Ok(PlaybackPlan::direct(url));
+            return Ok(PlaybackPlan::direct(
+                media_proxy
+                    .platform_cached_url(url, track.duration_seconds)
+                    .await,
+                loudness_gain_db,
+            ));
         }
     }
     let sources = if progressive {
@@ -1110,17 +1134,42 @@ async fn playback_plan(
                 return Err(CommandError::provider(error));
             }
             if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
-                return Ok(PlaybackPlan::direct(url));
+                return Ok(PlaybackPlan::direct(
+                    media_proxy
+                        .platform_cached_url(url, track.duration_seconds)
+                        .await,
+                    loudness_gain_db,
+                ));
             }
             return Err(CommandError::provider(error));
         }
     };
+    if let Some(descriptor) = provider.cached_loudness(&track.bvid, track.cid).await {
+        loudness_gain_db = descriptor.gain_db();
+        if let Ok(connection) = database.0.lock() {
+            if crate::infrastructure::database::account_session(&connection)
+                .ok()
+                .as_deref()
+                == Some(&account_session)
+            {
+                let _ = crate::infrastructure::repositories::loudness::LoudnessRepository::save(
+                    &connection,
+                    &descriptor,
+                );
+            }
+        }
+    }
     let target_bandwidth = source.bandwidth;
+    let target_codecs = source.codecs.clone();
     let target = media_proxy
         .register_audio(&track_id, &track.bvid, track.cid, quality.audio_id, source)
         .await;
     if let Some(initial) = initial {
+        let target = media_proxy
+            .platform_upgrade_url(target, track.duration_seconds, &target_codecs)
+            .await;
         let target = media_proxy.guard_upgrade(&target, target_bandwidth).await;
+        let initial_codecs = initial.codecs.clone();
         let url = media_proxy
             .register_audio(
                 &track_id,
@@ -1130,12 +1179,19 @@ async fn playback_plan(
                 initial,
             )
             .await;
+        let url = media_proxy
+            .platform_audio_url(url, track.duration_seconds, &initial_codecs)
+            .await;
         Ok(PlaybackPlan {
             url,
             upgrade_url: Some(target),
+            loudness_gain_db,
         })
     } else {
-        Ok(PlaybackPlan::direct(target))
+        let target = media_proxy
+            .platform_audio_url(target, track.duration_seconds, &target_codecs)
+            .await;
+        Ok(PlaybackPlan::direct(target, loudness_gain_db))
     }
 }
 

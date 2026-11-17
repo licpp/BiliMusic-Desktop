@@ -418,10 +418,23 @@ pub(super) struct PageData {
 #[derive(Deserialize)]
 struct PlayData {
     dash: Option<DashData>,
+    #[serde(default)]
+    volume: serde_json::Value,
+}
+
+impl PlayData {
+    fn into_dash(self, bvid: &str, cid: i64) -> Result<DashData, ProviderError> {
+        let mut dash = self.dash.ok_or(ProviderError::NoAudio)?;
+        dash.loudness =
+            crate::domain::loudness::LoudnessDescriptor::from_volume(bvid, cid, &self.volume);
+        Ok(dash)
+    }
 }
 
 #[derive(Deserialize)]
 struct DashData {
+    #[serde(skip)]
+    loudness: Option<crate::domain::loudness::LoudnessDescriptor>,
     #[serde(default)]
     flac: Option<FlacData>,
     #[serde(default)]
@@ -1066,6 +1079,22 @@ impl BilibiliProvider {
             .retain(|(video, part, _), _| video != bvid || *part != cid);
     }
 
+    /// Reads only the existing DASH result, never adds a network request.
+    pub async fn cached_loudness(
+        &self,
+        bvid: &str,
+        cid: i64,
+    ) -> Option<crate::domain::loudness::LoudnessDescriptor> {
+        self.dash_cache
+            .read()
+            .await
+            .get(&(bvid.to_owned(), cid, false))?
+            .get()?
+            .1
+            .loudness
+            .clone()
+    }
+
     pub async fn warm_playback(&self, bvid: &str, cid: i64) -> Result<(), ProviderError> {
         self.play_dash(bvid, cid, false).await.map(|_| ())
     }
@@ -1124,29 +1153,44 @@ impl BilibiliProvider {
             .append_pair("bvid", bvid)
             .append_pair("cid", &cid.to_string())
             .append_pair("qn", if expanded { "120" } else { "80" })
+            .append_pair("voice_balance", "1")
             .append_pair("fnver", "0")
             .append_pair("fnval", if expanded { "4048" } else { "1040" })
             .append_pair("fourk", if expanded { "1" } else { "0" });
         let play: PlayData = self.get_data(url).await?;
-        play.dash.ok_or(ProviderError::NoAudio)
+        play.into_dash(bvid, cid)
     }
 
     fn select_video_quality(
         streams: &[DashStream],
         height: u32,
     ) -> Result<VideoSource, ProviderError> {
+        Self::select_video_for_platform(streams, height, cfg!(target_os = "ios"))
+    }
+    #[cfg(test)]
+    pub(crate) async fn video_probe_for_platform(
+        &self,
+        bvid: &str,
+        cid: i64,
+        height: u32,
+        ios: bool,
+    ) -> Result<VideoSource, ProviderError> {
+        let dash = self.play_dash(bvid, cid, height > 1080).await?;
+        Self::select_video_for_platform(&dash.video, height, ios)
+    }
+    fn select_video_for_platform(
+        streams: &[DashStream],
+        height: u32,
+        ios: bool,
+    ) -> Result<VideoSource, ProviderError> {
         let maximum = if height > 0 {
             height
-        } else if cfg!(target_os = "ios") {
+        } else if ios {
             480
         } else {
             720
         };
-        let preferred = if cfg!(target_os = "ios") {
-            "hvc1"
-        } else {
-            "avc"
-        };
+        let preferred = if ios { "hvc1" } else { "avc" };
         let within_limit = |prefix: &str| {
             streams
                 .iter()
@@ -1156,11 +1200,7 @@ impl BilibiliProvider {
         let preferred_stream = within_limit(preferred);
         let avc_stream = within_limit("avc");
         let stream = if height == 0 {
-            let budget = if cfg!(target_os = "ios") {
-                650_000
-            } else {
-                1_200_000
-            };
+            let budget = if ios { 650_000 } else { 1_200_000 };
             let compatible = || {
                 streams.iter().filter(|s| {
                     s.codecs.starts_with(preferred) && s.height > 0 && s.height <= maximum
@@ -1531,6 +1571,53 @@ fn suggestion_words(value: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn platform_video_profiles_keep_native_codec_and_bandwidth_preferences() {
+        let streams: Vec<super::DashStream> = serde_json::from_value(serde_json::json!([
+            {"height":720,"bandwidth":900000,"codecs":"avc1.64001f","baseUrl":"https://cdn.test/avc720","mimeType":"video/mp4"},
+            {"height":480,"bandwidth":500000,"codecs":"hvc1.1.6.L93.90","baseUrl":"https://cdn.test/hevc480","mimeType":"video/mp4"},
+            {"height":360,"bandwidth":300000,"codecs":"avc1.64001e","baseUrl":"https://cdn.test/avc360","mimeType":"video/mp4"}
+        ])).unwrap();
+        let mac = super::BilibiliProvider::select_video_for_platform(&streams, 0, false).unwrap();
+        let ios = super::BilibiliProvider::select_video_for_platform(&streams, 0, true).unwrap();
+        assert_eq!(mac.video_url, "https://cdn.test/avc720");
+        assert_eq!(ios.video_url, "https://cdn.test/hevc480");
+        assert!(crate::infrastructure::fragmented_mp4::prefer_segmented(
+            1800,
+            &mac.codecs
+        ));
+        assert!(crate::infrastructure::fragmented_mp4::prefer_segmented(
+            1800,
+            &ios.codecs
+        ));
+    }
+    #[test]
+    fn optional_loudness_metadata_preserves_dash_audio_and_is_bound_to_the_part() {
+        for volume in [
+            serde_json::Value::Null,
+            serde_json::json!({"measured_i":-12,"measured_tp":0}),
+            serde_json::json!({"measured_i":"broken"}),
+            serde_json::json!("broken"),
+        ] {
+            let response = serde_json::json!({"volume":volume,"dash":{"audio":[{"id":30280,"baseUrl":"https://cdn.test/audio","bandwidth":192000}],"video":[]}});
+            let dash = serde_json::from_value::<super::PlayData>(response)
+                .unwrap()
+                .into_dash("BVtest", 42)
+                .unwrap();
+            assert_eq!(dash.audio[0].id, 30280);
+            assert_eq!(dash.audio[0].bandwidth, 192000);
+            assert_eq!(
+                dash.loudness.is_some(),
+                volume["measured_i"].as_f64().is_some()
+            );
+            if let Some(d) = dash.loudness {
+                assert!(d.valid_for("BVtest", 42));
+                assert!(!d.valid_for("BVtest", 43));
+                assert_eq!(d.gain_db(), -6.0);
+            }
+        }
+    }
+
     #[test]
     fn dash_cache_never_outlives_a_signed_source_deadline() {
         let now = std::time::SystemTime::now()

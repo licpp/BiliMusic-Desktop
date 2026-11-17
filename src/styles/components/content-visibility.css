@@ -1,0 +1,20 @@
+.visibility-tools{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;min-height:36px;margin:6px 0;color:var(--muted)}
+.visibility-tools button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;border-radius:10px}
+.visibility-tools button[aria-pressed=true]{color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,transparent)}
+.visibility-hidden .video-part-play,.large-track.visibility-hidden .large-track-main{opacity:.42}
+.visibility-hidden .video-part-copy strong{text-decoration:line-through;text-decoration-thickness:1px}
+.visibility-restore{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;padding:8px 10px;border-radius:10px;color:var(--cyan);font-size:13px}
+.visibility-hidden .video-part-play:disabled{cursor:default}
+@media(max-width:600px){.visibility-tools{gap:4px 8px}.visibility-tools button{font-size:13px}}
+
+.video-parts-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.video-parts-actions .visibility-tools{margin:0;gap:4px}
+.video-parts-actions .collection-flat-button{background:transparent;min-height:34px;padding:6px 9px}
+.video-parts-actions .collection-flat-button:hover{background:var(--panel-raised)}
+.video-parts-actions .collection-flat-button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+@media(max-width:420px){.video-parts-toolbar{align-items:flex-start;flex-wrap:wrap}.video-parts-toolbar>span{padding-top:10px;white-space:nowrap}.video-parts-actions{flex:1 1 auto;justify-content:flex-end;flex-wrap:wrap;min-width:0}.video-parts-actions .visibility-tools{flex-wrap:nowrap}.visibility-restore{padding:7px;font-size:12px}}
+.visibility-restore{border:0;background:transparent;font-family:inherit;cursor:pointer}
+.visibility-restore:hover{background:color-mix(in srgb,var(--cyan) 10%,transparent)}
+.visibility-restore:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.video-parts-toolbar .visibility-tools button{background:transparent}
+.video-parts-toolbar .visibility-tools button[aria-pressed=true]{background:color-mix(in srgb,var(--cyan) 10%,transparent)}

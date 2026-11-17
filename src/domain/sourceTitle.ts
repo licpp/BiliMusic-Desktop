@@ -1,6 +1,7 @@
 import type { SeasonSummary } from './bilibili'
 import type { Track } from './track'
 import { firstSongQuery } from './songIdentity'
+import { importedPresentation, sourceTrack } from './importedPresentation'
 
 export type SourceTitleContext = { videoTitle: string; partTitle: string; partCount: number; chapterContext?: boolean; season?: SeasonSummary }
 const genericPart = (value: string) => /^(?:p\s*\d+|part\s*\d+|正片|视频|默认|默认标题)$/i.test(value.normalize('NFKC'))
@@ -44,22 +45,26 @@ export function contentTitle(context: SourceTitleContext) {
 }
 
 export function withTrackTitle(track: Track): Track {
+  track = sourceTrack(track)
   if (track.titleOverridden) return track.displayTitle === track.title ? track : { ...track, displayTitle: track.title }
   const title = track.sourceTitleContext ? contentTitle(track.sourceTitleContext) : track.displayTitle || track.title
-  return title === track.title && title === track.displayTitle ? track : { ...track, title, displayTitle: title }
+  return importedPresentation(title === track.title && title === track.displayTitle ? track : { ...track, title, displayTitle: title })
 }
 
 type SeriesHeading = { kind?: string; title?: string; collectionRef?: string }
-export function hasSeriesHeading(track: Track, heading?: SeriesHeading) {
+type SubtitleTrack = Pick<Track, 'artist' | 'sourceTitleContext' | 'titleOverridden' | 'importedEntry'> & { id?: string; source: Pick<Track['source'], 'uploaderName'> }
+export function hasSeriesHeading(track: Pick<Track, 'sourceTitleContext'>, heading?: SeriesHeading) {
   const season = track.sourceTitleContext?.season
   return Boolean(season && (heading?.collectionRef === `season:${season.uploaderId}:${season.id}`
     || heading?.kind === 'season' && identity(heading.title || '') === identity(season.title)))
 }
-export function trackSubtitle(track: Track, heading?: SeriesHeading) {
-  if (hasSeriesHeading(track, heading)) return knownArtist(track)
-  return track.sourceTitleContext?.season?.title || knownArtist(track) || track.source.uploaderName || ''
+export function trackSubtitle(track: SubtitleTrack, heading?: SeriesHeading) {
+  const artist = knownArtist(track)
+  if (artist || hasSeriesHeading(track, heading)) return artist
+  return track.sourceTitleContext?.season?.title || track.source.uploaderName || ''
 }
-export function knownArtist(track: Track) {
+export function knownArtist(track: SubtitleTrack) {
   const artist = track.artist?.trim() || ''
-  return /^(?:歌手未知|未知歌手|未知|unknown(?: artist)?)$/i.test(artist) || identity(artist) === identity(track.source.uploaderName || '') ? '' : artist
+  const explicitArtist = track.titleOverridden || Boolean(track.importedEntry && track.importedEntry.trackId === track.id)
+  return /^(?:歌手未知|未知歌手|未知|unknown(?: artist)?)$/i.test(artist) || !explicitArtist && identity(artist) === identity(track.source.uploaderName || '') ? '' : artist
 }

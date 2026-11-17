@@ -20,6 +20,24 @@ resume.begin(wasPlaying:true);precondition(!resume.finish(allowed:false));precon
 resume.begin(wasPlaying:false);precondition(!resume.finish(allowed:true))
 // Explicit pause/stop cancels a delayed recommendation, including duplicates.
 resume.begin(wasPlaying:true);resume.cancel();precondition(!resume.finish(allowed:true));precondition(!resume.finish(allowed:true))
+// A legacy media app may omit the end event. Returning to BiliMusic recovers
+// only the captured interruption, after other audio has stopped.
+resume.begin(wasPlaying:true)
+let missingEnd = resume.foregroundToken!
+precondition(!resume.canRecoverInForeground(token:missingEnd,otherAudioPlaying:true))
+precondition(resume.canRecoverInForeground(token:missingEnd,otherAudioPlaying:false))
+// A failed activation does not consume intent; the next foreground can retry.
+precondition(resume.foregroundToken == missingEnd)
+precondition(resume.finish(allowed:true));precondition(resume.foregroundToken == nil)
+precondition(!resume.canRecoverInForeground(token:missingEnd,otherAudioPlaying:false))
+resume.begin(wasPlaying:true);let manual = resume.foregroundToken!;resume.cancel()
+precondition(!resume.canRecoverInForeground(token:manual,otherAudioPlaying:false))
+resume.begin(wasPlaying:true);let denied = resume.foregroundToken!;precondition(!resume.finish(allowed:false))
+precondition(!resume.canRecoverInForeground(token:denied,otherAudioPlaying:false))
+resume.begin(wasPlaying:true);let stale = resume.foregroundToken!;resume.begin(wasPlaying:false)
+precondition(!resume.canRecoverInForeground(token:stale,otherAudioPlaying:false))
+precondition(resume.canRecoverInForeground(token:resume.foregroundToken!,otherAudioPlaying:false))
+resume.cancel();resume.begin(wasPlaying:false);precondition(resume.foregroundToken == nil)
 var recovery = PlaybackRecovery()
 let threshold = AutomaticResumePolicy(enabled:true,thresholdSeconds:600,collection:false,durationSeconds:0)
 recovery.prepare(policy:threshold)

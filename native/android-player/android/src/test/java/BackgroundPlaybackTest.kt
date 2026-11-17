@@ -62,6 +62,31 @@ class BackgroundPlaybackTest {
         PlaybackService.listener = null; PlaybackService.resolveListener = null; PlaybackService.listeningListener = null
         PlaybackService.controllerListener = null; PlaybackService.queueData = null; PlaybackService.profilePath = null
     }
+    @Test fun loudnessSurvivesFocusVolumeAndNativeQueueWithoutDoubleAttenuation() {
+        service.onStartCommand(Intent(service,PlaybackService::class.java).setAction("load").putExtra("id","1")
+            .putExtra("url",url).putExtra("volume",.8).putExtra("loudnessGainDb",-6.0)
+            .putExtra("loudnessEnabled",true).putExtra("loudnessRevision",2L),0,1)
+        idle()
+        val expected=(.8*Math.pow(10.0,-6.0/20)).toFloat()
+        assertEquals(expected,shadowOf(player()).leftVolume,.000001f)
+        val focus=shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(expected*.2f,shadowOf(player()).leftVolume,.000001f)
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals(expected,shadowOf(player()).leftVolume,.000001f)
+        service.control("volume",.6)
+        assertEquals((.6*Math.pow(10.0,-6.0/20)).toFloat(),shadowOf(player()).leftVolume,.000001f)
+        service.control("next")
+        val request=requests.last()
+        service.resolved(request.first,JSONObject().put("url",url).put("track",request.second.getJSONObject("track")).put("loudnessGainDb",-9.0))
+        idle()
+        assertEquals((.6*Math.pow(10.0,-9.0/20)).toFloat(),shadowOf(player()).leftVolume,.000001f)
+        service.configureLoudness(false,3L)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(340))
+        assertEquals(.6f,shadowOf(player()).leftVolume,.000001f)
+        service.configureLoudness(true,2L)
+        assertEquals(.6f,shadowOf(player()).leftVolume,.000001f)
+    }
     @Test fun completedTracksAdvanceWithoutAnyWebViewListener() {
         load(); shadowOf(player()).invokeCompletionListener()
         assertEquals("2", requests.single().second.getJSONObject("track").getString("id"))
@@ -113,6 +138,27 @@ class BackgroundPlaybackTest {
         assertEquals("paused", service.snapshot().getString("status"))
         service.control("resume"); service.control("seek", 40.0); idle()
         assertEquals("playing", service.snapshot().getString("status")); assertEquals(40.0, service.snapshot().getDouble("position"), 0.1)
+    }
+    @Test fun transientFocusReturnsToTheSameTimelineUnlessTheUserPausesOrStops() {
+        load(); service.control("seek", 25.0); idle()
+        val focus = shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        assertEquals("paused", service.snapshot().getString("status"))
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+        assertTrue(requests.isEmpty())
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        service.control("pause")
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        assertEquals("paused", service.snapshot().getString("status"))
+        service.control("resume")
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        service.control("stop")
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        assertEquals("paused", service.snapshot().getString("status"))
+        assertNull(field("player")); assertTrue(requests.isEmpty())
     }
     @Test fun headsetReceiverTargetsThisServiceAndConsumesKeyUpOnce() {
         load()

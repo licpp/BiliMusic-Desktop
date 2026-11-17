@@ -1,5 +1,6 @@
 import { trackSubtitle } from '../../domain/sourceTitle'
 import { accountQueryKey } from '../../services/queryKeys'
+import { accountEpoch } from '../../services/accountScope'
 import { useQuery,useQueryClient } from '@tanstack/react-query'
 import { Heart,Library,ListPlus,Play } from 'lucide-react'
 import { useEffect,useRef,useState } from 'react'
@@ -26,6 +27,9 @@ import { PlaylistMenu } from './PlaylistEntry'
 import { showTrackMenu } from './trackActionStore'
 import { TrackMenuButton } from './TrackMenuButton'
 import { BatchTrackActions,useTrackSelection } from './useTrackSelection'
+import { useImportedPlaylist } from './useImportedPlaylist'
+import { ReplacementDialog } from './ReplacementDialog'
+import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
 
 export type LibraryTab = 'saved' | 'recent' | 'downloads'
 export function MusicLibraryView({ tab, onTabChange }: { tab: LibraryTab; onTabChange: (tab: LibraryTab) => void }) {
@@ -47,6 +51,8 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
   const enqueue = usePlayerStore((state) => state.enqueue)
   const updatePlayerTrack = usePlayerStore((state) => state.updateTrack)
   const tracks = useQuery({ queryKey: accountQueryKey('library', recent ? 'recent' : 'saved', playlist?.id), queryFn: () => playlist ? listPlaylistTracks(playlist.id) : recent ? listRecentTracks() : listLibraryTracks(false, true) })
+  const imported = useImportedPlaylist(playlist)
+  const [replacement,setReplacement] = useState<ImportedEntry>()
   useEffect(() => { if (tracks.data?.length) void hydrateSourceTitles(tracks.data.map(track => track.id), client) }, [tracks.data, client])
   const currentId = usePlayerStore(state => state.current?.id)
   const grid = useRef<HTMLDivElement>(null)
@@ -55,7 +61,7 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
   const sortEntity=playlist?playlistEntity(playlist):'view:saved'
   const listSort=useListSort(sortEntity)
   const sortedTracks=sortTracks(tracks.data||[],recent?'source:asc':listSort.rule,listSort.dates,listSort.playCounts)
-  const visibleTracks = sortedTracks.filter(track => matchesTrackSearch(track, filter))
+  const visibleTracks = sortedTracks.filter(track => {const entry=imported.byTrack.get(track.id);return matchesTrackSearch(track, filter)||Boolean(entry&&`${entry.song.title} ${entry.song.artists.join(' ')} ${entry.song.album||''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))})
   const selection = useTrackSelection(visibleTracks)
   useEffect(() => { setFilter(''); selection.exit() }, [playlist?.id, recent])
   const [favoriteError, setFavoriteError] = useState('')
@@ -64,6 +70,16 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
   useEffect(() => { void hydrateVisibleTracks(tracks.data, client).catch(() => undefined) }, [tracks.data, client])
   const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
   const refresh = () => Promise.all([client.invalidateQueries({ queryKey: accountQueryKey('library') }), client.invalidateQueries({ queryKey: accountQueryKey('playlists') }), client.invalidateQueries({ queryKey: accountQueryKey('home-recent') })])
+  const replaced = (snapshot:ImportedEntriesSnapshot) => {
+    const epoch=accountEpoch(),entryId=replacement?.entryId
+    client.setQueryData(accountQueryKey('imported-entries',playlist?.id),snapshot)
+    setReplacement(undefined)
+    void refresh().then(()=>requestAnimationFrame(()=>{
+      if(epoch!==accountEpoch())return
+      const row=[...document.querySelectorAll<HTMLElement>('[data-import-entry]')].find(el=>el.dataset.importEntry===entryId)
+      row?.querySelector<HTMLButtonElement>('[aria-label="歌曲操作"]')?.focus({preventScroll:true})
+    }))
+  }
   const toggleFavorite = async (track: Track) => {
     if (favoritePending.has(track.id)) return
     const previous = favoriteOverrides[track.id] ?? track.liked
@@ -83,7 +99,7 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
   return <section className={`library-view${playlist ? '' : ' library-tab-content'}`}>
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (recent ? '最近播放' : '已收藏')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
-    {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} onRemove={playlist ? async selected => {
+    {selection.selecting ? <BatchTrackActions allowAutoMatch selection={selection} total={visibleTracks.length} onRemove={playlist ? async selected => {
       await removeTracksFromPlaylist(playlist.id, selected.map(track => track.id))
       if (isFavorites) selected.forEach(track => updatePlayerTrack({ ...track, liked: false }))
       await refresh()
@@ -94,7 +110,7 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
     </div><div className="library-toolbar-icons">
       {!recent && <ListSort entity={sortEntity}/>}
       <ListSearch query={filter} onChange={setFilter} count={visibleTracks.length}/>
-      {playlist ? <PlaylistMenu playlist={playlist} onRemoved={onPlaylistDeleted} onRematch={playlist.id.startsWith('import:') && onRematchImported ? () => onRematchImported(playlist) : undefined}
+      {playlist ? <PlaylistMenu playlist={playlist} onRemoved={onPlaylistDeleted} missingCount={imported.missing.length} onRematch={imported.missing.length && onRematchImported ? () => onRematchImported(playlist) : undefined}
         listActions={compact ? {select: selection.enter, play: () => { void playAll(visibleTracks) }, enqueue: () => enqueue(visibleTracks), disabled: !visibleTracks.length} : undefined}/> : compact && <ActionMenu sheet label="列表操作">{close => <>
         <button disabled={!visibleTracks.length} onClick={() => { close(); selection.enter() }}>多选歌曲</button>
         <button disabled={!visibleTracks.length} onClick={() => { close(); enqueue(visibleTracks) }}><ListPlus size={16}/>全部加入队列</button>
@@ -107,21 +123,22 @@ export function LibraryView({ recent = false, playlist, onPlaylistDeleted, onRem
     {tracks.isLoading && <LibraryEmpty spinning title="正在读取资料库" detail="本地数据库正在准备歌曲信息" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {tracks.data?.length === 0 && <LibraryEmpty title={isFavorites ? '还没有喜欢的歌曲' : playlist ? '歌单还是空的' : recent ? '还没有播放记录' : '还没有收藏的歌曲'} detail={isFavorites ? '点击歌曲旁的红心，或通过“加入歌单”添加到我喜欢。' : playlist ? '通过歌曲菜单把歌曲加入这里。' : recent ? '播放过的歌曲会出现在这里。' : '点击红心，或把歌曲加入歌单后，它会出现在这里。'} />}
-    {Boolean(tracks.data?.length) && <div className="library-grid" ref={grid}>{visibleTracks.map((source, index) => { const track = favoriteOverrides[source.id] === undefined ? source : { ...source, liked: favoriteOverrides[source.id] }; return <article className={selection.selecting ? 'library-track selecting' : 'library-track playing-row'} data-current-row={currentId === track.id ? track.id : undefined} key={track.id} onContextMenu={(event) => { if (!selection.selecting) showTrackMenu(event, track, playlist?.id, visibleTracks) }}>
+    {Boolean(tracks.data?.length) && <div className="library-grid" ref={grid}>{visibleTracks.map((source, index) => { const track = favoriteOverrides[source.id] === undefined ? source : { ...source, liked: favoriteOverrides[source.id] }; const entry=imported.byTrack.get(track.id); const originalSong=track.titleOverridden?undefined:entry?.song; const rowActions=entry?{replaceVideo:()=>setReplacement(entry)}:undefined; return <article className={selection.selecting ? 'library-track selecting' : 'library-track playing-row'} data-import-entry={entry?.entryId} data-current-row={currentId === track.id ? track.id : undefined} key={track.id} onContextMenu={(event) => { if (!selection.selecting) showTrackMenu(event, track, playlist?.id, visibleTracks, rowActions) }}>
       {selection.selecting ? <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} /> :
       <button className="library-art" onClick={() => void play(visibleTracks, track.id)} aria-label={`播放 ${track.title}`}>
-        {track.coverUrl ? <Artwork src={track.coverUrl} adaptAspect /> : <span className={`tone-${index % 4}`} />}
+        {originalSong?.coverUrl || track.coverUrl ? <Artwork src={originalSong?.coverUrl || track.coverUrl} adaptAspect /> : <span className={`tone-${index % 4}`} />}
         <i><Play fill="currentColor" /></i>
         {currentId === track.id && <PlayingMark/>}
       </button>}
-      <div className="library-copy" role="button" aria-current={currentId === track.id ? 'true' : undefined} tabIndex={0} onClick={() => { if (!selection.selecting) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{track.displayTitle || track.title}</strong><small>{trackSubtitle(track)}{track.album ? ` · ${track.album}` : ''}</small></div>
+      <div className="library-copy" role="button" aria-current={currentId === track.id ? 'true' : undefined} tabIndex={0} onClick={() => { if (!selection.selecting) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{originalSong?.title || track.displayTitle || track.title}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
       <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
-      <TrackMenuButton track={track} playlistId={playlist?.id} tracks={visibleTracks} />
+      <TrackMenuButton track={track} playlistId={playlist?.id} tracks={visibleTracks} actions={rowActions}/>
       </div>}
     </article>})}</div>}
     </div>
+    {replacement&&imported.data&&<ReplacementDialog entry={replacement} session={imported.data.session} currentTrack={tracks.data?.find(t=>t.id===replacement.trackId)} onSaved={replaced} onClose={()=>setReplacement(undefined)}/>}
 
   </section>
 }

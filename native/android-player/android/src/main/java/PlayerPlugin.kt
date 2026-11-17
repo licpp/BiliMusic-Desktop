@@ -25,6 +25,9 @@ class PlayArgs {
     var artist: String = "歌手未知"
     var coverUrl: String? = null
     var position: Double = 0.0
+    var loudnessGainDb: Double = 0.0
+    var loudnessEnabled: Boolean = false
+    var loudnessRevision: Long = 0
     var volume: Double = 0.7
     var playing: Boolean = true
     var seamless: Boolean = false
@@ -37,6 +40,7 @@ class PlayArgs {
 class LyricsArgs { var data: String = "{}" }
 @InvokeArg
 class ControlArgs {
+    var settingsRevision: Long = 0
     lateinit var action: String
     var value: Double = 0.0
     var id: String = ""
@@ -317,7 +321,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject("无效的本地播放地址"); return
         }
         if(args.seamless){
-            activity.runOnUiThread { val service=PlaybackService.instance;if(service==null)invoke.reject("当前没有可切换的音源") else service.switchSource(args.url,args.id){message->if(message==null)invoke.resolve()else invoke.reject(message)} }
+            activity.runOnUiThread { PlaybackService.instance?.configureLoudness(args.loudnessEnabled,args.loudnessRevision) }
+            activity.runOnUiThread { val service=PlaybackService.instance;if(service==null)invoke.reject("当前没有可切换的音源") else service.switchSource(args.url,args.id,args.loudnessGainDb){message->if(message==null)invoke.resolve()else invoke.reject(message)} }
             return
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
@@ -325,6 +330,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
             .putExtra("title", args.title).putExtra("artist", args.artist)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
+            .putExtra("loudnessGainDb", args.loudnessGainDb).putExtra("loudnessEnabled", args.loudnessEnabled).putExtra("loudnessRevision", args.loudnessRevision)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)
         args.automaticResume?.let { policy ->
             intent.putExtra("automaticResume", true).putExtra("resumeEnabled", policy.enabled)
@@ -372,7 +378,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 if (args.action.startsWith("sleep") && service == null) {
                     invoke.reject("请先开始播放"); return@runOnUiThread
                 }
-                if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
+                if (args.action == "loudness") service?.configureLoudness(args.value > 0,args.settingsRevision)
+                else if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
                 else try {
                     service?.control(args.action, args.value)
                 } catch (_: IllegalArgumentException) {

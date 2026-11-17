@@ -4,7 +4,10 @@ import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 const output = await build({
   entryPoints: ['src/features/player/playerStore.ts'], bundle: true, write: false, format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
-  plugins: [{ name: 'android-boundary', setup(b) {
+  plugins: [{name:'visibility-boundary',setup(b){
+    b.onResolve({filter:/services\/contentVisibility$/},()=>({path:'visibility',namespace:'visibility-test'}))
+    b.onLoad({filter:/.*/,namespace:'visibility-test'},()=>({contents:`import {create} from 'zustand'; export const useContentVisibility=create(()=>({session:'test-session',rules:[]})); export const ensureVisibility=async()=>{};`}))
+  }},{ name: 'android-boundary', setup(b) {
     b.onResolve({ filter: /services\/desktopApi$/ }, () => ({ path: 'api', namespace: 'mock' }))
     b.onResolve({ filter: /services\/platform$/ }, () => ({ path: 'platform', namespace: 'mock' }))
     b.onResolve({ filter: /\.\/androidAudio$/ }, () => ({ path: 'audio', namespace: 'mock' }))

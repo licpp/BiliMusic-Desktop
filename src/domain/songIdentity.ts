@@ -1,3 +1,7 @@
+import { Converter } from 'opencc-js/t2cn'
+const simplified = Converter({ from: 't', to: 'cn' })
+export type ExternalSong = { title:string; artists:string[]; aliases?:string[]; durationSeconds?:number }
+
 /** Shared song text recognition. No network, UI, account or persistence policy. */
 export type SongQueryInput = { title: string; artist?: string; source?: { uploaderName?: string } }
 export type SongQuery = { title: string; artist: string }
@@ -5,7 +9,7 @@ export type SongQuery = { title: string; artist: string }
 export type SongEdition = 'live' | 'cover' | 'instrumental' | 'orchestral' | 'remix' | 'sped' | 'slowed' | 'remastered' | 'acoustic' | 'short' | 'cantonese' | 'mandarin'
 const editions: Record<SongEdition, RegExp> = {
   live: /现场|演唱会|音乐会|\b(?:live|concert|the first take)\b/iu,
-  cover: /翻唱|翻弹|\bcover(?:ed)?\b/iu,
+  cover: /翻唱|翻弹|歌ってみた|歌ってみました|弾いてみた|\bcover(?:ed)?\b/iu,
   instrumental: /伴奏|纯音乐|无人声|\b(?:instrumental|off[ -]?vocal|karaoke|inst)\b\.?/iu,
   orchestral: /管弦|交响|\b(?:orchestral|orchestra|orch)\b\.?/iu,
   remix: /混音|重混|\b(?:remix|dj)\b/iu,
@@ -30,7 +34,7 @@ export function decodeSongText(text: string): string {
 export const readableSongText = (text: string) => decodeSongText(text).toLowerCase()
 
 export function songWords(text: string): string {
-  return readableSongText(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
+  return simplified(readableSongText(text)).replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
 }
 export const songTextIdentity = (text: string) => songWords(text).replace(/ /g, '')
 export function coreSongTitle(text: string): string {
@@ -80,7 +84,7 @@ export function primarySongTitle(title: string) {
   return decodeSongText(title).replace(/[（(]([^）)]*)[）)]/gu, (whole, label: string) => {
     const bilingual = /[^\x00-\x7f]/.test(title.replace(whole, '')) && /^[\x00-\x7f\s]+$/.test(label)
     return /^\s*(?:feat\.?|ft\.?|featuring)\s/iu.test(label) || bilingual && !songEditions(label).size ? ' ' : whole
-  }).replace(/\s+/g, ' ').trim()
+  }).replace(/\s+(?:feat\.?|ft\.?|featuring)\s+.+$/iu, '').replace(/\s+/g, ' ').trim()
 }
 
 // Dice similarity is used by lyric / metadata result ordering. Playlist ranking
@@ -175,3 +179,25 @@ export function songQueries(track: SongQueryInput): SongQuery[] {
   return queries.length ? queries.slice(0, 2) : [{ title, artist }]
 }
 export const firstSongQuery = (track: SongQueryInput) => songQueries(track)[0]
+
+export type RecognizedSong = {
+  titles: string[]
+  artists: string[]
+  editions: Set<SongEdition>
+  queries: SongQuery[]
+}
+/** Parse both catalog identities and noisy video captions. A performer suffix is
+ * removable only when it names an artist supplied by the catalog; arbitrary
+ * “XX版” labels and all edition requirements remain part of the identity. */
+export function recognizeSong(input: {title: string; artists?: string[]; artist?: string; aliases?: string[]; uploaderName?: string; artistHints?:string[]}): RecognizedSong {
+  const artists = (input.artists || (input.artist ? [input.artist] : [])).map(a => a.trim()).filter(Boolean)
+  const performerHints = [...artists,...(input.artistHints || [])]
+  const title = decodeSongText(input.title).replace(/\(([^()]*)\)/gu, (whole, label: string) => {
+    if (songEditions(label).size) return whole
+    const performer = label.replace(/(?:版本|版)$/u, '').trim()
+    return /版$/u.test(label) && performerHints.some(a => songTextIdentity(a) === songTextIdentity(performer)) ? '' : whole
+  }).replace(/\s+/g, ' ').trim()
+  const queries = songQueries({title, artist: artists[0] || '', source: {uploaderName:input.uploaderName}})
+  const titles = [...new Set([...queries.map(q => coreSongTitle(primarySongTitle(q.title))), ...(input.aliases || []).filter(a => !/电视剧|影视|主题曲|片头曲|片尾曲|插曲|\bOST\b/iu.test(a)).map(a => coreSongTitle(primarySongTitle(a)))].filter(Boolean))]
+  return {titles, artists:artists.length ? artists : [...new Set(queries.map(q=>q.artist).filter(Boolean))], editions:songEditions(title), queries}
+}

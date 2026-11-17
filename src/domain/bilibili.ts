@@ -11,4 +11,5 @@ export type FavoritePage = { medias?: FavoriteVideo[]; has_more: boolean }
 export type LinkedFolder = { folderId: number; name: string; refreshedAt: number; videos: FavoriteVideo[] }
 export type SeasonSummary = { id:number; uploaderId:number; title:string; coverUrl:string; uploaderName:string }
 export type SeasonVideo = { publishedAt?: number; bvid: string; aid: number; cid: number; title: string; coverUrl: string; durationSeconds: number; playCount?: number; parts?: BiliVideoPart[] }
-export type Season = { unavailable: number; summary: SeasonSummary; tracks: SeasonVideo[] }
+export type SeasonSection = { id:string; title:string; bvids:string[] }
+export type Season = { unavailable: number; summary: SeasonSummary; tracks: SeasonVideo[]; sections?:SeasonSection[] }

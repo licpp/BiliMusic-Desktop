@@ -34,11 +34,21 @@ const MAX_ENTRIES: usize = 24;
 const PREFIX_LIMIT: usize = 256 * 1024;
 const MEDIA_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 #[cfg(test)]
+#[path = "long_audio_probe.rs"]
+mod long_audio_probe;
+#[cfg(test)]
 #[path = "startup_benchmark.rs"]
 mod startup_benchmark;
 
 #[derive(Clone)]
+enum FragmentManifest {
+    Ready(Arc<String>),
+    Pending(String),
+}
+
+#[derive(Clone)]
 struct MediaEntry {
+    manifest: Option<FragmentManifest>,
     upgrade_gate: Option<(u64, Arc<tokio::sync::OnceCell<bool>>)>,
     upstream_urls: Vec<String>,
     content_type: String,
@@ -117,6 +127,7 @@ impl MediaProxy {
         let router = Router::new()
             .route("/_health/{token}", get(proxy_health))
             .route("/{token}/{media_id}", get(proxy_media))
+            .route("/{token}/{media_id}/index.m3u8", get(proxy_manifest))
             .with_state(state);
         tauri::async_runtime::spawn(async move {
             if let Err(error) = axum::serve(listener, router).await {
@@ -273,6 +284,7 @@ impl MediaProxy {
         entries.insert(
             media_id.clone(),
             MediaEntry {
+                manifest: None,
                 upgrade_gate: None,
                 upstream_urls,
                 content_type,
@@ -301,6 +313,7 @@ impl MediaProxy {
         entries.insert(
             id.clone(),
             MediaEntry {
+                manifest: None,
                 upgrade_gate: None,
                 upstream_urls: vec![],
                 content_type: "audio/mp4".into(),
@@ -333,8 +346,10 @@ impl MediaProxy {
     }
     pub async fn guard_upgrade(&self, url: &str, bandwidth: u64) -> String {
         let id = Uuid::new_v4().simple().to_string();
+        let raw = url.strip_suffix("/index.m3u8").unwrap_or(url);
+        let local = self.local_url(&id).await;
         let mut entries = self.state.entries.write().await;
-        let Some(mut entry) = url
+        let Some(mut entry) = raw
             .rsplit('/')
             .next()
             .and_then(|key| entries.get(key))
@@ -345,6 +360,14 @@ impl MediaProxy {
         // The same CDN route can already serve explicit playback. Give the
         // automatic candidate its own gate without changing that route's policy.
         entry.upgrade_gate = Some((bandwidth, Arc::new(tokio::sync::OnceCell::new())));
+        // A guarded route owns its byte ranges too. It must survive eviction of
+        // the original unguarded route, without retaining a stale source ID.
+        entry.manifest = entry.manifest.map(|manifest| match manifest {
+            FragmentManifest::Ready(text) => {
+                FragmentManifest::Ready(Arc::new(text.replace(raw, &local)))
+            }
+            FragmentManifest::Pending(_) => FragmentManifest::Pending(local.clone()),
+        });
         entries.retain(|_, value| value.expires_at > Instant::now());
         if entries.len() >= MAX_ENTRIES {
             if let Some(oldest) = entries
@@ -357,7 +380,11 @@ impl MediaProxy {
         }
         entries.insert(id.clone(), entry);
         drop(entries);
-        self.local_url(&id).await
+        if raw != url {
+            format!("{local}/index.m3u8")
+        } else {
+            local
+        }
     }
     pub async fn register_audio(
         &self,
@@ -392,6 +419,103 @@ impl MediaProxy {
                 .await
         }
     }
+    pub async fn platform_cached_url(&self, url: String, duration_seconds: i64) -> String {
+        let id = url.rsplit('/').next().unwrap_or_default();
+        let codecs = self
+            .state
+            .entries
+            .read()
+            .await
+            .get(id)
+            .and_then(|entry| entry.cached.as_ref())
+            .and_then(|audio| audio.variant.fingerprint.rsplit('|').nth(1))
+            .unwrap_or("")
+            .to_owned();
+        self.platform_audio_url(url, duration_seconds, &codecs)
+            .await
+    }
+    pub async fn platform_audio_url(
+        &self,
+        url: String,
+        duration_seconds: i64,
+        codecs: &str,
+    ) -> String {
+        if cfg!(any(target_os = "ios", target_os = "macos"))
+            && super::fragmented_mp4::prefer_segmented(duration_seconds, codecs)
+        {
+            match self.segmented_mp4(&url).await {
+                Ok(Some(segmented)) => return segmented,
+                Ok(None) => {}
+                Err(_) => eprintln!(
+                    "[playback] stage=fragment_index unavailable; retaining original source"
+                ),
+            }
+        }
+        url
+    }
+    pub async fn platform_video_url(&self, url: String, codecs: &str) -> String {
+        // Audio and video DASH tracks use the same fragmented MP4/SIDX layout.
+        self.platform_audio_url(url, 0, codecs).await
+    }
+    /// Preparing an automatic quality upgrade must not hold up its initial source.
+    /// The candidate reads its index only when the native player requests it.
+    pub async fn platform_upgrade_url(
+        &self,
+        url: String,
+        duration_seconds: i64,
+        codecs: &str,
+    ) -> String {
+        if cfg!(any(target_os = "ios", target_os = "macos"))
+            && super::fragmented_mp4::prefer_segmented(duration_seconds, codecs)
+        {
+            let id = url.rsplit('/').next().unwrap_or_default();
+            let mut entries = self.state.entries.write().await;
+            if let Some(entry) = entries.get_mut(id) {
+                if entry.local_path.is_none() && entry.content_type == "audio/mp4" {
+                    if entry.manifest.is_none() {
+                        entry.manifest = Some(FragmentManifest::Pending(url.clone()));
+                    }
+                    return format!("{url}/index.m3u8");
+                }
+            }
+        }
+        url
+    }
+    /// AVFoundation otherwise scans a long fragmented MP4 to learn its duration.
+    /// Reuse SIDX ranges rather than copying/transcoding/downloading the full asset.
+    pub async fn segmented_mp4(&self, url: &str) -> Result<Option<String>, String> {
+        let id = url.rsplit('/').next().ok_or("本机媒体地址无效")?;
+        let entry = self
+            .state
+            .entries
+            .read()
+            .await
+            .get(id)
+            .cloned()
+            .ok_or("本机媒体已过期")?;
+        if entry.manifest.is_some() {
+            return Ok(Some(format!("{url}/index.m3u8")));
+        }
+        if entry.local_path.is_some()
+            || !matches!(entry.content_type.as_str(), "audio/mp4" | "video/mp4")
+        {
+            return Ok(None);
+        }
+        let index = tokio::time::timeout(
+            Duration::from_secs(8),
+            read_fragment_index(&self.state, &entry),
+        )
+        .await
+        .map_err(|_| "媒体分段索引读取超时")??;
+        let Some(index) = index else { return Ok(None) };
+        let count = index.segments.len();
+        let playlist = Arc::new(index.playlist(url));
+        let mut entries = self.state.entries.write().await;
+        let entry = entries.get_mut(id).ok_or("本机媒体已过期")?;
+        entry.manifest = Some(FragmentManifest::Ready(playlist));
+        eprintln!("[playback] stage=fragment_index segments={count}");
+        Ok(Some(format!("{url}/index.m3u8")))
+    }
     async fn register_cached(&self, mut variant: Variant, urls: Vec<String>) -> String {
         let cache = self.state.cache.as_ref().unwrap().clone();
         variant.total = cache.total(&variant.key).unwrap_or(variant.total);
@@ -420,6 +544,7 @@ impl MediaProxy {
         entries.insert(
             id.clone(),
             MediaEntry {
+                manifest: None,
                 upgrade_gate: None,
                 upstream_urls: vec![],
                 content_type: audio.variant.mime.clone(),
@@ -431,6 +556,112 @@ impl MediaProxy {
         );
         self.local_url(&id).await
     }
+}
+
+async fn read_fragment_index(
+    state: &ProxyState,
+    entry: &MediaEntry,
+) -> Result<Option<super::fragmented_mp4::Index>, String> {
+    use super::fragmented_mp4::{self, Probe};
+    let mut prefix = Vec::new();
+    let mut block = 0;
+    loop {
+        let (mut stream, total): (BlockStream, u64) = if let Some(audio) = &entry.cached {
+            let stream = audio
+                .stream_block(state, block)
+                .await
+                .map_err(|_| "音频分段索引暂不可用")?;
+            (stream, audio.total.load(Ordering::Acquire))
+        } else {
+            let range =
+                HeaderValue::from_str(&format!("bytes=0-{}", fragmented_mp4::INDEX_LIMIT - 1))
+                    .unwrap();
+            let client = state.client.read().await.clone();
+            let (response, _, first) =
+                fetch_playback_range(&client, &entry.upstream_urls, Some(&range))
+                    .await
+                    .ok_or("音频分段索引暂不可用")?;
+            let total = response_span(response.headers())
+                .filter(|s| s.0 == 0)
+                .map(|s| s.2)
+                .ok_or("音频分段索引长度无效")?;
+            let stream = futures_util::stream::once(async move { Ok(first) }).chain(
+                response
+                    .bytes_stream()
+                    .map(|r| r.map_err(std::io::Error::other)),
+            );
+            (Box::pin(stream), total)
+        };
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| "音频分段索引读取中断")?;
+            let count = chunk.len().min(fragmented_mp4::INDEX_LIMIT - prefix.len());
+            prefix.extend_from_slice(&chunk[..count]);
+            match fragmented_mp4::probe(&prefix, total) {
+                Probe::Ready(index) => return Ok(Some(index)),
+                Probe::Unsupported => return Ok(None),
+                Probe::More => {}
+            }
+        }
+        if entry.cached.is_none() || prefix.len() >= fragmented_mp4::INDEX_LIMIT {
+            return Ok(None);
+        }
+        block += 1;
+    }
+}
+
+async fn proxy_manifest(
+    State(state): State<ProxyState>,
+    Path((token, id)): Path<(String, String)>,
+) -> Response<Body> {
+    if token != state.access_token {
+        return status_response(StatusCode::NOT_FOUND);
+    }
+    let entry = {
+        let mut entries = state.entries.write().await;
+        entries.get_mut(&id).map(|entry| {
+            entry.expires_at = Instant::now() + ENTRY_LIFETIME;
+            entry.clone()
+        })
+    };
+    let Some(entry) = entry else {
+        return status_response(StatusCode::GONE);
+    };
+    if let Some((bandwidth, gate)) = &entry.upgrade_gate {
+        if !*gate
+            .get_or_init(|| upgrade_feasible(&state, &entry, *bandwidth))
+            .await
+        {
+            return status_response(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+    let manifest = match &entry.manifest {
+        Some(FragmentManifest::Ready(manifest)) => manifest.clone(),
+        Some(FragmentManifest::Pending(source)) => {
+            let index =
+                tokio::time::timeout(Duration::from_secs(8), read_fragment_index(&state, &entry))
+                    .await;
+            let Ok(Ok(Some(index))) = index else {
+                // Unsupported or unavailable indexes preserve the original source.
+                return axum::response::IntoResponse::into_response(
+                    axum::response::Redirect::temporary(source),
+                );
+            };
+            let manifest = Arc::new(index.playlist(source));
+            if let Some(entry) = state.entries.write().await.get_mut(&id) {
+                entry.manifest = Some(FragmentManifest::Ready(manifest.clone()));
+            }
+            manifest
+        }
+        None => return status_response(StatusCode::NOT_FOUND),
+    };
+    Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
+        .header(header::CONTENT_LENGTH, manifest.len())
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from(manifest.as_str().to_owned()))
+        .unwrap()
 }
 
 impl Drop for MediaProxy {
@@ -575,6 +806,7 @@ impl CachedAudio {
         self.total
             .store(span.2, std::sync::atomic::Ordering::Release);
         let entry = MediaEntry {
+            manifest: None,
             upgrade_gate: None,
             upstream_urls: urls,
             content_type: self.variant.mime.clone(),
@@ -1282,6 +1514,234 @@ mod tests {
     use super::MediaProxy;
 
     #[tokio::test]
+    async fn segmented_mp4_manifest_reuses_exact_cached_ranges_and_upgrade_gates() {
+        use super::*;
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            [(body.len() as u32 + 8).to_be_bytes().as_slice(), kind, body].concat()
+        }
+        let mut index = vec![0u8; 4];
+        index.extend(2u32.to_be_bytes());
+        index.extend(48000u32.to_be_bytes());
+        index.extend(0u32.to_be_bytes());
+        index.extend(0u32.to_be_bytes());
+        index.extend([0, 0, 0, 1]);
+        index.extend(100u32.to_be_bytes());
+        index.extend(240000u32.to_be_bytes());
+        index.extend(0x90000000u32.to_be_bytes());
+        let mut bytes = [
+            atom(b"ftyp", b"iso6"),
+            atom(b"moov", b"mvex"),
+            atom(b"sidx", &index),
+        ]
+        .concat();
+        let offset = bytes.len();
+        bytes.extend((0..100).map(|n| n as u8));
+        let expected = bytes.clone();
+        let requests = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let hits = requests.clone();
+        let data = Arc::new(bytes);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/audio",
+                    get(move |headers: HeaderMap| {
+                        let bytes = data.clone();
+                        let hits = hits.clone();
+                        async move {
+                            hits.fetch_add(1, Ordering::Relaxed);
+                            let (start, end) = byte_range(
+                                headers.get(header::RANGE).and_then(|v| v.to_str().ok()),
+                                bytes.len() as u64,
+                            )
+                            .unwrap();
+                            Response::builder()
+                                .status(206)
+                                .header(
+                                    header::CONTENT_RANGE,
+                                    format!("bytes {start}-{end}/{}", bytes.len()),
+                                )
+                                .header(header::CONTENT_LENGTH, end - start + 1)
+                                .body(Body::from(bytes[start as usize..=end as usize].to_vec()))
+                                .unwrap()
+                        }
+                    }),
+                ),
+            )
+            .into_future(),
+        );
+        let root = std::env::temp_dir().join(format!("bilimusic-hls-test-{}", Uuid::new_v4()));
+        let cache =
+            Arc::new(PlaybackCache::open(root.join("cache"), root.join("config.json")).unwrap());
+        let proxy = MediaProxy::start_inner(Some(cache), None).await.unwrap();
+        *proxy.state.client.write().await = Client::builder().no_proxy().build().unwrap();
+        let source = super::super::providers::bilibili::PlaybackSource {
+            quality_id: 30280,
+            audio_url: format!("{base}/audio"),
+            backup_urls: vec![],
+            mime_type: "audio/mp4".into(),
+            codecs: "mp4a.40.2".into(),
+            bandwidth: 192000,
+        };
+        let raw = proxy
+            .register_audio("test", "BVtest", 1, 30280, source)
+            .await;
+        // The quality candidate must not fetch any bytes until requested.
+        let upgrade = proxy
+            .platform_upgrade_url(raw.clone(), 17325, "mp4a.40.2")
+            .await;
+        assert_eq!(requests.load(Ordering::Relaxed), 0);
+        if cfg!(any(target_os = "ios", target_os = "macos")) {
+            assert!(upgrade.ends_with("/index.m3u8"));
+            let client = Client::builder().no_proxy().build().unwrap();
+            let lazy_guard = proxy.guard_upgrade(&upgrade, 0).await;
+            let lazy_text = client
+                .get(&lazy_guard)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            assert!(lazy_text.contains(lazy_guard.strip_suffix("/index.m3u8").unwrap()));
+            assert!(
+                client
+                    .get(&upgrade)
+                    .send()
+                    .await
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap()
+                    .starts_with("#EXTM3U")
+            );
+        }
+        let playlist = proxy.segmented_mp4(&raw).await.unwrap().unwrap();
+        assert_eq!(proxy.segmented_mp4(&raw).await.unwrap().unwrap(), playlist);
+        let guarded = proxy.guard_upgrade(&playlist, 0).await;
+        assert_ne!(guarded, playlist);
+        assert!(guarded.ends_with("/index.m3u8"));
+        let client = Client::builder().no_proxy().build().unwrap();
+        let response = client.get(&guarded).send().await.unwrap();
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/vnd.apple.mpegurl"
+        );
+        let text = response.text().await.unwrap();
+        assert!(text.contains(&format!("#EXT-X-BYTERANGE:100@{offset}")));
+        assert!(text.contains("BYTERANGE=\"24@0\""));
+        let guarded_raw = guarded.strip_suffix("/index.m3u8").unwrap();
+        assert!(text.contains(guarded_raw));
+        assert!(!text.contains(&raw));
+        proxy
+            .state
+            .entries
+            .write()
+            .await
+            .remove(raw.rsplit('/').next().unwrap());
+        let fragment = client
+            .get(guarded_raw)
+            .header(header::RANGE, format!("bytes={offset}-{}", offset + 99))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        assert_eq!(&fragment[..], &expected[offset..offset + 100]);
+        let map = client
+            .get(guarded_raw)
+            .header(header::RANGE, "bytes=0-23")
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        assert_eq!(&map[..], &expected[..24]);
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1,
+            "index and fragments must share the original cache"
+        );
+        // Video-only DASH tracks must use exactly the same SIDX byte ranges.
+        let movie = proxy
+            .register_stream(format!("{base}/audio"), vec![], "video/mp4".into())
+            .await;
+        let movie_manifest = proxy.platform_video_url(movie.clone(), "avc1.64001f").await;
+        if cfg!(any(target_os = "macos", target_os = "ios")) {
+            assert!(movie_manifest.ends_with("/index.m3u8"));
+            let text = client
+                .get(&movie_manifest)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            assert!(text.contains(&format!("#EXT-X-BYTERANGE:100@{offset}")));
+            assert!(text.contains("BYTERANGE=\"24@0\""));
+            let media = client
+                .get(&movie)
+                .header(header::RANGE, format!("bytes={offset}-{}", offset + 99))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(media.headers()[header::CONTENT_TYPE], "video/mp4");
+            assert_eq!(
+                &media.bytes().await.unwrap()[..],
+                &expected[offset..offset + 100]
+            );
+        } else {
+            assert_eq!(movie_manifest, movie);
+        }
+        let wrong = playlist.replacen(&proxy.state.access_token, "wrong", 1);
+        assert_eq!(
+            client.get(wrong).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        task.abort();
+        drop(proxy);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn lazy_fragment_index_failure_redirects_to_the_original_source() {
+        use super::*;
+        let proxy = MediaProxy::start().await.unwrap();
+        *proxy.state.client.write().await = Client::builder().no_proxy().build().unwrap();
+        // Reserve and close a port so index lookup fails without an external request.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}/missing", listener.local_addr().unwrap());
+        drop(listener);
+        let raw = proxy
+            .register_stream(upstream, vec![], "audio/mp4".into())
+            .await;
+        let id = raw.rsplit('/').next().unwrap();
+        proxy
+            .state
+            .entries
+            .write()
+            .await
+            .get_mut(id)
+            .unwrap()
+            .manifest = Some(FragmentManifest::Pending(raw.clone()));
+        let response = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+            .get(format!("{raw}/index.m3u8"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.headers()[header::LOCATION], raw);
+    }
+
+    #[tokio::test]
     async fn dead_listener_is_rebuilt_once_without_losing_registered_audio() {
         let proxy = MediaProxy::start().await.unwrap();
         let path =
@@ -1944,6 +2404,7 @@ mod tests {
         let prefix = response.chunk().await.unwrap().unwrap();
         let cache = Arc::new(tokio::sync::RwLock::new((Vec::new(), 0)));
         let entry = super::MediaEntry {
+            manifest: None,
             upgrade_gate: None,
             upstream_urls: vec![format!("{base}/truncated"), format!("{base}/backup")],
             content_type: "audio/mp4".into(),

@@ -261,7 +261,18 @@ async fn every_bootstrap_request_boundary_recovers_before_and_after_server_commi
                 "unvisited request {i} {method}"
             );
             assert!(
-                first.is_err(),
+                first.is_err()
+                    || a.0
+                        .0
+                        .lock()
+                        .unwrap()
+                        .query_row(
+                            "SELECT count(*) FROM visibility_runtime WHERE key='sync_error'",
+                            [],
+                            |r| r.get::<_, i64>(0)
+                        )
+                        .unwrap()
+                        > 0,
                 "failure was silently accepted at {i} {method}"
             );
             for _ in 0..2 {
@@ -1388,7 +1399,21 @@ async fn quota_exhaustion_at_every_bootstrap_boundary_resumes_without_losing_off
             engine::sync(&a.0, &cfg, &secret, None, false),
         )
         .await;
-        assert!(result.is_err(), "cutoff={cutoff}");
+        assert!(
+            result.is_err()
+                || a.0
+                    .0
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT count(*) FROM visibility_runtime WHERE key='sync_error'",
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .unwrap()
+                    > 0,
+            "cutoff={cutoff}"
+        );
         assert_eq!(store.lock().unwrap().requests.len(), cutoff);
         a.sql(&format!(
             "UPDATE playlists SET name='edited while deferred' WHERE id='{LIST}'"
@@ -1494,7 +1519,21 @@ async fn statistics_quota_exhaustion_preserves_samples_and_deduplicates_replay()
             super::statistics_v2::exchange(&a.0, &cfg, &secret),
         )
         .await;
-        assert!(result.is_err(), "cutoff={cutoff}");
+        assert!(
+            result.is_err()
+                || a.0
+                    .0
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT count(*) FROM visibility_runtime WHERE key='sync_error'",
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .unwrap()
+                    > 0,
+            "cutoff={cutoff}"
+        );
         assert_eq!(store.lock().unwrap().requests.len(), cutoff);
         sample(&a, &cfg, 15_000);
         budget.elapse_window();

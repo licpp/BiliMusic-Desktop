@@ -67,7 +67,14 @@ pub fn replace_for(
         };
         let error = if !matches!(
             binding.action.as_str(),
-            "toggle" | "previous" | "next" | "seekBack" | "seekForward" | "volumeUp" | "volumeDown"
+            "show"
+                | "toggle"
+                | "previous"
+                | "next"
+                | "seekBack"
+                | "seekForward"
+                | "volumeUp"
+                | "volumeDown"
         ) || binding.code == "Space"
             || key.is_none()
             || (modifiers == 0
@@ -76,7 +83,6 @@ pub fn replace_for(
                     .strip_prefix('F')
                     .and_then(|v| v.parse::<u32>().ok())
                     .is_some_and(|v| (1..=12).contains(&v)))
-            || (binding.code == "KeyQ" && modifiers == 3)
         {
             Some("此按键不能注册为全局播放快捷键".to_owned())
         } else if !actions.insert(binding.action.clone()) || !keys.insert((modifiers, key.unwrap()))
@@ -85,7 +91,10 @@ pub fn replace_for(
         } else {
             let key = key.unwrap();
             let id = active.len() as i32 + 1;
-            let no_repeat = if matches!(binding.action.as_str(), "toggle" | "previous" | "next") {
+            let no_repeat = if matches!(
+                binding.action.as_str(),
+                "show" | "toggle" | "previous" | "next"
+            ) {
                 0x4000
             } else {
                 0
@@ -117,6 +126,40 @@ pub fn replace_for(
         }
     }
     (active, result)
+}
+
+/// Explorer .lnk hotkeys support a narrower set than RegisterHotKey. Unsupported
+/// runtime combinations explicitly clear the old launch key instead of leaving Q.
+pub fn windows_launch_hotkey(binding: &GlobalBinding) -> Option<String> {
+    if binding.action != "show" || !binding.ctrl || !binding.alt || binding.meta {
+        return None;
+    }
+    let key = if let Some(letter) = binding
+        .code
+        .strip_prefix("Key")
+        .filter(|s| s.len() == 1 && s.bytes().all(|c| c.is_ascii_uppercase()))
+    {
+        letter.to_owned()
+    } else if let Some(digit) = binding
+        .code
+        .strip_prefix("Digit")
+        .filter(|s| s.len() == 1 && s.bytes().all(|c| c.is_ascii_digit()))
+    {
+        digit.to_owned()
+    } else if binding
+        .code
+        .strip_prefix('F')
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=12).contains(&n))
+    {
+        binding.code.clone()
+    } else {
+        return None;
+    };
+    Some(format!(
+        "CTRL+ALT+{}{key}",
+        if binding.shift { "SHIFT+" } else { "" }
+    ))
 }
 
 // macOS virtual key codes are physical ANSI keyboard positions, rather than
@@ -374,8 +417,7 @@ mod tests {
         let mut os = Fake::default();
         let mut bare = binding("toggle", "KeyA");
         bare.ctrl = false;
-        let mut launch = binding("next", "KeyQ");
-        launch.alt = true;
+        let launch = binding("show", "MouseForward");
         let (active, result) = replace(
             &[
                 bare,
@@ -393,5 +435,41 @@ mod tests {
         assert!(active.is_empty());
         assert!(result.errors.is_empty());
         assert_eq!(os.removed.len(), 32);
+    }
+    #[test]
+    fn configurable_show_registers_on_both_platforms_and_reports_conflicts() {
+        for platform in [Platform::Windows, Platform::Mac] {
+            let mut os = Fake::default();
+            let mut show = binding("show", "KeyQ");
+            show.alt = true;
+            let (active, result) = replace_for(&[show.clone(), show.clone()], &mut os, platform);
+            assert_eq!(result.registered, ["show"]);
+            assert_eq!(result.errors.len(), 1);
+            assert_eq!(active[&1].action, "show");
+            assert_ne!(os.registered[0].1 & 0x4000, 0);
+            let mut next = binding("next", "KeyQ");
+            next.alt = true;
+            let (_, result) = replace_for(&[show, next], &mut os, platform);
+            assert_eq!(result.registered, ["show"]);
+            assert_eq!(result.errors[0].action, "next");
+        }
+    }
+    #[test]
+    fn explorer_launch_mapping_is_explicit_and_clears_unsupported_runtime_combinations() {
+        let mut b = binding("show", "KeyQ");
+        b.alt = true;
+        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+Q".into()));
+        b.code = "F12".into();
+        b.shift = true;
+        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+SHIFT+F12".into()));
+        b.code = "Digit7".into();
+        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+SHIFT+7".into()));
+        for code in ["Numpad7", "Enter", "ArrowLeft", "MouseBack"] {
+            b.code = code.into();
+            assert_eq!(windows_launch_hotkey(&b), None);
+        }
+        b.code = "KeyQ".into();
+        b.meta = true;
+        assert_eq!(windows_launch_hotkey(&b), None);
     }
 }

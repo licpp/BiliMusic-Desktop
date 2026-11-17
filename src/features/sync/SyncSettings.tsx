@@ -56,6 +56,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   const merge = (resolution?: string) => action(async () => { await applyOutcome(await syncNow(false, resolution)) })
   const preview = () => action(async () => { setOutcome(await syncNow(true)) })
   return <section className={`sync-settings${embedded?' sync-settings-embedded':''}`} aria-label="云同步设置">
+    {status.data?.visibilityError && <p className="sync-attention-message" role="status">隐藏偏好尚未同步：{status.data.visibilityError}。可点击立即同步重试。</p>}
     {attention && <p className="sync-attention-message" role="status">{attention}{!outcome && '。请点击“立即同步”重试。'}</p>}
     {(!embedded||connected)&&<div className="sync-heading">
       {!embedded&&<><div className="settings-icon"><Cloud /></div>

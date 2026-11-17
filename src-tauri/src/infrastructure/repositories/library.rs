@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackInput {
     pub id: String,
@@ -82,6 +82,11 @@ impl LibraryRepository {
             .as_ref()
             .map(|c| c.video_title.as_str())
             .unwrap_or(&track.source_title);
+        let cover = super::source_artwork::canonical_cover(
+            connection,
+            &track.id,
+            track.cover_url.as_deref(),
+        )?;
         let transaction = connection.transaction()?;
         transaction.execute(
             "INSERT INTO source_items (id, provider, bvid, aid, cid, page, uploader_id, uploader_name, source_title)
@@ -95,7 +100,7 @@ impl LibraryRepository {
              VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
                cover_url=excluded.cover_url, duration_seconds=excluded.duration_seconds, updated_at=CURRENT_TIMESTAMP",
-            params![track.id, canonical, track.artist, track.album, track.cover_url, track.duration_seconds],
+            params![track.id, canonical, track.artist, track.album, cover, track.duration_seconds],
         )?;
         if let Some(context) = &cached {
             crate::infrastructure::repositories::source_titles::save(
@@ -302,9 +307,8 @@ mod tests {
 
     fn database() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(include_str!("../../../migrations/0001_initial.sql"))
-            .unwrap();
+        // Repositories run after the same complete migration as production.
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
         connection
     }
 

@@ -1,6 +1,6 @@
 use super::{
     GlobalBinding,
-    registry::{self, ActiveBinding, BindingError, Platform, Registrar, Registration},
+    registry::{self, ActiveBinding, Platform, Registrar, Registration},
 };
 use std::{
     collections::HashMap,
@@ -12,7 +12,6 @@ use tauri::{AppHandle, Emitter};
 #[path = "carbon.rs"]
 mod carbon;
 
-const SHOW_ID: u32 = u32::MAX;
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 static WAKE: Condvar = Condvar::new();
@@ -32,11 +31,7 @@ impl Registrar for MacRegistrar {
     fn register(&mut self, id: i32, modifiers: u32, key: u32) -> Result<(), u32> {
         // A queued event from a previous registration must never execute a newly
         // assigned action that happens to reuse the same logical slot.
-        self.serial = self
-            .serial
-            .checked_add(1)
-            .filter(|id| *id != SHOW_ID)
-            .ok_or(1u32)?;
+        self.serial = self.serial.checked_add(1).ok_or(1u32)?;
         let native_id = self.serial;
         let handle = carbon::register(key, modifiers, native_id).map_err(|code| code as u32)?;
         self.handles.insert(id, handle);
@@ -92,10 +87,7 @@ struct State {
     active: HashMap<i32, ActiveBinding>,
     pressed: PressedKeys,
     handler: usize,
-    show_key: usize,
-    show_pressed: bool,
     error: Option<String>,
-    show_error: Option<String>,
 }
 fn state() -> &'static Mutex<State> {
     STATE.get_or_init(|| Mutex::new(State::default()))
@@ -116,9 +108,12 @@ pub fn start(app: AppHandle) {
                 return;
             }
         }
-        match carbon::register(12, 3, SHOW_ID) {
-            Ok(handle) => state.show_key = handle,
-            Err(_) => state.show_error = Some("Ctrl + Option + Q 已被系统或其他应用占用".into()),
+        if let Some(app) = APP.get() {
+            let bindings = super::saved_show_binding(app)
+                .into_iter()
+                .collect::<Vec<_>>();
+            let (active, _) = registry::replace_for(&bindings, &mut state.registrar, Platform::Mac);
+            state.active = active;
         }
     });
     let _ = std::thread::Builder::new()
@@ -145,15 +140,10 @@ pub async fn apply(bindings: Vec<GlobalBinding>) -> Result<Registration, String>
             }
             state.pressed = PressedKeys::default();
             WAKE.notify_one();
-            let (active, mut result) =
+            let (active, result) =
                 registry::replace_for(&bindings, &mut state.registrar, Platform::Mac);
             state.active = active;
-            if let Some(error) = &state.show_error {
-                result.errors.push(BindingError {
-                    action: "show".into(),
-                    message: error.clone(),
-                });
-            }
+
             Ok(result)
         })();
         let _ = send.send(result);
@@ -172,21 +162,6 @@ unsafe extern "C" fn callback(_next: *mut c_void, event: *mut c_void, _data: *mu
     let Ok(mut state) = state().lock() else {
         return -9874;
     };
-    if id == SHOW_ID {
-        if kind == carbon::RELEASED {
-            state.show_pressed = false;
-            return 0;
-        }
-        if kind != carbon::PRESSED || state.show_pressed {
-            return 0;
-        }
-        state.show_pressed = true;
-        drop(state);
-        if let Some(app) = APP.get() {
-            crate::show_main_window(app);
-        }
-        return 0;
-    }
     if kind == carbon::RELEASED {
         state.pressed.release(id);
         WAKE.notify_one();
@@ -207,6 +182,11 @@ unsafe extern "C" fn callback(_next: *mut c_void, event: *mut c_void, _data: *mu
     };
     if state.pressed.press(id, &action, Instant::now()) {
         if let Some(app) = APP.get() {
+            if action == "show" {
+                drop(state);
+                crate::show_main_window(app);
+                return 0;
+            }
             let _ = app.emit_to("main", "global-shortcut", action);
         }
         WAKE.notify_one();

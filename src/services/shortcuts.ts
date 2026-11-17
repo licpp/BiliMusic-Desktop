@@ -17,7 +17,7 @@ export const useShortcutStore=create<{bindings:ShortcutBindings;globalEnabled:bo
     set({globalEnabled:enabled})
   },
   setBinding:(action,key)=>{
-    if(key){const problem=shortcutProblem(key,get().bindings,action,shortcutDesktop)||(get().globalEnabled?globalShortcutConflict(key,get().bindings,action,shortcutMac):undefined);if(problem)return problem}
+    if(key){const problem=shortcutProblem(key,get().bindings,action,shortcutDesktop)||globalShortcutConflict(key,get().bindings,action,shortcutMac,get().globalEnabled);if(problem)return problem}
     const bindings={...get().bindings,[action]:key}
     try{persist(bindings)}catch{return '无法保存快捷键，请重试'}
     set({bindings})

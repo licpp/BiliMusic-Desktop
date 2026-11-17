@@ -1,0 +1,17 @@
+{
+  "provenance": "Synthetic candidate captions for reported import titles; no claim of live Bilibili search recall.",
+  "cases": [
+    {"title":"当我一个人","artists":["潘超"],"durationSeconds":229,"candidate":"潘超《当我一个人》官方音源","actualSeconds":234,"accept":true},
+    {"title":"再遇见（苏打绿版）","artists":["苏打绿"],"durationSeconds":277,"candidate":"苏打绿《再遇见》官方MV","actualSeconds":277,"accept":true},
+    {"title":"留低","artists":["潘志钊"],"durationSeconds":203,"candidate":"潘志钊 - 留低","actualSeconds":203,"accept":true},
+    {"title":"实不相瞒","artists":["郑秀文"],"durationSeconds":227,"candidate":"郑秀文《实不相瞒》官方MV","actualSeconds":240,"accept":true},
+    {"title":"Perfect Version of Me (Acoustic Version)","artists":["Vicky宣宣"],"durationSeconds":251,"candidate":"Vicky宣宣 - Perfect Version of Me (Acoustic)","actualSeconds":252,"accept":true},
+    {"title":"漩涡 (feat. 老虎歌皇)","artists":["RU","老虎歌皇"],"durationSeconds":243,"candidate":"RU - 漩涡 feat. 老虎歌皇","actualSeconds":243,"accept":true},
+    {"title":"相信（苏打绿版）","artists":["苏打绿"],"durationSeconds":464,"candidate":"苏打绿《相信》","actualSeconds":464,"accept":true},
+    {"title":"红豆","artists":["王菲"],"durationSeconds":240,"candidate":"在百万豪装录音棚听王菲《红豆》","actualSeconds":250,"accept":true},
+    {"title":"遇见","artists":["孙燕姿"],"durationSeconds":209,"candidate":"【私藏馆】孙燕姿《遇见》爆火神曲！祝大家节日快乐","actualSeconds":212,"accept":true},
+    {"title":"晴天","artists":["周杰伦"],"durationSeconds":269,"candidate":"周杰伦《晴天》伴奏版","actualSeconds":269,"accept":false},
+    {"title":"晴天 (Live)","artists":["周杰伦"],"durationSeconds":269,"candidate":"周杰伦《晴天》官方音源","actualSeconds":269,"accept":false},
+    {"title":"Star","artists":["Artist"],"durationSeconds":200,"candidate":"Artist - Starlight","actualSeconds":200,"accept":false}
+  ]
+}

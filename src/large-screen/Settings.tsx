@@ -1,3 +1,4 @@
+import { LoudnessSettings } from '../features/settings/LoudnessSettings'
 import { SystemTitleLyricsSettings } from '../features/settings/SystemTitleLyricsSettings'
 import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../services/queryKeys'
 import { useEffect, useState } from 'react'
@@ -24,7 +25,7 @@ export function LargeSettings() {
   const [awake, setAwake] = useState(() => localStorage.getItem('large-keep-awake') === 'true')
   return <><LargeAccount/><div className="large-settings-common"><UpdateSettings/></div>
     <details className="large-disclosure" open={attention ? true : undefined}><summary><Cloud/><span><strong>云同步</strong><small>{attention || '在不同设备间同步音乐库与听歌记录'}</small></span></summary><SyncSettings embedded/></details>
-    <div className="large-settings-common"><ResumeSettings/><SystemTitleLyricsSettings/></div>
+    <div className="large-settings-common"><ResumeSettings/><LoudnessSettings/><SystemTitleLyricsSettings/></div>
     <details className="large-disclosure"><summary><HardDrive/><span><strong>播放缓存</strong><small>容量与已用空间</small></span></summary><PlaybackCacheSettings embedded/></details>
     <section className="large-setting-section large-surface"><h2>外观与显示</h2><div className="large-setting-row"><span>主题</span><div className="large-options"><button aria-pressed={theme === 'light'} onClick={() => setTheme('light')}><Sun/>明亮</button><button aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}><Moon/>深色</button></div></div>
       <div className="large-setting-row"><span>界面大小</span><div className="large-options">{[0.9, 1, 1.15].map((value, i) => <button key={value} aria-pressed={size === value} onClick={() => { setSize(value); localStorage.setItem('large-ui-size', String(value)); document.documentElement.style.setProperty('--large-scale', String(value)) }}>{['紧凑', '标准', '较大'][i]}</button>)}</div></div>

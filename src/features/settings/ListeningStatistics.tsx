@@ -1,4 +1,5 @@
 import { accountQueryKey } from '../../services/queryKeys'
+import { trackSubtitle } from '../../domain/sourceTitle'
 import { syncErrorMessage } from '../../services/userErrors'
 import { ListeningBars } from './ListeningBars'
 import { hydrateSourceTitles } from '../../services/sourceTitles'
@@ -119,7 +120,7 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
         {top?.length ? <ol className="listening-ranking">{top.map((track, i) => <li key={track.id}>
           <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />
-          <div className="listening-song"><strong>{track.title}</strong><small>{track.sourceTitleContext?.season?.title || track.artist || track.uploaderName || ''}</small><div className="listening-song-duration"><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div><span className="listening-song-time">{duration(track.seconds)}</span></div></div>
+          <div className="listening-song"><strong>{track.title}</strong><small>{trackSubtitle({...track, source: {uploaderName: track.uploaderName}})}</small><div className="listening-song-duration"><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div><span className="listening-song-time">{duration(track.seconds)}</span></div></div>
         </li>)}</ol> : <div className="listening-empty"><Headphones size={30} /><strong>让喜欢的歌留下足迹</strong><p>开始播放后，这里会记录你常听的声音。</p></div>}
       </section>
       <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>

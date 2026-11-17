@@ -3,17 +3,12 @@ import { accountEpoch } from '../../services/accountScope'
 import { getStoredLyrics, inDesktopShell, saveStoredLyrics, searchLyrics } from '../../services/desktopApi'
 import type { LyricCandidate } from '../../domain/lyrics'
 import { usePlayerStore } from '../player/playerStore'
-import { bestCandidate, candidateLines } from '../../domain/lrc'
+import { candidateLines } from '../../domain/lrc'
 
-import { songQueries, songTextIdentity, songTitleIdentity, type SongQuery } from '../../domain/songIdentity'
+import { songQueries } from '../../domain/songIdentity'
 
-export function chooseAutomaticLyrics(track: Track, candidates: LyricCandidate[], query?: SongQuery) {
-  const queries = query ? [query] : songQueries(track)
-  return bestCandidate(candidates.filter(candidate => {
-    if (candidate.instrumental || !queries.some(query => songTitleIdentity(candidate.trackName) === songTitleIdentity(query.title) && (!query.artist || songTextIdentity(candidate.artistName) === songTextIdentity(query.artist)))) return false
-    return (!track.durationSeconds || !candidate.duration || Math.abs(track.durationSeconds - candidate.duration) <= Math.max(15, track.durationSeconds * .08)) && candidateLines(candidate).length > 0
-  }), track.durationSeconds)
-}
+export { chooseAutomaticLyrics } from '../../domain/automaticLyrics'
+import { chooseAutomaticLyrics } from '../../domain/automaticLyrics'
 
 export function startAutomaticLyrics() {
   if (!inDesktopShell) return

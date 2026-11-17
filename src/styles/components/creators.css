@@ -83,3 +83,12 @@
 .creator-entry .creator-actions>.action-menu-trigger { width:34px;height:34px;padding:0;border:0;background:none;color:var(--muted); }
 .creator-unfollow-action { margin-top:6px;border-top:1px solid var(--line)!important; }
 .collection-dialog.creator-import-dialog.collection-dialog-mobile-sheet { max-height:min(80dvh,calc(var(--visible-height,100dvh) - max(72px,var(--native-safe-top,env(safe-area-inset-top,0px))) - 16px)); }
+
+.creator-inline-parts { min-width:0;border-left-color:color-mix(in srgb,var(--cyan) 35%,var(--line)); }
+.creator-inline-parts > header { display:flex;align-items:center;min-height:36px; }
+.creator-inline-parts > header .collection-flat-button { display:inline-flex;align-items:center;gap:6px;min-height:36px;color:var(--cyan);background:transparent; }
+.creator-inline-parts > header svg { transform:rotate(180deg); }
+.creator-inline-parts > .video-parts-list { min-width:0;padding:0; }
+:root[data-layout="mobile"] .creator-inline-parts { margin-left:8px;padding-left:8px; }
+:root[data-layout="mobile"] .creator-inline-parts > header .collection-flat-button { min-height:44px; }
+.creator-inline-parts > header .collection-flat-button:hover { background:var(--panel-raised); }

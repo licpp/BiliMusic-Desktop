@@ -453,8 +453,8 @@
 .large-settings-common .update-settings small { font-size:.9rem; }
 .large-settings-common .update-settings > div:nth-child(2) { gap:8px; }
 
-.large-settings-common .system-title-lyrics-setting { display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:16px;align-items:center;padding:22px; }
-.large-settings-common .system-title-lyrics-setting strong { font-size:1.15rem; }
-.large-settings-common .system-title-lyrics-setting small { display:block;margin-top:8px;font-size:.9rem;color:var(--muted); }
+.large-settings-common :is(.system-title-lyrics-setting,.loudness-setting) { display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:16px;align-items:center;padding:22px; }
+.large-settings-common :is(.system-title-lyrics-setting,.loudness-setting) strong { font-size:1.15rem; }
+.large-settings-common :is(.system-title-lyrics-setting,.loudness-setting) small { display:block;margin-top:8px;font-size:.9rem;color:var(--muted); }
 
 .large-caption-notice { position:absolute;bottom:12px;left:50%;transform:translateX(-50%);max-width:calc(100% - 24px);padding:8px 12px;border-radius:10px;background:var(--panel-raised);color:var(--muted);font-size:.85rem;pointer-events:none;text-align:center; }

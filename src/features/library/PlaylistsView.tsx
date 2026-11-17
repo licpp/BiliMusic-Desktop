@@ -39,7 +39,7 @@ export function PlaylistsView({ playlists, onOpen, onRemoved, onCreate, onImport
           {!organizer.editing && <><button type="button" className="collection-icon library-create-action" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
           <ImportPlaylistButton onClick={onImport}/></>}</div>
         </div>
-        {organizer.editing?organizer.editor:<div className="playlist-grid">{ordered.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>}
+        {organizer.editing?organizer.editor:<div className="playlist-grid library-gallery">{ordered.map(playlist => <PlaylistEntry gallery key={playlist.id} playlist={playlist} onOpen={() => onOpen(playlist.id)} onRemoved={() => onRemoved(playlist.id)}/>)}</div>}
       </> : section === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/> : <CollectionsView hideHeading onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>}
       </div>
     </div>

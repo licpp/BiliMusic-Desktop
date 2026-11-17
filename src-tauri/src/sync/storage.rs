@@ -43,6 +43,7 @@ pub fn bind_legacy(c: &Connection, provider: &str, target: &str) -> Result<(), S
     tx.commit().map_err(|e| e.to_string())
 }
 pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, String> {
+    crate::infrastructure::repositories::imported_entries::init(c).map_err(|e| e.to_string())?;
     let mut s = Snapshot::empty(uid);
     let mut add = |key: String, kind: &str, value: Value| {
         s.records.insert(
@@ -218,6 +219,7 @@ fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
 }
 pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> {
     init(c)?;
+    crate::infrastructure::repositories::imported_entries::init(c).map_err(|e| e.to_string())?;
     crate::infrastructure::repositories::collections::init_folders(c).map_err(|e| e.to_string())?;
     s.validate(&s.uid)?;
     c.execute_batch("SAVEPOINT sync_apply")
@@ -389,6 +391,11 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 "item" => {
                     let playlist = text(r, "playlistId");
                     let track = text(r, "trackId");
+                    if crate::infrastructure::repositories::imported_entries::owned(
+                        tx, playlist, track,
+                    )? {
+                        continue;
+                    }
                     tx.execute(
                         "INSERT INTO sync_item_keys VALUES(?1,?2)",
                         params![playlist, track],
@@ -439,6 +446,8 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
         }
         crate::infrastructure::repositories::list_preferences::apply(&tx, s)?;
+        crate::infrastructure::repositories::imported_entries::project(tx)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
         prune(&tx)?;
         Ok(())
     })();

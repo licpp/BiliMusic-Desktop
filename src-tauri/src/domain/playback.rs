@@ -1,5 +1,10 @@
 /// Disabled resume also disables automatic collection checkpoints; explicit positions bypass this policy.
-pub fn should_resume_video(duration: f64, enabled: bool, threshold: f64, _collection: bool) -> bool {
+pub fn should_resume_video(
+    duration: f64,
+    enabled: bool,
+    threshold: f64,
+    _collection: bool,
+) -> bool {
     enabled && (threshold <= 0.0 || duration.is_finite() && duration >= threshold)
 }
 

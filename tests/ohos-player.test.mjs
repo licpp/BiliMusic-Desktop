@@ -536,3 +536,27 @@ test('Harmony optional system-title lyrics preserve card artwork and restore son
   assert.equal(h.plugin.currentMetadata.title,'原来的歌名')
  }finally{await h.plugin.destroy()}
 })
+
+
+test('Harmony applies shared gains before playback and preserves them through duck, volume, source and background queue changes', async () => {
+  const h=setup(),near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`)
+  try {
+    await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media',volume:.8,loudnessGainDb:-6,loudnessEnabled:true,loudnessRevision:2})
+    near(h.player.volume,.8*Math.pow(10,-6/20))
+    for(const cb of h.player.callbacks.audioInterrupt??[])cb({hintType:4,eventType:1})
+    near(h.player.volume,.8*Math.pow(10,-6/20)*.2)
+    await h.command('control',{action:'volume',value:.6})
+    near(h.player.volume,.6*Math.pow(10,-6/20)*.2)
+    for(const cb of h.player.callbacks.audioInterrupt??[])cb({hintType:5,eventType:2})
+    near(h.player.volume,.6*Math.pow(10,-6/20))
+    await h.command('play',{id:'song',url:'http://127.0.0.1:1234/quality',seamless:true,loudnessGainDb:-9,loudnessEnabled:true,loudnessRevision:2})
+    near(h.player.volume,.6*Math.pow(10,-9/20))
+    await h.command('control',{action:'loudness',value:0,settingsRevision:3})
+    await new Promise(resolve=>setTimeout(resolve,340))
+    near(h.player.volume,.6)
+    await h.command('play',{id:'song',url:'http://127.0.0.1:1234/stale',seamless:true,loudnessGainDb:-12,loudnessEnabled:true,loudnessRevision:2})
+    near(h.player.volume,.6)
+    await h.command('play',{id:'next',url:'http://127.0.0.1:1234/next',volume:.6,loudnessGainDb:0,loudnessEnabled:true,loudnessRevision:4})
+    near(h.player.volume,.6)
+  } finally {await h.plugin.destroy()}
+})

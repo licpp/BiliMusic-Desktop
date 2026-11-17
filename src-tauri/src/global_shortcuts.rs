@@ -1,11 +1,12 @@
 mod registry;
 use registry::Registration;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tauri_plugin_store::StoreExt;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct GlobalBinding {
     action: String,
     code: String,
@@ -13,6 +14,50 @@ pub struct GlobalBinding {
     alt: bool,
     shift: bool,
     meta: bool,
+}
+
+fn default_show_binding() -> GlobalBinding {
+    GlobalBinding {
+        action: "show".into(),
+        code: "KeyQ".into(),
+        ctrl: true,
+        alt: true,
+        shift: false,
+        meta: false,
+    }
+}
+fn saved_show_binding(app: &AppHandle) -> Option<GlobalBinding> {
+    app.store("settings.json")
+        .ok()
+        .and_then(|store| store.get("showShortcut"))
+        .map(|value| {
+            serde_json::from_value::<GlobalBinding>(value)
+                .ok()
+                .filter(|b| b.action == "show")
+        })
+        .unwrap_or_else(|| Some(default_show_binding()))
+}
+fn save_show_binding(app: &AppHandle, bindings: &[GlobalBinding]) -> Result<(), String> {
+    let store = app.store("settings.json").map_err(|e| e.to_string())?;
+    store.set(
+        "showShortcut",
+        serde_json::to_value(bindings.iter().find(|b| b.action == "show"))
+            .map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn global_shortcuts_show(app: AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        crate::show_main_window(&app);
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err("当前平台不支持打开桌面窗口".into())
+    }
 }
 
 pub fn start(app: AppHandle) {
@@ -26,20 +71,38 @@ pub fn start(app: AppHandle) {
 
 #[tauri::command]
 pub async fn global_shortcuts_apply(
+    app: AppHandle,
     bindings: Vec<GlobalBinding>,
     enabled: bool,
+    suspended: Option<bool>,
 ) -> Result<Registration, String> {
+    let suspended = suspended.unwrap_or(false);
+    if !suspended {
+        save_show_binding(&app, &bindings)?;
+    }
+    let bindings = if suspended {
+        vec![]
+    } else {
+        bindings
+            .into_iter()
+            .filter(|b| enabled || b.action == "show")
+            .collect()
+    };
     #[cfg(windows)]
     {
-        windows::apply(if enabled { bindings } else { vec![] }).await
+        #[cfg(not(debug_assertions))]
+        if !suspended {
+            windows::install_launch_shortcut(saved_show_binding(&app).as_ref());
+        }
+        windows::apply(bindings).await
     }
     #[cfg(target_os = "macos")]
     {
-        macos::apply(if enabled { bindings } else { vec![] }).await
+        macos::apply(bindings).await
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        let _ = (bindings, enabled);
+        let _ = (app, bindings, enabled);
         Err("当前系统仅支持窗口内快捷键".into())
     }
 }
@@ -69,14 +132,15 @@ mod windows {
     static APP: OnceLock<AppHandle> = OnceLock::new();
 
     pub fn start(app: AppHandle) {
+        let initial = saved_show_binding(&app).into_iter().collect::<Vec<_>>();
         let _ = APP.set(app);
         let started = std::thread::Builder::new()
             .name("global-shortcuts".into())
-            .spawn(|| {
+            .spawn(move || {
                 // A development build must never replace an installed Start Menu shortcut.
                 #[cfg(not(debug_assertions))]
-                install_launch_shortcut();
-                pump();
+                install_launch_shortcut(initial.first());
+                pump(initial);
             });
         AVAILABLE.store(started.is_ok(), Ordering::Release);
     }
@@ -103,7 +167,7 @@ mod windows {
     }
 
     #[cfg(not(debug_assertions))]
-    fn install_launch_shortcut() {
+    pub(super) fn install_launch_shortcut(binding: Option<&GlobalBinding>) {
         let Ok(exe) = std::env::current_exe() else {
             return;
         };
@@ -116,8 +180,8 @@ mod windows {
         // single-instance plugin brings an already running main window to the front.
         let _=std::process::Command::new("powershell.exe").args([
             "-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Command",
-            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:BILIMUSIC_LNK); $s.TargetPath=$env:BILIMUSIC_EXE; $s.WorkingDirectory=(Split-Path $env:BILIMUSIC_EXE); $s.Hotkey='CTRL+ALT+Q'; $s.Save()",
-        ]).env("BILIMUSIC_LNK",lnk).env("BILIMUSIC_EXE",exe).creation_flags(0x08000000).spawn();
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:BILIMUSIC_LNK); $s.TargetPath=$env:BILIMUSIC_EXE; $s.WorkingDirectory=(Split-Path $env:BILIMUSIC_EXE); $s.Hotkey=$env:BILIMUSIC_HOTKEY; $s.Save()",
+        ]).env("BILIMUSIC_HOTKEY",binding.and_then(registry::windows_launch_hotkey).unwrap_or_default()).env("BILIMUSIC_LNK",lnk).env("BILIMUSIC_EXE",exe).creation_flags(0x08000000).spawn();
     }
 
     const WM_HOTKEY: u32 = 0x0312;
@@ -184,12 +248,12 @@ mod windows {
             let _ = request.reply.send(result);
         }
     }
-    fn pump() {
+    fn pump(initial: Vec<GlobalBinding>) {
         unsafe {
             let mut msg = std::mem::zeroed::<Msg>();
             PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, 0);
             THREAD.store(GetCurrentThreadId(), Ordering::Release);
-            let mut active = HashMap::new();
+            let (mut active, _) = registry::replace(&initial, &mut SystemRegistrar);
             update(&mut active);
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 if msg.message == WM_APP {
@@ -199,7 +263,11 @@ mod windows {
                         // Discard messages queued for a replaced binding using the same id.
                         if binding.matches_message(msg.l_param) {
                             if let Some(app) = APP.get() {
-                                let _ = app.emit_to("main", "global-shortcut", &binding.action);
+                                if binding.action == "show" {
+                                    crate::show_main_window(app);
+                                } else {
+                                    let _ = app.emit_to("main", "global-shortcut", &binding.action);
+                                }
                             }
                         }
                     }

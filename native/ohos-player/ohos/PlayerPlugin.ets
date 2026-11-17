@@ -1,3 +1,4 @@
+import { OutputGain } from './OutputGain';
 import { common, Want, wantAgent } from '@kit.AbilityKit';
 import { avSession } from '@kit.AVSessionKit';
 import { media } from '@kit.MediaKit';
@@ -20,6 +21,7 @@ import { NativeQueue, QueueUpdate, QueueTrack, ResolveResult, NotificationLyricL
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
   data?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
+  loudnessGainDb?: number; loudnessEnabled?: boolean; loudnessRevision?: number; settingsRevision?: number;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
   rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
   key?: string; remove?: boolean;
@@ -65,10 +67,10 @@ export class PlayerPlugin {
     const pending = this.pendingResolve; this.pendingResolve = null;
     pending(JSON.parse(args.data ?? '{}') as ResolveResult);
   }
-  private async advance(direction: number, ended: boolean = false): Promise<void> {
+  private async advance(direction: number, ended: boolean = false, override?: QueueTrack): Promise<void> {
     if (this.sleepExpired || this.destroyed) return;
     if (direction < 0 && (this.player?.currentTime ?? 0) > 4000) { await this.control({action:'seek',value:0}); return; }
-    const track = this.queue.target(this.id, direction, ended);
+    const track = override ?? this.queue.target(this.id, direction, ended);
     if (!track) { await this.control({action:'pause'}); return; }
     this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
     this.accountListening(true);
@@ -88,10 +90,15 @@ export class PlayerPlugin {
         native.bilimusicOhosResolve(request, JSON.stringify(this.queue.payload(track, ended)));
       });
       if (request !== this.nativeRequest || !this.queue.find(track.id) || !this.desiredPlaying || this.destroyed) return;
+      if (result.skip && result.entryId) {
+        const next=this.queue.skip(result.entryId);
+        if(next) {await this.advance(1,false,next);} else {await this.control({action:'pause'});}
+        return;
+      }
       if (result.error || !result.track || !result.url) throw new Error(result.error ?? '后台播放地址无效');
       this.queue.resolved(result);
       await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
-        automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
+        loudnessGainDb:result.loudnessGainDb,automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
       await this.lyrics({action:'update',id:result.track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,lrc:result.lyrics?.lines.length ? result.lyrics.rawText : '',subtitles:false}).catch(()=>{});
     } catch(error) {
       if(request!==this.nativeRequest || !this.desiredPlaying) return;
@@ -118,6 +125,19 @@ export class PlayerPlugin {
   private upgradeIntent: number = 0;
   private cancelSourceSwitch: (() => void) | null = null;
   private cancelPreparation: (() => void) | null = null;
+  private outputGain: OutputGain = new OutputGain();
+  private outputTimer: number = -1;
+  private applyOutput(smooth: boolean = false): void {
+    clearTimeout(this.outputTimer); this.outputTimer=-1;
+    this.outputGain.transition(Date.now(),smooth);
+    const player=this.player;
+    const tick=():void => {
+      if(!player || this.player!==player || this.destroyed || !['prepared','playing','paused','completed'].includes(player.state)) return;
+      player.setVolume(this.outputGain.level(this.volume,this.focusDucked ? 0.2 : 1,Date.now()));
+      if(this.outputGain.active(Date.now())) this.outputTimer=setTimeout(tick,20);
+    };
+    tick();
+  }
   private volume: number = 0.7;
   private rate: number = 1;
   private collectionRef: string = '';
@@ -200,7 +220,7 @@ export class PlayerPlugin {
     }
     if (request.plugin === 'ohos-player' && request.command === 'control') {
       const args = JSON.parse(request.payload) as Args;
-      if (args.action === 'pause' || args.action === 'stop' || args.action === 'prepare' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection'].includes(args.action ?? '')) {
+      if (args.action === 'loudness' || args.action === 'pause' || args.action === 'stop' || args.action === 'prepare' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection','loudness'].includes(args.action ?? '')) {
         // A preparation promise must never delay a user's pause/stop intent.
         this.control(args).then(() => native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())))
           .catch(() => native.tauriOhosPluginResponse(request.id,false,JSON.stringify({message:'无法停止播放，请重试'} as BridgeError)));
@@ -316,7 +336,7 @@ export class PlayerPlugin {
       }).catch(() => {});
     } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK || event.hintType === audio.InterruptHint.INTERRUPT_HINT_UNDUCK) {
       this.focusDucked = event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK;
-      player.setVolume(this.volume * (this.focusDucked ? 0.2 : 1));
+      this.applyOutput();
     }
   }
 
@@ -375,6 +395,7 @@ export class PlayerPlugin {
 
   private async play(args: Args): Promise<void> {
     if (!args.url || !args.id || !/^http:\/\/127\.0\.0\.1:\d+\//.test(args.url)) throw new Error('Invalid playback source');
+    if(args.loudnessEnabled !== undefined) this.outputGain.configure(args.loudnessEnabled,args.loudnessRevision ?? 0);
     if(args.seamless && this.player && this.id===args.id){await this.switchSource(args);return;}
     this.resumeAfterInterruption = false; this.interruptionRevision += 1; this.focusDucked = false;
     this.cancelSourceSwitch?.();
@@ -389,10 +410,12 @@ export class PlayerPlugin {
     if (this.player) { await this.player.release(); this.player = null; }
     await this.ensureSession();
     if (revision !== this.mediaRevision) return;
+    this.queue.observe(args.id);
     this.id = args.id; this.title = args.title ?? 'BiliMusic'; this.artist = args.artist ?? '';
     this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
     this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1;
-    this.rate = args.rate ?? 1; this.volume = args.volume ?? 0.7;
+    this.rate = args.rate ?? 1; this.volume = Math.max(0,Math.min(1,args.volume ?? 0.7));
+    this.outputGain.plan(args.loudnessGainDb ?? 0);
     this.previousPosition = -1; this.previousId = ''; if(!args.preserveSession) this.sessionId = util.generateRandomUUID(true);
     const player = await media.createAVPlayer();
     if (revision !== this.mediaRevision) { await player.release(); return; }
@@ -432,7 +455,7 @@ export class PlayerPlugin {
       });
       player.url = args.url ?? '';
     }); } catch(error) { if(revision !== this.mediaRevision) return; throw new Error(String(error)); } finally { this.cancelPreparation=null; }
-    player.setVolume(this.volume * (this.focusDucked ? 0.2 : 1)); this.applyRate(this.rate);
+    this.applyOutput(); this.applyRate(this.rate);
     const position = playbackStartPosition(args.position ?? 0, player.duration / 1000, args.automaticResume);
     this.upgradeAfterPosition = position * 1000 + 750;
     if (position > 0) {
@@ -493,7 +516,7 @@ export class PlayerPlugin {
       this.accountListening(true);if(original.state==='playing')await original.pause();
       if(!valid())throw new Error('音质切换已取消');
       this.player=candidate;this.mediaRevision+=1;handoffRevision=this.mediaRevision;this.previousPosition=-1;this.mediaAdvancedAt=Date.now();this.watchdogPosition=-1;this.pendingSeek=-1;
-      candidate.setVolume(this.volume * (this.focusDucked ? 0.2 : 1));if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
+      if(args.loudnessGainDb !== undefined) this.outputGain.plan(args.loudnessGainDb); this.applyOutput();if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
       try{await original.release();}catch{}this.emit();
     }catch(error){
       if(this.player===candidate && this.mediaRevision===handoffRevision){this.player=original;this.mediaRevision+=1;this.previousPosition=-1;this.error='';}
@@ -534,7 +557,8 @@ export class PlayerPlugin {
         this.accountListening(true); await this.player?.release(); this.player = null;
         this.id = ''; this.status = 'paused'; await this.stopBackground(); break;
       case 'seek': this.seekRevision += 1; this.pendingSeek = Math.max(0, value * 1000); this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
-      case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.player?.setVolume(this.volume * (this.focusDucked ? 0.2 : 1)); break;
+      case 'loudness': if(this.outputGain.configure(value > 0,args.settingsRevision ?? 0)) this.applyOutput(true); break;
+      case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.applyOutput(); break;
       case 'rate': this.accountListening(true); this.applyRate(value); break;
       case 'collection':
         if (args.id === this.id) { this.accountListening(true); this.collectionRef = args.collectionRef ?? ''; } break;
@@ -627,6 +651,7 @@ export class PlayerPlugin {
   async destroy(): Promise<void> {
     this.cancelResolution();
     this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
+    clearTimeout(this.outputTimer);
     this.accountListening(true); this.destroyed = true; clearInterval(this.timer); clearInterval(this.lyricTimer);
     await this.metadataTasks.catch(() => {});
     await this.player?.release(); await this.stopBackground(); await this.session?.destroy();

@@ -34,6 +34,35 @@ test('automatic lyrics clean Bilibili part titles and reject unrelated songs, ar
   }
 })
 
+test('similarly matched automatic lyrics prefer QQ, then NetEase, regardless of response order', () => {
+  const qq = { ...candidate, provider: 'qq', duration: 262 }
+  const netease = { ...candidate, provider: 'netease', duration: 260, translatedLyrics: '[00:01.00]translation', romanizedLyrics: '[00:01.00]romanization' }
+  const other = { ...candidate, duration: 261 }
+  for (const results of [[qq, netease, other], [qq, other, netease], [netease, qq, other], [netease, other, qq], [other, qq, netease], [other, netease, qq]]) {
+    const original = [...results]
+    assert.equal(chooseAutomaticLyrics(track, results), qq)
+    assert.deepEqual(results, original)
+    assert.equal(chooseAutomaticLyrics(track, results.filter(item => item !== qq)), netease)
+  }
+  assert.equal(chooseAutomaticLyrics(track, [other]), other)
+})
+
+test('source preference cannot override a clearly better match or timed lyrics', () => {
+  const netease = { ...candidate, provider: 'netease' }
+  const qq = { ...candidate, provider: 'qq' }
+  assert.equal(chooseAutomaticLyrics(track, [netease, { ...qq, duration: 263 }]).provider, 'qq')
+  assert.equal(chooseAutomaticLyrics(track, [netease, { ...qq, duration: 264 }]), netease)
+  assert.equal(chooseAutomaticLyrics(track, [netease, { ...candidate, duration: 263 }, { ...qq, duration: 266 }]), netease)
+  assert.equal(chooseAutomaticLyrics(track, [netease, { ...qq, syncedLyrics: undefined, plainLyrics: 'plain lyrics' }]), netease)
+  const longTrack = { ...track, durationSeconds: 2000 }
+  const longNetease = { ...netease, duration: 2061 }
+  assert.equal(chooseAutomaticLyrics(longTrack, [longNetease, { ...qq, duration: 2065 }]), longNetease)
+  assert.equal(chooseAutomaticLyrics(longTrack, [{ ...qq, duration: 2000, syncedLyrics: undefined, plainLyrics: 'plain lyrics' }, longNetease]), longNetease)
+  for (const patch of [{ trackName: '其他歌曲' }, { artistName: '其他歌手' }, { trackName: '小幸运 (Live)' }, { syncedLyrics: '[00:01.00]' }]) {
+    assert.equal(chooseAutomaticLyrics(track, [{ ...qq, ...patch }, netease]), netease)
+  }
+})
+
 test('a manual selection made during automatic lookup is preserved', async () => {
   globalThis.autoTest = { state: { current: track, status: 'playing' }, candidate, reads: 0, writes: 0 }
   const stop = startAutomaticLyrics()

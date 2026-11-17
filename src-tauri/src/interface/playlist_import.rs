@@ -842,10 +842,18 @@ fn connection_archive_rows(c: &Connection, id: &str) -> Vec<(usize, String)> {
 pub fn playlist_import_archive(
     database: State<'_, Database>,
     expected_scope: String,
+    expected_account_session: Option<String>,
     playlist_id: String,
     document: Option<String>,
 ) -> Result<Option<String>, CommandError> {
     let c = database.0.lock().map_err(CommandError::database)?;
+    if let Some(expected) = expected_account_session {
+        if crate::infrastructure::database::account_session(&c).map_err(CommandError::database)?
+            != expected
+        {
+            return Err(CommandError::validation("账号已切换，请重新打开导入页面"));
+        }
+    }
     if scope(&c) != expected_scope {
         return Err(CommandError::validation("账号已切换，请重新打开导入页面"));
     }
@@ -882,11 +890,20 @@ pub fn playlist_import_archive(
 pub fn playlist_import_commit(
     database: State<'_, Database>,
     expected_scope: String,
+    expected_account_session: Option<String>,
     playlist_id: String,
     name: String,
     entries: Vec<ImportEntry>,
 ) -> Result<PlaylistRecord, CommandError> {
     let mut connection = database.0.lock().map_err(CommandError::database)?;
+    if let Some(expected) = expected_account_session {
+        if crate::infrastructure::database::account_session(&connection)
+            .map_err(CommandError::database)?
+            != expected
+        {
+            return Err(CommandError::validation("账号已切换，请重新打开导入页面"));
+        }
+    }
     commit(
         &mut connection,
         &expected_scope,

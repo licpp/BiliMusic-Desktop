@@ -1,14 +1,8 @@
-import { coreSongTitle as core, containsSongTitle as containsTitle, songEditSimilarity as similarity, readableSongText as readable, songTextIdentity as compact, songVersionConflict, primarySongTitle } from '../domain/songIdentity'
-/** External playlist matching prototype. No requests or library writes happen here.
- * Scores rank evidence; they are not calibrated probabilities. Only resolved parts
- * can be automatically selected. The importer must let users review every choice.
- */
-export type ExternalSong = {
-  title: string
-  artists: string[]
-  aliases?: string[]
-  durationSeconds?: number
-}
+import { coreSongTitle as core, containsSongTitle as containsTitle, songEditSimilarity as similarity, readableSongText as readable, songTextIdentity as compact, songVersionConflict, primarySongTitle, recognizeSong } from '../domain/songIdentity'
+/** Pure ranking evidence. Import acceptance is separate from manual search;
+ * resolved BVID/CID is always required before a selection can be stored. */
+export type { ExternalSong } from '../domain/songIdentity'
+import type { ExternalSong } from '../domain/songIdentity'
 
 export type SongCandidate = {
   bvid: string
@@ -88,6 +82,8 @@ export function scoreSongCandidate(song: ExternalSong, candidate: SongCandidate)
   }
 }
 
+/** Frozen baseline evaluator retained for comparative regression fixtures.
+ * Production import acceptance uses rankImportSongCandidates below. */
 export function rankSongCandidates(song: ExternalSong, candidates: SongCandidate[]) {
   const unique = new Map<string, SongCandidate>()
   const resolvedBvids = new Set(candidates.filter(item => item.detailsVerified).map(item => item.bvid))
@@ -113,35 +109,63 @@ export function rankSongCandidates(song: ExternalSong, candidates: SongCandidate
   return { decision, margin, ranked, detailBvids }
 }
 
-/** Experimental reranker, evaluated separately from the frozen first prototype.
- * Duration is continuous and dominant AFTER a title match. This is not an audio
- * fingerprint: equally long covers and undocumented live editions remain possible.
- */
-export function rankDurationFirstSongCandidates(song: ExternalSong, candidates: SongCandidate[]) {
-  const primary = primarySongTitle(song.title)
-  const source = { ...song, aliases: [...(song.aliases || []).filter(alias=>!/电视剧|影视|主题曲|片头曲|片尾曲|插曲|\bOST\b/iu.test(alias)), ...(primary !== song.title ? [primary] : [])] }
-  const titleContext = (candidate: SongCandidate) => `${candidate.title} ${candidate.videoTitle || ''}`
-  const artists = song.artists.map(artist => artist.trim()).filter(Boolean)
-  const unwantedCapture = /录音棚大声听|车载|车内|音响|外放|音箱|领克\s*\d|指弹|小提琴|钢琴版|\breaction\b|教学|教程/iu
-  const ranked = rankSongCandidates(source, candidates).ranked.map(evidence => {
-    const candidate = evidence.candidate
-    const actual = candidate.detailsVerified || candidate.partCount === 1 ? candidate.durationSeconds || 0 : 0
+/** Import ranking uses shared identities. Duration and popularity refine a
+ * relevant result; neither can turn a different song/edition into a match. */
+export function rankImportSongCandidates(song: ExternalSong, candidates: SongCandidate[]) {
+  const source = recognizeSong(song)
+  const artists = source.artists
+  const unique = new Map<string, SongCandidate>()
+  const resolved = new Set(candidates.filter(c=>c.detailsVerified).map(c=>c.bvid))
+  for (const c of candidates) {
+    if (!c.detailsVerified && resolved.has(c.bvid)) continue
+    const key = `${c.bvid}:${c.cid || 'unresolved'}`
+    if (!unique.has(key) || c.detailsVerified) unique.set(key,c)
+  }
+  const ranked = [...unique.values()].flatMap(candidate => {
+    // For a verified multi-part BV only the selected part proves the song name.
+    const title = candidate.partTitle && (candidate.partCount || 0) > 1 ? candidate.partTitle : candidate.title
+    const identity = recognizeSong({title, artistHints:artists, uploaderName:candidate.uploaderName})
+    const context = `${title} ${candidate.videoTitle || ''}`
+    const exact = source.titles.some(wanted=>identity.titles.some(actual=>containsTitle(actual,wanted)))
+    const fuzzy = Math.max(0,...source.titles.flatMap(wanted=>identity.titles.map(actual=>similarity(wanted,actual)))) >= .84
+    const titleEvidence: ScoredSongCandidate['titleEvidence'] = exact ? 'exact' : fuzzy ? 'fuzzy' : 'none'
+    if (titleEvidence === 'none') return []
+    const artistHits = artists.filter(artist=>containsTitle(context,artist) || identity.artists.some(a=>compact(a)===compact(artist))).length
+    const explicitArtists=identity.queries.filter(q=>source.titles.some(t=>containsTitle(core(q.title),t))).map(q=>q.artist).filter(Boolean)
+    const artistConflict=artists.length>0 && explicitArtists.length>0 && artistHits===0
+    const versionConflict = songVersionConflict(song.title, context)
+    const actual = candidate.detailsVerified ? candidate.durationSeconds || 0 : 0
     const duration = song.durationSeconds || 0
-    const delta = actual > 0 && duration > 0 ? Math.abs(actual - duration) : undefined
-    // A one-second dead zone accommodates integer-second Bilibili durations.
-    const sigma = Math.max(2, duration * 0.01)
-    const durationScore = delta === undefined ? 0 : 55 * Math.exp(-0.5 * (Math.max(0, delta - 1) / sigma) ** 2)
-    const artistHits = artists.filter(artist => containsTitle(titleContext(candidate), artist)).length
-    const artistScore = artists.length && artistHits === artists.length ? 15 : artistHits ? 10 : 0
-    const titleScore = evidence.titleEvidence === 'exact' ? 25 : evidence.titleEvidence === 'alias' ? 24 : 10
-    const versionConflict = songVersionConflict(song.title, titleContext(candidate))
-    const capturePenalty = unwantedCapture.test(`${titleContext(candidate)} ${candidate.description || ''}`) && !unwantedCapture.test(song.title) ? 20 : 0
-    return { ...evidence, score: Math.max(0, durationScore + artistScore + titleScore + 5 - capturePenalty - (versionConflict ? 70 : 0)),
-      durationDifference: delta, durationScore, capturePenalty, versionConflict }
-  }).sort((a, b) => b.score - a.score || (a.durationDifference ?? Infinity) - (b.durationDifference ?? Infinity))
-  const best = ranked[0], margin = best ? best.score - (ranked[1]?.score || 0) : 0
-  const unresolvedCompetitor = ranked.slice(1).some(item => !item.candidate.detailsVerified && item.possibleScoreAfterDetails > 0)
-  const decision: 'automatic' | 'review' | 'missing' = !best ? 'missing'
-    : best.automaticEligible && best.capturePenalty === 0 && best.score >= 85 && margin >= 10 && !unresolvedCompetitor ? 'automatic' : 'review'
-  return { ranked, decision, margin }
+    const delta = actual > 0 && duration > 0 ? Math.abs(actual-duration) : undefined
+    const sigma = Math.max(12,duration*.08)
+    const durationScore = delta === undefined ? 0 : 8*Math.exp(-.5*(Math.max(0,delta-2)/sigma)**2)
+    const artistScore = artists.length && artistHits===artists.length ? 24 : artistHits ? 19 : 0
+    // A recording-room presentation can be the most useful upload. Its title
+    // format is not evidence of a wrong song or a low-quality source.
+    const capturePenalty = /录屏|屏幕录制|\bscreen\s*record/iu.test(title) ? 4
+      : /麦克风.{0,12}(?:现场收录|收音)|外放录制/iu.test(candidate.description || '') ? 1 : 0
+    const plays = Number.isFinite(candidate.playCount) ? Math.max(0,candidate.playCount || 0) : 0
+    const popularityScore = Math.min(12,Math.log10(1+plays)*2)
+    const publicationScore = artistHits > 0 && /官方|\bofficial\b|\bMV\b|音乐录影带/iu.test(title) ? 2 : 0
+    const verified = candidate.detailsVerified === true && Number.isSafeInteger(candidate.cid) && (candidate.cid || 0)>0
+    const quotes=[...title.matchAll(/《([^《》]+)》|「([^「」]+)」|“([^“”]+)”/g)]
+    const quotedSongs = new Set(quotes.filter(match => !/(?:动画|動漫|动漫|番剧|电影|電影|电视剧|電視劇|游戏|遊戲|漫画|專輯|专辑)[\s:：]*$/u.test(title.slice(Math.max(0,(match.index||0)-12),match.index)))
+      .map(match=>compact(match[1]||match[2]||match[3])))
+    const medley = quotedSongs.size>1 || /串烧|连唱|\b(?:medley|mashup)\b/iu.test(title) && !/串烧|连唱|\b(?:medley|mashup)\b/iu.test(song.title)
+    const giantDurationConflict = delta !== undefined && delta > Math.max(45,duration*.3)
+    const titleSize = Math.max(0,...source.titles.map(t=>compact(t).length))
+    const strongIdentity = artistHits>0 || (titleSize>4 && delta !== undefined && delta<=Math.max(15,duration*.08))
+    const shortClear = titleSize>2 || identity.titles.some(actual=>source.titles.some(t=>compact(actual)===compact(t))) || /[《「“]/.test(title)
+    const score = Math.max(0,(exact?50:32)+artistScore+durationScore+popularityScore+publicationScore-capturePenalty-(versionConflict?70:0)-(giantDurationConflict?35:0)-(artistConflict?40:0))
+    const reasons = [exact?'曲名一致':'曲名近似',artistHits?'歌手相符':'缺少歌手证据',...(versionConflict?['版本不一致']:[]),...(artistConflict?['歌手不一致']:[]),...(giantDurationConflict?['时长差异较大']:[])]
+    return [{candidate,score,titleEvidence,reasons,automaticEligible:verified && exact && strongIdentity && shortClear && !versionConflict && !artistConflict && !medley && !giantDurationConflict,
+      possibleScoreAfterDetails:!verified && exact && !versionConflict?100:0,durationDifference:delta,durationScore,capturePenalty,versionConflict,popularityScore}]
+  }).sort((a,b)=>Number(b.automaticEligible)-Number(a.automaticEligible) || b.score-a.score || (a.durationDifference??Infinity)-(b.durationDifference??Infinity) || a.candidate.bvid.localeCompare(b.candidate.bvid) || (a.candidate.cid||0)-(b.candidate.cid||0))
+  const best=ranked[0], margin=best?best.score-(ranked[1]?.score||0):0
+  const unresolvedCompetitor=ranked.slice(1).some(c=>!c.candidate.detailsVerified&&c.possibleScoreAfterDetails>0)
+  const decision:'automatic'|'review'|'missing'=!best?'missing':best.automaticEligible&&!unresolvedCompetitor?'automatic':'review'
+  return {ranked,decision,margin}
 }
+
+/** Historical export retained for callers/tests; the active ranker is identity-first. */
+export const rankDurationFirstSongCandidates = rankImportSongCandidates

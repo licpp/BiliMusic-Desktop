@@ -1,4 +1,6 @@
 import { withTrackTitle } from '../domain/sourceTitle'
+import { sourceTrack } from '../domain/importedPresentation'
+import type { ImportedEntriesSnapshot } from '../domain/importedEntry'
 import type { BiliComment, CommentPage } from '../domain/comments'
 export type { BiliComment, CommentPage } from '../domain/comments'
 import type { QrLogin, QrLoginStatus, AccountProfile } from '../domain/account'
@@ -67,7 +69,7 @@ export function getVideoParts(bvid: string, refresh = false) {
 }
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
 export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh, preferOnline })
-export const getTrackPlaybackPlan = (track: Track, refresh = false) => invoke<{ url: string; upgradeUrl?: string }>('track_playback_plan', { trackId: track.id, refresh })
+export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number }>('track_playback_plan', { trackId: track.id, refresh, preferOnline })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   if (track.resolveParts && track.source.cid <= 0) {
@@ -86,7 +88,7 @@ export async function recordPlayedTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   const stored = await write<StoredTrack>('library_record_play', { track: toTrackInput(track) })
   window.dispatchEvent(new Event('bilimusic-recent-changed'))
-  return withTrackTitle({ ...track, ...fromStoredTrack(stored), sourceTitleContext: stored.sourceTitleContext || track.sourceTitleContext, videoTitle: stored.sourceVideoTitle || track.videoTitle, partCount: track.partCount })
+  return withTrackTitle({ ...sourceTrack(track), ...fromStoredTrack(stored), sourceTitleContext: stored.sourceTitleContext || track.sourceTitleContext, videoTitle: stored.sourceVideoTitle || track.videoTitle, partCount: track.partCount })
 }
 
 export async function listLibraryTracks(favoritesOnly = false, savedOnly = false): Promise<Track[]> {
@@ -197,7 +199,13 @@ export const createPlaylist = (name: string) => write<Playlist>('playlist_create
 export const createLinkedPlaylist = (name: string) => write<Playlist>('bili_linked_create', { name })
 export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
   if (!inDesktopShell) return []
-  return (await invoke<StoredTrack[]>('playlist_tracks', { playlistId })).map(fromStoredTrack)
+  const epoch = accountEpoch()
+  const records = await invoke<StoredTrack[]>('playlist_tracks', { playlistId })
+  const snapshot = playlistId.startsWith('import:')
+    ? await invoke<ImportedEntriesSnapshot>('playlist_import_entries', { playlistId }) : undefined
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
+  const entries = new Map(snapshot?.entries.filter(entry => entry.trackId).map(entry => [entry.trackId!, entry]))
+  return records.map(record => withTrackTitle({ ...fromStoredTrack(record), importedEntry: entries.get(record.id) }))
 }
 export const addTracksToPlaylist = (playlistId: string, trackIds: string[], append = false) => write<void>('playlist_add_tracks', { playlistId, trackIds, append })
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_add_track', { playlistId, trackId })
@@ -241,6 +249,7 @@ export const setCommentLike = (aid: number, replyId: number, liked: boolean) => 
 export const replyComment = (aid: number, message: string, root?: number, parent?: number) => invoke<void>('bili_comment_reply', { aid, message, root, parent })
 
 function toTrackInput(track: Track) {
+  track = sourceTrack(track)
   return {
     id: track.id, bvid: track.source.bvid, aid: track.source.aid, cid: track.source.cid, page: track.source.page,
     sourceTitleContext: track.sourceTitleContext, sourceTitle: track.videoTitle || track.displayTitle || track.title, title: track.displayTitle || track.title, artist: track.artist, album: track.album, coverUrl: track.coverUrl,

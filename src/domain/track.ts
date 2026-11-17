@@ -1,4 +1,5 @@
 import type { SourceTitleContext } from './sourceTitle'
+import type { ImportedEntry } from './importedEntry'
 export type TrackSource = {
   provider: 'bilibili'
   bvid: string
@@ -27,6 +28,9 @@ export type Track = {
   publishedAt?: number
   playCount?: number
   partCount?: number
+  /** Playlist-local catalog presentation; never a manual metadata override. */
+  importedEntry?: ImportedEntry
+  importedSourceMetadata?: Pick<Track, 'title' | 'displayTitle' | 'artist' | 'album' | 'coverUrl'>
 }
 
 export const sourceIdentity = (source: TrackSource) =>

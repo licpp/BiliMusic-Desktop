@@ -48,3 +48,16 @@ test('series information is shown in mixed lists and omitted beneath the same se
  assert.equal(trackSubtitle(track,{collectionRef:'season:42:10'}),'')
  assert.equal(trackSubtitle(track,{kind:'season',title:'其他合集'}),'苦命皇帝咸丰')
 })
+
+test('known singer takes precedence over series; explicit singers may also be the uploader',async()=>{
+ const {trackSubtitle,knownArtist}=await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`)
+ const track={id:'song:1',artist:'王菲',source:{uploaderName:'音乐频道'},sourceTitleContext:{season:{id:10,uploaderId:42,title:'王菲作品合集'}}}
+ assert.equal(trackSubtitle(track),'王菲')
+ assert.equal(trackSubtitle(track,{collectionRef:'season:42:10'}),'王菲')
+ for(const artist of ['', '歌手未知','未知歌手','unknown artist'])assert.equal(trackSubtitle({...track,artist}),'王菲作品合集')
+ const sameUploader={...track,source:{uploaderName:'王菲'}}
+ assert.equal(knownArtist(sameUploader),'')
+ assert.equal(trackSubtitle({...sameUploader,titleOverridden:true}),'王菲')
+ assert.equal(trackSubtitle({...sameUploader,importedEntry:{trackId:'song:1'}}),'王菲')
+ assert.equal(knownArtist({...sameUploader,importedEntry:{trackId:'other'}}),'')
+})

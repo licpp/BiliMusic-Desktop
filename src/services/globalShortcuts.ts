@@ -27,11 +27,12 @@ export function suspendGlobalShortcuts(on: boolean) {
 function queue() {
   if (!inDesktopShell || !shortcutDesktop || !current) return
   const enabled = current.enabled && !suspended && !listenerFailure
-  const bindings = enabled ? shortcutActions.flatMap(({id}) => {
+  const bindings = !suspended ? shortcutActions.flatMap(({id}) => {
+    if(id!=='show'&&!enabled)return []
     const binding = globalShortcutBinding(id,current!.bindings[id])
     return binding ? [binding] : []
   }) : []
-  desired = JSON.stringify({bindings,enabled})
+  desired = JSON.stringify({bindings,enabled,suspended})
   void push()
 }
 
@@ -66,11 +67,17 @@ export function listenGlobalShortcuts(run: (action: ShortcutAction) => void) {
   void listen<string>('global-shortcut',event=>{
     if (dead || suspended || !current?.enabled) return
     const action = shortcutActions.find(item=>item.id===event.payload)?.id
-    if (action && useGlobalShortcutStatus.getState().registered.includes(action)) run(action)
+    if (action && action!=='show' && useGlobalShortcutStatus.getState().registered.includes(action)) run(action)
   }).then(unlisten=>{
     if(dead)unlisten();else {stop=unlisten;if(listenerFailure){listenerFailure='';queue()}}
   }).catch(()=>{
     if(!dead){listenerFailure='无法接收全局快捷键，请重启应用';useGlobalShortcutStatus.setState({error:listenerFailure});queue()}
   })
   return () => { dead=true;stop() }
+}
+
+/** Used only for in-window key dispatch; background hotkeys restore natively. */
+export async function showMainWindow() {
+  if(!inDesktopShell||!shortcutDesktop)return
+  try{await invoke('global_shortcuts_show')}catch(cause){useGlobalShortcutStatus.setState({error:typeof cause==='string'?cause:'无法打开主窗口，请从托盘重试'})}
 }

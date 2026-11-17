@@ -62,12 +62,27 @@ export function nextLyricSupplement(mode: LyricSupplement, modes: LyricSupplemen
 }
 
 export function bestCandidate(candidates: LyricCandidate[], durationSeconds: number): LyricCandidate | undefined {
-  return [...candidates]
-    .filter((candidate) => candidate.syncedLyrics || candidate.plainLyrics)
-    .sort((left, right) => score(right, durationSeconds) - score(left, durationSeconds))[0]
+  const available = candidates.filter(candidate => candidate.syncedLyrics || candidate.plainLyrics)
+  const timed = available.filter(candidate => candidate.syncedLyrics)
+  const ranked = (timed.length ? timed : available)
+    .map(candidate => ({ candidate, delta: durationDelta(candidate, durationSeconds) }))
+  if (!ranked.length) return undefined
+  const closest = Math.min(...ranked.map(item => item.delta))
+  // Anchor the comparison to the best match, not each adjacent pair: a fuzzy
+  // sort comparator can otherwise change its answer when results arrive reordered.
+  return ranked.filter(item => item.delta <= closest + 3)
+    .sort((left, right) => sourcePriority(left.candidate) - sourcePriority(right.candidate)
+      || score(right.candidate, durationSeconds) - score(left.candidate, durationSeconds))[0].candidate
+}
+
+function sourcePriority(candidate: LyricCandidate) {
+  return candidate.provider === 'qq' ? 0 : candidate.provider === 'netease' ? 1 : 2
+}
+
+function durationDelta(candidate: LyricCandidate, durationSeconds: number) {
+  return durationSeconds > 0 && candidate.duration > 0 ? Math.abs(candidate.duration - durationSeconds) : 0
 }
 
 function score(candidate: LyricCandidate, durationSeconds: number) {
-  const durationDelta = durationSeconds > 0 && candidate.duration > 0 ? Math.abs(candidate.duration - durationSeconds) : 0
-  return (candidate.syncedLyrics ? 100 : 0) + (candidate.plainLyrics ? 10 : 0) + (candidate.translatedLyrics ? 3 : 0) + (candidate.romanizedLyrics ? 3 : 0) + (/netease|qq/.test(candidate.provider) ? 1.5 : 0) - Math.min(durationDelta, 60)
+  return (candidate.syncedLyrics ? 100 : 0) + (candidate.plainLyrics ? 10 : 0) + (candidate.translatedLyrics ? 3 : 0) + (candidate.romanizedLyrics ? 3 : 0) - Math.min(durationDelta(candidate, durationSeconds), 60)
 }

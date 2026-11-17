@@ -25,6 +25,7 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
       if (report.library) {
         reportSyncOutcome(report.library)
         await onLibrary(report.library)
+        window.dispatchEvent(new Event('bilimusic-library-synced'))
         if (stopped || switching || epoch !== accountEpoch()) return
         await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
         if (stopped || switching || epoch !== accountEpoch()) return

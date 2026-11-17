@@ -643,6 +643,8 @@ fn capture_edits(
         return Ok(());
     }
     let current = projection::capture(c, &cfg.uid, cfg.history)?;
+    let import_mirrors =
+        crate::infrastructure::repositories::imported_entries::MirrorCapture::new(c, target)?;
     for d in LIBRARY_DOMAINS {
         if d == Domain::Progress && !cfg.history {
             continue;
@@ -652,6 +654,28 @@ fn capture_edits(
             let Ok((entity, field)) = serde_json::from_str::<(String, String)>(key) else {
                 return true;
             };
+            if d == Domain::Library && !import_mirrors.allow_item(&entity) {
+                return false;
+            }
+            if d == Domain::Library
+                && let Some(id) = entity.strip_prefix("track:")
+            {
+                if !state.observed.snapshot.records.contains_key(&entity)
+                    && import_mirrors.remote_track(id)
+                    && current.snapshot.records.get(&entity).is_some_and(|r| {
+                        [
+                            "overrideTitle",
+                            "overrideArtist",
+                            "overrideAlbum",
+                            "overrideCover",
+                        ]
+                        .iter()
+                        .all(|k| r.fields.get(*k).is_none_or(serde_json::Value::is_null))
+                    })
+                {
+                    return false;
+                }
+            }
             // The top-200 query is a bounded local VIEW, not an explicit global
             // deletion. An offline device may have just played the aged-out song.
             if d == Domain::Progress
@@ -688,6 +712,7 @@ fn capture_edits(
         }
     }
     state.observed = current;
+    crate::infrastructure::repositories::imported_entries::acknowledge_core(c, target)?;
     put(c, target, "runtime", state)
 }
 async fn publish(
@@ -1154,11 +1179,59 @@ pub async fn sync(
     })?;
     net.parents().await?;
     publish(db, cfg, &target, &net, &mut state, &mut lease).await?;
+    let visibility_session = with(db, cfg, |c| {
+        crate::infrastructure::database::account_session(c).map_err(err)
+    })?;
+    let visibility_result = super::visibility::exchange(db, cfg, secret, lease.actor()).await;
+    let visibility_changed = with(db, cfg, |c| {
+        let active = super::config_from_connection(c)?.ok_or("同步连接已改变")?;
+        if crate::infrastructure::database::account_session(c).map_err(err)? != visibility_session {
+            return Err("同步账号会话已变更".into());
+        }
+        if active.provider != cfg.provider || active.url != cfg.url || active.uid != cfg.uid {
+            return Err("同步连接已改变".into());
+        }
+        match visibility_result {
+            Ok(changed) => {
+                c.execute("DELETE FROM visibility_runtime WHERE key='sync_error'", [])
+                    .map_err(err)?;
+                Ok(changed)
+            }
+            Err(error) => {
+                c.execute("INSERT INTO visibility_runtime VALUES('sync_error',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[error]).map_err(err)?;
+                Ok(false)
+            }
+        }
+    })?;
+    let import_result = super::import_entries::exchange(db, cfg, secret, lease.actor()).await;
+    let import_changed = with(db, cfg, |c| {
+        if crate::infrastructure::database::account_session(c).map_err(err)? != visibility_session {
+            return Err("同步账号会话已变更".into());
+        }
+        match import_result {
+            Ok(changed) => {
+                c.execute(
+                    "DELETE FROM imported_entry_runtime WHERE key='sync_error'",
+                    [],
+                )
+                .map_err(err)?;
+                Ok(changed)
+            }
+            Err(error) => {
+                c.execute("INSERT INTO imported_entry_runtime VALUES('sync_error',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&error]).map_err(err)?;
+                Err(format!("导入歌单同步失败：{error}"))
+            }
+        }
+    })?;
     with(db, cfg, |c| {
         c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(err)?;
         Ok(())
     })?;
-    Ok(outcome(&after, vec![], after != current))
+    Ok(outcome(
+        &after,
+        vec![],
+        after != current || visibility_changed || import_changed,
+    ))
 }
 
 #[cfg(test)]

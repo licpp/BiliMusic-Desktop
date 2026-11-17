@@ -1,4 +1,5 @@
 import { SeekRange } from '../shared/SeekRange'
+import { PlayingVideoReplacement } from '../features/library/PlayingVideoReplacement'
 import { useSourceTitleMetadata } from '../shared/useSourceTitleMetadata'
 import { trackSubtitle } from '../domain/sourceTitle'
 import { accountQueryKey, accountKeyAt } from '../services/queryKeys'
@@ -7,7 +8,7 @@ import { fitMediaFrame, centeredLyricScroll } from './playerLayout'
 import { progressKeyAction } from './playerNavigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText } from 'lucide-react'
+import { ArrowLeft, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText, RefreshCw } from 'lucide-react'
 import { usePlayerStore, playbackClock, playbackRates, reloadCurrentAudioSource } from '../features/player/playerStore'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaybackSettings } from '../features/lyrics/PlaybackSettings'
@@ -63,6 +64,7 @@ export function LargeProgress() {
 
 export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navigate }: { onBack: () => void; onQueue: () => void; onFavorite: () => void; onMore: (track: Track) => void; onSleep: () => void; navigate: Navigate }) {
   const sourceClient = useQueryClient()
+  const [replacingVideo, setReplacingVideo] = useState<Track | null>(null)
   const current = usePlayerStore(s => s.current), error = usePlayerStore(s => s.error)
   useSourceTitleMetadata(current)
   const [video, setVideo] = useState(() => localStorage.getItem('lyrics-media-mode') === 'video')
@@ -114,7 +116,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
   const frame = <>{source.data && <SyncedVideo key={current.id} onReload={reloadVideo} src={source.data.videoUrl} poster={current.coverUrl} active={video} onReady={ready}/>}<Failure error={source.error} retry={() => void source.refetch()}/>{!source.data && !source.error && <div className="large-video-placeholder"><Artwork src={current.coverUrl}/><span><LoaderCircle className="spin"/>正在准备画面…</span></div>}</>
   return <div className={`large-player${fullscreen ? ' is-fullscreen' : ''}`}>
     <LyricsBackdrop cover={current.coverUrl}/>
-    <header className="large-player-header"><button className="large-text-button" data-focus="player-back" onClick={onBack}><ArrowLeft/>返回浏览</button><div className="large-toolbar"><button data-focus="player-video" data-focus-down={video ? 'video-fullscreen' : undefined} aria-pressed={video} onClick={() => { const next = !video; setVideo(next); setFullscreen(false); localStorage.setItem('lyrics-media-mode', next ? 'video' : 'cover') }}>{video ? <Music2/> : <MonitorPlay/>}{video ? '封面' : '视频'}</button><button onClick={onQueue}><ListVideo/>队列</button></div></header>
+    <header className="large-player-header"><button className="large-text-button" data-focus="player-back" onClick={onBack}><ArrowLeft/>返回浏览</button><div className="large-toolbar"><button data-focus="player-video" data-focus-down={video ? 'video-fullscreen' : undefined} aria-pressed={video} onClick={() => { const next = !video; setVideo(next); setFullscreen(false); localStorage.setItem('lyrics-media-mode', next ? 'video' : 'cover') }}>{video ? <Music2/> : <MonitorPlay/>}{video ? '封面' : '视频'}</button><button onClick={onQueue}><ListVideo/>队列</button>{current.importedEntry?.trackId === current.id && <button onClick={() => setReplacingVideo(current)}><RefreshCw/>更换视频</button>}</div></header>
     <div className="large-player-body"><section className="large-player-info">
       <div className="large-media-stage" ref={mediaStage}><div className="large-media-frame" style={stageSize.width ? mediaFit : undefined} onLoadedMetadataCapture={e => { const element = e.target; if (element instanceof HTMLVideoElement && element.videoWidth && element.videoHeight) setVideoAspect({ trackId: current.id, ratio: element.videoWidth / element.videoHeight }) }}>{video ? <div className={`large-video${fullscreen ? ' expanded' : ''}`} role={fullscreen ? 'dialog' : undefined} aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? '全屏视频' : '视频小窗'} onPointerMove={fullscreen ? reveal : undefined} onKeyDownCapture={fullscreen ? e => { if (!shown) { e.preventDefault(); e.stopPropagation(); reveal() } else reveal() } : undefined}>
         {frame}{videoReady && danmaku.visible && danmaku.query.data && <DanmakuCanvas items={danmaku.query.data} scale={danmaku.size} opacity={danmaku.opacity} density={2 ** (danmaku.density - 3)}/>}{!fullscreen && <button tabIndex={-1} aria-hidden="true" className="large-video-tap" onClick={() => { setFullscreen(true); reveal() }}/>}{!fullscreen && <button ref={trigger} className="large-video-open" aria-label="全屏播放视频" data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back" onClick={() => { setFullscreen(true); reveal() }}><Expand/><span>全屏</span></button>}
@@ -124,6 +126,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
 <Failure error={error} retry={() => void usePlayerStore.getState().play(current)}/>
     </section><LargeLyrics track={current} toolsHost={lyricTools}/></div>
     <footer className="large-player-footer"><div className="large-player-extras"><button className={current.liked ? 'liked' : ''} aria-pressed={current.liked} aria-label={current.liked ? '取消喜欢' : '喜欢'} onClick={onFavorite}><Heart fill={current.liked ? 'currentColor' : 'none'}/></button><PlaybackModeButton/><button onClick={() => navigate({ kind: 'collection', item: { bvid: current.source.bvid, title: current.videoTitle || current.title, coverUrl: current.coverUrl || '', uploaderName: current.source.uploaderName || '', folderId: '' } })}><ListVideo/>选集</button><button onClick={() => setSettings(true)}><Settings2/>设置</button><button aria-label="当前歌曲更多操作" onClick={() => onMore(current)}>···</button></div><div className="large-lyrics-tools-host" ref={setLyricTools}/></footer>
+    {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)} renderDialog={body => <LargeDialog title="更换视频" className="import-match-large-dialog" onClose={() => setReplacingVideo(null)}>{body}</LargeDialog>}/>}
     {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack"><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
   </div>
 }

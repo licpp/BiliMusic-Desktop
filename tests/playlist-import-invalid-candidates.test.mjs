@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
+import {importEntryCommand} from './fixtures/import-entry-store.mjs'
 
 const { outputFiles } = await build({
   entryPoints: ['src/services/playlistImport.ts'], bundle: true, write: false, format: 'cjs', platform: 'node',
@@ -20,8 +21,9 @@ const song = { sourceId: 'text:1', title: '晴天', artists: ['周杰伦'], dura
 const item = (bvid, title = '周杰伦《晴天》') => ({ bvid, title, uploaderName: '音乐', durationSeconds: 269 })
 const detail = (bvid, title = '周杰伦《晴天》') => ({ bvid, title, uploaderName: '音乐', uploaderId: 1, coverUrl: '', parts: [{ cid: 1, page: 1, title, durationSeconds: 269, coverUrl: '' }] })
 function setup(search, read = async bvid => detail(bvid)) {
-  const window = new EventTarget(), requests = [], commits = []
+  const window = new EventTarget(), requests = [], commits = [], state={scope:'account:1',commits:[]}
   window.fixture = { search: async keyword => ({ items: await search(keyword) }), detail: async bvid => { requests.push(bvid); return read(bvid) }, invoke: async (command, args) => {
+    state.commits=commits;const result=importEntryCommand(state,command,args);if(result!==undefined)return result;
     if (command === 'playlist_import_commit') { commits.push(args); return { id: args.playlistId, name: args.name } }
     return undefined
   } }

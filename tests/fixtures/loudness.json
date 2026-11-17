@@ -1,0 +1,14 @@
+[
+  {"volume":{"measured_i":-12.7,"measured_tp":0.8},"gainDb":-5.3},
+  {"volume":{"measured_i":-9.1,"measured_tp":3.8,"target_offset":-0.5},"gainDb":-8.9},
+  {"volume":{"measured_i":-15.5,"measured_tp":0.001},"gainDb":-2.5},
+  {"volume":{"measured_i":-24,"measured_tp":-7},"gainDb":0},
+  {"volume":{"measured_i":-18,"measured_tp":0},"gainDb":-1.5},
+  {"volume":{"measured_i":0,"measured_tp":1},"gainDb":-18},
+  {"volume":{"measured_i":-12},"gainDb":-6},
+  {"volume":{"measured_i":-30},"gainDb":0},
+  {"volume":{"measured_i":-12,"measured_tp":"bad"},"gainDb":-6},
+  {"volume":{"measured_i":-80},"gainDb":0},
+  {"volume":{"measured_i":"bad"},"gainDb":0},
+  {"volume":null,"gainDb":0}
+]

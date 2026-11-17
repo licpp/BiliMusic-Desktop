@@ -1,3 +1,8 @@
+import { LargeBatchMatch } from './BatchMatch'
+import { trackHidden, videoScope } from '../domain/contentVisibility'
+import { useManagedVisibilityScope } from '../shared/useManagedVisibilityScope'
+import { useVisibilityRules } from '../services/contentVisibility'
+import { VisibilityControls } from '../shared/VisibilityControls'
 import { matchesTrackSearch } from '../shared/ListSearch'
 import { trackSubtitle } from '../domain/sourceTitle'
 import { accountKeyAt, accountQueryKey } from '../services/queryKeys'
@@ -24,11 +29,18 @@ import { listCollections, readCollectionProgress, type Collection, type Collecti
 import { accountEpoch } from '../services/accountScope'
 import { toTrack } from '../services/collectionTrack'
 import { getSeason, parseSeasonReference, seasonTracks, creatorVideoRow } from '../services/mediaSources'
+import { filterSeasonSection } from '../domain/seasonSections'
+import { SeasonSections,useSeasonSection } from '../shared/SeasonSections'
 import { hydrateVisibleTracks } from '../services/sync'
 import { useListPreferences, playlistEntity } from '../services/listPreferences'
 import { rankList, sortTracks } from '../services/listOrdering'
 import { linkedFolderKey, reloadLinkedFolder } from '../services/linkedFolders'
 import { usePlayerStore, type QueueSource } from '../features/player/playerStore'
+import { useImportedPlaylist } from '../features/library/useImportedPlaylist'
+import { ReplacementSearch } from '../features/library/ReplacementDialog'
+import { ImportedPlaylistCompletionContent } from '../features/library/ImportedPlaylistCompletion'
+import { LargeDialog } from './LargeDialog'
+import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
 
 export type LibraryTab = 'playlists' | 'collections' | 'creators'
 export type Route = { kind: 'home' | 'library' | 'search' | 'offline' | 'settings' | 'player' } | { kind: 'playlist'; playlist: Playlist } | { kind: 'folder'; id: string; title: string; scope: LibraryTab } | { kind: 'collection'; item: Collection } | { kind: 'creator'; item: Collection; tab?: 'videos' | 'seasons'; query?: string }
@@ -93,37 +105,58 @@ export function LargeLibrary({ tab, setTab, navigate, folder, filterState }: { f
 export function ListFilter({ value, onChange, label = '搜索列表中的音乐' }: { value: string; onChange: (value: string) => void; label?: string }) {
   return <label className="large-search"><Search size={22}/><input data-primary-focus aria-label={label} placeholder={label} value={value} onChange={e => onChange(e.target.value)}/>{value && <button aria-label="清空搜索" onClick={() => onChange('')}><X size={20}/></button>}</label>
 }
-export function TrackRows({ tracks, source, onMore, onPlayed, onOpen }: { tracks: Track[]; source?: QueueSource; onMore: (track: Track) => void; onPlayed?: () => void; onOpen?: (track: Track) => void }) {
+export function TrackRows({ tracks, source, onMore, onPlayed, onOpen,visibilityScope,playbackTracks=tracks,importedEntries }: { importedEntries?:ImportedEntry[];visibilityScope?:string;playbackTracks?:Track[];tracks: Track[]; source?: QueueSource; onMore: (track: Track) => void; onPlayed?: () => void; onOpen?: (track: Track) => void }) {
+  const rules=useVisibilityRules()
   const id = usePlayerStore(s => s.current?.id), status = usePlayerStore(s => s.status)
-  return <div className="large-tracks">{tracks.map((track, index) => <div className={`large-track${track.id === id ? ' current' : ''}`} key={track.id}>
-    <button className="large-track-main" data-focus={`track-${track.id}`} onClick={() => { if (onOpen) onOpen(track); else { void usePlayerStore.getState().playFromList(tracks, track.id, source); onPlayed?.() } }}>
-      <span className="large-track-number">{track.id === id && status === 'playing' ? <span className="large-playing-mark">ııı</span> : index + 1}</span><span className="large-track-art"><Artwork adaptAspect src={track.coverUrl}/></span><span className="large-track-copy"><strong>{track.displayTitle || track.title}</strong><small>{trackSubtitle(track,source)}<PublishedDate value={track.publishedAt}/></small></span><span className="large-track-duration">{formatDuration(track.durationSeconds)}</span>
+  const origins=new Map(importedEntries?.filter(e=>e.trackId).map(e=>[e.trackId,e.song]))
+  return <div className="large-tracks">{tracks.map((track, index) => {const origin=track.titleOverridden?undefined:origins.get(track.id);return <div className={`large-track${track.id === id ? ' current' : ''}${visibilityScope&&trackHidden(track,visibilityScope,rules)?' visibility-hidden':''}`} key={track.id}>
+    <button disabled={Boolean(visibilityScope&&trackHidden(track,visibilityScope,rules))} className="large-track-main" data-focus={`track-${track.id}`} onClick={() => { if (onOpen) onOpen(track); else { void usePlayerStore.getState().playFromList(playbackTracks, track.id, source); onPlayed?.() } }}>
+      <span className="large-track-number">{track.id === id && status === 'playing' ? <span className="large-playing-mark">ııı</span> : index + 1}</span><span className="large-track-art"><Artwork adaptAspect src={origin?.coverUrl||track.coverUrl}/></span><span className="large-track-copy"><strong>{origin?.title||track.displayTitle || track.title}</strong><small>{origin?origin.artists.join(' / ')||'歌手未知':trackSubtitle(track,source)}<PublishedDate value={track.publishedAt}/></small></span><span className="large-track-duration">{formatDuration(track.durationSeconds)}</span>
     </button><button className="large-icon large-track-more" data-focus={`more-${track.id}`} aria-label={`${track.title}的更多操作`} onClick={() => onMore(track)}><MoreHorizontal/></button>
-  </div>)}</div>
+  </div>})}</div>
 }
 
-export function LargePlaylist({ playlist, onMore, navigate, filterState }: { filterState?: FilterState; playlist: Playlist; onMore: (t: Track) => void; navigate: Navigate }) {
+export function LargePlaylist({ playlist, onMore, navigate, filterState }: { filterState?: FilterState; playlist: Playlist; onMore: (t: Track,replaceVideo?:()=>void) => void; navigate: Navigate }) {
   const client = useQueryClient(), prefs = useListPreferences(), epoch = accountEpoch()
   const linked = playlist.biliFolderId
+  const imported=useImportedPlaylist(playlist)
+  const [replacement,setReplacement]=useState<ImportedEntry>(),[completion,setCompletion]=useState(false),[matching,setMatching]=useState(false)
   const query = useQuery<Track[] | LinkedFolder | null>({ queryKey: linked ? linkedFolderKey(linked) : accountQueryKey('library', playlist.id), queryFn: () => linked ? getLinkedFolder(linked) : listPlaylistTracks(playlist.id) })
   const [filter, setFilter] = useFilter(filterState), [refreshError, setRefreshError] = useState<unknown>()
   useEffect(() => { let alive = true; if (linked) void reloadLinkedFolder(client, linked).catch(e => { if (alive) setRefreshError(e) }); return () => { alive = false } }, [linked, client, epoch])
   const raw = Array.isArray(query.data) ? query.data : query.data ? seasonTracks({ unavailable: 0, summary: { id: linked!, uploaderId: 0, title: playlist.name, uploaderName: '', coverUrl: '' }, tracks: query.data.videos.map(v => ({ bvid: v.bvid, aid: v.aid || 0, cid: 0, title: v.title, coverUrl: v.cover, durationSeconds: v.duration || 0, publishedAt: v.pubtime, playCount: v.cnt_info?.play })) }) : []
   useEffect(() => { if (!linked && Array.isArray(query.data)) void hydrateVisibleTracks(query.data, client).catch(() => undefined) }, [query.data, linked, client])
   const entity = playlistEntity(playlist), rule = prefs.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc'
-  const tracks = sortTracks(raw, rule, prefs.data?.dates || {}, prefs.data?.playCounts || {}).filter(t => matchesTrackSearch(t,filter))
+  const tracks = sortTracks(raw, rule, prefs.data?.dates || {}, prefs.data?.playCounts || {}).filter(t => {const entry=imported.byTrack.get(t.id);return matchesTrackSearch(t,filter)||Boolean(entry&&`${entry.song.title} ${entry.song.artists.join(' ')} ${entry.song.album||''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))})
   const source = playlistContext(playlist.name, Boolean(linked))
-  return <><header className="large-page-heading"><div><h1>{playlist.name}{linked && <Link2 size={22}/>}</h1><p>{raw.length} {linked ? '个视频 · B站关联收藏夹' : '首歌曲'}</p></div><div className="large-toolbar"><ListSort entity={entity}/><DownloadListButton tracks={tracks}/><button className="large-primary" disabled={!tracks.length} onClick={() => void usePlayerStore.getState().playFromList(tracks, tracks[0].id, source)}><Play/>播放全部</button></div></header><ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || refreshError} retry={() => { void query.refetch(); if (linked) void reloadLinkedFolder(client, linked).then(() => setRefreshError(undefined)).catch(setRefreshError) }}/><TrackRows tracks={tracks} source={source} onMore={onMore} onOpen={linked ? t => navigate({ kind: 'collection', item: { bvid: t.source.bvid, folderId: '', title: t.title, coverUrl: t.coverUrl || '', uploaderName: t.source.uploaderName || '' } }) : undefined}/>{!query.isPending && !tracks.length && <Empty>{filter ? '没有匹配的歌曲' : '这个歌单还没有歌曲'}</Empty>}</>
+  const replaced=(snapshot:ImportedEntriesSnapshot)=>{
+    const epoch=accountEpoch(),trackId=snapshot.entries.find(e=>e.entryId===replacement?.entryId)?.trackId
+    client.setQueryData(accountQueryKey('imported-entries',playlist.id),snapshot);setReplacement(undefined)
+    void query.refetch().then(()=>requestAnimationFrame(()=>{if(epoch!==accountEpoch())return;[...document.querySelectorAll<HTMLElement>('[data-focus]')].find(el=>el.dataset.focus===`more-${trackId}`)?.focus({preventScroll:true})}))
+    void client.invalidateQueries({queryKey:accountQueryKey('playlists')})
+  }
+  return <><header className="large-page-heading"><div><h1>{playlist.name}{linked && <Link2 size={22}/>}</h1><p>{raw.length} {linked ? '个视频 · B站关联收藏夹' : '首歌曲'}</p></div><div className="large-toolbar"><ListSort entity={entity}/>{!linked&&<button disabled={!tracks.length} onClick={()=>setMatching(true)}>自动匹配</button>}{imported.missing.length>0&&<button onClick={()=>setCompletion(true)}><RefreshCw/>补全未匹配 · {imported.missing.length}</button>}<DownloadListButton tracks={tracks}/><button className="large-primary" disabled={!tracks.length} onClick={() => void usePlayerStore.getState().playFromList(tracks, tracks[0].id, source)}><Play/>播放全部</button></div></header><ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || refreshError} retry={() => { void query.refetch(); if (linked) void reloadLinkedFolder(client, linked).then(() => setRefreshError(undefined)).catch(setRefreshError) }}/><TrackRows tracks={tracks} source={source} importedEntries={imported.entries} onMore={track=>{const entry=imported.byTrack.get(track.id);onMore(track,entry?()=>setReplacement(entry):undefined)}} onOpen={linked ? t => navigate({ kind: 'collection', item: { bvid: t.source.bvid, folderId: '', title: t.title, coverUrl: t.coverUrl || '', uploaderName: t.source.uploaderName || '' } }) : undefined}/>{!query.isPending && !tracks.length && <Empty>{filter ? '没有匹配的歌曲' : '这个歌单还没有歌曲'}</Empty>}
+    {matching&&<LargeBatchMatch tracks={tracks} onClose={()=>setMatching(false)}/>}
+    {replacement&&imported.data&&<LargeDialog title="更换视频" className="import-match-large-dialog" onClose={()=>setReplacement(undefined)}><ReplacementSearch entry={replacement} session={imported.data.session} currentTrack={raw.find(t=>t.id===replacement.trackId)} onSaved={replaced} onClose={()=>setReplacement(undefined)}/></LargeDialog>}
+    {completion&&<LargeDialog title="补全未匹配" className="import-match-large-dialog" onClose={()=>setCompletion(false)}><ImportedPlaylistCompletionContent playlist={playlist} onClose={()=>setCompletion(false)} renderReplacement={props=><LargeDialog title="更换视频" className="import-match-large-dialog" onClose={props.onClose}><ReplacementSearch {...props}/></LargeDialog>}/></LargeDialog>}
+  </>
 }
 
-export function LargeCollection({ item, onMore, navigate, filterState }: { filterState?: FilterState; item: Collection; onMore: (t: Track) => void; navigate: Navigate }) {
+export function LargeCollection({ item, onMore, navigate, filterState }: { filterState?: FilterState; item: Collection; onMore: (t: Track,visibilityScope?:string) => void; navigate: Navigate }) {
   const season = parseSeasonReference(item.bvid), [filter, setFilter] = useFilter(filterState)
-  const query = useQuery({ queryKey: accountQueryKey('large-collection', item.bvid), queryFn: async () => { if (season) { const data = await getSeason(season.mid, season.seasonId); return { tracks: seasonTracks(data), season: undefined, title: data.summary.title, uploaderName: data.summary.uploaderName } }; const detail = await getVideoParts(item.bvid); return { tracks: detail.parts.map(p => toTrack(detail, p)), season: detail.season, title: detail.title, uploaderName: detail.uploaderName } } })
+  const query = useQuery({ queryKey: accountQueryKey('large-collection', item.bvid), queryFn: async () => { if (season) { const data = await getSeason(season.mid, season.seasonId); return { tracks: seasonTracks(data), sections:data.sections, season: undefined, title: data.summary.title, uploaderName: data.summary.uploaderName } }; const detail = await getVideoParts(item.bvid); return { tracks: detail.parts.map(p => toTrack(detail, p)), sections:undefined, season: detail.season, title: detail.title, uploaderName: detail.uploaderName } } })
   const progress = useQuery({ queryKey: accountQueryKey('collection-progress', item.bvid), queryFn: () => readCollectionProgress(item.bvid) })
+  const rules=useVisibilityRules(), [shown,setShown]=useState(false)
+  const scope=useManagedVisibilityScope(season?item.bvid:videoScope(item.bvid),query.data?.tracks ?? [])
+  const isHidden=(track:Track)=>Boolean(scope && trackHidden(track,scope,rules))
   const sorting = useListSort(`collection:${item.bvid}`)
-  const ordered = sortTracks(query.data?.tracks || [], sorting.rule, sorting.dates, sorting.playCounts)
-  const tracks = ordered.filter(t => matchesTrackSearch(t,filter))
-  const source = collectionContext(query.data?.title || item.title, item.bvid, Boolean(season), query.data?.tracks.length || 0)
+  const [selectedSection,setSelectedSection] = useSeasonSection(item.bvid,query.data?.sections)
+  const ordered = sortTracks(filterSeasonSection(query.data?.tracks || [],query.data?.sections,selectedSection), sorting.rule, sorting.dates, sorting.playCounts)
+  const tracks = ordered.filter(t => (shown || !isHidden(t)) && matchesTrackSearch(t,filter))
+  const playable=ordered.filter(t=>!isHidden(t))
+  const checkpoint = progress.data
+  const canResume = checkpoint && playable.length>0 && ordered.some(t => t.source.bvid === checkpoint.bvid && (t.source.cid === checkpoint.cid || t.resolveParts))
+  const source = { ...collectionContext(query.data?.title || item.title, item.bvid, Boolean(season), query.data?.tracks.length || 0), visibilityManaged: Boolean(scope) }
   const [playError, setPlayError] = useState('')
   const play = async (resume = false) => {
     const epoch = accountEpoch(), intent = playbackIntent()
@@ -131,13 +164,13 @@ export function LargeCollection({ item, onMore, navigate, filterState }: { filte
     setPlayError('')
     try {
       if (resume && !progress.data) return
-      const prepared = await prepareListPlayback(resume ? ordered : tracks, resume ? progress.data ?? undefined : undefined, resolveSeasonEntry, current)
+      const prepared = await prepareListPlayback(resume ? ordered : tracks, resume ? progress.data ?? undefined : undefined, resolveSeasonEntry, current,t=>!isHidden(t))
       if (!current()) return
-      if (!prepared) { setPlayError('上次播放的分 P 已不在这个合集里。'); return }
+      if (!prepared) { setPlayError('没有可继续播放的内容。'); return }
       await usePlayerStore.getState().playFromList(prepared.queue, prepared.trackId, source, prepared.startAt, true)
     } catch (error) { if (current()) setPlayError(commandErrorMessage(error)) }
   }
-  return <><header className="large-page-heading"><div><h1>{query.data?.title || item.title || '合集'}</h1><p>{query.data?.uploaderName || item.uploaderName} · {query.data?.tracks.length || 0} {season ? '集' : 'P'}</p></div><div className="large-toolbar"><ListSort entity={`collection:${item.bvid}`}/><DownloadListButton tracks={tracks}/>{progress.data && <button onClick={() => play(true)}>继续上次</button>}<button className="large-primary" disabled={!tracks.length} onClick={() => play()}><Play/>播放全部</button></div></header>{query.data?.season && <button className="large-text-button" onClick={() => { const s = query.data!.season!; navigate({ kind: 'collection', item: { bvid: `season:${s.uploaderId}:${s.id}`, title: s.title, coverUrl: s.coverUrl, uploaderName: s.uploaderName, folderId: '' } }) }}>查看所属合集</button>}<ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || (playError ? new Error(playError) : null)} retry={() => void query.refetch()}/>{query.isPending ? <p className="large-muted" role="status">正在读取内容…</p> : <TrackRows tracks={tracks} source={source} onMore={onMore} onOpen={season ? track => navigate({ kind: 'collection', item: { bvid: track.source.bvid, title: track.videoTitle || track.title, coverUrl: track.coverUrl || '', uploaderName: item.uploaderName, folderId: '' } }) : undefined}/>}</>
+  return <><header className="large-page-heading"><div><h1>{query.data?.title || item.title || '合集'}</h1><p>{query.data?.uploaderName || item.uploaderName} · {query.data?.tracks.length || 0} {season ? '集' : 'P'}</p></div><div className="large-toolbar"><ListSort entity={`collection:${item.bvid}`}/><DownloadListButton tracks={tracks}/>{canResume && <button onClick={() => play(true)}>继续上次</button>}<button className="large-primary" disabled={!tracks.length} onClick={() => play()}><Play/>播放全部</button></div></header>{query.data?.season && <button className="large-text-button" onClick={() => { const s = query.data!.season!; navigate({ kind: 'collection', item: { bvid: `season:${s.uploaderId}:${s.id}`, title: s.title, coverUrl: s.coverUrl, uploaderName: s.uploaderName, folderId: '' } }) }}>查看所属合集</button>}<SeasonSections sections={query.data?.sections} selected={selectedSection} onChange={setSelectedSection}/>{scope && <VisibilityControls scope={scope} rules={rules} shown={shown} onShow={setShown} tracks={query.data?.tracks||[]}/>}<ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || (playError ? new Error(playError) : null)} retry={() => void query.refetch()}/>{query.isPending ? <p className="large-muted" role="status">正在读取内容…</p> : <TrackRows visibilityScope={scope} tracks={tracks} playbackTracks={ordered} source={source} onMore={track=>onMore(track,scope)} onOpen={season ? track => navigate({ kind: 'collection', item: { bvid: track.source.bvid, title: track.videoTitle || track.title, coverUrl: track.coverUrl || '', uploaderName: item.uploaderName, folderId: '' } }) : undefined}/>}</>
 }
 
 

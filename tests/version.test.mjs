@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
+import { mobileVersion } from '../scripts/mobile-version.mjs'
 const result = await build({ entryPoints: ['src/shared/version.ts'], bundle: true, write: false, format: 'esm' })
 const { compareVersions } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
 test('updates compare preview numbers numerically and do not suggest downgrades', () => {
@@ -19,12 +20,13 @@ test('the displayed release identifier belongs to the native bundle version', as
   const native=JSON.parse(await readFile('src-tauri/tauri.conf.json','utf8'))
   assert.equal(native.version,pkg.version)
   assert.equal(compareVersions(pkg.version,native.version),0)
-  assert.ok(!pkg.version.includes('-'))
+  assert.equal(mobileVersion(pkg.version).version, pkg.version)
 })
 test('Android upgrade code matches the release version', async () => {
   const {readFile}=await import('node:fs/promises')
   const pkg=JSON.parse(await readFile('package.json','utf8'))
   const android=JSON.parse(await readFile('src-tauri/tauri.android.conf.json','utf8'))
-  const [major, minor, patch] = pkg.version.split('.').map(Number)
-  assert.equal(android.bundle.android.versionCode, major * 1_000_000 + minor * 10_000 + patch * 100)
+  assert.equal(android.bundle.android.versionCode, mobileVersion(pkg.version).androidVersionCode)
+  const ios=JSON.parse(await readFile('src-tauri/tauri.ios.conf.json','utf8'))
+  assert.equal(ios.bundle.iOS.bundleVersion, mobileVersion(pkg.version).iosBundleVersion)
 })

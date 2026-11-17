@@ -7,3 +7,5 @@ pub mod list_preferences;
 pub mod source_title;
 
 pub mod lyrics;
+
+pub mod loudness;
