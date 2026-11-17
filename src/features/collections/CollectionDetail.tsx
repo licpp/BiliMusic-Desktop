@@ -8,7 +8,7 @@ import { listen } from '@tauri-apps/api/event'
 import { ArrowLeft,History,ListPlus,LoaderCircle,Play,Plus,RefreshCw,Search,X } from 'lucide-react'
 import { useEffect,useMemo,useRef,useState } from 'react'
 import type { Track } from '../../domain/track'
-import { filterSeasonSection } from '../../domain/seasonSections'
+import { filterSeasonSection,seasonResumeSelection } from '../../domain/seasonSections'
 import { accountEpoch } from '../../services/accountScope'
 import { listCollections,readCollectionProgress,type Collection } from '../../services/collections'
 import { toTrack } from '../../services/collectionTrack'
@@ -63,6 +63,8 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
     return () => { void stop.then(unlisten => unlisten?.()) }
   }, [item.bvid, refreshProgress, saved])
   const [resuming, setResuming] = useState(false)
+  const resumeVersion = useRef(0)
+  useEffect(() => () => { resumeVersion.current++ }, [item.bvid])
   const forceRefresh = useRef(false)
   const q=useQuery({queryKey:accountQueryKey('collection-detail', item.bvid),queryFn:async()=>{
     if(reference){
@@ -94,41 +96,48 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   const season = detail?.season
   const sections = detail?.catalog?.sections
   const [selectedSection,setSelectedSection] = useSeasonSection(item.bvid,sections)
-  const reversed = detailSort.rule==='source:desc'
-  const tracks = useMemo(() => {
-    if (!detail) return []
-    const selected = filterSeasonSection(detail.tracks,sections,selectedSection)
-    if (detailSort.rule.startsWith('plays:')) return sortTracks(selected,detailSort.rule,detailSort.dates,detailSort.playCounts)
-    return sortList(selected,detailSort.rule,track=>({id:track.id,name:track.title,date:track.publishedAt||detailSort.dates[track.source.bvid],playCount:track.playCount??detailSort.playCounts[track.source.bvid]}))
+  const {tracks,playbackTracks,resumePlaybackTracks} = useMemo(() => {
+    if (!detail) return {tracks:[],playbackTracks:[],resumePlaybackTracks:[]}
+    const sort = (rows:Track[]) => detailSort.rule.startsWith('plays:')
+      ? sortTracks(rows,detailSort.rule,detailSort.dates,detailSort.playCounts)
+      : sortList(rows,detailSort.rule,track=>({id:track.id,name:track.title,date:track.publishedAt||detailSort.dates[track.source.bvid],playCount:track.playCount??detailSort.playCounts[track.source.bvid]}))
+    const project = (rows:Track[]) => {
+      const catalog = detail.catalog
+      if (!catalog) return rows
+      const ordered=rows.map(track=>catalog.tracks.find(video=>video.bvid===track.source.bvid)).filter((v):v is NonNullable<typeof v>=>Boolean(v))
+      return seasonTracks({...catalog,tracks:ordered})
+    }
+    const tracks=sort(filterSeasonSection(detail.tracks,sections,selectedSection))
+    return {tracks,playbackTracks:project(tracks),resumePlaybackTracks:project(selectedSection ? sort(detail.tracks) : tracks)}
   }, [detail, sections, selectedSection, detailSort.rule, detailSort.dates, detailSort.playCounts])
-  const playbackTracks = useMemo(() => {
-    if (!detail?.catalog) return tracks
-    const catalog = detail.catalog
-    const ordered=tracks.map(track=>catalog.tracks.find(video=>video.bvid===track.source.bvid)).filter((v):v is NonNullable<typeof v>=>Boolean(v))
-    return seasonTracks({...catalog,tracks:ordered})
-  }, [detail?.catalog, reversed, tracks])
   const queueSource = { kind: reference ? 'season' as const : 'video' as const, title: detail?.title || item.title, collectionRef: item.bvid, visibilityManaged: Boolean(visibilityScope) }
   const unit=reference?'个视频':'个分 P'
   const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes((searchQuery ?? filter).toLowerCase()))
   const checkpoint = saved ? progress.data : undefined
-  const canResume = checkpoint && playbackTracks.some(track => track.source.bvid === checkpoint.bvid &&
-    (track.source.cid === checkpoint.cid || track.resolveParts)) && playbackTracks.some(t=>!isHidden(t))
+  const canResume = checkpoint && resumePlaybackTracks.some(track => track.source.bvid === checkpoint.bvid &&
+    (track.source.cid === checkpoint.cid || track.resolveParts)) && resumePlaybackTracks.some(t=>!isHidden(t))
   const resumeTime = checkpoint?.positionMs ? formatDuration(Math.floor(checkpoint.positionMs / 1000)) : ''
   const resumeLabel = resuming ? '正在读取选集' : `继续上次播放${resumeTime ? ` · ${resumeTime}` : ''}`
   const resume = async () => {
     if (!canResume || !checkpoint || resuming) return
     const epoch = accountEpoch()
     const intent = playbackIntent()
+    const version = ++resumeVersion.current
+    const active = () => version === resumeVersion.current && epoch === accountEpoch()
+    const current = () => active() && intent === playbackIntent()
     setResuming(true)
     setMessage('')
     try {
-      const prepared = await prepareListPlayback(playbackTracks, checkpoint, resolveSeasonEntry,
-        () => epoch === accountEpoch() && intent === playbackIntent(),t=>!isHidden(t))
-      if (epoch !== accountEpoch() || intent !== playbackIntent()) return
+      const prepared = await prepareListPlayback(resumePlaybackTracks, checkpoint, resolveSeasonEntry,
+        current,t=>!isHidden(t))
+      if (!current()) return
       if (!prepared) { setMessage('没有可继续播放的内容。'); return }
-      await player.playFromList(prepared.queue, prepared.trackId, queueSource, prepared.startAt, true)
-    } catch (error) { setMessage(commandErrorMessage(error)) }
-    finally { setResuming(false) }
+      const selection = seasonResumeSelection(prepared.queue,prepared.trackId,sections,selectedSection)
+      setSelectedSection(selection.sectionId)
+      setFilter('')
+      await player.playFromList(selection.tracks, prepared.trackId, queueSource, prepared.startAt, true)
+    } catch (error) { if (current()) setMessage(commandErrorMessage(error)) }
+    finally { if (active()) setResuming(false) }
   }
   const copy=async()=>{
     const epoch=accountEpoch();setCopying(true);setMessage('')

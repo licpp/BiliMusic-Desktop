@@ -16,3 +16,15 @@ export function filterSeasonSection<T extends { source:{ bvid:string } }>(tracks
   }
   return [...new Set(section.bvids)].flatMap(bvid => groups.get(bvid) || [])
 }
+
+// Resolve from the actual prepared target (which may skip a hidden checkpoint).
+// Preserve the chosen sort and every resolved part when narrowing the queue.
+export function seasonResumeSelection<T extends { id:string;source:{bvid:string} }>(tracks:T[], trackId:string, sections:SeasonSection[] | undefined, selected?:string) {
+  const bvid = tracks.find(track => track.id === trackId)?.source.bvid
+  const current = selectedSeasonSection(sections,selected)
+  const section = bvid && sections && sections.length > 1
+    ? current?.bvids.includes(bvid) ? current : sections.find(section => section.bvids.includes(bvid))
+    : undefined
+  const members = section && new Set(section.bvids)
+  return {sectionId:section?.id,tracks:members ? tracks.filter(track => members.has(track.source.bvid)) : tracks}
+}

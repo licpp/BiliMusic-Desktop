@@ -42,3 +42,35 @@ test('picker hides a lone default category and exposes selection with native foc
  assert.match(html,/aria-pressed="true" title="西汉"/)
  assert.match(render(sections,'removed'),/aria-pressed="true" title="全部"/)
 })
+
+test('resume selects the target category even when another category was open',()=>{
+ const {seasonResumeSelection}=module.exports
+ const selected=seasonResumeSelection(tracks,'C1',sections,'90')
+ assert.equal(selected.sectionId,'10')
+ assert.deepEqual(selected.tracks.map(t=>t.id),['C1'])
+ assert.equal(seasonResumeSelection(tracks,'B2',sections).sectionId,'90')
+})
+test('resume preserves sort order and resolved parts, including duplicate category membership',()=>{
+ const {seasonResumeSelection}=module.exports
+ const ordered=[tracks[2],tracks[1],tracks[0],tracks[3]]
+ const duplicate=[...sections,{id:'also',title:'另一个分类',bvids:['B','A']}]
+ const selected=seasonResumeSelection(ordered,'B2',duplicate,'also')
+ assert.equal(selected.sectionId,'also')
+ assert.deepEqual(selected.tracks.map(t=>t.id),['B2','B1','A1'])
+ assert.deepEqual(ordered.map(t=>t.id),['B2','B1','A1','C1'])
+})
+test('uncategorized targets and lone default categories keep the complete resume queue',()=>{
+ const {seasonResumeSelection}=module.exports
+ for(const [data,id] of [[sections,'X1'],[undefined,'C1'],[sections.slice(0,1),'B2'],[sections,'missing']]){
+  const selected=seasonResumeSelection(tracks,id,data,'90')
+  assert.equal(selected.sectionId,undefined)
+  assert.equal(selected.tracks,tracks)
+ }
+})
+test('category follows the actual playable fallback rather than a hidden or removed checkpoint',()=>{
+ const {seasonResumeSelection}=module.exports
+ const afterHiddenCheckpoint=tracks.filter(t=>t.source.bvid!=='B')
+ const selected=seasonResumeSelection(afterHiddenCheckpoint,'C1',sections,'90')
+ assert.equal(selected.sectionId,'10')
+ assert.deepEqual(selected.tracks.map(t=>t.id),['C1'])
+})

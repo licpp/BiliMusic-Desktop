@@ -29,7 +29,7 @@ import { listCollections, readCollectionProgress, type Collection, type Collecti
 import { accountEpoch } from '../services/accountScope'
 import { toTrack } from '../services/collectionTrack'
 import { getSeason, parseSeasonReference, seasonTracks, creatorVideoRow } from '../services/mediaSources'
-import { filterSeasonSection } from '../domain/seasonSections'
+import { filterSeasonSection,seasonResumeSelection } from '../domain/seasonSections'
 import { SeasonSections,useSeasonSection } from '../shared/SeasonSections'
 import { hydrateVisibleTracks } from '../services/sync'
 import { useListPreferences, playlistEntity } from '../services/listPreferences'
@@ -153,21 +153,26 @@ export function LargeCollection({ item, onMore, navigate, filterState }: { filte
   const [selectedSection,setSelectedSection] = useSeasonSection(item.bvid,query.data?.sections)
   const ordered = sortTracks(filterSeasonSection(query.data?.tracks || [],query.data?.sections,selectedSection), sorting.rule, sorting.dates, sorting.playCounts)
   const tracks = ordered.filter(t => (shown || !isHidden(t)) && matchesTrackSearch(t,filter))
-  const playable=ordered.filter(t=>!isHidden(t))
+  const resumeTracks=sortTracks(query.data?.tracks || [],sorting.rule,sorting.dates,sorting.playCounts)
+  const playable=resumeTracks.filter(t=>!isHidden(t))
   const checkpoint = progress.data
-  const canResume = checkpoint && playable.length>0 && ordered.some(t => t.source.bvid === checkpoint.bvid && (t.source.cid === checkpoint.cid || t.resolveParts))
+  const canResume = checkpoint && playable.length>0 && resumeTracks.some(t => t.source.bvid === checkpoint.bvid && (t.source.cid === checkpoint.cid || t.resolveParts))
   const source = { ...collectionContext(query.data?.title || item.title, item.bvid, Boolean(season), query.data?.tracks.length || 0), visibilityManaged: Boolean(scope) }
   const [playError, setPlayError] = useState('')
+  const playVersion = useRef(0)
+  useEffect(() => () => { playVersion.current++ }, [item.bvid])
   const play = async (resume = false) => {
-    const epoch = accountEpoch(), intent = playbackIntent()
-    const current = () => epoch === accountEpoch() && intent === playbackIntent()
+    const epoch = accountEpoch(), intent = playbackIntent(), version = ++playVersion.current
+    const current = () => version === playVersion.current && epoch === accountEpoch() && intent === playbackIntent()
     setPlayError('')
     try {
       if (resume && !progress.data) return
-      const prepared = await prepareListPlayback(resume ? ordered : tracks, resume ? progress.data ?? undefined : undefined, resolveSeasonEntry, current,t=>!isHidden(t))
+      const prepared = await prepareListPlayback(resume ? resumeTracks : tracks, resume ? progress.data ?? undefined : undefined, resolveSeasonEntry, current,t=>!isHidden(t))
       if (!current()) return
       if (!prepared) { setPlayError('没有可继续播放的内容。'); return }
-      await usePlayerStore.getState().playFromList(prepared.queue, prepared.trackId, source, prepared.startAt, true)
+      const selection = resume ? seasonResumeSelection(prepared.queue,prepared.trackId,query.data?.sections,selectedSection) : {tracks:prepared.queue,sectionId:selectedSection}
+      if (resume) { setSelectedSection(selection.sectionId); setFilter('') }
+      await usePlayerStore.getState().playFromList(selection.tracks, prepared.trackId, source, prepared.startAt, true)
     } catch (error) { if (current()) setPlayError(commandErrorMessage(error)) }
   }
   return <><header className="large-page-heading"><div><h1>{query.data?.title || item.title || '合集'}</h1><p>{query.data?.uploaderName || item.uploaderName} · {query.data?.tracks.length || 0} {season ? '集' : 'P'}</p></div><div className="large-toolbar"><ListSort entity={`collection:${item.bvid}`}/><DownloadListButton tracks={tracks}/>{canResume && <button onClick={() => play(true)}>继续上次</button>}<button className="large-primary" disabled={!tracks.length} onClick={() => play()}><Play/>播放全部</button></div></header>{query.data?.season && <button className="large-text-button" onClick={() => { const s = query.data!.season!; navigate({ kind: 'collection', item: { bvid: `season:${s.uploaderId}:${s.id}`, title: s.title, coverUrl: s.coverUrl, uploaderName: s.uploaderName, folderId: '' } }) }}>查看所属合集</button>}<SeasonSections sections={query.data?.sections} selected={selectedSection} onChange={setSelectedSection}/>{scope && <VisibilityControls scope={scope} rules={rules} shown={shown} onShow={setShown} tracks={query.data?.tracks||[]}/>}<ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || (playError ? new Error(playError) : null)} retry={() => void query.refetch()}/>{query.isPending ? <p className="large-muted" role="status">正在读取内容…</p> : <TrackRows visibilityScope={scope} tracks={tracks} playbackTracks={ordered} source={source} onMore={track=>onMore(track,scope)} onOpen={season ? track => navigate({ kind: 'collection', item: { bvid: track.source.bvid, title: track.videoTitle || track.title, coverUrl: track.coverUrl || '', uploaderName: item.uploaderName, folderId: '' } }) : undefined}/>}</>

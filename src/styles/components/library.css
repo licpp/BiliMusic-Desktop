@@ -9,8 +9,8 @@
  .collection-detail-toolbar.collection-unified-toolbar { gap:6px; }
  .collection-unified-toolbar > .collection-list-actions,.collection-unified-toolbar .video-parts-actions,.collection-unified-toolbar .visibility-tools { gap:2px; }
  .collection-unified-toolbar .collection-list-actions :is(.collection-flat-button,.collection-icon,.action-menu-trigger) { flex:0 0 32px;width:32px;min-width:32px;height:36px;min-height:36px;padding:0; }
- .collection-unified-toolbar .video-parts-actions .collection-flat-button > span,.collection-unified-toolbar .collection-resume > span { display:none; }
- .collection-unified-toolbar .collection-resume { display:grid;place-items:center;width:34px;min-width:34px;padding:0; }
+ .collection-unified-toolbar .video-parts-actions .collection-flat-button > span { display:none; }
+ .collection-unified-toolbar .collection-resume { display:inline-flex;gap:5px;min-width:62px;padding:8px 10px; }
  .collection-unified-toolbar .collection-primary { padding:10px 12px;white-space:nowrap; }
 }
 @media(max-width:360px) {
