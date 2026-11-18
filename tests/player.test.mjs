@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { build } from 'esbuild'
 
 const output = await build({
-  stdin: {contents:"export * from './src/features/player/playerStore'; export {useContentVisibility} from './src/services/contentVisibility'; export {setLoudnessPreference,useLoudnessSettings} from './src/services/loudness'",resolveDir:process.cwd()}, bundle: true, write: false,
+  stdin: {contents:"export * from './src/features/player/playerStore'; export {useContentVisibility} from './src/services/contentVisibility'; export {indexOfflineTracks,useOfflinePlayback} from './src/features/player/offlinePlayback'; export {setLoudnessPreference,useLoudnessSettings} from './src/services/loudness'",resolveDir:process.cwd()}, bundle: true, write: false,
   format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
   plugins: [{name:'visibility-boundary',setup(b){
     b.onResolve({filter:/services\/contentVisibility$/},()=>({path:'visibility',namespace:'visibility-test'}))
@@ -21,7 +21,7 @@ const output = await build({
       export const recordPlayedTrack = track => globalThis.testApi.record(track);
       export const getVideoParts = async () => ({ parts: [] });
       export const getTrackPlaybackUrl = (track, refresh) => globalThis.testApi.resolve(track, refresh);
-      export const getTrackPlaybackPlan = async (t,r) => globalThis.testApi.plan ? globalThis.testApi.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
+      export const getTrackPlaybackPlan = async (t,r,p,o) => globalThis.testApi.plan ? globalThis.testApi.plan(t,r,p,o) : ({url:await getTrackPlaybackUrl(t,r)});
     ` }))
   } }],
 })
@@ -51,6 +51,57 @@ function setup(snapshot) {
 }
 const track = id => ({ id, source: { provider: 'bilibili', bvid: 'BVTEST00001', cid: Number(id), page: 1 }, title: id, durationSeconds: 120, liked: false })
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+
+test('desktop sleep deadline pauses an active track on wake, blocks stale ended, and can repeat', async () => {
+  let now = 1_800_000_000_000
+  const oldClock = Date.now
+  Date.now = () => now
+  try {
+    const { store, audio, listeners, module } = setup()
+    await store.getState().playFromList([track('1'), track('2')], '1')
+    await module.controlDesktopSleep('sleepStart', 60)
+    now += 60_001
+    listeners.focus()
+    audio[0].callbacks.ended()
+    assert.equal(store.getState().current.id, '1')
+    assert.equal(store.getState().status, 'paused')
+    assert.equal(audio[0].paused, true)
+    assert.deepEqual(store.getState().sleep, { deadline: 0, duration: 60, expired: true })
+    await module.controlDesktopSleep('sleepRepeat')
+    assert.equal(store.getState().status, 'playing')
+    assert.equal(store.getState().sleep.deadline, now + 60_000)
+    await module.controlDesktopSleep('sleepCancel')
+    assert.equal(store.getState().sleep.deadline, 0)
+    listeners.pagehide()
+  } finally { Date.now = oldClock }
+})
+
+test('desktop sleep deadline suppresses deferred autoplay without restarting a manually paused track', async () => {
+  let now = 1_800_000_000_000
+  const oldClock = Date.now
+  Date.now = () => now
+  try {
+    const { store, audio, listeners, module } = setup()
+    const pending = deferred()
+    const started = deferred()
+    globalThis.testApi.resolve = async () => { started.resolve(); return pending.promise }
+    const playing = store.getState().play(track('1'))
+    await started.promise
+    await module.controlDesktopSleep('sleepStart', 60)
+    now += 60_001
+    listeners.focus()
+    pending.resolve('local://1')
+    await playing
+    assert.equal(store.getState().status, 'paused')
+    assert.equal(audio.length, 0)
+    await module.controlDesktopSleep('sleepStart', 60)
+    now += 60_001
+    listeners.focus()
+    assert.equal(audio.length, 0)
+    assert.equal(store.getState().status, 'paused')
+    listeners.pagehide()
+  } finally { Date.now = oldClock }
+})
 
 test('rapid switching discards stale source responses', async () => {
   const { store, audio, listeners } = setup()
@@ -105,6 +156,20 @@ test('restart restores queue, position and volume without autoplay', async () =>
   assert.equal(audio[0].currentTime, 32)
   assert.equal(audio[0].volume, .25)
   listeners.pagehide()
+})
+
+test('a comment seek while audio is unloaded overrides the saved checkpoint only for the current track', async () => {
+  const restore = { state: { current: track('1'), queue: [track('1')], progressSeconds: 12, durationSeconds: 120 }, version: 0 }
+  const first = setup(restore)
+  first.store.getState().seek(82)
+  await first.store.getState().toggle()
+  assert.equal(first.audio[0].currentTime, 82)
+  first.listeners.pagehide()
+  const another = setup(restore)
+  another.store.getState().seek(82)
+  await another.store.getState().play(track('2'))
+  assert.equal(another.audio[0].currentTime, 0)
+  another.listeners.pagehide()
 })
 
 test('restored Bilibili covers use HTTPS allowed by the desktop CSP', () => {
@@ -577,4 +642,56 @@ test('unmanaged search playback and late season adoption ignore old hiding rules
  assert.equal(restored.store.getState().queue.length,3)
  assert.deepEqual(restored.store.getState().queueOrigins['1'],[''])
  restored.listeners.pagehide()
+})
+
+
+test('offline playback keeps the original order and skips songs without complete local audio', async () => {
+  const { store, module } = setup()
+  const tracks = ['1','2','3','4'].map(track)
+  const played = []
+  globalThis.testApi.plan = async (song, _refresh, _preferOnline, offlineOnly) => {
+    played.push([song.id, offlineOnly])
+    return { url: `local://${song.id}` }
+  }
+  module.useOfflinePlayback.setState({offline: true, library: module.indexOfflineTracks([tracks[1], tracks[3]])})
+  await store.getState().playAll(tracks)
+  assert.deepEqual(store.getState().queueBase.map(song => song.id), ['1','2','3','4'])
+  assert.deepEqual(store.getState().queue.map(song => song.id), ['2','4'])
+  await store.getState().play(tracks[2])
+  assert.equal(store.getState().current.id, '2')
+  await store.getState().next(true)
+  assert.equal(store.getState().current.id, '4')
+  await store.getState().next(true)
+  assert.equal(store.getState().status, 'paused')
+  assert.deepEqual(played, [['2', true], ['4', true]])
+  module.useOfflinePlayback.setState({offline: false, library: null})
+  assert.deepEqual(store.getState().queue.map(song => song.id), ['1','2','3','4'])
+})
+
+test('offline video rows resolve only saved parts and keep per-part visibility rules', async () => {
+  const { store, module, listeners, storage } = setup()
+  const group = {...track('1'), resolveParts: true}
+  const first = track('1')
+  const second = {...track('2'), source:{...track('2').source,page:2}}
+  const groupSource = { kind: 'season', title: '原合集', collectionRef: 'season:1:1', visibilityManaged: true }
+  module.useContentVisibility.setState({rules:[{scope:'video:BVTEST00001',target:'cid:1',hidden:true}]})
+  module.useOfflinePlayback.setState({offline: true, library: module.indexOfflineTracks([second, first])})
+  await store.getState().playFromList([group], group.id, groupSource)
+  assert.deepEqual(store.getState().queue.map(item=>item.id),['2'])
+  assert.equal(store.getState().current.id,'2')
+  listeners.pagehide()
+  const restored = setup(JSON.parse(storage.get('resonance-player-v1')))
+  assert.deepEqual(restored.store.getState().queueBase.map(item=>item.id),['1'])
+})
+
+test('offline resume can explicitly start a non-first saved part inside a grouped queue', async () => {
+  const { store, module } = setup()
+  const group = {...track('0'), resolveParts: true}
+  const first = track('1')
+  const second = {...track('2'), source:{...track('2').source,page:2}}
+  module.useOfflinePlayback.setState({offline: true, library: module.indexOfflineTracks([first, second])})
+  await store.getState().playFromList([group], second.id, undefined, 42, true)
+  assert.equal(store.getState().current.id, second.id)
+  assert.equal(store.getState().progressSeconds, 42)
+  assert.deepEqual(store.getState().queueBase.map(item => item.id), [group.id])
 })

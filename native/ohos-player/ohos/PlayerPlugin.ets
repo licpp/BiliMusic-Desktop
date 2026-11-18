@@ -20,7 +20,8 @@ import { NativeQueue, QueueUpdate, QueueTrack, ResolveResult, NotificationLyricL
 
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
-  data?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string; coverUrl?: string;
+  data?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string;
+  album?: string; coverUrl?: string; durationSeconds?: number;
   loudnessGainDb?: number; loudnessEnabled?: boolean; loudnessRevision?: number; settingsRevision?: number;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
   rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
@@ -40,6 +41,7 @@ interface LyricsResult { supported: boolean; enabled: boolean; reason?: string; 
 class EmptyResult {}
 interface BridgeError { message: string }
 interface SecretResult { value?: string }
+interface WindowInsets { active: boolean; top: number; right: number; bottom: number; left: number }
 interface ListeningSample {
   scope: string; trackId: string; seconds?: number; position?: number;
   observedAt: number; sessionId?: string; collectionRef?: string;
@@ -67,18 +69,20 @@ export class PlayerPlugin {
     const pending = this.pendingResolve; this.pendingResolve = null;
     pending(JSON.parse(args.data ?? '{}') as ResolveResult);
   }
-  private async advance(direction: number, ended: boolean = false, override?: QueueTrack): Promise<void> {
+  private async advance(direction: number, ended: boolean = false, override?: QueueTrack, remote: boolean = false): Promise<void> {
     if (this.sleepExpired || this.destroyed) return;
-    if (direction < 0 && (this.player?.currentTime ?? 0) > 4000) { await this.control({action:'seek',value:0}); return; }
+    if (!remote && direction < 0 && (this.player?.currentTime ?? 0) > 4000) { await this.control({action:'seek',value:0}); return; }
     const track = override ?? this.queue.target(this.id, direction, ended);
+    if (remote && (!track || track.id === this.id)) return;
     if (!track) { await this.control({action:'pause'}); return; }
     this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
     this.accountListening(true);
     this.sessionId = util.generateRandomUUID(true);
     const previous=this.player; this.player=null; this.pendingSeek=-1;
     const request = this.nativeRequest;
-    this.id = track.id; this.title = track.title; this.artist = track.artist ?? ''; this.status = 'buffering'; this.error = ''; this.desiredPlaying = true;
-    this.mediaRevision += 1; this.emit();
+    this.setTrackMetadata(track.id, track.title, track.artist, track.album, track.durationSeconds);
+    this.status = 'buffering'; this.error = ''; this.desiredPlaying = true;
+    this.mediaRevision += 1; this.emit(); void this.setMetadata(this.mediaRevision);
     try {
       // Keep the system playback task alive across the silent resolution gap.
       await this.startBackground();
@@ -97,7 +101,7 @@ export class PlayerPlugin {
       }
       if (result.error || !result.track || !result.url) throw new Error(result.error ?? '后台播放地址无效');
       this.queue.resolved(result);
-      await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
+      await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,album:result.track.album,durationSeconds:result.track.durationSeconds,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
         loudnessGainDb:result.loudnessGainDb,automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
       await this.lyrics({action:'update',id:result.track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,lrc:result.lyrics?.lines.length ? result.lyrics.rawText : '',subtitles:false}).catch(()=>{});
     } catch(error) {
@@ -108,12 +112,19 @@ export class PlayerPlugin {
   private context: common.UIAbilityContext;
   private player: media.AVPlayer | null = null;
   private session: avSession.AVSession | null = null;
+  private sessionActive: boolean = false;
+  private sessionActivation: Promise<void> = Promise.resolve();
   private win: window.Window | null = null;
+  private lightTheme: boolean = false;
+  private windowAppearanceTasks: Promise<void> = Promise.resolve();
   private tasks: Promise<void> = Promise.resolve();
   private id: string = '';
   private systemTitleLyrics: boolean = false;
   private title: string = 'BiliMusic';
   private artist: string = '';
+  private album: string = '';
+  private listedDuration: number = 0;
+  private bluetoothOutput: boolean = false;
   private status: string = 'paused';
   private desiredPlaying: boolean = false;
   private resumeAfterInterruption: boolean = false;
@@ -138,7 +149,7 @@ export class PlayerPlugin {
     };
     tick();
   }
-  private volume: number = 0.7;
+  private volume: number = 1;
   private rate: number = 1;
   private collectionRef: string = '';
   private profilePath: string = '';
@@ -177,6 +188,8 @@ export class PlayerPlugin {
   private pendingSeek: number = -1;
   private currentMetadata: avSession.AVMetadata | null = null;
   private metadataTasks: Promise<void> = Promise.resolve();
+  private sessionPositionPending: boolean = false;
+  private sessionPositionInFlight: boolean = false;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -203,7 +216,68 @@ export class PlayerPlugin {
     this.lyricTimer = setInterval(() => { this.setMetadata(this.mediaRevision).catch(() => {}); },250);
   }
 
-  setWindow(win: window.Window): void { this.win = win; }
+  async setWindow(win: window.Window): Promise<void> {
+    this.win = win;
+    // Keep the same window geometry when moving between library and playback.
+    await win.setWindowLayoutFullScreen(true).catch(() => {});
+    await this.applyBarTheme();
+  }
+
+  private applyBarTheme(lightTheme?: boolean): Promise<void> {
+    const update = this.windowAppearanceTasks.then(async () => {
+      if (lightTheme !== undefined) this.lightTheme = lightTheme;
+      const win = this.win;
+      if (!win || this.destroyed) return;
+
+      const background = this.lightTheme ? '#F4F6FA' : '#071019';
+      const text = this.lightTheme ? '#203044' : '#FFFFFF';
+      const barBackground = win.getWindowProperties().isLayoutFullScreen ? '#00000000' : background;
+      win.setWindowBackgroundColor(background);
+      await win.setWindowSystemBarProperties({ statusBarColor: barBackground, navigationBarColor: barBackground,
+        statusBarContentColor: text, navigationBarContentColor: text });
+    });
+    this.windowAppearanceTasks = update.catch(() => {});
+    return update;
+  }
+
+  private windowInsets(): WindowInsets {
+    const insets: WindowInsets = { active: false, top: 0, right: 0, bottom: 0, left: 0 };
+    const win = this.win;
+    if (!win || this.destroyed) return insets;
+    const properties = win.getWindowProperties();
+    if (!properties.isLayoutFullScreen) return insets;
+
+    insets.active = true;
+    const ui = win.getUIContext();
+    const width = properties.windowRect.width;
+    const height = properties.windowRect.height;
+    for (const type of [window.AvoidAreaType.TYPE_SYSTEM, window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR,
+      window.AvoidAreaType.TYPE_CUTOUT]) {
+      const area = win.getWindowAvoidArea(type);
+      // A physical cutout can report visible=false and sit away from the window edge.
+      if (!area.visible && type !== window.AvoidAreaType.TYPE_CUTOUT) continue;
+      if (area.topRect.height > 0) insets.top = Math.max(insets.top, area.topRect.top + area.topRect.height);
+      if (area.rightRect.width > 0) insets.right = Math.max(insets.right, width - area.rightRect.left);
+      if (area.bottomRect.height > 0) insets.bottom = Math.max(insets.bottom, height - area.bottomRect.top);
+      if (area.leftRect.width > 0) insets.left = Math.max(insets.left, area.leftRect.left + area.leftRect.width);
+    }
+    insets.top = ui.px2vp(insets.top);
+    insets.right = ui.px2vp(insets.right);
+    insets.bottom = ui.px2vp(insets.bottom);
+    insets.left = ui.px2vp(insets.left);
+    return insets;
+  }
+
+  private async respondToWindowControl(request: Request, args: Args): Promise<void> {
+    try {
+      let result: Object = new EmptyResult();
+      if (args.action === 'windowInsets') result = this.windowInsets();
+      else await this.applyBarTheme(Number(args.value) === 1);
+      native.tauriOhosPluginResponse(request.id, true, JSON.stringify(result));
+    } catch (error) {
+      native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: String(error) } as BridgeError));
+    }
+  }
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
@@ -220,6 +294,10 @@ export class PlayerPlugin {
     }
     if (request.plugin === 'ohos-player' && request.command === 'control') {
       const args = JSON.parse(request.payload) as Args;
+      if (args.action === 'theme' || args.action === 'windowInsets') {
+        this.respondToWindowControl(request, args);
+        return;
+      }
       if (args.action === 'loudness' || args.action === 'pause' || args.action === 'stop' || args.action === 'prepare' || this.cancelSourceSwitch !== null && ['seek','rate','volume','collection','loudness'].includes(args.action ?? '')) {
         // A preparation promise must never delay a user's pause/stop intent.
         this.control(args).then(() => native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())))
@@ -278,26 +356,42 @@ export class PlayerPlugin {
   }
 
   private updateSessionPosition(): void {
-    if (!this.session) return;
-    const playback: avSession.AVPlaybackState = {
-      state: this.status === 'playing' ? avSession.PlaybackState.PLAYBACK_STATE_PLAY : avSession.PlaybackState.PLAYBACK_STATE_PAUSE,
-      speed: this.rate, position: { elapsedTime: Math.max(0,this.player?.currentTime ?? 0), updateTime: Date.now() }
-    };
-    this.session.setAVPlaybackState(playback).catch(() => {});
+    if (!this.session || this.destroyed) return;
+    this.sessionPositionPending = true;
+    if (!this.sessionPositionInFlight) void this.flushSessionPosition();
+  }
+
+  private async flushSessionPosition(): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    this.sessionPositionInFlight = true;
+    try {
+      // AVSession can be briefly unresponsive. Publish only the most recent
+      // position or status after an outstanding request, not every sample.
+      while (!this.destroyed && this.session === session && this.sessionPositionPending) {
+        this.sessionPositionPending = false;
+        const playback: avSession.AVPlaybackState = {
+          state: !this.id ? avSession.PlaybackState.PLAYBACK_STATE_STOP : this.status === 'playing' ?
+            avSession.PlaybackState.PLAYBACK_STATE_PLAY : avSession.PlaybackState.PLAYBACK_STATE_PAUSE,
+          speed: this.rate, position: { elapsedTime: Math.max(0,this.player?.currentTime ?? 0), updateTime: Date.now() }
+        };
+        try { await session.setAVPlaybackState(playback); } catch (_) {}
+      }
+    } finally { this.sessionPositionInFlight = false; }
   }
 
   private async lyrics(args: LyricsPayload): Promise<LyricsResult> {
     if (args.action === 'system-title') {
       const store = preferences.getPreferencesSync(this.context, {name:'bilimusic-media'});
       store.putSync('lyricTitle',args.enabled === true); await store.flush();
-      this.systemTitleLyrics = args.enabled === true; await this.setMetadata(this.mediaRevision);
+      this.systemTitleLyrics = args.enabled === true; void this.setMetadata(this.mediaRevision);
     }
     if (args.action === 'update') {
       if ((args.lrc?.length ?? 0) > 16 * 1024 * 1024) throw new Error('歌词内容过大');
       this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').replace(/[♪♫♬♩🎵🎶]/g,'');
       this.lyricLines = (args.lines ?? []).filter(line => Number.isFinite(line.timeMs) && typeof line.text === 'string');
       this.lyricBias = Number.isFinite(args.biasMs) ? args.biasMs ?? 0 : 0; this.lyricSubtitles = args.subtitles === true;
-      await this.setMetadata(this.mediaRevision);
+      void this.setMetadata(this.mediaRevision);
     }
     // Notification lyrics are automatic; retain compatibility with older clients.
     return { supported:false,enabled:false,reason:'当前歌词自动显示在通知栏',fontSizeSupported:false,lockSupported:false };
@@ -314,10 +408,38 @@ export class PlayerPlugin {
   }
 
   private enqueueControl(action: string, value: number = 0): void {
-    if (action === 'pause' || action === 'stop' || action === 'next' || action === 'previous') { this.control({action,value}).catch(() => {}); return; }
+    if (action === 'pause' || action === 'stop') {
+      void this.control({ action, value }).catch(() => {});
+      return;
+    }
     this.tasks = this.tasks.catch(() => {}).then(() => this.control({ action, value })).catch((error: BusinessError) => {
       this.error = String(error); this.status = 'error'; this.emit();
     });
+  }
+
+  private remoteSkip(direction: number): void {
+    if (this.id) void this.advance(direction, false, undefined, true).catch(() => {});
+  }
+
+  private watchOutputRoute(player: media.AVPlayer): void {
+    const renderer: audio.AudioRendererInfo = player.audioRendererInfo ??
+      { usage: audio.StreamUsage.STREAM_USAGE_MUSIC, rendererFlags: 0 };
+    try {
+      const routing = audio.getAudioManager().getRoutingManager();
+      this.updateOutputRoute(player, routing.getPreferredOutputDeviceForRendererInfoSync(renderer));
+    } catch (_) {
+      // The player reports its actual output route once the stream starts.
+    }
+    player.on('audioOutputDeviceChangeWithInfo', event => this.updateOutputRoute(player, event.devices));
+  }
+
+  private updateOutputRoute(player: media.AVPlayer, devices: audio.AudioDeviceDescriptors): void {
+    if (this.destroyed || this.player !== player || devices.length === 0) return;
+    const bluetooth = devices.some(device => device.deviceType === audio.DeviceType.BLUETOOTH_A2DP ||
+      device.deviceType === audio.DeviceType.BLUETOOTH_SCO);
+    if (bluetooth === this.bluetoothOutput) return;
+    this.bluetoothOutput = bluetooth;
+    void this.setMetadata(this.mediaRevision);
   }
 
   private audioInterrupted(player: media.AVPlayer, event: audio.InterruptEvent): void {
@@ -334,22 +456,43 @@ export class PlayerPlugin {
         await this.interruptionPause;
         if (!this.destroyed && this.player === player && revision === this.interruptionRevision) await this.control({ action: 'resume' });
       }).catch(() => {});
-    } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK || event.hintType === audio.InterruptHint.INTERRUPT_HINT_UNDUCK) {
-      this.focusDucked = event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK;
-      this.applyOutput();
+    } else if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE ||
+        event.forceType === audio.InterruptForceType.INTERRUPT_FORCE) {
+      // FORCE uses the system's own gain. Applying another gain here leaves
+      // AVPlayer's volume attenuated even after the system clears its gain.
+      if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_DUCK && event.eventType === audio.InterruptType.INTERRUPT_TYPE_BEGIN) {
+        const duck = event.forceType === audio.InterruptForceType.INTERRUPT_SHARE;
+        if (duck !== this.focusDucked) { this.focusDucked = duck; this.applyOutput(); }
+      } else if (this.focusDucked && event.hintType === audio.InterruptHint.INTERRUPT_HINT_UNDUCK &&
+          event.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
+        this.focusDucked = false; this.applyOutput();
+      }
     }
   }
 
-  private async ensureSession(): Promise<void> {
-    if (this.session) return;
-    this.session = await avSession.createAVSession(this.context, 'BiliMusic', 'audio');
-    this.session.on('play', () => this.enqueueControl('resume'));
-    this.session.on('pause', () => this.enqueueControl('pause'));
-    this.session.on('stop', () => this.enqueueControl('stop'));
-    this.session.on('seek', position => this.enqueueControl('seek', position / 1000));
-    this.session.on('playNext', () => { void this.advance(1); });
-    this.session.on('playPrevious', () => { void this.advance(-1); });
-    await this.session.activate();
+  private async ensureSession(revision: number): Promise<void> {
+    if (!this.session) {
+      this.session = await avSession.createAVSession(this.context, 'BiliMusic', 'audio');
+      this.session.on('play', () => this.enqueueControl('resume'));
+      this.session.on('pause', () => this.enqueueControl('pause'));
+      this.session.on('stop', () => this.enqueueControl('stop'));
+      this.session.on('seek', position => this.enqueueControl('seek', position / 1000));
+      this.session.on('playNext', () => this.remoteSkip(1));
+      this.session.on('playPrevious', () => this.remoteSkip(-1));
+    }
+    await this.setSessionActive(true, revision);
+  }
+
+  private setSessionActive(active: boolean, revision: number): Promise<void> {
+    const update = this.sessionActivation.then(async () => {
+      const session = this.session;
+      if (!session || this.destroyed || revision !== this.mediaRevision || active === this.sessionActive) return;
+      if (active) await session.activate();
+      else await session.deactivate();
+      this.sessionActive = active;
+    });
+    this.sessionActivation = update.catch(() => {});
+    return update;
   }
 
   private async startBackground(): Promise<void> {
@@ -367,18 +510,39 @@ export class PlayerPlugin {
     this.background = false;
   }
 
+  private setTrackMetadata(id: string, title?: string, artist?: string, album?: string, durationSeconds?: number): void {
+    this.id = id;
+    this.title = title ?? 'BiliMusic';
+    this.artist = artist ?? '';
+    this.album = album ?? '';
+    this.listedDuration = Number.isFinite(durationSeconds) ? Math.max(0, (durationSeconds ?? 0) * 1000) : 0;
+    this.artwork.clear();
+    this.cover = undefined; this.currentMetadata = null;
+    this.metadataSignature = ''; this.metadataRetryAt = 0; this.coverRevision += 1;
+  }
+
   private setMetadata(revision: number): Promise<void> {
     this.metadataTasks = this.metadataTasks.catch(() => {}).then(async () => {
       if (revision !== this.mediaRevision || this.destroyed || !this.session || !this.id) return;
       // Build from live authoritative state when the queued task executes. A
       // lyric update queued before image decoding must never erase that image.
-      const currentLine=this.notificationLine();
-      const title=this.systemTitleLyrics ? currentLine ?? this.title : this.title;
-      const artist=this.systemTitleLyrics ? this.artist : currentLine ?? this.artist,duration=this.player?.duration ?? 0;
-      const lyric=this.lyricId === this.id ? this.lyricText : '';
-      const signature=JSON.stringify([revision,this.id,title,artist,duration,this.coverRevision,lyric]);
+      const currentLine = this.notificationLine() ?? '';
+      // Car stereos display the title and artist fields as track information.
+      // Send the live lyric in its own field when playback is routed over Bluetooth.
+      const title = !this.bluetoothOutput && this.systemTitleLyrics && currentLine ? currentLine : this.title;
+      const artist = !this.bluetoothOutput && !this.systemTitleLyrics && currentLine ? currentLine : this.artist;
+      const actualDuration = this.player?.duration ?? 0;
+      const duration = actualDuration > 0 ? actualDuration : this.listedDuration;
+      const lyric = this.lyricId === this.id ? this.lyricText : '';
+      const neighbors = this.queue.sessionNeighbors(this.id);
+      const signature = JSON.stringify([revision, this.id, title, artist, this.album, duration, this.coverRevision,
+        lyric, currentLine, neighbors.previous, neighbors.next]);
       if(signature === this.metadataSignature || Date.now() < this.metadataRetryAt) return;
-      const merged: avSession.AVMetadata = {assetId:this.id,title,artist,duration,lyric};
+      const merged: avSession.AVMetadata = { assetId: this.id, title, artist, duration, lyric };
+      if (this.album) merged.album = this.album;
+      if (currentLine || this.currentMetadata?.singleLyricText) merged.singleLyricText = currentLine;
+      if (neighbors.previous) merged.previousAssetId = neighbors.previous;
+      if (neighbors.next) merged.nextAssetId = neighbors.next;
       // Native AVSession validates property presence, not just its TS type.
       // An explicitly present undefined image rejects the entire media card.
       if(this.cover !== undefined) merged.mediaImage=this.cover;
@@ -386,6 +550,7 @@ export class PlayerPlugin {
         await this.session.setAVMetadata(merged);
         if(revision === this.mediaRevision) { this.currentMetadata=merged;this.metadataSignature=signature; }
       } catch(error) {
+        if (revision !== this.mediaRevision || this.destroyed) return;
         this.metadataRetryAt=Date.now()+2000;
         hilog.warn(0xB110,'BiliMusicPlayer','Media metadata update failed; code=%{public}d',(error as BusinessError).code ?? -1);
       }
@@ -403,23 +568,26 @@ export class PlayerPlugin {
     this.desiredPlaying = args.playing !== false;
     this.pendingUpgradeUrl = /^http:\/\/127\.0\.0\.1:\d+\//.test(args.upgradeUrl ?? '') ? args.upgradeUrl! : '';
     this.upgradeAfterPosition = (args.position ?? 0) * 1000 + 750;
-    this.artwork.clear();this.cover=undefined;this.currentMetadata=null;this.metadataSignature='';this.metadataRetryAt=0;this.coverRevision+=1;
     this.accountListening(true);
     this.pendingSeek = -1;
     this.initialPositionPending = true;
-    if (this.player) { await this.player.release(); this.player = null; }
-    await this.ensureSession();
+    const previous = this.player; this.player = null;
+    this.setTrackMetadata(args.id, args.title, args.artist, args.album, args.durationSeconds);
+    this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
+    await previous?.release();
+    if (revision !== this.mediaRevision) return;
+    await this.ensureSession(revision);
     if (revision !== this.mediaRevision) return;
     this.queue.observe(args.id);
-    this.id = args.id; this.title = args.title ?? 'BiliMusic'; this.artist = args.artist ?? '';
-    this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
     this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1;
-    this.rate = args.rate ?? 1; this.volume = Math.max(0,Math.min(1,args.volume ?? 0.7));
+    this.rate = args.rate ?? 1; this.volume = Math.max(0,Math.min(1,args.volume ?? 1));
     this.outputGain.plan(args.loudnessGainDb ?? 0);
     this.previousPosition = -1; this.previousId = ''; if(!args.preserveSession) this.sessionId = util.generateRandomUUID(true);
     const player = await media.createAVPlayer();
     if (revision !== this.mediaRevision) { await player.release(); return; }
     this.player = player;
+    this.watchOutputRoute(player);
+    void this.setMetadata(revision);
     let initialSeekDone: (() => void) | null = null;
     player.on('seekDone', () => { if (this.player !== player) return; this.pendingSeek = -1; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = player.currentTime; initialSeekDone?.(); this.emit(); });
     player.on('audioInterrupt', event => this.audioInterrupted(player, event));
@@ -468,7 +636,10 @@ export class PlayerPlugin {
     }
     if (revision !== this.mediaRevision || this.player !== player) return;
     this.initialPositionPending = false;
-    await this.setMetadata(revision);
+    // The system media card, including a stalled AVSession service, must not
+    // delay audio that AVPlayer has already prepared. Revision checks in
+    // setMetadata prevent the queued card from publishing earlier track data.
+    void this.setMetadata(revision);
     this.artworkReady = this.artwork.load(args.coverUrl, async pixels => {
       if(revision !== this.mediaRevision || this.player !== player) return;
       this.cover=pixels;this.coverRevision+=1;
@@ -480,11 +651,11 @@ export class PlayerPlugin {
   }
 
   private maybeUpgrade(): void {
-    if (!this.pendingUpgradeUrl || !this.player || !this.desiredPlaying || this.status !== 'playing' || this.player.currentTime < this.upgradeAfterPosition || this.pendingSeek >= 0 || this.cancelSourceSwitch !== null) return;
+    if (!this.pendingUpgradeUrl || !this.player || !this.desiredPlaying || this.focusDucked || this.status !== 'playing' || this.player.currentTime < this.upgradeAfterPosition || this.pendingSeek >= 0 || this.cancelSourceSwitch !== null) return;
     const url = this.pendingUpgradeUrl, player = this.player, revision = this.mediaRevision, intent = this.upgradeIntent;
     this.pendingUpgradeUrl = '';
     this.tasks = this.tasks.catch(() => {}).then(async () => {
-      if (this.destroyed || !this.desiredPlaying || this.player !== player || revision !== this.mediaRevision || intent !== this.upgradeIntent) return;
+      if (this.destroyed || !this.desiredPlaying || this.focusDucked || this.player !== player || revision !== this.mediaRevision || intent !== this.upgradeIntent) return;
       await this.switchSource({url,id:this.id,seamless:true});
     }).catch(() => { /* Keep playing the initial stream. */ });
   }
@@ -493,7 +664,7 @@ export class PlayerPlugin {
     this.pendingUpgradeUrl = '';
     const original=this.player,revision=this.mediaRevision,seek=this.seekRevision;
     if(!original || args.id!==this.id) throw new Error('当前歌曲已变更');
-    const candidate=await media.createAVPlayer();let cancelled=false;let handoffRevision=-1;
+    const candidate=await media.createAVPlayer();let cancelled=false;let handoffRevision=-1;let originalDucked=false;
     let ready: (()=>void) | null=null;let failed: ((error:Error)=>void) | null=null;let seekDone: (()=>void) | null=null;
     const cancel=()=>{cancelled=true;failed?.(new Error('音质切换已取消'));};this.cancelSourceSwitch=cancel;
     const valid=():boolean=>!cancelled && this.player===original && this.mediaRevision===revision && this.seekRevision===seek;
@@ -512,14 +683,18 @@ export class PlayerPlugin {
       const position=Math.max(0,original.currentTime);
       if(position>0)await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('新音源定位超时，已保留原音质')),5000);seekDone=()=>{clearTimeout(timeout);resolve();};failed=(error:Error)=>{clearTimeout(timeout);reject(error);};candidate.seek(position);});
       if(!valid())throw new Error('音质切换已取消');
+      if(this.resumeAfterInterruption)throw new Error('音频被系统中断，已保留原音质');
       const rates=[0.75,1,1.25,1.75,2,0.5,1.5,3,0.25,0.125];candidate.setSpeed(rates.indexOf(this.rate) as media.PlaybackSpeed);
       this.accountListening(true);if(original.state==='playing')await original.pause();
-      if(!valid())throw new Error('音质切换已取消');
+      if(!valid() || this.resumeAfterInterruption)throw new Error('音质切换已取消');
+      originalDucked=this.focusDucked;this.focusDucked=false;
+      this.resumeAfterInterruption=false;this.interruptionRevision+=1;
       this.player=candidate;this.mediaRevision+=1;handoffRevision=this.mediaRevision;this.previousPosition=-1;this.mediaAdvancedAt=Date.now();this.watchdogPosition=-1;this.pendingSeek=-1;
+      this.watchOutputRoute(candidate);
       if(args.loudnessGainDb !== undefined) this.outputGain.plan(args.loudnessGainDb); this.applyOutput();if(this.desiredPlaying){await this.startBackground();if(this.desiredPlaying)await candidate.play();}else this.status='paused';
       try{await original.release();}catch{}this.emit();
     }catch(error){
-      if(this.player===candidate && this.mediaRevision===handoffRevision){this.player=original;this.mediaRevision+=1;this.previousPosition=-1;this.error='';}
+      if(this.player===candidate && this.mediaRevision===handoffRevision){this.player=original;this.mediaRevision+=1;this.previousPosition=-1;this.error='';this.focusDucked=originalDucked;this.applyOutput();}
       if(this.player===original && this.desiredPlaying && original.state==='paused'){await original.play();}
       throw new Error(String(error));
     }finally{if(this.cancelSourceSwitch===cancel)this.cancelSourceSwitch=null;if(this.player!==candidate){try{await candidate.release();}catch{}}}
@@ -540,7 +715,17 @@ export class PlayerPlugin {
     }
     if (args.action === 'pause' || args.action === 'stop' || args.action === 'seek') this.upgradeIntent += 1;
     switch (args.action) {
-      case 'prepare': { this.cancelResolution(); this.cancelPreparation?.(); this.accountListening(true); this.desiredPlaying=false; const previous=this.player; this.player=null; const revision=++this.mediaRevision; await previous?.release(); if(revision!==this.mediaRevision)return; this.id=args.id ?? ''; this.status='buffering'; break; }
+      case 'prepare': {
+        this.cancelResolution(); this.cancelPreparation?.(); this.accountListening(true);
+        this.desiredPlaying = false;
+        const previous = this.player; this.player = null;
+        const revision = ++this.mediaRevision;
+        this.setTrackMetadata(args.id ?? '', args.title, args.artist, args.album, args.durationSeconds);
+        this.status = 'buffering'; void this.setMetadata(revision);
+        await previous?.release();
+        if (revision !== this.mediaRevision) return;
+        break;
+      }
       case 'next': await this.advance(1); break;
       case 'previous': await this.advance(-1); break;
       case 'resume': this.desiredPlaying = true; this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.error = ''; if (this.player) { const player=this.player; await this.startBackground(); if(this.desiredPlaying && this.player===player) await player.play(); else await this.stopBackground(); } break;
@@ -550,12 +735,20 @@ export class PlayerPlugin {
         this.accountListening(true); this.status = 'paused';
         if (this.player?.state === 'playing') await this.player.pause();
         await this.stopBackground(); break;
-      case 'stop':
+      case 'stop': {
         this.pendingUpgradeUrl = '';
         this.desiredPlaying = false;
-        this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
-        this.accountListening(true); await this.player?.release(); this.player = null;
-        this.id = ''; this.status = 'paused'; await this.stopBackground(); break;
+        const revision = ++this.mediaRevision;
+        this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.accountListening(true);
+        const previous = this.player; this.player = null;
+        this.setTrackMetadata('');
+        this.pendingSeek = -1; this.status = 'paused';
+        void this.setSessionActive(false, revision).catch(() => {});
+        await previous?.release();
+        if (revision !== this.mediaRevision) return;
+        await this.stopBackground();
+        break;
+      }
       case 'seek': this.seekRevision += 1; this.pendingSeek = Math.max(0, value * 1000); this.mediaAdvancedAt = Date.now(); this.watchdogPosition = -1; this.accountListening(true); this.previousPosition = -1; this.player?.seek(Math.max(0, value * 1000)); break;
       case 'loudness': if(this.outputGain.configure(value > 0,args.settingsRevision ?? 0)) this.applyOutput(true); break;
       case 'volume': this.volume = Math.max(0, Math.min(1, value)); this.applyOutput(); break;
@@ -571,10 +764,6 @@ export class PlayerPlugin {
         await this.control({ action: 'resume' }); break;
       case 'sleepDismiss': this.sleepExpired = false; break;
       case 'sleepCancel': this.sleepingAt = 0; this.sleepExpired = false; break;
-      case 'theme':
-        await this.win?.setWindowSystemBarProperties({ statusBarContentColor: value === 1 ? '#203044' : '#FFFFFF',
-          navigationBarContentColor: value === 1 ? '#203044' : '#FFFFFF' }); break;
-      case 'immersive': break; // ArkWeb occupies the same safe-area window in both modes.
       default: throw new Error(`Unsupported playback action: ${args.action}`);
     }
     this.emit();
@@ -654,6 +843,7 @@ export class PlayerPlugin {
     clearTimeout(this.outputTimer);
     this.accountListening(true); this.destroyed = true; clearInterval(this.timer); clearInterval(this.lyricTimer);
     await this.metadataTasks.catch(() => {});
+    await this.sessionActivation;
     await this.player?.release(); await this.stopBackground(); await this.session?.destroy();
   }
 }

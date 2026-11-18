@@ -1,20 +1,21 @@
 import Foundation
 
-struct NativeLyricWord: Decodable {
-    let text: String; let startTimeMs: Double; let endTimeMs: Double
-}
 struct NativeLyricLine: Decodable {
-    let timeMs: Double; let endTimeMs: Double?; let text: String; let words: [NativeLyricWord]?
+    let timeMs: Double; let endTimeMs: Double?; let text: String
 }
 struct NativeLyricsRequest: Decodable {
     var enabled: Bool? = nil
     let action: String; let id: String?; let lines: [NativeLyricLine]?; let biasMs: Double?; let subtitles: Bool?
 }
 struct NativeSavedLyrics: Decodable {
-    let rawText: String; let parsedJson: String; let biasMs: Double
-    var lines: [NativeLyricLine] {
-        guard rawText.range(of:"\\[\\d{1,3}:\\d{1,2}",options:.regularExpression) != nil,let data=parsedJson.data(using:.utf8) else { return [] }
-        return (try? JSONDecoder().decode([NativeLyricLine].self,from:data)) ?? []
+    let lines: [NativeLyricLine]; let biasMs: Double
+
+    private enum CodingKeys: String, CodingKey { case lines, biasMs }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        lines = (try? values.decode([NativeLyricLine].self, forKey: .lines)) ?? []
+        biasMs = (try? values.decode(Double.self, forKey: .biasMs)) ?? 0
     }
 }
 struct LyricsArgs: Decodable { let data: String }
@@ -27,11 +28,14 @@ struct LyricsCapability: Encodable {
 // suspended. This owns lyric data only; it never starts another media session.
 final class NotificationLyrics {
     private var request: NativeLyricsRequest?
+    private var saved: NativeLyricsRequest?
     func update(_ value: NativeLyricsRequest) { request=value }
-    func clear() { request=nil }
-    func line(for trackID: String?, at position: Double) -> String? {
-        guard let trackID,!trackID.isEmpty,let request,request.id==trackID,
-              position.isFinite,let lines=request.lines else { return nil }
+    func seed(_ value: NativeLyricsRequest) { saved=value }
+    func clear() { request=nil; saved=nil }
+    func line(for trackID: String?, at position: Double, carAudio: Bool = false) -> String? {
+        guard !carAudio, let trackID, !trackID.isEmpty, position.isFinite else { return nil }
+        let live = request?.id == trackID && request?.lines?.isEmpty == false ? request : nil
+        guard let request = live ?? saved, request.id == trackID, let lines = request.lines else { return nil }
         let time=position*1000-(request.biasMs ?? 0)
         var low=0,high=lines.count
         while low<high { let mid=(low+high)/2; if lines[mid].timeMs<=time { low=mid+1 } else { high=mid } }
@@ -45,5 +49,5 @@ final class NotificationLyrics {
 }
 
 func notificationMediaText(title: String, artist: String, lyric: String?) -> (title: String, artist: String) {
-    return (title, lyric ?? artist)
+    (title, lyric ?? artist)
 }

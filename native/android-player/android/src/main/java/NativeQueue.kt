@@ -22,6 +22,7 @@ internal class NativeQueue {
     private var threshold = 0.0
     private var origins = JSONObject()
     private var entryOrder: List<String> = emptyList()
+    private var offlineOnly = false
     private var collection = false
     var collectionRef: String? = null
         private set
@@ -58,6 +59,7 @@ internal class NativeQueue {
             val parts=expanded.optJSONArray(entry) ?: continue
             for (i in 0 until parts.length()) {val part=parts.getJSONObject(i).getString("id");if(!origins.has(part)) origins.put(part,inherited)}
         }
+        offlineOnly = data.optBoolean("offlineOnly")
         repeatMode = data.getString("repeatMode"); shuffled = data.optBoolean("shuffled")
         autoResume = data.optBoolean("autoResume", true); threshold = data.optDouble("resumeThresholdSeconds", 0.0)
         collection = data.optBoolean("collectionPlayback"); collectionRef = data.optString("collectionRef").takeIf { it.isNotEmpty() }
@@ -84,7 +86,7 @@ internal class NativeQueue {
         val isCollection = collection || track.optInt("partCount") > 1 || source.optInt("page") > 1 ||
             tracks.any { it.optString("id") != track.optString("id") && it.optJSONObject("source")?.optString("bvid") == source.optString("bvid") }
         return JSONObject().put("accountSession", accountSession.takeIf { it.isNotEmpty() }).put("profile", profile).put("track", track).put("restart", restart)
-            .put("refresh", refresh).put("position", position).put("autoResume", autoResume)
+            .put("offlineOnly", offlineOnly).put("refresh", refresh).put("position", position).put("autoResume", autoResume)
             .put("resumeThresholdSeconds", threshold).put("collectionPlayback", isCollection).put("visibilityScopes", origins.optJSONArray(track.optString("id")) ?: JSONArray())
     }
     fun skip(entry: String): JSONObject? {

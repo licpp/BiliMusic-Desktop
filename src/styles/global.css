@@ -346,3 +346,13 @@ button:disabled{cursor:default;opacity:.45}
 .sync-conflict-label { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
 .sync-conflict-options button[aria-pressed="true"] .sync-conflict-label { color: var(--cyan); }
 .sync-conflict-options button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+[data-offline-unavailable] {
+  opacity: .56;
+}
+[data-offline-unavailable] :is(.library-art, .result-cover, .video-part-index, .large-track-art, .home-cover-button) {
+  filter: grayscale(1);
+}
+[data-offline-unavailable] :is(button:disabled, [aria-disabled="true"]) {
+  cursor: default;
+}

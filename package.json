@@ -1,7 +1,7 @@
 {
   "name": "bilimusic-desktop",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,9 +16,10 @@
     "android:dev": "tauri android dev",
     "android:build": "node scripts/mobile-version.mjs && node scripts/android-prepare.mjs && tauri android build --apk --target aarch64",
     "android:local": "node scripts/android-local.mjs",
-    "ios:init": "tauri icon public/app-icon.png --output src-tauri/.ios-icons && tauri ios init --ci --skip-targets-install && node scripts/ios-prepare.mjs",
-    "ios:dev": "tauri ios dev",
-    "ios:build": "node scripts/mobile-version.mjs && tauri ios build --ci --target aarch64 --no-sign --archive-only && node scripts/ios-package.mjs",
+    "ios:init": "tauri ios init --ci --skip-targets-install && npm run ios:prepare",
+    "ios:prepare": "node scripts/ios-prepare.mjs",
+    "ios:dev": "npm run ios:prepare && tauri ios dev",
+    "ios:build": "npm run ios:prepare && node scripts/mobile-version.mjs && tauri ios build --ci --target aarch64 --no-sign --archive-only && node scripts/ios-package.mjs",
     "ohos:tools": "node scripts/ohos.mjs tools",
     "ohos:prepare": "node scripts/ohos.mjs prepare",
     "ohos:check": "node scripts/ohos.mjs check",

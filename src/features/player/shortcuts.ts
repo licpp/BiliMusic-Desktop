@@ -61,10 +61,10 @@ export function globalShortcutBinding(action: ShortcutAction, key: Shortcut | nu
 
 // RegisterHotKey cannot distinguish the main Enter key from keypad Enter.
 // Other Windows OEM/numpad keys have different virtual keys and stay distinct.
-export function globalShortcutConflict(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction, mac=false, playbackEnabled=true): string | undefined {
-  if (!globalShortcutBinding(action, key) || action!=='show'&&!playbackEnabled) return
+export function globalShortcutConflict(key: Shortcut, bindings: ShortcutBindings, action: ShortcutAction, mac=false, globalEnabled=true): string | undefined {
+  if (!globalEnabled || !globalShortcutBinding(action, key)) return
   const canonical = (value: Shortcut) => !mac && value.code === 'NumpadEnter' ? { ...value, code: 'Enter' } : value
-  const conflict = shortcutActions.find(item => item.id !== action && (item.id==='show'||playbackEnabled) && globalShortcutBinding(item.id, bindings[item.id])
+  const conflict = shortcutActions.find(item => item.id !== action && globalShortcutBinding(item.id, bindings[item.id])
     && sameShortcut(canonical(bindings[item.id]!), canonical(key)))
   return conflict ? `全局快捷键与“${conflict.label}”冲突，主键盘 Enter 和数字键盘 Enter 无法分别注册` : undefined
 }

@@ -66,7 +66,14 @@ export function startFloatingLyrics() {
       const signature = JSON.stringify([frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
       if (signature === lastNative) return
       lastNative = signature; pending = true
-      try { await nativeLyrics({action:'update',...frame,lrc:systemLrc(frame.lines,frame.biasMs)}) }
+      try {
+        if (isIOS) {
+          const lines = frame.lines.map(({ timeMs, endTimeMs, text }) => ({ timeMs, endTimeMs, text }))
+          await nativeLyrics({ action: 'update', id: frame.id, lines, biasMs: frame.biasMs, subtitles: frame.subtitles })
+        } else {
+          await nativeLyrics({action:'update',...frame,lrc:systemLrc(frame.lines,frame.biasMs)})
+        }
+      }
       catch { if (signature === lastNative) lastNative = '' }
       finally { pending=false; if (dirty) { dirty=false; void publish() } }
     } else if (useFloatingLyrics.getState().enabled) {
@@ -98,7 +105,9 @@ export function startFloatingLyrics() {
   }
   usePlayerStore.subscribe((state,previous) => {
     if (currentKey() !== trackKey) void load()
-    else if (state.current?.title !== previous.current?.title || state.current?.artist !== previous.current?.artist || !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
+    else if (state.current?.title !== previous.current?.title || state.current?.artist !== previous.current?.artist ||
+      isIOS && state.status === 'playing' && previous.status !== 'playing' ||
+      !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   })
   const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
   useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()})

@@ -1,14 +1,14 @@
 /* One continuous cover layer for the complete window, including playback chrome. */
 .app-shell.lyrics-immersive { --lyrics-shade:rgba(3,10,17,.68); }
 :root[data-theme="light"] .app-shell.lyrics-immersive { --lyrics-shade:rgba(248,250,253,.73); }
-.app-shell.lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:var(--base); }
+.app-shell.lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:radial-gradient(ellipse at 24% 25%,color-mix(in srgb,var(--cyan) 22%,var(--base)),var(--base) 72%); }
 .app-shell.lyrics-immersive .lyrics-view { background:transparent; }
 .app-shell.lyrics-immersive .lyrics-topbar,.app-shell.lyrics-immersive .lyrics-album-pane { border-color:transparent; }
 .app-shell.lyrics-immersive .lyrics-topbar .action-menu-trigger { border:0;background:transparent;box-shadow:none; }
 .lyrics-media { position:relative;display:flex;flex-direction:column;align-items:center;max-width:100%; }
 .lyrics-meta-actions { display:none; }
 .video-fullscreen > .lyrics-media { width:100%;height:100%; }
-.video-fullscreen > .lyrics-track-meta { display:none; }
+:root[data-video-fullscreen="true"] .video-fullscreen > .lyrics-track-meta { display:none; }
 .app-shell.lyrics-immersive > .player-dock { z-index:40;background:transparent;border:0;box-shadow:none; }
 .app-shell.lyrics-immersive > .rail { visibility:hidden;pointer-events:none; }
 .app-shell.lyrics-immersive > .queue-drawer { z-index:45; }
@@ -115,7 +115,7 @@
 .lyrics-timing-preview p[role="button"] { cursor:pointer; }
 .lyrics-timing-preview p[role="button"]:hover,.lyrics-timing-preview p[role="button"]:focus-visible { color:var(--ink);text-decoration:underline;text-underline-offset:6px; }
 @media (min-width:961px) {
-  /* Android tablets use the wide layout but still need system-bar/cutout space. */
+  /* The wide tablet layout also reserves room for system bars and cutouts. */
   .app-shell.lyrics-immersive.frame-browser { grid-template-rows:minmax(0,1fr) calc(80px + var(--native-safe-bottom,0px)); }
   .app-shell.lyrics-immersive.frame-browser .lyrics-view { inset:var(--native-safe-top,0px) var(--native-safe-right,0px) calc(80px + var(--native-safe-bottom,0px)) var(--native-safe-left,0px); }
   .app-shell.lyrics-immersive.frame-browser > .player-dock { padding-bottom:var(--native-safe-bottom,0px);padding-left:calc(20px + var(--native-safe-left,0px));padding-right:calc(20px + var(--native-safe-right,0px)); }
@@ -154,7 +154,7 @@
   :root[data-layout="mobile"] .lyrics-cover.video-active > .video-tools > button { color:#fff;border:1px solid #ffffff26;background:rgba(15,24,32,.42);box-shadow:0 2px 8px #0002; }
   :root[data-layout="mobile"] .lyrics-cover.video-active > .video-tools > .video-danmaku-toggle[aria-pressed="true"] { color:var(--cyan); }
   :root[data-layout="mobile"] .lyrics-media .video-tools > button:focus-visible { outline:2px solid var(--cyan);outline-offset:2px; }
-  :root[data-layout="mobile"][data-video-fullscreen="true"] .video-fullscreen .lyrics-cover.video-active > .video-tools.video-tools-overlay { inset:max(12px,var(--native-safe-top,0px)) max(16px,var(--native-safe-right,0px)) auto auto; }
+  :root[data-layout="mobile"][data-video-fullscreen="true"] .video-fullscreen .lyrics-cover.video-active > .video-tools.video-tools-overlay { inset:max(12px,var(--video-safe-top)) max(16px,var(--video-safe-right)) auto auto; }
   :root[data-layout="mobile"][data-video-fullscreen="true"] .video-fullscreen .video-tools > button { width:44px;height:44px;min-height:44px; }
 }
 @media (min-width: 961px) {
@@ -184,3 +184,5 @@
   :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll:has(.lyrics-status)::before,
   :root[data-platform="desktop"] .app-shell.lyrics-immersive .lyrics-scroll:has(.lyrics-status)::after { display:none; }
 }
+
+.lyrics-cover.video-active { background:#111e2b; }

@@ -1,5 +1,5 @@
 name: release-all-desktop
-run-name: BiliMusic 0.3.6 installers — Windows, Intel Mac and Linux
+run-name: BiliMusic installers — Windows, Intel Mac and Linux
 on:
   workflow_dispatch:
 permissions:
@@ -161,7 +161,7 @@ jobs:
           file "$binary"
           test "$(lipo -archs "$binary")" = x86_64
           codesign --verify --deep --strict --verbose=2 "$app"
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist" | grep -x 0.3.6
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist" | grep -Fx "$(node -p "require('./package.json').version")"
       - name: Verify Windows ARM64 application and GUI subsystem
         if: runner.os == 'Windows'
         shell: pwsh
@@ -180,7 +180,7 @@ jobs:
           if [ '${{ matrix.arch }}' = arm64 ]; then readelf -h "$binary" | grep -q AArch64; expected=arm64; else readelf -h "$binary" | grep -q 'X86-64'; expected=amd64; fi
           deb=$(find src-tauri/target/${{ matrix.target }}/release/bundle/deb -name '*.deb' -print -quit)
           test "$(dpkg-deb -f "$deb" Architecture)" = "$expected"
-          test "$(dpkg-deb -f "$deb" Version)" = 0.3.6
+          test "$(dpkg-deb -f "$deb" Version)" = "$(node -p "require('./package.json').version")"
           ! ldd "$binary" | grep 'not found'
           set +e
           timeout 18s xvfb-run -a dbus-run-session -- "$binary" > linux-launch.log 2>&1
@@ -192,7 +192,7 @@ jobs:
         shell: bash
         run: |
           node scripts/release-notices.mjs ${{ matrix.target }} THIRD_PARTY_LICENSES-${{ matrix.artifact }}.json
-          node -e "const fs=require('fs');fs.writeFileSync('build-provenance.json',JSON.stringify({version:'0.3.6',source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID},null,2))"
+          node -e "const fs=require('fs');fs.writeFileSync('build-provenance.json',JSON.stringify({version:require('./package.json').version,source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID},null,2))"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

@@ -12,7 +12,7 @@ import { Empty, Failure } from './Library'
 import { LargeDialog } from './LargeDialog'
 
 export function LargeOffline() {
-  const client = useQueryClient(), downloads = useQuery({ queryKey: accountQueryKey('downloads'), queryFn: listDownloads, refetchInterval: 3000 })
+  const client = useQueryClient(), downloads = useQuery({ queryKey: accountQueryKey('downloads'), queryFn: listDownloads, networkMode: 'always', refetchInterval: 3000 })
   const batch = useDownloadBatch(s => s.batch), busy = useDownloadBatch(s => s.busy)
   const [error, setError] = useState(''), [removing, setRemoving] = useState<string>()
   const complete = [...new Map((downloads.data || []).filter(d => d.status === 'completed' && d.track).map(d => [d.trackId, d.track!])).values()]

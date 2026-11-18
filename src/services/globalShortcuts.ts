@@ -26,9 +26,9 @@ export function suspendGlobalShortcuts(on: boolean) {
 
 function queue() {
   if (!inDesktopShell || !shortcutDesktop || !current) return
-  const enabled = current.enabled && !suspended && !listenerFailure
-  const bindings = !suspended ? shortcutActions.flatMap(({id}) => {
-    if(id!=='show'&&!enabled)return []
+  const enabled = current.enabled && !suspended
+  const bindings = enabled ? shortcutActions.flatMap(({id}) => {
+    if(id!=='show'&&listenerFailure)return []
     const binding = globalShortcutBinding(id,current!.bindings[id])
     return binding ? [binding] : []
   }) : []

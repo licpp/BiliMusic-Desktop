@@ -37,7 +37,8 @@ import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { playbackClock, playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
-import { commandErrorMessage, getDanmaku, getVideoSource, getStoredLyrics, enrichStoredLyricLines, getVideoParts, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
+import { commandErrorMessage, getDanmaku, getVideoSource, getStoredLyrics, enrichStoredLyricLines, getVideoParts, lyricMatchVersion, saveLyricsWithMetadata, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
+import { metadataForLyric } from '../../services/batchMatching'
 import type { LyricCandidate, LyricLine, StoredLyrics } from '../../domain/lyrics'
 import { candidateLines, lyricSupplementModes, nextLyricSupplement, parseLrc, type LyricSupplement } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
@@ -190,6 +191,8 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     return () => window.removeEventListener('bilimusic-back', back, true)
   }, [chooserOpen, editing, rateOpen, commentsOpen, videoFullscreen, biasOpen])
   const lyricRequest = useRef(0)
+  const savingSelection = useRef(false)
+  const [savingLyrics, setSavingLyrics] = useState(false)
   const videoRequest = useRef(0)
   const [videoRetry, setVideoRetry] = useState(0)
   useEffect(() => {
@@ -400,21 +403,35 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
 
   async function importManualLyrics() {
     if (!current || !manualText.trim()) return
-    const request = ++lyricRequest.current
     setLoading(false)
     const synced = parseLrc(manualText).length > 0
-    await selectCandidate({ provider: 'local', id: 0, trackName: current.title, artistName: current.artist || '', albumName: current.album || '', duration: current.durationSeconds, instrumental: false, syncedLyrics: synced ? manualText.trim() : undefined, plainLyrics: synced ? undefined : manualText.trim() }, true, request)
+    await selectCandidate({ provider: 'local', id: 0, trackName: current.title, artistName: current.artist || '', albumName: current.album || '', duration: current.durationSeconds, instrumental: false, syncedLyrics: synced ? manualText.trim() : undefined, plainLyrics: synced ? undefined : manualText.trim() }, true)
   }
 
-  async function selectCandidate(candidate: LyricCandidate, manual: boolean, request = lyricRequest.current) {
-    if (!current) return
+  async function selectCandidate(candidate: LyricCandidate, manual: boolean, updateMetadata = false) {
+    if (!current || savingSelection.current) return
+    const request = ++lyricRequest.current
+    const epoch = accountEpoch()
+    const valid = () => epoch === accountEpoch() && request === lyricRequest.current
     const parsed = candidateLines(candidate)
     if (!parsed.length) { setError('这个版本没有可显示的歌词'); return }
+    savingSelection.current = true; setSavingLyrics(true)
     try {
-      const saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
-      if (request !== lyricRequest.current) return
+      let saved
+      if (updateMetadata) {
+        const version = await lyricMatchVersion(current.id)
+        const metadata = await metadataForLyric(candidate)
+        if (!valid()) return
+        const pair = await saveLyricsWithMetadata(current.id, candidate, parsed, metadata, version)
+        if (epoch !== accountEpoch()) return
+        usePlayerStore.getState().updateTrack(pair.track)
+        void queryClient.invalidateQueries({ predicate: q => ['library', 'playlists', 'playlist-tracks', 'home-recent'].includes(String(q.queryKey[0])) })
+        saved = pair.stored
+      } else saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
+      if (!valid()) return
       setStored(saved); setLines(parsed); setChooserOpen(false); setError('')
-    } catch (cause) { if (request === lyricRequest.current) setError(commandErrorMessage(cause)) }
+    } catch (cause) { if (valid()) setError(commandErrorMessage(cause)) }
+    finally { savingSelection.current = false; setSavingLyrics(false) }
   }
 
   function adjustBias(delta: number) {
@@ -499,9 +516,9 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
             {current.importedEntry?.trackId === current.id && <button type="button" role="menuitem" onClick={() => { close(); setReplacingVideo(current) }}><RefreshCw size={18}/><span>更换视频</span></button>}
             {compact && <>
               <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
-              {isMobile && <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>}
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
             </>}
+            <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>
             {compact && isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
@@ -581,12 +598,12 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
       {(floatingError || subtitles.message || autoAlignment.message || (error && displayLines.length > 0)) && <div className={`lyrics-toast${autoAlignment.message && !floatingError && !subtitles.message ? ' lyrics-alignment-toast' : ''}`} role={floatingError || autoAlignment.failed ? 'alert' : 'status'}>{floatingError || subtitles.message || autoAlignment.message || error}{floatingError && <button type="button" onClick={() => useFloatingLyrics.setState({error:''})}>知道了</button>}</div>}
       {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
-        onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
+        saving={savingLyrics} onSearch={refreshCandidates} onChoose={(candidate, update) => selectCandidate(candidate, true, update)} onClose={() => { ++lyricRequest.current; setChooserOpen(false); setManualOpen(false) }}
         manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
       {rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
       {seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
       {partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
-      {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} video={mediaMode === 'video' ? videoCover.current : null} />}
+      {commentsOpen && current.source.aid && <CommentsPanel key={current.id} trackId={current.id} aid={current.source.aid} onClose={closeComments} video={mediaMode === 'video' ? videoCover.current : null} />}
       {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
       {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)}/>}
     </section>

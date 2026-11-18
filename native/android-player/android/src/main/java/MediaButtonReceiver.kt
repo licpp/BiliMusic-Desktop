@@ -11,6 +11,6 @@ class MediaButtonReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_MEDIA_BUTTON) return
         val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return
         val action = MediaButtons.action(key.keyCode, key.action == KeyEvent.ACTION_DOWN, key.repeatCount) ?: return
-        PlaybackService.instance?.control(action)
+        PlaybackService.instance?.controlFromMediaSession(action)
     }
 }

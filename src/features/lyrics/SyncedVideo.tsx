@@ -11,9 +11,10 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
   const activeRef = useRef(active)
   const syncRef = useRef<(force?: boolean) => void>(() => {})
   const [error, setError] = useState('')
-  const [visible, setVisible] = useState(false)
+  const [frame, setFrame] = useState<{ src: string; attempt: number }>()
   const [slow, setSlow] = useState(false)
   const [retry, setRetry] = useState(0)
+  const visible = frame?.src === src && frame.attempt === retry
   const [recovering, setRecovering] = useState(false)
   const reloadRef = useRef(onReload)
   reloadRef.current = onReload
@@ -31,7 +32,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
   useEffect(() => {
     const video = ref.current
     if (!video) return
-    setError(''); setVisible(false); setSlow(false)
+    setError(''); setSlow(false)
     let firstFrameShown = false
     let pendingAlignment = true
     let startupRequested = false
@@ -67,7 +68,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
       // WKWebView may not receive a compositor frame callback.
       if (!firstFrameShown && !pendingAlignment && !video.seeking && video.readyState >= 2) {
         firstFrameShown = true
-        setVisible(true); setError('')
+        setFrame({ src, attempt: retry }); setError('')
         onReady(src)
       }
     }
@@ -108,5 +109,5 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
     if (active) syncRef.current(true)
     else ref.current?.pause()
   }, [active])
-  return <><video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />{active && !visible && !error && <div className="video-startup"><Artwork src={poster} /><div className="video-startup-status" role="status"><LoaderCircle size={16} className="spin" /><span>{slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}</span>{slow && <button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重试加载</button>}</div></div>}{active && error && <div className="video-error" role="alert"><span>{recovering ? '正在重新连接视频…' : error}</span><button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重新加载</button></div>}</>
+  return <><video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />{active && <div className={`video-startup${visible ? ' video-startup-ready' : ''}`} aria-hidden={visible || undefined}><Artwork src={poster} />{!visible && !error && <div className="video-startup-status" role="status"><LoaderCircle size={16} className="spin" /><span>{slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}</span>{slow && <button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重试加载</button>}</div>}</div>}{active && error && <div className="video-error" role="alert"><span>{recovering ? '正在重新连接视频…' : error}</span><button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重新加载</button></div>}</>
 })

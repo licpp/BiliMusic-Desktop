@@ -24,16 +24,16 @@ export function CommentsSurface({ children, onClose, onBackFromThread, onBackFro
       const overlay=sheet.parentElement?.getBoundingClientRect()
       const height=overlay?.height ?? window.innerHeight
       const target=video ? video.getBoundingClientRect().bottom-(overlay?.top ?? 0) : height*.26
-      const collapsed=Math.max(230,Math.min(720,height-target))
+      const collapsed = Math.max(230, video ? height - target : Math.min(720, height - target))
       shift.current=Math.max(0,height-collapsed)
       sheet.style.setProperty('--comments-collapsed-height',`${collapsed}px`)
-
     }
+    update()
+    sheet.dataset.positioned = ''
     const observer = new ResizeObserver(update)
-    observer.observe(sheet)
+    if (sheet.parentElement) observer.observe(sheet.parentElement)
     if (video) observer.observe(video)
     window.addEventListener('resize', update)
-    update()
     return () => { observer.disconnect(); window.removeEventListener('resize', update) }
   }, [mobile, video])
   const forceExpanded = Boolean(onBackFromThread)

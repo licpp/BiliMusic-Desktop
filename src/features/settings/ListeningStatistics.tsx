@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { CalendarDays, ChartNoAxesColumn, Cloud, Headphones, Info, LoaderCircle, Music2, RefreshCw } from 'lucide-react'
-import { getListeningStatistics, type ListeningPeriod } from '../../services/listeningStatistics'
+import { getListeningStatistics, type ListeningPeriod, type ListeningPreferences } from '../../services/listeningStatistics'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { MobilePage } from '../../shared/MobilePage'
 import { CollectionDialog } from '../../shared/CollectionDialog'
@@ -25,6 +25,30 @@ const labels = { week: '本周', month: '本月', year: '本年', total: '累计
 const dayKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 const accountToday = () => new Date(`${new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}T00:00:00Z`)
 
+const preferenceKinds = { artists: '歌手', uploaders: 'UP 主', themes: '内容关键词' } as const
+function PreferenceSummary({ preferences }: { preferences?: ListeningPreferences }) {
+  const [picked, setPicked] = useState<string>()
+  const groups = Object.keys(preferenceKinds) as (keyof typeof preferenceKinds)[]
+  const items = groups.flatMap(kind => (preferences?.[kind] || []).slice(0, 6).map(item => ({
+    ...item, kind, key: `${kind}:${item.id}`,
+  }))).sort((a, b) => b.seconds - a.seconds)
+  const [lead, ...rest] = items
+  const selected = items.find(item => item.key === picked)
+  const word = (item: (typeof items)[number]) => <button key={item.key} type="button" data-kind={item.kind}
+    aria-label={`${item.label}，${preferenceKinds[item.kind]}，${duration(item.seconds)}`} aria-pressed={item.key === picked}
+    onClick={() => setPicked(picked === item.key ? undefined : item.key)}
+    style={{fontSize:`${.88 + .9 * Math.sqrt(item.seconds / Math.max(1, lead.seconds))}rem`}}>{item.label}</button>
+  return <section className="listening-section listening-preferences">
+    <header><h3>聆听偏好</h3></header>
+    {lead ? <div className="listening-preference-cloud">
+      <div>{rest.filter((_, index) => index % 2 === 0).reverse().map(word)}</div>
+      <div>{word(lead)}</div>
+      <div>{rest.filter((_, index) => index % 2 === 1).map(word)}</div>
+    </div> :
+      <p className="listening-preference-note">暂无偏好记录</p>}
+    <div className="listening-preference-detail" aria-live="polite">{selected && <><strong>{selected.label}</strong><span>{duration(selected.seconds)}</span></>}</div>
+  </section>
+}
 
 function ListeningCalendar({ daily, year, today }: { daily: { day: string; seconds: number }[]; year: number; today: string }) {
   const cells = listeningCalendar(year, daily, today), scroll = useRef<HTMLDivElement>(null)
@@ -64,8 +88,6 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const summaryTime = listeningTimeParts(summary?.seconds ?? 0)
   useEffect(() => { if (top?.length) void hydrateSourceTitles(top.map(track => track.id), client) }, [top, client])
   const today = accountToday(), thisYear = today.getUTCFullYear(), todayKey = dayKey(today)
-  const [calendarYear, setCalendarYear] = useState(thisYear)
-  const years = [...new Set([thisYear, ...(data?.daily || []).map(d => Number(d.day.slice(0, 4)))])].sort((a, b) => b - a)
   const daily = new Map(data?.daily.map(d => [d.day, d.seconds]) || [])
   const start = new Date(today)
   if (period === 'week') start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7)
@@ -75,8 +97,8 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
     const date = new Date(start.getTime() + i * 86400000), key = dayKey(date)
     return { key, label: period === 'week' ? ['一', '二', '三', '四', '五', '六', '日'][i] : String(i + 1), seconds: daily.get(key) || 0, future: key > todayKey }
   })
-  const max = Math.max(1, ...bars.map(d => d.seconds)), calendar = period === 'year' || period === 'total'
-  const chartYear = period === 'year' ? thisYear : calendarYear
+  const max = Math.max(1, ...bars.map(d => d.seconds)), calendar = period === 'year'
+  const chartYear = thisYear
   const activeCalendarDays = data?.daily.filter(d => d.day.startsWith(String(chartYear)) && d.seconds > 0).length || 0
   const enabled = !!data?.sync.enabled
   const uid = data?.sync.uid
@@ -111,12 +133,12 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
           <div title="有效播放次数从新版开始记录"><Headphones size={15} /><strong>{summary.plays.toLocaleString()}</strong><span>次播放</span></div>
         </div>
       </section>
-      <section className="listening-trend listening-section">
-        <header><div><h3>{calendar ? '聆听日历' : '聆听足迹'}</h3><p>{calendar ? `${chartYear} 年，${activeCalendarDays} 天有音乐相伴` : period === 'week' ? '这一周，每天听了多久' : `${thisYear} 年 ${today.getUTCMonth() + 1} 月的每日时长`}</p></div>{period === 'total' ? <select aria-label="聆听日历年份" value={calendarYear} onChange={e => setCalendarYear(Number(e.target.value))}>{years.map(y => <option key={y} value={y}>{y} 年</option>)}</select> : <ChartNoAxesColumn size={18} aria-hidden="true" />}</header>
+      {period === 'total' ? <PreferenceSummary preferences={data?.preferences}/> : <section className="listening-trend listening-section">
+        <header><div><h3>{calendar ? '聆听日历' : '聆听足迹'}</h3><p>{calendar ? `${chartYear} 年，${activeCalendarDays} 天有音乐相伴` : period === 'week' ? '这一周，每天听了多久' : `${thisYear} 年 ${today.getUTCMonth() + 1} 月的每日时长`}</p></div><ChartNoAxesColumn size={18} aria-hidden="true" /></header>
         {calendar ? <ListeningCalendar daily={data?.daily || []} year={chartYear} today={todayKey} /> : <>
           <ListeningBars bars={bars} max={max} today={todayKey} weekly={period==='week'}/>
         </>}
-      </section>
+      </section>}
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
         {top?.length ? <ol className="listening-ranking">{top.map((track, i) => <li key={track.id}>
           <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />

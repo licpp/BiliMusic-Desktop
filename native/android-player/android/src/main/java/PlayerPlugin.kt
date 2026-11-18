@@ -23,12 +23,14 @@ class PlayArgs {
     lateinit var id: String
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
     var position: Double = 0.0
     var loudnessGainDb: Double = 0.0
     var loudnessEnabled: Boolean = false
     var loudnessRevision: Long = 0
-    var volume: Double = 0.7
+    var volume: Double = 1.0
     var playing: Boolean = true
     var seamless: Boolean = false
     var upgradeUrl: String? = null
@@ -47,6 +49,8 @@ class ControlArgs {
     var collectionRef: String? = null
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
 }
 
@@ -328,7 +332,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
-            .putExtra("title", args.title).putExtra("artist", args.artist)
+            .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+            .putExtra("durationSeconds", args.durationSeconds)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
             .putExtra("loudnessGainDb", args.loudnessGainDb).putExtra("loudnessEnabled", args.loudnessEnabled).putExtra("loudnessRevision", args.loudnessRevision)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)
@@ -349,7 +354,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 // tracks still works after the activity goes into the background.
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
-                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("coverUrl", args.coverUrl))
+                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+                    .putExtra("durationSeconds", args.durationSeconds).putExtra("coverUrl", args.coverUrl))
             } else if (args.action == "largeScreen") {
                 largeScreen = args.value > 0
                 if (largeScreen) activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE

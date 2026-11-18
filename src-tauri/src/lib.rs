@@ -172,6 +172,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             interface::playback_cache::playback_cache_status,
+            interface::playback_cache::offline_playable_tracks,
             interface::playback_cache::playback_cache_limit,
             interface::playback_cache::playback_cache_clear,
             #[cfg(desktop)]
@@ -206,6 +207,7 @@ pub fn run() {
             interface::imported_entries::playlist_import_bind,
             interface::batch_matching::batch_match_snapshot,
             interface::batch_matching::batch_match_commit,
+            interface::batch_matching::lyric_match_version,
             global_shortcuts::global_shortcuts_apply,
             global_shortcuts::global_shortcuts_show,
             interface::media::bili_creator_catalog,
@@ -285,6 +287,7 @@ pub fn run() {
             interface::linked_folders::bili_linked_create,
             interface::linked_folders::bili_linked_refresh,
             interface::linked_folders::bili_linked_change,
+            interface::linked_folders::bili_linked_remove_selected,
             interface::linked_folders::bili_linked_unlink,
             interface::commands::bili_logout,
             interface::commands::bili_comments,
@@ -299,6 +302,7 @@ pub fn run() {
             interface::commands::lyrics_complete_selected,
             interface::commands::lyrics_restore_selected,
             interface::commands::lyrics_save,
+            interface::commands::lyrics_save_with_metadata,
             interface::commands::lyrics_set_bias,
             interface::commands::mobile_download_directory,
             #[cfg(target_os = "android")]

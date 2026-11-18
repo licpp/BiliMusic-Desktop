@@ -40,6 +40,8 @@ test('large screen target preserves native Android identity and uses isolated ou
  assert.match(entry,/startFloatingLyrics/,"native system-title lyrics share the mobile controller without enabling an overlay")
  assert.match(entry,/startCloudSync/)
  assert.match(entry,/startListeningStatistics/)
+ assert.match(entry,/installLocalPlayback\(client\)/)
+ assert.match(await readFile('src/main.tsx','utf8'),/installLocalPlayback\(queryClient\)/)
 })
 test('manifest preparation is repeatable after regenerating or preparing twice',()=>{
  const once=editionManifest(manifest,true)
@@ -123,7 +125,25 @@ test('cross-region focus enters the nearest menu row rather than its active page
 })
 
 const layoutCode=(await build({entryPoints:['src/large-screen/playerLayout.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
-const {fitMediaFrame,centeredLyricScroll}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
+const {fitMediaFrame,centeredLyricScroll,playerDensity,lyricRowCount}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
+test('player density uses the safe window, including when a car screen reserves system bars',()=>{
+ assert.equal(playerDensity(1280,800),'regular')
+ assert.equal(playerDensity(1280,720),'regular')
+ assert.equal(playerDensity(1920,720),'regular')
+ assert.equal(playerDensity(1864,612),'compact')
+ assert.equal(playerDensity(1280,480),'compact')
+ assert.equal(playerDensity(1224,372),'compact')
+ assert.equal(playerDensity(968,312),'tight')
+ assert.equal(playerDensity(740,430),'compact')
+})
+test('short lyric windows prioritize the current line and budget room for translations',()=>{
+ assert.equal(lyricRowCount(140,false),1)
+ assert.equal(lyricRowCount(185,false),3)
+ assert.equal(lyricRowCount(185,true),1)
+ assert.equal(lyricRowCount(275,true),3)
+ assert.equal(lyricRowCount(400,true),5)
+ assert.equal(lyricRowCount(600,false),7)
+})
 test('video frames retain their ratio inside the reserved stage on wide, narrow and portrait sources',()=>{
  for(const [width,height,ratio] of [[480,204,16/9],[200,360,16/9],[480,300,9/16],[800,300,4/3]]){
   const fit=fitMediaFrame(width,height,ratio)

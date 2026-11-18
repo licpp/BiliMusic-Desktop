@@ -7,13 +7,15 @@ type Props = {
   value: string; focused: boolean; history: string[]
   onChange: (value: string) => void; onFocus: () => void; onBlur: () => void
   onSearch: (value: string) => void; onClear: () => void; onClearHistory: () => void
+  inputRef?: React.RefObject<HTMLInputElement | null>
 }
 export function SearchField(props: Props) {
   const [debounced, setDebounced] = useState('')
   const [composing, setComposing] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [active, setActive] = useState(-1)
-  const input = useRef<HTMLInputElement>(null)
+  const ownInput = useRef<HTMLInputElement>(null)
+  const input = props.inputRef ?? ownInput
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const keyword = props.value.trim()
   useEffect(() => {

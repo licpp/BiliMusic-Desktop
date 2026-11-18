@@ -36,11 +36,15 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
     if (!element || !position || isSheet || floating) return
     const place = () => {
       const { width, height } = element.getBoundingClientRect()
-      const maxTop = window.innerHeight - height - 8
+      const root = document.documentElement
+      const insets = root.hasAttribute('data-ohos-edge-to-edge') ? getComputedStyle(root) : undefined
+      const clearance = (side: 'top' | 'right' | 'bottom' | 'left') => Math.max(8, Number.parseFloat(insets?.getPropertyValue(`--native-safe-${side}`) || '0'))
+      const maxTop = window.innerHeight - height - clearance('bottom')
       const above = position.anchorTop === undefined ? position.top : position.anchorTop - height - 6
       const top = position.top <= maxTop ? position.top : above
-      element.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, position.left - (position.anchorTop === undefined ? 0 : width)))}px`
-      element.style.top = `${Math.max(8, Math.min(maxTop, top))}px`
+      const left = position.anchorTop === undefined ? position.left : position.left - width
+      element.style.left = `${Math.max(clearance('left'), Math.min(window.innerWidth - width - clearance('right'), left))}px`
+      element.style.top = `${Math.max(clearance('top'), Math.min(maxTop, top))}px`
     }
     place()
     const observer = new ResizeObserver(place)

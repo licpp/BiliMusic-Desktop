@@ -175,6 +175,7 @@ pub(crate) async fn resolve_with_guard(
                 }
                 let pages = provider.video_pagelist(bvid).await?;
                 Ok(VideoParts {
+                    access: None,
                     play_count: None,
                     published_at: track["publishedAt"].as_u64(),
                     bvid: bvid.to_owned(),
@@ -285,9 +286,9 @@ pub(crate) async fn resolve_with_guard(
         stored.id.clone(),
         Some(refresh),
         None,
+        payload["offlineOnly"].as_bool(),
     )
-    .await
-    .map_err(|e| e.message)?;
+    .await;
     let _gate = sync.account_gate.lock().await;
     if !current()
         || profile != current_profile(app)
@@ -302,6 +303,11 @@ pub(crate) async fn resolve_with_guard(
     {
         return Err("播放账号已变更，请重新播放".into());
     }
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) if error.code == "offline_unavailable" => return Ok(visibility_skip(&entry_id)),
+        Err(error) => return Err(error.message),
+    };
     {
         let db = app.state::<Database>();
         let c = db.0.lock().map_err(|_| "数据库正忙")?;

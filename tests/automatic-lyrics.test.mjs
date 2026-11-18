@@ -137,3 +137,12 @@ test('shared edition aliases improve recognition without relaxing automatic lyri
   const both={...candidate,trackName:'红豆 (Live) (Cover)',artistName:'王菲'}
   assert.equal(chooseAutomaticLyrics(video,[{...both,trackName:'红豆 (Live)'},both]),both)
 })
+
+test('performer edition alias improves recall without accepting another recording',()=>{
+  const wanted={...track,title:'再遇见 (苏打绿版)',artist:'苏打绿',durationSeconds:277}
+  const good={...candidate,trackName:'再遇见',artistName:'苏打绿',duration:277}
+  assert.equal(chooseAutomaticLyrics(wanted,[good]),good)
+  for(const bad of [{trackName:'再遇见 (Live)'},{duration:296},{artistName:'另一个歌手'}]){
+    assert.equal(chooseAutomaticLyrics(wanted,[{...good,...bad}]),undefined)
+  }
+})

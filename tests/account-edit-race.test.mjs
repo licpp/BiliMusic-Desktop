@@ -8,6 +8,8 @@ const scope={
   useState(initial){const slot=index++;states[slot]=initial;return[states[slot],value=>{states[slot]=typeof value==='function'?value(states[slot]):value}]},
   useRef(initial){return {current:initial}},useEffect(fn){effects.push(fn)},
   useVisibilityRules(){return []},
+  useOfflinePlayback(){return {offline:false,library:null}},
+  offlineUnavailable(){return false},
   useQueryClient(){return {invalidateQueries:async()=>{}}},
   useTrackActions:Object.assign(()=>({menu:{track,x:0,y:0},adding:null}),{setState(){}}),
   saveLibraryTrack(){return new Promise(resolve=>{resolveSave=resolve})},

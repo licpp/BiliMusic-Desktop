@@ -171,6 +171,7 @@ mod tests {
         .unwrap();
         c.execute("INSERT INTO tracks(id,source_item_id,title,cover_url) VALUES(?1,?1,'旧标题','https://bili.test/first.jpg')", [&id]).unwrap();
         let video = VideoParts {
+            access: None,
             play_count: Some(100),
             published_at: Some(1),
             bvid: bvid.into(),
@@ -231,6 +232,7 @@ mod tests {
         };
         LibraryRepository::upsert(&mut c, &input).unwrap();
         let video = VideoParts {
+            access: None,
             play_count: Some(0),
             published_at: None,
             bvid: input.bvid.clone(),

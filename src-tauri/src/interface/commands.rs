@@ -46,7 +46,10 @@ pub fn account_session(database: State<'_, Database>) -> Result<String, CommandE
     let c = database.0.lock().map_err(CommandError::database)?;
     crate::infrastructure::database::account_session(&c).map_err(CommandError::database)
 }
-fn check_account_session(c: &rusqlite::Connection, expected: &str) -> Result<(), CommandError> {
+pub(super) fn check_account_session(
+    c: &rusqlite::Connection,
+    expected: &str,
+) -> Result<(), CommandError> {
     if crate::infrastructure::database::account_session(c).map_err(CommandError::database)?
         != expected
     {
@@ -755,9 +758,9 @@ pub async fn lyrics_search(
     if title.is_empty() {
         return Err(CommandError::validation("歌曲名不能为空"));
     }
-    // v4 refreshes QQ candidates cached before the complete QRC parsing fix.
+    // Refresh entries from the three-candidate search.
     let key = serde_json::to_string(&(
-        "multi-source-v4",
+        "multi-source-v5",
         title.to_lowercase(),
         artist.as_deref().unwrap_or("").trim().to_lowercase(),
     ))
@@ -932,6 +935,25 @@ pub fn lyrics_save(
 }
 
 #[tauri::command]
+pub fn lyrics_save_with_metadata(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    track_id: String,
+    expected_version: String,
+    lyrics: SaveLyricsInput,
+    metadata: MetadataPatch,
+) -> Result<(StoredLyrics, TrackRecord), CommandError> {
+    let c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    if super::batch_matching::pair_version(&c, &track_id)? != expected_version {
+        return Err(CommandError::validation(
+            "这首歌的歌词或资料刚刚更新，请重新选择",
+        ));
+    }
+    super::batch_matching::save_manual_pair(&c, &track_id, metadata, &lyrics)
+}
+
+#[tauri::command]
 pub fn lyrics_set_bias(
     database: State<'_, Database>,
     expected_account_session: String,
@@ -1005,6 +1027,7 @@ pub async fn track_playback_url(
         refresh,
         prefer_online,
         false,
+        false,
     )
     .await
     .map(|plan| plan.url)
@@ -1018,7 +1041,10 @@ pub async fn track_playback_plan(
     track_id: String,
     refresh: Option<bool>,
     prefer_online: Option<bool>,
+    offline_only: Option<bool>,
 ) -> Result<PlaybackPlan, CommandError> {
+    let offline_only = offline_only.unwrap_or(false);
+    let prefer_online = prefer_online.filter(|_| !offline_only);
     playback_plan(
         database,
         provider,
@@ -1027,6 +1053,7 @@ pub async fn track_playback_plan(
         refresh,
         prefer_online,
         !prefer_online.unwrap_or(false),
+        offline_only,
     )
     .await
 }
@@ -1039,6 +1066,7 @@ async fn playback_plan(
     refresh: Option<bool>,
     prefer_online: Option<bool>,
     progressive: bool,
+    offline_only: bool,
 ) -> Result<PlaybackPlan, CommandError> {
     media_proxy
         .ensure_running()
@@ -1093,22 +1121,11 @@ async fn playback_plan(
             .map_err(|_| CommandError::database("数据库正忙"))?;
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
-    if refresh.unwrap_or(false) {
-        media_proxy
-            .refresh_connections()
+    if !prefer_online.unwrap_or(false) {
+        if let Some(url) = media_proxy
+            .complete_cached_audio(&track_id, quality.audio_id)
             .await
-            .map_err(CommandError::provider)?;
-        provider.invalidate_playback(&track.bvid, track.cid).await;
-    }
-    if !refresh.unwrap_or(false) {
-        let cached = if progressive {
-            media_proxy
-                .complete_cached_audio(&track_id, quality.audio_id)
-                .await
-        } else {
-            media_proxy.cached_audio(&track_id, quality.audio_id).await
-        };
-        if let Some(url) = cached {
+        {
             return Ok(PlaybackPlan::direct(
                 media_proxy
                     .platform_cached_url(url, track.duration_seconds)
@@ -1116,6 +1133,20 @@ async fn playback_plan(
                 loudness_gain_db,
             ));
         }
+    }
+    if offline_only {
+        return Err(CommandError {
+            code: "offline_unavailable",
+            message: "此歌曲尚未保存在本机".into(),
+            retryable: false,
+        });
+    }
+    if refresh.unwrap_or(false) {
+        media_proxy
+            .refresh_connections()
+            .await
+            .map_err(CommandError::provider)?;
+        provider.invalidate_playback(&track.bvid, track.cid).await;
     }
     let sources = if progressive {
         provider

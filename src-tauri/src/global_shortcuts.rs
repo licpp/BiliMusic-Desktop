@@ -2,7 +2,6 @@ mod registry;
 use registry::Registration;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tauri_plugin_store::StoreExt;
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -16,36 +15,6 @@ pub struct GlobalBinding {
     meta: bool,
 }
 
-fn default_show_binding() -> GlobalBinding {
-    GlobalBinding {
-        action: "show".into(),
-        code: "KeyQ".into(),
-        ctrl: true,
-        alt: true,
-        shift: false,
-        meta: false,
-    }
-}
-fn saved_show_binding(app: &AppHandle) -> Option<GlobalBinding> {
-    app.store("settings.json")
-        .ok()
-        .and_then(|store| store.get("showShortcut"))
-        .map(|value| {
-            serde_json::from_value::<GlobalBinding>(value)
-                .ok()
-                .filter(|b| b.action == "show")
-        })
-        .unwrap_or_else(|| Some(default_show_binding()))
-}
-fn save_show_binding(app: &AppHandle, bindings: &[GlobalBinding]) -> Result<(), String> {
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set(
-        "showShortcut",
-        serde_json::to_value(bindings.iter().find(|b| b.action == "show"))
-            .map_err(|e| e.to_string())?,
-    );
-    store.save().map_err(|e| e.to_string())
-}
 #[tauri::command]
 pub fn global_shortcuts_show(app: AppHandle) -> Result<(), String> {
     #[cfg(desktop)]
@@ -76,24 +45,13 @@ pub async fn global_shortcuts_apply(
     enabled: bool,
     suspended: Option<bool>,
 ) -> Result<Registration, String> {
-    let suspended = suspended.unwrap_or(false);
-    if !suspended {
-        save_show_binding(&app, &bindings)?;
-    }
-    let bindings = if suspended {
-        vec![]
-    } else {
+    let bindings = if enabled && !suspended.unwrap_or(false) {
         bindings
-            .into_iter()
-            .filter(|b| enabled || b.action == "show")
-            .collect()
+    } else {
+        vec![]
     };
     #[cfg(windows)]
     {
-        #[cfg(not(debug_assertions))]
-        if !suspended {
-            windows::install_launch_shortcut(saved_show_binding(&app).as_ref());
-        }
         windows::apply(bindings).await
     }
     #[cfg(target_os = "macos")]
@@ -114,7 +72,6 @@ mod windows {
     use std::{
         collections::{HashMap, VecDeque},
         ffi::c_void,
-        os::windows::process::CommandExt,
         sync::{
             Mutex, OnceLock,
             atomic::{AtomicBool, AtomicU32, Ordering},
@@ -127,25 +84,25 @@ mod windows {
         reply: tokio::sync::oneshot::Sender<Registration>,
     }
     static PENDING: Mutex<VecDeque<Request>> = Mutex::new(VecDeque::new());
+    static STARTED: OnceLock<()> = OnceLock::new();
     static THREAD: AtomicU32 = AtomicU32::new(0);
     static AVAILABLE: AtomicBool = AtomicBool::new(false);
     static APP: OnceLock<AppHandle> = OnceLock::new();
 
     pub fn start(app: AppHandle) {
-        let initial = saved_show_binding(&app).into_iter().collect::<Vec<_>>();
         let _ = APP.set(app);
-        let started = std::thread::Builder::new()
-            .name("global-shortcuts".into())
-            .spawn(move || {
-                // A development build must never replace an installed Start Menu shortcut.
-                #[cfg(not(debug_assertions))]
-                install_launch_shortcut(initial.first());
-                pump(initial);
-            });
-        AVAILABLE.store(started.is_ok(), Ordering::Release);
     }
 
     pub async fn apply(bindings: Vec<GlobalBinding>) -> Result<Registration, String> {
+        if bindings.is_empty() && STARTED.get().is_none() {
+            return Ok(Registration::default());
+        }
+        STARTED.get_or_init(|| {
+            let started = std::thread::Builder::new()
+                .name("global-shortcuts".into())
+                .spawn(pump);
+            AVAILABLE.store(started.is_ok(), Ordering::Release);
+        });
         if !AVAILABLE.load(Ordering::Acquire) {
             return Err("全局快捷键服务未能启动，请重启应用".into());
         }
@@ -164,24 +121,6 @@ mod windows {
             .await
             .map_err(|_| "全局快捷键设置超时，请重试".to_owned())?
             .map_err(|_| "全局快捷键服务已停止，请重启应用".into())
-    }
-
-    #[cfg(not(debug_assertions))]
-    pub(super) fn install_launch_shortcut(binding: Option<&GlobalBinding>) {
-        let Ok(exe) = std::env::current_exe() else {
-            return;
-        };
-        let Some(appdata) = std::env::var_os("APPDATA") else {
-            return;
-        };
-        let lnk = std::path::PathBuf::from(appdata)
-            .join(r"Microsoft\Windows\Start Menu\Programs\BiliMusic.lnk");
-        // Explorer can launch this shortcut after the application exits; the existing
-        // single-instance plugin brings an already running main window to the front.
-        let _=std::process::Command::new("powershell.exe").args([
-            "-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Command",
-            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:BILIMUSIC_LNK); $s.TargetPath=$env:BILIMUSIC_EXE; $s.WorkingDirectory=(Split-Path $env:BILIMUSIC_EXE); $s.Hotkey=$env:BILIMUSIC_HOTKEY; $s.Save()",
-        ]).env("BILIMUSIC_HOTKEY",binding.and_then(registry::windows_launch_hotkey).unwrap_or_default()).env("BILIMUSIC_LNK",lnk).env("BILIMUSIC_EXE",exe).creation_flags(0x08000000).spawn();
     }
 
     const WM_HOTKEY: u32 = 0x0312;
@@ -248,12 +187,12 @@ mod windows {
             let _ = request.reply.send(result);
         }
     }
-    fn pump(initial: Vec<GlobalBinding>) {
+    fn pump() {
         unsafe {
             let mut msg = std::mem::zeroed::<Msg>();
             PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, 0);
             THREAD.store(GetCurrentThreadId(), Ordering::Release);
-            let (mut active, _) = registry::replace(&initial, &mut SystemRegistrar);
+            let mut active = HashMap::new();
             update(&mut active);
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 if msg.message == WM_APP {

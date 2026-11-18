@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 pub type Facts = BTreeMap<String, Cell>;
+const MATCH_METADATA: [&str; 4] = [
+    "overrideTitle",
+    "overrideArtist",
+    "overrideAlbum",
+    "overrideCover",
+];
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct View {
     pub snapshot: Snapshot,
@@ -163,7 +169,46 @@ pub fn delta(before: &Facts, after: &Facts, domain: Domain) -> Result<Facts, Str
         delta.insert(key.clone(), value);
     }
     complete_lyric_selection(&mut delta, after)?;
+    complete_matched_metadata(&mut delta, after)?;
     Ok(delta)
+}
+/// When a lyric selection and overrides change together, publish them under
+/// one dot. This reuses existing v2 fields and keeps independently changed
+/// metadata fields independent in all other updates.
+pub fn complete_matched_metadata(delta: &mut Facts, after: &Facts) -> Result<(), String> {
+    let selections = delta
+        .keys()
+        .map(|k| serde_json::from_str::<(String, String)>(k).map_err(err))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (entity, field) in selections {
+        let Some(id) = entity.strip_prefix("lyric:") else {
+            continue;
+        };
+        if field != "providerLyricId"
+            || after.get(&causal::key(&entity, "__present")) != Some(&Cell::Value(true.into()))
+        {
+            continue;
+        }
+        let track = format!("track:{id}");
+        if !MATCH_METADATA
+            .iter()
+            .any(|field| delta.contains_key(&causal::key(&track, field)))
+        {
+            continue;
+        }
+        for field in MATCH_METADATA
+            .into_iter()
+            .map(|f| (&track, f))
+            .chain([(&entity, "manual"), (&entity, "biasMs")])
+        {
+            let key = causal::key(field.0, field.1);
+            delta.insert(
+                key.clone(),
+                after.get(&key).cloned().unwrap_or(Cell::Missing),
+            );
+        }
+    }
+    Ok(())
 }
 /// Both halves of a lyric selection use the same causal operation, even if
 /// only its ID changed. No new wire fields or per-song timestamps are needed.
@@ -250,6 +295,7 @@ pub fn rows(doc: &Document) -> Result<BTreeMap<String, BTreeMap<String, Value>>,
     // Concurrent selections choose a whole provider/ID pair from one operation.
     // Causally newer writes already replace older candidates; concurrent writes
     // have no reliable wall clock, so the register's stable dot order breaks ties.
+    let mut matched = Vec::new();
     for (entity, fields) in rows
         .iter_mut()
         .filter(|(entity, _)| entity.starts_with("lyric:"))
@@ -274,10 +320,56 @@ pub fn rows(doc: &Document) -> Result<BTreeMap<String, BTreeMap<String, Value>>,
                         }
                     }
                 }
+                let track = format!("track:{}", entity.strip_prefix("lyric:").unwrap());
+                // Paired changes share their dot. An independent edit of a
+                // field remains authoritative and must not affect the other fields.
+                let dot_is_selection = |dot: &causal::Dot| {
+                    id.values.iter().any(|v| &v.dot == dot)
+                        && provider.values.iter().any(|v| &v.dot == dot)
+                };
+                let select = |entity: &str, field: &str| {
+                    let reg = doc.registers.get(&causal::key(entity, field))?;
+                    if !reg.values.iter().all(|v| dot_is_selection(&v.dot)) {
+                        return None;
+                    }
+                    reg.values
+                        .iter()
+                        .find(|v| v.dot == i.dot)
+                        .map(|v| v.cell.clone())
+                };
+                for field in ["manual", "biasMs"] {
+                    if let Some(cell) = select(entity, field) {
+                        apply_cell(fields, field, cell);
+                    }
+                }
+                let cells = MATCH_METADATA
+                    .into_iter()
+                    .filter_map(|f| select(&track, f).map(|c| (f, c)))
+                    .collect::<Vec<_>>();
+                if !cells.is_empty() {
+                    matched.push((track, cells));
+                }
+            }
+        }
+    }
+    for (entity, cells) in matched {
+        if let Some(fields) = rows.get_mut(&entity) {
+            for (field, cell) in cells {
+                apply_cell(fields, field, cell);
             }
         }
     }
     Ok(rows)
+}
+fn apply_cell(fields: &mut BTreeMap<String, Value>, field: &str, cell: Cell) {
+    match cell {
+        Cell::Value(value) => {
+            fields.insert(field.into(), value);
+        }
+        Cell::Missing => {
+            fields.remove(field);
+        }
+    }
 }
 pub fn snapshot(
     library: &Document,
@@ -386,6 +478,67 @@ mod selection_tests {
         .into_iter()
         .map(|(f, v)| (causal::key("lyric:bilibili:BV1tZuKzgENQ:1", f), v))
         .collect()
+    }
+    #[test]
+    fn matched_lyrics_and_album_art_stay_together_on_concurrent_v2_edits() {
+        let id = "bilibili:BV1tZuKzgENQ:1";
+        let entity = format!("track:{id}");
+        let make = |actor: &str, provider: &str, lyric_id: &str, title: &str, art: &str| {
+            let mut after = selection(provider, lyric_id);
+            after.insert(causal::key(&entity, "__present"), Cell::Value(true.into()));
+            after.insert(
+                causal::key(&entity, "overrideTitle"),
+                Cell::Value(title.into()),
+            );
+            after.insert(
+                causal::key(&entity, "overrideCover"),
+                Cell::Value(art.into()),
+            );
+            let mut doc = Document::empty(scope());
+            let batch = doc
+                .make_observed_batch(
+                    actor,
+                    delta(&Facts::new(), &after, Domain::Library).unwrap(),
+                    &doc.registers,
+                )
+                .unwrap()
+                .unwrap();
+            doc.apply(&batch).unwrap();
+            doc
+        };
+        let mut a = make(
+            "00000000-0000-4000-8000-000000000002",
+            "qq",
+            "101",
+            "版本 A",
+            "https://site.test/a",
+        );
+        let mut b = make(
+            "00000000-0000-4000-8000-000000000003",
+            "netease",
+            "202",
+            "版本 B",
+            "https://site.test/b",
+        );
+        b.join(&a).unwrap();
+        a.join(&b).unwrap();
+        assert_eq!(rows(&a).unwrap(), rows(&b).unwrap());
+        let both = rows(&a).unwrap();
+        assert_eq!(both[&format!("lyric:{id}")]["providerLyricId"], "101");
+        assert_eq!(both[&entity]["overrideCover"], "https://site.test/a");
+        let cover = causal::key(&entity, "overrideCover");
+        let edit = a
+            .make_batch(
+                "00000000-0000-4000-8000-000000000002",
+                Facts::from([(cover, Cell::Value("https://site.test/custom".into()))]),
+            )
+            .unwrap()
+            .unwrap();
+        a.apply(&edit).unwrap();
+        assert_eq!(
+            rows(&a).unwrap()[&entity]["overrideCover"],
+            "https://site.test/custom"
+        );
     }
     #[test]
     fn favorites_concurrent_add_wins_but_observed_unlike_still_removes() {

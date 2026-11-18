@@ -3,16 +3,31 @@ import type { Track } from '../../domain/track'
 import { replaceSeasonEntry } from './seasonQueue'
 
 export type PlaybackCheckpoint = { bvid: string; cid: number; positionMs: number }
-export type PreparedList = { queue: Track[]; trackId: string; startAt?: number }
+export type PreparedList = { queue: Track[]; trackId: string; sourceTrackId?: string; startAt?: number }
 /** Missing checkpoints must never apply their time to a different song. */
 export async function prepareListPlayback(
   entries: readonly Track[], checkpoint: PlaybackCheckpoint | undefined,
   resolveParts: (entry: Track) => Promise<Track[]>, current: () => boolean,
   allowed: (entry:Track)=>boolean = ()=>true,
+  localParts?: (entry: Track) => Track[],
 ): Promise<PreparedList | null> {
   let queue = [...entries]
-  if (!checkpoint) {const first=queue.find(allowed);return current() && first?{queue,trackId:first.id}:null}
+  const available = (entry: Track) => allowed(entry) ? (localParts?.(entry) ?? [entry]).filter(allowed) : []
+  if (!checkpoint) {
+    const first = queue.find(entry => available(entry).length > 0)
+    return current() && first ? { queue, trackId: first.id } : null
+  }
   const id = `bilibili:${checkpoint.bvid}:${checkpoint.cid}`
+  if (localParts) {
+    const entry = queue.find(track => track.id === id) ??
+      queue.find(track => track.resolveParts && track.source.bvid === checkpoint.bvid)
+    if (!current() || !entry) return null
+    const source = visibleCheckpoint(queue, entry.id, track => available(track).length > 0).track
+    if (!source) return null
+    const parts = available(source)
+    const target = parts.find(part => part.id === id) ?? parts[0]
+    return { queue, trackId: target.id, sourceTrackId: source.id, startAt: target.id === id ? checkpoint.positionMs / 1000 : 0 }
+  }
   if (!queue.some(t => t.id === id && !t.resolveParts)) {
     const entry = queue.find(t => t.resolveParts && t.source.bvid === checkpoint.bvid)
     if (!entry) return null

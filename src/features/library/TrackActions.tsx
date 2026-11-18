@@ -1,3 +1,4 @@
+import { offlineUnavailable, useOfflinePlayback } from '../player/offlinePlayback'
 import { HideAction } from '../../shared/VisibilityControls'
 import { useVisibilityRules } from '../../services/contentVisibility'
 import { accountQueryKey } from '../../services/queryKeys'
@@ -17,6 +18,7 @@ import { chooseTrackPlaylist,useTrackActions } from './trackActionStore'
 
 export { PlaylistButton,TrackMenuButton } from './TrackMenuButton'
 export function TrackActionsHost() {
+  const offline = useOfflinePlayback()
   const { menu, adding } = useTrackActions()
   const visibilityRules = useVisibilityRules()
   const [editing, setEditing] = useState<Track | null>(null)
@@ -52,10 +54,10 @@ export function TrackActionsHost() {
     {menu && <div className="track-menu-scrim" onClick={event => { event.stopPropagation(); useTrackActions.setState({ menu: null }) }} />}
     {menu && <div ref={element} className="track-context-menu" role="menu" aria-label="歌曲操作" style={{ left: Math.max(8, Math.min(menu.x, window.innerWidth - 222)), top: Math.max(8, Math.min(menu.y, window.innerHeight - 230)) }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return; event.preventDefault(); const buttons = [...element.current!.querySelectorAll('button')]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus() }}>
       <small>{menu.track.title}</small>
-      <button role="menuitem" onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
+      <button role="menuitem" disabled={offlineUnavailable(menu.track, offline)} onClick={() => { if (menu.play) menu.play(); else void (menu.tracks ? usePlayerStore.getState().playFromList(menu.tracks, menu.track.id) : usePlayerStore.getState().play(menu.track)); useTrackActions.setState({ menu: null }) }}><Play size={15} />播放</button>
       {menu.openParts && <button role="menuitem" onClick={() => { useTrackActions.setState({ menu: null }); menu.openParts?.() }}><ListVideo size={15}/>查看选集</button>}
       {menu.replaceVideo && <button role="menuitem" onClick={() => { const replace=menu.replaceVideo; useTrackActions.setState({ menu: null }); replace?.() }}><RefreshCw size={15}/>更换视频</button>}
-      <button role="menuitem" onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
+      <button role="menuitem" disabled={offlineUnavailable(menu.track, offline)} onClick={() => { usePlayerStore.getState().enqueue([menu.track]); useTrackActions.setState({ menu: null }) }}><ListMusic size={15} />加入播放队列</button>
       {menu.visibilityScope && <HideAction track={menu.track} scope={menu.visibilityScope} rules={visibilityRules} onDone={()=>useTrackActions.setState({menu:null})}/>}
       <button role="menuitem" onClick={() => chooseTrackPlaylist([menu.track])}><FolderPlus size={15} />收藏到歌单…</button>
       {menu.track.source.provider === 'bilibili' && <button role="menuitem" onClick={() => { const track=menu.track; useTrackActions.setState({menu:null}); chooseDownload([track]) }}><Download size={15} />下载歌曲</button>}

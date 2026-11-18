@@ -126,6 +126,10 @@ impl Plan {
             &mut delta,
             &super::projection::facts(&self.merged, causal::Domain::Library),
         )?;
+        super::projection::complete_matched_metadata(
+            &mut delta,
+            &super::projection::facts(&self.merged, causal::Domain::Library),
+        )?;
         Ok(delta)
     }
 }

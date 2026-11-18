@@ -1,9 +1,11 @@
+import { offlineUnavailable, useOfflinePlayback } from '../player/offlinePlayback'
 import { projectSeasonRows, trackHidden, videoScope, visibilityChange } from '../../domain/contentVisibility'
 import { saveVisibility, useVisibilityRules } from '../../services/contentVisibility'
 import { VisibilityControls } from '../../shared/VisibilityControls'
 import { useManagedVisibilityScope } from '../../shared/useManagedVisibilityScope'
 import { CoverCount } from '../../shared/CoverCount'
 import { PublishedDate } from '../../shared/PublishedDate'
+import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
 import { Artwork } from '../../shared/Artwork'
 import { formatAudienceCount } from '../../shared/count'
 import { isMobile } from '../../services/platform'
@@ -83,14 +85,16 @@ function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, vi
   onSelect: () => void; actionTrack: Track; playbackTracks: Track[]; queueSource?: QueueSource
   onOpenParts?: (track: Track) => void; renderActions?: (track: Track) => ReactNode
 }) {
-  const { ref, pages } = useVisibleVideoPages(track.source.bvid, videoCollection && track.partCount === undefined)
+  const unavailable = useOfflinePlayback(state => offlineUnavailable(track, state, videoCollection || track.resolveParts === true || track.source.cid <= 0))
+  const offline = useOfflinePlayback(state => state.offline)
+  const { ref, pages, access } = useVisibleVideoPages(track.source.bvid, videoCollection && !offline, true)
   const count = track.partCount ?? pages?.length
   const openParts = onOpenParts && (count ?? 0) > 1 ? () => onOpenParts(track) : undefined
   const play = () => void usePlayerStore.getState().playFromList(playbackTracks, track.id, queueSource)
   const actions = { openParts, play, visibilityScope }
   const duration = track.durationSeconds || (count === 1 ? pages?.[0]?.durationSeconds : undefined)
   const label = videoCollection ? index + 1 : track.partCount === 1 ? '视频' : `P${track.source.page}`
-  return <div ref={ref} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${videoCollection ? ' video-with-cover' : ''}${selecting ? '' : ' playing-row'}${hidden?' visibility-hidden':''}`}
+  return <div ref={ref} data-offline-unavailable={unavailable || undefined} data-current-row={active ? track.id : undefined} className={`part-entry video-part-row${videoCollection ? ' video-with-cover' : ''}${selecting ? '' : ' playing-row'}${hidden?' visibility-hidden':''}`}
     onContextMenu={event => {
       event.preventDefault()
       event.stopPropagation()
@@ -100,10 +104,10 @@ function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, vi
     }}>
     {selecting ? <label className="video-part-select">
       <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={checked} onChange={onSelect}/>
-      <span>{label}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
+      {track.coverUrl || videoCollection ? <span className="video-part-select-art"><Artwork src={track.coverUrl}/>{videoCollection && <CoverCount count={count}/>}</span> : <span>{label}</span>}<strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
     </label> : <>
-      <button type="button" className="video-part-play" disabled={hidden} aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
-        <span className="video-part-index">{videoCollection ? <><Artwork src={track.coverUrl}/><CoverCount count={count}/></> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta">{videoCollection && <PublishedDate value={track.publishedAt}/>}{videoCollection && track.playCount !== undefined && <small className="video-part-views">{formatAudienceCount(track.playCount)} 次播放</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
+      <button type="button" className="video-part-play" disabled={hidden || unavailable} aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
+        <span className="video-part-index">{videoCollection ? <><Artwork src={track.coverUrl}/><CoverCount count={count}/><VideoAccessBadge access={access} onCover/></> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta">{videoCollection && <PublishedDate value={track.publishedAt}/>}{videoCollection && track.playCount !== undefined && <small className="video-part-views">{formatAudienceCount(track.playCount)} 次播放</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
       </button>
       {hidden && <button type="button" className="visibility-restore" onClick={restore}><Eye size={16}/>恢复</button>}
       {!isMobile && renderActions?.(track)}

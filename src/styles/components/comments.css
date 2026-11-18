@@ -28,6 +28,11 @@
 .comment-emote-grid { display:grid;flex:0 1 auto;align-content:start;grid-template-columns:repeat(auto-fill,minmax(34px,1fr));grid-auto-rows:34px;gap:3px;overflow-y:auto;overscroll-behavior:contain;min-height:0; }
 .comment-emote-grid button{display:grid;place-items:center;min-height:34px;padding:3px;border:0;border-radius:7px;background:transparent;color:var(--ink);font-size:12px}.comment-emote-grid button:hover{background:var(--line)}
 .comment-emote-grid img{width:24px;height:24px;object-fit:contain}.comment-body-reply{cursor:pointer;user-select:text;-webkit-user-select:text}
+.comment-row .comment-body-reply:not([data-full]) { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden; }
+.comment-row :is(.comment-fold-toggle,.comment-timestamp) { border:0;padding:0;color:var(--cyan);background:transparent;font:inherit; }
+.comment-row .comment-fold-toggle { min-height:32px;font-size:13px; }
+.comment-row .comment-timestamp { text-decoration:underline;text-underline-offset:2px; }
+.comment-row :is(.comment-fold-toggle,.comment-timestamp):focus-visible { outline:2px solid var(--cyan);outline-offset:2px; }
 :is(.comments-panel,.comments-panel.comments-sheet.mobile-comments) .comment-compose > .comment-editor { display:block;grid-column:1;min-width:0;min-height:44px;max-height:112px;margin:0;padding:10px 11px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:12px;background:var(--comments-input);color:var(--ink);font:inherit;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;outline:0;cursor:text;-webkit-user-select:text;user-select:text; }
 .comment-editor:focus { border-color:var(--cyan)!important; }
 .comment-editor[data-empty=true]::before { content:attr(data-placeholder);float:left;height:0;color:var(--muted);pointer-events:none; }
@@ -40,3 +45,6 @@
 
 :root[data-layout="mobile"][data-keyboard-open] .comments-panel.comments-sheet.mobile-comments .comment-compose{padding:6px 12px}
 @media(max-height:420px){:root[data-keyboard-open] .comments-sheet-handle{height:16px;padding:4px 0}:root[data-keyboard-open] .comments-panel.comments-sheet.mobile-comments > header{padding-bottom:8px}:root[data-keyboard-open] .comments-panel.comments-sheet.mobile-comments > header h3{font-size:16px}}
+.comments-scroll { overflow-anchor:none; }
+.comments-panel.comments-sheet.mobile-comments:not([data-positioned]) { visibility:hidden;animation:none; }
+.comments-sheet-overlay[data-video="true"] .comments-panel.mobile-comments { transition:none; }

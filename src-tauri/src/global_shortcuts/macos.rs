@@ -87,38 +87,13 @@ struct State {
     active: HashMap<i32, ActiveBinding>,
     pressed: PressedKeys,
     handler: usize,
-    error: Option<String>,
 }
 fn state() -> &'static Mutex<State> {
     STATE.get_or_init(|| Mutex::new(State::default()))
 }
 
 pub fn start(app: AppHandle) {
-    if APP.set(app.clone()).is_err() {
-        return;
-    }
-    let _ = app.run_on_main_thread(|| {
-        let Ok(mut state) = state().lock() else {
-            return;
-        };
-        match carbon::install(callback) {
-            Ok(handle) => state.handler = handle,
-            Err(code) => {
-                state.error = Some(format!("全局快捷键服务未能启动（{code}）"));
-                return;
-            }
-        }
-        if let Some(app) = APP.get() {
-            let bindings = super::saved_show_binding(app)
-                .into_iter()
-                .collect::<Vec<_>>();
-            let (active, _) = registry::replace_for(&bindings, &mut state.registrar, Platform::Mac);
-            state.active = active;
-        }
-    });
-    let _ = std::thread::Builder::new()
-        .name("mac-hotkey-repeat".into())
-        .spawn(repeat_worker);
+    let _ = APP.set(app);
 }
 
 pub async fn apply(bindings: Vec<GlobalBinding>) -> Result<Registration, String> {
@@ -132,11 +107,15 @@ pub async fn apply(bindings: Vec<GlobalBinding>) -> Result<Registration, String>
             let mut state = state()
                 .lock()
                 .map_err(|_| "全局快捷键服务暂不可用".to_owned())?;
-            if let Some(error) = &state.error {
-                return Err(error.clone());
-            }
             if state.handler == 0 {
-                return Err("全局快捷键服务尚未就绪，请重试".into());
+                if bindings.is_empty() {
+                    return Ok(Registration::default());
+                }
+                state.handler = carbon::install(callback)
+                    .map_err(|code| format!("全局快捷键服务未能启动（{code}）"))?;
+                let _ = std::thread::Builder::new()
+                    .name("mac-hotkey-repeat".into())
+                    .spawn(repeat_worker);
             }
             state.pressed = PressedKeys::default();
             WAKE.notify_one();

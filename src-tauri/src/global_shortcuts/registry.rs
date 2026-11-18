@@ -84,7 +84,7 @@ pub fn replace_for(
                     .and_then(|v| v.parse::<u32>().ok())
                     .is_some_and(|v| (1..=12).contains(&v)))
         {
-            Some("此按键不能注册为全局播放快捷键".to_owned())
+            Some("此按键不能注册为全局快捷键".to_owned())
         } else if !actions.insert(binding.action.clone()) || !keys.insert((modifiers, key.unwrap()))
         {
             Some("此全局快捷键与另一项设置冲突".to_owned())
@@ -126,40 +126,6 @@ pub fn replace_for(
         }
     }
     (active, result)
-}
-
-/// Explorer .lnk hotkeys support a narrower set than RegisterHotKey. Unsupported
-/// runtime combinations explicitly clear the old launch key instead of leaving Q.
-pub fn windows_launch_hotkey(binding: &GlobalBinding) -> Option<String> {
-    if binding.action != "show" || !binding.ctrl || !binding.alt || binding.meta {
-        return None;
-    }
-    let key = if let Some(letter) = binding
-        .code
-        .strip_prefix("Key")
-        .filter(|s| s.len() == 1 && s.bytes().all(|c| c.is_ascii_uppercase()))
-    {
-        letter.to_owned()
-    } else if let Some(digit) = binding
-        .code
-        .strip_prefix("Digit")
-        .filter(|s| s.len() == 1 && s.bytes().all(|c| c.is_ascii_digit()))
-    {
-        digit.to_owned()
-    } else if binding
-        .code
-        .strip_prefix('F')
-        .and_then(|n| n.parse::<u8>().ok())
-        .is_some_and(|n| (1..=12).contains(&n))
-    {
-        binding.code.clone()
-    } else {
-        return None;
-    };
-    Some(format!(
-        "CTRL+ALT+{}{key}",
-        if binding.shift { "SHIFT+" } else { "" }
-    ))
 }
 
 // macOS virtual key codes are physical ANSI keyboard positions, rather than
@@ -453,23 +419,5 @@ mod tests {
             assert_eq!(result.registered, ["show"]);
             assert_eq!(result.errors[0].action, "next");
         }
-    }
-    #[test]
-    fn explorer_launch_mapping_is_explicit_and_clears_unsupported_runtime_combinations() {
-        let mut b = binding("show", "KeyQ");
-        b.alt = true;
-        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+Q".into()));
-        b.code = "F12".into();
-        b.shift = true;
-        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+SHIFT+F12".into()));
-        b.code = "Digit7".into();
-        assert_eq!(windows_launch_hotkey(&b), Some("CTRL+ALT+SHIFT+7".into()));
-        for code in ["Numpad7", "Enter", "ArrowLeft", "MouseBack"] {
-            b.code = code.into();
-            assert_eq!(windows_launch_hotkey(&b), None);
-        }
-        b.code = "KeyQ".into();
-        b.meta = true;
-        assert_eq!(windows_launch_hotkey(&b), None);
     }
 }
