@@ -4,7 +4,7 @@ import {build} from 'esbuild'
 import {createRequire} from 'node:module'
 const compiled=await build({entryPoints:['src/features/player/preloadNextTrack.ts'],bundle:true,write:false,format:'cjs',platform:'node',plugins:[{name:'prefetch-fixture',setup(b){
  b.onResolve({filter:/playerStore$|desktopApi$|accountScope$|^@tauri-apps\/api\/core$/},a=>({path:a.path,namespace:'fixture'}))
- b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('playerStore')?'export const usePlayerStore={getState:()=>globalThis.prefetchFixture.state,subscribe:fn=>globalThis.prefetchFixture.listener=fn};export const prepareSeasonQueueEntry=t=>globalThis.prefetchFixture.resolve(t)':path.endsWith('desktopApi')?'export const inDesktopShell=true':path.endsWith('accountScope')?'export const accountEpoch=()=>globalThis.prefetchFixture.epoch':'export const invoke=(...a)=>globalThis.prefetchFixture.calls.push(a)'}))
+ b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('playerStore')?'export const usePlayerStore={getState:()=>globalThis.prefetchFixture.state,subscribe:fn=>globalThis.prefetchFixture.listener=fn};export const prepareSeasonQueueEntry=t=>globalThis.prefetchFixture.resolve(t)':path.endsWith('desktopApi')?'export const inDesktopShell=true':path.endsWith('accountScope')?'export const accountEpoch=()=>globalThis.prefetchFixture.epoch':'export const isTauri=()=>true;export const invoke=(...a)=>globalThis.prefetchFixture.calls.push(a)'}))
 }}]})
 function setup(extra={}){
  const track=i=>({id:`bilibili:BVtest:${i}`,source:{provider:'bilibili',bvid:'BVtest',cid:i}}),queue=[track(1),track(2),track(3)]
