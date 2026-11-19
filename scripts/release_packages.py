@@ -238,6 +238,29 @@ def verify_native(path, platform, version, certificate, architecture='arm64', bu
         require(actual in (version, version + '.0'), 'Unexpected Windows installer version')
 
 
+def preserves_release_history(history, previous, version):
+    if history == previous:
+        return True
+    if not isinstance(history, list) or not isinstance(previous, list) or len(history) != len(previous):
+        return False
+    for current, original in zip(history, previous):
+        if current == original:
+            continue
+        if not isinstance(current, dict) or not isinstance(original, dict) or original.get('version') != version:
+            return False
+        if {
+            key: value for key, value in current.items() if key != 'changes'
+        } != {key: value for key, value in original.items() if key != 'changes'}:
+            return False
+        changes, prior = current.get('changes'), original.get('changes', [])
+        if not isinstance(changes, list) or not isinstance(prior, list) or len(changes) <= len(prior):
+            return False
+        count = len(changes) - len(prior)
+        if changes[count:] != prior or not all(isinstance(note, str) and note.strip() for note in changes[:count]):
+            return False
+    return True
+
+
 def validate_release_scope(build, manifest, previous):
     packages = build['platforms']
     version = build['version']
@@ -249,7 +272,9 @@ def validate_release_scope(build, manifest, previous):
     if build.get('partialRelease'):
         prior = {p['id']: p for p in previous['platforms']}
         require(version == previous['version'] and set(prior) == set(manifest_ids) and set(ids) <= set(prior), 'Platform patches must preserve the release and platform list')
-        require({k: v for k, v in manifest.items() if k != 'platforms'} == {k: v for k, v in previous.items() if k != 'platforms'}, 'Platform patches must preserve shared release information')
+        shared_keys_excluded = {'platforms', 'history'}
+        require({k: v for k, v in manifest.items() if k not in shared_keys_excluded} == {k: v for k, v in previous.items() if k not in shared_keys_excluded}, 'Platform patches must preserve shared release information')
+        require(preserves_release_history(manifest.get('history', []), previous.get('history', []), version), 'Platform patches may only add notes to the current release history')
         current = {p['id']: p for p in manifest['platforms']}
         require(all(current[i] == prior[i] for i in prior.keys() - set(ids)), 'Unbuilt platform entry changed')
         for package in packages:

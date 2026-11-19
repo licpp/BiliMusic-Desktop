@@ -45,7 +45,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 (root / filename).write_text('# BiliMusic 0.4.0')
             (root / 'THIRD_PARTY_LICENSES-Android.json').write_text(json.dumps({'version': version, 'sourceCommit': source}))
             channels = [{'id': 'github'}, {'id': 'gitee'}]
-            previous = {'version': version, 'history': [{'version': version}], 'platforms': [
+            previous = {'version': version, 'history': [
+                {'version': version, 'changes': ['Initial notes']},
+                {'version': '0.3.7', 'changes': ['Previous release notes']},
+            ], 'platforms': [
                 {'id': 'android', 'build': 1, 'file': 'phone.apk', 'channels': channels, 'status': 'available', 'sha256': '1' * 64},
                 {'id': 'android-large', 'build': 1, 'file': 'large.apk', 'channels': channels, 'status': 'available', 'sha256': '2' * 64},
                 {'id': 'mac', 'build': 1, 'file': 'mac.dmg', 'channels': channels, 'status': 'available', 'sha256': '3' * 64},
@@ -62,6 +65,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn('build-info-android-build-2.json', {asset['name'] for asset in plan['assets']})
             package = root / 'staged' / 'candidate-releases.json'
             candidate = json.loads(package.read_text())
+            candidate['history'][0]['changes'].insert(0, 'Fixed Android media keys')
+            package.write_text(json.dumps(candidate))
+            published = validate_bundle(output, verifier)
+            self.assertEqual(published['manifest']['history'][0]['changes'], ['Fixed Android media keys', 'Initial notes'])
+            for index in (0, 1):
+                changes = candidate['history'][index]['changes']
+                original = changes[-1]
+                changes[-1] = 'Rewritten notes'
+                package.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, 'only add notes to the current release history'):
+                    validate_bundle(output, verifier)
+                changes[-1] = original
             candidate['platforms'][1]['build'] = 2
             package.write_text(json.dumps(candidate))
             with self.assertRaisesRegex(ValueError, 'Unbuilt platform'):
