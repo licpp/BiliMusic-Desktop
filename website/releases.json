@@ -115,22 +115,22 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build2_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build3_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build2_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build3_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.4.0_android-build2_Android_arm64.apk",
+      "file": "BiliMusic_0.4.0_android-build3_Android_arm64.apk",
       "size": 17502420,
-      "sha256": "1a53c547b03162a5ed914afda3e19cba973e992a9559e32e64cc373678de1a99",
+      "sha256": "7d5b811fc4f638d917e66ad0779cb9f858618ee6dffe7134b4b69c947903a923",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk",
       "version": "0.4.0",
-      "build": 2
+      "build": 3
     },
     {
       "id": "android-large",
@@ -350,6 +350,7 @@
       "publishedAt": "2026-11-19T10:21:54.501267+00:00",
       "kind": "major",
       "changes": [
+        "修复 Android 手机和平板上部分蓝牙耳机按键无法控制播放的问题。",
         "改善 iQOO 等 Android 机型通知栏播放器的显示。",
         "优化移动端手势、长列表加载和页面切换，听歌统计支持左右滑动。",
         "修复全屏视频错位和单 P 标题，优化视频加载、平板播放和评论回复的过渡。",
