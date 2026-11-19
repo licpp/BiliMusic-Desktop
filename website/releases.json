@@ -220,24 +220,24 @@
       "packageFormat": "hap",
       "signature": "unsigned",
       "releaseStatus": "experimental",
-      "file": "BiliMusic_0.4.0_stable_HarmonyOS_NEXT_arm64-unsigned.hap",
-      "size": 14274097,
-      "sha256": "e1f9f5882d933ac6939d25eb3e2b59decbb340b97be752821a38132ed82dfafe",
+      "file": "BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap",
+      "size": 14272449,
+      "sha256": "fd264415d5940c131e4382534a730a54f85085005caffc340def2c8576eab674",
       "sourceCommit": "a1fc126a4454a5234d5d1c2645cf7c596207df99",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_HarmonyOS_NEXT_arm64-unsigned.hap"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_HarmonyOS_NEXT_arm64-unsigned.hap"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap"
         }
       ],
-      "build": 1
+      "build": 2
     },
     {
       "id": "linux-x64-appimage",
