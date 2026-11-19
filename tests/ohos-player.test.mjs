@@ -12,6 +12,7 @@ const output = await build({
       export const deviceInfo = { sdkApiVersion: 26 };
       export const hilog = { info() {}, error() {}, warn() {} };
       export const http = globalThis.ohosTest.http;
+      export const connection = { hasDefaultNetSync: () => globalThis.ohosTest.networkOnline() };
       export const image = globalThis.ohosTest.image;
       export const rcp = globalThis.ohosTest.rcp;
       export const media = globalThis.ohosTest.media;
@@ -53,6 +54,7 @@ function setup() {
   const missing = () => Object.assign(new Error('missing'), { code: 24000002 })
   const h = globalThis.ohosTest = {
     scope: '123',
+    networkOnline: () => true,
     native: { bilimusicOhosCancelResolve() {}, bilimusicOhosResolve(request,payload) { h.resolveRequests.push({request,payload:JSON.parse(payload)}) }, tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
     media: { createAVPlayer: async () => (player = new FakePlayer()) },
     audio: {
