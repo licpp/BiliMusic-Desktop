@@ -668,12 +668,13 @@ class PlaybackService : MediaSessionService() {
     private fun startAtRate(media: MediaPlayer) {
         try {
             media.playbackParams = PlaybackParams().allowDefaults().setSpeed(playbackRate)
-            if (!media.isPlaying) media.start()
         } catch (_: IllegalArgumentException) {
             playbackRate = 1f
             media.playbackParams = PlaybackParams().allowDefaults().setSpeed(playbackRate)
-            if (!media.isPlaying) media.start()
         }
+        // A nonzero speed can start decoding without registering playback with AudioService.
+        // Explicitly start so Android can route global media keys to this session.
+        media.start()
     }
     private fun requestFocus(): Boolean {
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
