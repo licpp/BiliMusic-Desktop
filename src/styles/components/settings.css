@@ -38,6 +38,8 @@
 .shortcut-action-label > .shortcut-binding-error { color:var(--danger,#bd525f);font-size:11px;line-height:1.5;white-space:normal;overflow:visible; }
 .shortcut-editor > .shortcut-launch-hint { margin:14px 0 0;font-size:11px; }
 .shortcut-editor button.shortcut-record { justify-content:center;min-width:120px;min-height:32px;padding:4px 8px;background:var(--base); }
+.shortcut-editor button.shortcut-record:disabled { opacity:.55;cursor:default; }
+.shortcut-disabled-hint { color:var(--muted);font-size:11px; }
 .shortcut-record > kbd { border:0;background:none;padding:0; }
 .shortcut-editor .shortcut-record[data-recording="true"] { color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 0 2px color-mix(in srgb,var(--cyan) 12%,transparent); }
 .shortcut-record[data-recording="true"] > kbd { color:var(--cyan); }

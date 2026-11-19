@@ -15,7 +15,8 @@ import type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, Pla
 export type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
 import { invoke, isTauri } from '@tauri-apps/api/core'
-import { rememberVideoPages } from './videoPages'
+import { getVideoParts } from './videoPages'
+export { getVideoParts } from './videoPages'
 import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
 import { attachSupplementalLyrics, candidateLines } from '../domain/lrc'
@@ -27,7 +28,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename bili_linked_remove_selected'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -53,23 +54,9 @@ export async function getSearchSuggestions(keyword: string): Promise<string[]> {
   return invoke<string[]>('bili_search_suggestions', { keyword })
 }
 
-const videoDetails = new Map<string, { expires: number; request: Promise<BiliVideoParts> }>()
-export function getVideoParts(bvid: string, refresh = false) {
-  const key = `${accountEpoch()}:${bvid}`
-  const saved = videoDetails.get(key)
-  if (!refresh && saved && saved.expires > Date.now()) return saved.request
-  const request = invoke<BiliVideoParts>('bili_video_parts', { bvid }).then(detail => {
-    if (key === `${accountEpoch()}:${bvid}`) rememberVideoPages(bvid, detail.parts)
-    return detail
-  })
-  videoDetails.set(key, { request, expires: Date.now() + 120_000 })
-  if (videoDetails.size > 100) videoDetails.delete(videoDetails.keys().next().value!)
-  void request.catch(() => { if (videoDetails.get(key)?.request === request) videoDetails.delete(key) })
-  return request
-}
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
 export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh, preferOnline })
-export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number }>('track_playback_plan', { trackId: track.id, refresh, preferOnline })
+export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false, offlineOnly = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number }>('track_playback_plan', { trackId: track.id, refresh, preferOnline, ...(offlineOnly ? { offlineOnly } : {}) })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   if (track.resolveParts && track.source.cid <= 0) {
@@ -117,10 +104,10 @@ export async function updateStoredMetadata(trackId: string, patch: MetadataPatch
   return fromStoredTrack(await write<StoredTrack>('library_update_metadata', { trackId, patch }))
 }
 
-export async function searchLyrics(title: string, artist?: string, forceRefresh = false): Promise<LyricSearchResult> {
+export async function searchLyrics(title: string, artist?: string, forceRefresh = false, source?: { uploaderName?: string }): Promise<LyricSearchResult> {
   if (!inDesktopShell) return { candidates: [] }
   const epoch = accountEpoch()
-  const result = await lookupSongs({ title, artist }, async query => {
+  const result = await lookupSongs({ title, artist, source }, async query => {
     const found = await invoke<LyricSearchResult>('lyrics_search', { ...query, forceRefresh })
     return { items: found.candidates, warning: found.warning }
   }, item => `${item.provider}:${item.id}`, () => epoch === accountEpoch())
@@ -188,6 +175,20 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
   })
 }
 
+export const lyricMatchVersion = (trackId: string) => scopedInvoke<string>('lyric_match_version', { trackId })
+
+export async function saveLyricsWithMetadata(trackId: string, candidate: LyricCandidate, lines: LyricLine[], metadata: MetadataPatch, expectedVersion: string) {
+  const [stored, track] = await scopedInvoke<[StoredLyrics, StoredTrack]>('lyrics_save_with_metadata', {
+    trackId, metadata, expectedVersion, lyrics: {
+      provider: candidate.provider, providerLyricId: String(candidate.id), rawText: candidate.syncedLyrics || candidate.plainLyrics || '',
+      parsedJson: JSON.stringify(lines),
+    },
+  })
+  window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: stored }))
+  window.dispatchEvent(new Event('bilimusic-data-changed'))
+  return { stored, track: fromStoredTrack(track) }
+}
+
 export const setStoredLyricsBias = (trackId: string, biasMs: number, expected?: StoredLyrics) =>
   write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs, ...(expected ? { expected } : {}) })
 
@@ -226,7 +227,13 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
   const records = await invoke<(Omit<DownloadRecord, 'track'> & { track?: StoredTrack })[]>('downloads_list')
   return records.map(record => ({ ...record, track: record.track ? fromStoredTrack(record.track) : undefined }))
 }
-export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId })
+export async function listOfflinePlayableTracks(): Promise<Track[]> {
+  if (!inDesktopShell) return []
+  const epoch = accountEpoch()
+  const tracks = await invoke<StoredTrack[]>('offline_playable_tracks')
+  return epoch === accountEpoch() ? tracks.map(fromStoredTrack) : []
+}
+export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId }).then(() => { window.dispatchEvent(new Event('bilimusic-offline-files-changed')) })
 export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') => invoke<boolean>('download_track', {
   trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
 })
@@ -242,6 +249,7 @@ export const getFavoriteVideos = (folderId: number, page: number) => invoke<Favo
 export const getLinkedFolder = (folderId: number) => invoke<LinkedFolder | null>('bili_linked_folder', { folderId })
 export const refreshLinkedFolder = (folderId: number, link = false) => write<LinkedFolder>('bili_linked_refresh', { folderId, link })
 export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => write<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
+export const removeLinkedVideos = (folderId: number, bvids: string[]) => write<{ folder: LinkedFolder; removed: string[]; failed: { bvid: string; message: string }[] }>('bili_linked_remove_selected', { folderId, bvids })
 export const unlinkBiliFolder = (folderId: number) => write<void>('bili_linked_unlink', { folderId })
 export const getComments = (aid: number, next = 1) => invoke<CommentPage>('bili_comments', { aid, next })
 export const getCommentReplies = (aid: number, root: number, page = 1) => invoke<BiliComment[]>('bili_comment_replies', { aid, root, page })

@@ -41,10 +41,36 @@ pub enum ProviderError {
     NoAudio,
     #[error("没有找到兼容的视频流")]
     NoVideo,
+    #[error("{0}")]
+    AccessRestricted(VideoAccess),
+    #[error("B 站仅提供试看，请在 B 站视频页查看完整内容的观看条件")]
+    PreviewOnly,
     #[error("弹幕数据解码失败: {0}")]
     DanmakuDecode(String),
     #[error("请先登录 Bilibili 账号")]
     NotAuthenticated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VideoAccess {
+    Paid,
+    ChargeExclusive,
+    ChargeEarlyAccess,
+}
+
+impl std::fmt::Display for VideoAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Paid => "该视频为付费内容，当前账号无法播放完整版，请在 B 站视频页查看购买方式",
+            Self::ChargeExclusive => {
+                "该视频为充电专属，当前账号无法播放完整版，请在 B 站视频页查看充电方式"
+            }
+            Self::ChargeEarlyAccess => {
+                "该视频为充电抢先看，当前账号无法播放完整版，可在 B 站查看充电方式或等待公开"
+            }
+        })
+    }
 }
 
 impl ProviderError {
@@ -89,6 +115,8 @@ pub struct SearchItem {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoParts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<VideoAccess>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub play_count: Option<u64>,
     pub published_at: Option<u64>,
@@ -378,6 +406,8 @@ struct SearchVideo {
 
 #[derive(Deserialize)]
 struct DetailData {
+    #[serde(flatten)]
+    access: AccessFlags,
     #[serde(default)]
     stat: Option<VideoStats>,
     #[serde(default)]
@@ -391,6 +421,64 @@ struct DetailData {
     pages: Vec<PageData>,
     #[serde(default)]
     ugc_season: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct AccessFlags {
+    rights: Option<VideoRights>,
+    is_upower_exclusive: bool,
+    is_upower_play: bool,
+    is_upower_preview: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct VideoRights {
+    pay: u32,
+    ugc_pay: u32,
+    arc_pay: u32,
+    free_watch: u32,
+}
+
+impl AccessFlags {
+    fn kind(&self, charge: Option<&ChargeInfo>) -> Option<VideoAccess> {
+        if self.is_upower_exclusive {
+            let early = charge
+                .and_then(|info| info.show_info.as_ref())
+                .and_then(|info| info.high_level.as_ref())
+                .is_some_and(|level| level.title.contains("抢先看"));
+            return Some(if early {
+                VideoAccess::ChargeEarlyAccess
+            } else {
+                VideoAccess::ChargeExclusive
+            });
+        }
+        let rights = self.rights.as_ref()?;
+        (rights.free_watch == 0 && (rights.pay > 0 || rights.ugc_pay > 0 || rights.arc_pay > 0))
+            .then_some(VideoAccess::Paid)
+    }
+
+    fn blocked_kind(&self, charge: Option<&ChargeInfo>) -> Option<VideoAccess> {
+        self.kind(charge)
+            .filter(|kind| *kind == VideoAccess::Paid || !self.is_upower_play)
+    }
+}
+
+#[derive(Deserialize)]
+struct ChargeInfo {
+    show_info: Option<ChargeBanner>,
+}
+
+#[derive(Deserialize)]
+struct ChargeBanner {
+    high_level: Option<ChargeLevel>,
+}
+
+#[derive(Deserialize)]
+struct ChargeLevel {
+    #[serde(default)]
+    title: String,
 }
 
 #[derive(Deserialize)]
@@ -419,10 +507,22 @@ pub(super) struct PageData {
 struct PlayData {
     dash: Option<DashData>,
     #[serde(default)]
+    is_preview: serde_json::Value,
+    #[serde(default)]
     volume: serde_json::Value,
 }
 
 impl PlayData {
+    fn is_preview(&self) -> bool {
+        self.is_preview.as_bool() == Some(true) || self.is_preview.as_u64() == Some(1)
+    }
+
+    fn has_audio(&self) -> bool {
+        self.dash.as_ref().is_some_and(|dash| {
+            !dash.audio.is_empty() || dash.flac.as_ref().is_some_and(|flac| flac.audio.is_some())
+        })
+    }
+
     fn into_dash(self, bvid: &str, cid: i64) -> Result<DashData, ProviderError> {
         let mut dash = self.dash.ok_or(ProviderError::NoAudio)?;
         dash.loudness =
@@ -955,11 +1055,30 @@ impl BilibiliProvider {
         }
     }
 
-    pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
-        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
+    async fn video_detail(&self, bvid: &str) -> Result<DetailData, ProviderError> {
         let mut url = self.api_url("/x/web-interface/view");
         url.query_pairs_mut().append_pair("bvid", bvid);
-        let detail: DetailData = self.get_data(url).await?;
+        self.get_data(url).await
+    }
+
+    async fn charge_info(&self, detail: &DetailData) -> Option<ChargeInfo> {
+        if !detail.access.is_upower_exclusive {
+            return None;
+        }
+        let mut url = self.api_url("/x/web-interface/elec/show");
+        url.query_pairs_mut()
+            .append_pair("aid", &detail.aid.to_string())
+            .append_pair("mid", &detail.owner.mid.to_string());
+        tokio::time::timeout(Duration::from_secs(2), self.get_data(url))
+            .await
+            .ok()?
+            .ok()
+    }
+
+    pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
+        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
+        let detail = self.video_detail(bvid).await?;
+        let charge = self.charge_info(&detail).await;
         let fallback_cover = normalize_url(&detail.pic);
         let season = detail
             .ugc_season
@@ -974,6 +1093,7 @@ impl BilibiliProvider {
             }
         }
         Ok(VideoParts {
+            access: detail.access.kind(charge.as_ref()),
             play_count: detail.stat.and_then(|stat| stat.view),
             published_at: detail.pubdate.filter(|date| *date > 0),
             bvid: detail.bvid,
@@ -1157,8 +1277,45 @@ impl BilibiliProvider {
             .append_pair("fnver", "0")
             .append_pair("fnval", if expanded { "4048" } else { "1040" })
             .append_pair("fourk", if expanded { "1" } else { "0" });
-        let play: PlayData = self.get_data(url).await?;
+        let play: PlayData = match self.get_data(url).await {
+            Ok(play) => play,
+            Err(
+                error @ ProviderError::Api {
+                    code: -403 | -10403 | -101,
+                    ..
+                },
+            ) => {
+                return Err(self.restricted_playback(bvid, false).await.unwrap_or(error));
+            }
+            Err(error) => return Err(error),
+        };
+        let preview = play.is_preview();
+        // A guest may receive a short durl and no DASH even though the
+        // envelope says success and timelength describes the full video.
+        if preview || !play.has_audio() {
+            if let Some(error) = self.restricted_playback(bvid, preview).await {
+                return Err(error);
+            }
+        }
         play.into_dash(bvid, cid)
+    }
+
+    async fn restricted_playback(&self, bvid: &str, preview: bool) -> Option<ProviderError> {
+        if let Ok(Ok(detail)) =
+            tokio::time::timeout(Duration::from_secs(3), self.video_detail(bvid)).await
+        {
+            if detail.access.blocked_kind(None).is_some() {
+                let charge = self.charge_info(&detail).await;
+                return detail
+                    .access
+                    .blocked_kind(charge.as_ref())
+                    .map(ProviderError::AccessRestricted);
+            }
+            if detail.access.is_upower_preview && !detail.access.is_upower_play {
+                return Some(ProviderError::PreviewOnly);
+            }
+        }
+        preview.then_some(ProviderError::PreviewOnly)
     }
 
     fn select_video_quality(
@@ -1571,6 +1728,106 @@ fn suggestion_words(value: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn access_flags_distinguish_early_access_exclusive_and_paid() {
+        use super::{AccessFlags, ChargeInfo, VideoAccess};
+        use serde_json::{from_value, json};
+
+        let charge: AccessFlags = from_value(json!({
+            "is_upower_exclusive": true,
+            "is_upower_play": false,
+            "is_upower_preview": true,
+            "rights": { "pay": 0, "arc_pay": 0, "ugc_pay": 0 }
+        }))
+        .unwrap();
+        let early: ChargeInfo = from_value(json!({
+            "show_info": { "high_level": { "title": "该视频为「充电包」充电抢先看视频" } }
+        }))
+        .unwrap();
+        let exclusive: ChargeInfo = from_value(json!({
+            "show_info": { "high_level": { "title": "该视频为「大开大合」专属视频" } }
+        }))
+        .unwrap();
+        assert_eq!(
+            charge.kind(Some(&early)),
+            Some(VideoAccess::ChargeEarlyAccess)
+        );
+        assert_eq!(
+            charge.kind(Some(&exclusive)),
+            Some(VideoAccess::ChargeExclusive)
+        );
+        assert_eq!(
+            charge.blocked_kind(None),
+            Some(VideoAccess::ChargeExclusive)
+        );
+        let entitled = AccessFlags {
+            is_upower_play: true,
+            ..charge
+        };
+        assert_eq!(
+            entitled.kind(Some(&early)),
+            Some(VideoAccess::ChargeEarlyAccess)
+        );
+        assert_eq!(entitled.blocked_kind(Some(&early)), None);
+
+        let paid: AccessFlags = from_value(json!({"rights":{"ugc_pay":1}})).unwrap();
+        assert_eq!(paid.kind(None), Some(VideoAccess::Paid));
+        let public: AccessFlags =
+            from_value(json!({"rights":{"arc_pay":1,"free_watch":1}})).unwrap();
+        assert_eq!(public.kind(None), None);
+        let legacy: AccessFlags = from_value(json!({"rights":null})).unwrap();
+        assert_eq!(legacy.kind(None), None);
+        assert_eq!(AccessFlags::default().kind(None), None);
+    }
+
+    #[test]
+    fn guest_preview_can_report_the_full_duration_without_a_dash_stream() {
+        use super::PlayData;
+        use serde_json::{from_value, json};
+
+        let response: PlayData = from_value(json!({
+            "timelength": 3365941, "durl":[{"length": 654989}]
+        }))
+        .unwrap();
+        assert!(!response.has_audio());
+        assert!(!response.is_preview());
+        let response: PlayData = from_value(json!({
+            "dash": {"audio":[{"baseUrl":"https://cdn.test/audio"}]}, "is_preview":1
+        }))
+        .unwrap();
+        assert!(response.has_audio());
+        assert!(response.is_preview());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires access to Bilibili and current guest restrictions"]
+    async fn live_charge_restrictions_on_reported_videos() {
+        use super::{BilibiliProvider, ProviderError, VideoAccess};
+        let provider = BilibiliProvider::new().unwrap();
+        for (bvid, expected) in [
+            ("BV1Thsr68Edj", VideoAccess::ChargeEarlyAccess),
+            ("BV1FZNZ67EaP", VideoAccess::ChargeExclusive),
+            ("BV1Ns9uBiEkj", VideoAccess::ChargeExclusive),
+        ] {
+            let detail = provider.video_parts(bvid).await.unwrap();
+            assert_eq!(detail.access, Some(expected), "{bvid}");
+            let cid = detail.parts[0].cid;
+            assert!(
+                matches!(provider.playback_source(bvid, cid).await, Err(ProviderError::AccessRestricted(kind)) if kind == expected),
+                "{bvid}"
+            );
+        }
+        let bvid = "BV1GJ411x7h7";
+        let detail = provider.video_parts(bvid).await.unwrap();
+        assert_eq!(detail.access, None);
+        assert!(
+            provider
+                .playback_source(bvid, detail.parts[0].cid)
+                .await
+                .is_ok()
+        );
+    }
+
     #[test]
     fn platform_video_profiles_keep_native_codec_and_bandwidth_preferences() {
         let streams: Vec<super::DashStream> = serde_json::from_value(serde_json::json!([

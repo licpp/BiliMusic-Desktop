@@ -48,6 +48,16 @@ test('legacy releases without an OTA artifact retain the website fallback',async
  await a.checkUpdates();await a.downloadUpdate();await a.installUpdate();assert.deepEqual(calls,['app_check_update'])
 })
 
+test('a larger build of the installed version is offered only when the selected platform changed', async () => {
+ const result = { version: '0.4.0', available: true, currentBuild: 1 }
+ for (const [build, status] of [[2, 'available'], [1, 'current'], [0, 'ahead']]) {
+  const app = setup(async () => ({ ...result, build }))
+  assert.equal((await app.checkForUpdate()).status, status)
+ }
+ const next = setup(async () => ({ ...result, version: '0.4.1', build: 1, currentBuild: 50 }))
+ assert.equal((await next.checkForUpdate()).status, 'available')
+})
+
 test('signed builds and the Rust verifier use the same public key',async()=>{
  const {readFile}=await import('node:fs/promises')
  const key=(await readFile('src-tauri/update-public-key.txt','utf8')).trim()

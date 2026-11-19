@@ -59,8 +59,8 @@ test('OHOS reuses native audio transport with real Tauri Channel delivery and pl
     window.__TAURI_INTERNALS__.runCallback(channel.id, { index: 0, message: { id: 'song', status: 'playing', position: 10, rate: 1.5 } })
     assert.equal(states.at(-1).position, 10)
     assert.ok(audio.ohosPlaybackClock() >= 10)
-    await audio.playOHOSAudio({ id: 'song', title: '歌曲', artist: '歌手' }, 'http://127.0.0.1:1234/media', 4, .7, true, 'collection', 1.5)
-    assert.deepEqual(calls.at(-1).args, { loudnessEnabled: false, loudnessRevision: 0, loudnessGainDb: 0, url: 'http://127.0.0.1:1234/media', id: 'song', title: '歌曲', artist: '歌手', coverUrl: undefined, position: 4, volume: .7, playing: true, collectionRef: 'collection', rate: 1.5 })
+    await audio.playOHOSAudio({ id: 'song', title: '歌曲', artist: '歌手', album: '专辑', durationSeconds: 120 }, 'http://127.0.0.1:1234/media', 4, .7, true, 'collection', 1.5)
+    assert.deepEqual(calls.at(-1).args, { loudnessEnabled: false, loudnessRevision: 0, loudnessGainDb: 0, url: 'http://127.0.0.1:1234/media', id: 'song', title: '歌曲', artist: '歌手', album: '专辑', coverUrl: undefined, durationSeconds: 120, position: 4, volume: .7, playing: true, collectionRef: 'collection', rate: 1.5 })
     await audio.controlOHOSAudio('pause')
     assert.equal(calls.at(-1).args.action, 'pause')
   } finally { clearMocks(); globalThis.window = originalWindow }

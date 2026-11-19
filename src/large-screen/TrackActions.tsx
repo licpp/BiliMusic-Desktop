@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Heart, Link2, ListMusic, ListPlus, RefreshCw, Trash2 } from 'lucide-react'
 import type { Track } from '../domain/track'
 import { addTrackToPlaylist, changeLinkedVideo, getVideoParts, listPlaylists, saveLibraryTrack, commandErrorMessage } from '../services/desktopApi'
+import { offlineUnavailable, useOfflinePlayback } from '../features/player/offlinePlayback'
 import { usePlayerStore } from '../features/player/playerStore'
 import { playlistCapabilities } from '../features/library/playlistSelection'
 import { useDownloadBatch } from '../features/downloads/downloadBatch'
@@ -27,6 +28,7 @@ export function DownloadListButton({ tracks }: { tracks: Track[] }) {
 }
 
 export function LargeTrackActions({ track, onClose, onFavorite, queue = false, visibilityScope, replaceVideo }: { replaceVideo?:()=>void; visibilityScope?:string; track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean }) {
+  const unavailable = useOfflinePlayback(state => offlineUnavailable(track, state))
   const visibilityRules=useVisibilityRules()
   const [page, setPage] = useState<'menu' | 'playlists'>('menu'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const client = useQueryClient(), epoch = accountEpoch(), downloading = useDownloadBatch(s => s.busy)
@@ -36,7 +38,7 @@ export function LargeTrackActions({ track, onClose, onFavorite, queue = false, v
   const run = async (fn: () => Promise<unknown>) => { setError(''); setBusy(true); try { await fn(); if (epoch === accountEpoch()) onClose() } catch (e) { setError(commandErrorMessage(e)) } finally { setBusy(false) } }
   return <LargeDialog title={page === 'menu' ? track.displayTitle || track.title : '收藏到歌单'} onClose={onClose}><div className="large-action-list">{page === 'menu' ? <>
     {!track.resolveParts && <button disabled={busy} onClick={() => void run(() => onFavorite(track))}><Heart/>{track.liked ? '取消喜欢' : '喜欢'}</button>}
-    <button disabled={busy} onClick={() => { usePlayerStore.getState().enqueue([track]); onClose() }}><ListMusic/>加入播放队列</button>
+    <button disabled={busy || unavailable} onClick={() => { usePlayerStore.getState().enqueue([track]); onClose() }}><ListMusic/>加入播放队列</button>
     {replaceVideo&&<button disabled={busy} onClick={()=>{onClose();replaceVideo()}}><RefreshCw/>更换视频</button>}
     {visibilityScope && <HideAction track={track} scope={visibilityScope} rules={visibilityRules} onDone={onClose}/>}
     <button disabled={busy} onClick={() => setPage('playlists')}><ListPlus/>收藏到歌单</button>

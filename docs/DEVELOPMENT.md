@@ -45,7 +45,7 @@ npm run ios:build
 
 桌面安装包输出到 `src-tauri/target/release/bundle/`，APK 输出到 `src-tauri/gen/android/app/build/outputs/apk/`，未签名 IPA 输出到 `src-tauri/target/ios-unsigned/`。仓库的 GitHub Actions 提供四端构建任务，公开 Android APK 使用固定签名以支持覆盖更新。
 
-移动端构建入口通过 `scripts/mobile-version.mjs` 从根版本同步原生升级序号。`0.3.6-preview` 的 Android versionCode 为 `30599`，正式 `0.3.6` 为 `30600`；iOS 的显示版本保留完整 SemVer，原生短版本为 `0.3.6`，构建号分别为 `3.6.1` 和 `3.6.99`（预览迭代占用 1–98）。不要手工沿用预览版构建号发布正式版。覆盖安装须保留应用标识和签名；iOS 自签还须使用原来的签名工具与身份。
+移动端构建入口通过 `scripts/mobile-version.mjs` 从根版本和 `BILIMUSIC_BUILD_NUMBER` 同步系统安装序号。Android 和鸿蒙的 `0.4.0` 构建 1、2 分别为 `40000`、`40001`，Apple 构建号分别为 `1004.0.50`、`1004.0.51`。覆盖安装须保留应用标识和签名，iOS 自签也需使用原有签名身份。
 
 macOS 使用完整应用包的 ad-hoc 临时签名，并从最终 DMG 验证签名与资源封装。当前仍未配置 Apple Developer ID 签名、Apple 公证或 Windows 发布者签名；临时签名不能证明发布者身份。Android、大屏版与桌面端的应用内更新、签名构建和发布步骤见 [应用内更新](APPLICATION_UPDATES.md)。证书和账号密钥不要提交到仓库。
 

@@ -1,7 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { isMobile } from '../../services/platform'
-import { usePlayerStore } from './playerStore'
+import { useThemeStore } from '../../services/theme'
+import { playbackClock, usePlayerStore } from './playerStore'
 
 export function connectMediaSession() {
   if (isMobile) return () => undefined
@@ -37,11 +38,26 @@ function connectDesktopMedia() {
   let stopped=false, timer:ReturnType<typeof setTimeout>|undefined, lastSent=0, lastPosition=0, lastMetadata=''
   const synchronize=()=>{
     clearTimeout(timer)
+    timer = undefined
     const state=usePlayerStore.getState(), track=state.current
     const metadata=JSON.stringify([track?.id,track?.title,track?.artist,track?.album,track?.coverUrl,state.durationSeconds])
     const metadataChanged=lastMetadata!==metadata
     lastMetadata=metadata;lastSent=Date.now();lastPosition=state.progressSeconds
-    void invoke('desktop_media_update',{snapshot:{id:track?.id||null,title:track?.title||'',artist:track?.artist||'歌手未知',album:track?.album||'',coverUrl:track?.coverUrl||null,duration:state.durationSeconds,position:state.progressSeconds,playing:['playing','buffering'].includes(state.status),metadataChanged}}).catch(()=>undefined)
+    void invoke('desktop_media_update', { snapshot: {
+      id: track?.id ?? null,
+      title: track?.title ?? '',
+      artist: track?.artist || '歌手未知',
+      album: track?.album ?? '',
+      coverUrl: track?.coverUrl ?? null,
+      duration: state.durationSeconds,
+      position: playbackClock(),
+      playing: ['playing', 'buffering'].includes(state.status),
+      advancing: state.status === 'playing',
+      rate: state.rate,
+      capturedAt: lastSent,
+      theme: useThemeStore.getState().theme,
+      metadataChanged,
+    } }).catch(() => undefined)
   }
   const subscription=listen<{action:string;seconds:number}>('desktop-media-command',({payload})=>{
     if(stopped)return
@@ -53,10 +69,14 @@ function connectDesktopMedia() {
     else if(payload.action==='seekBy')state.seek(state.progressSeconds+payload.seconds)
   }).catch(()=>undefined)
   const unsubscribe=usePlayerStore.subscribe((state,previous)=>{
-    if(state.current!==previous.current||state.status!==previous.status||state.durationSeconds!==previous.durationSeconds||Date.now()-lastSent>=10000||Math.abs(state.progressSeconds-lastPosition)>12){
-      clearTimeout(timer);timer=setTimeout(synchronize,80)
+    if (state.current !== previous.current || state.status !== previous.status || state.durationSeconds !== previous.durationSeconds ||
+      state.rate !== previous.rate || Math.abs(state.progressSeconds - previous.progressSeconds) > 1) {
+      synchronize()
+    } else if (timer === undefined && (Date.now() - lastSent >= 4000 || Math.abs(state.progressSeconds - lastPosition) > 12)) {
+      timer = setTimeout(synchronize, 80)
     }
   })
+  const unsubscribeTheme = useThemeStore.subscribe(synchronize)
   synchronize()
-  return ()=>{stopped=true;clearTimeout(timer);unsubscribe();void subscription.then(stop=>stop?.())}
+  return ()=>{stopped=true;clearTimeout(timer);unsubscribe();unsubscribeTheme();void subscription.then(stop=>stop?.())}
 }

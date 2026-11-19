@@ -15,7 +15,7 @@
   "bundle": {
     "iOS": {
       "minimumSystemVersion": "15.0",
-      "bundleVersion": "3.6.99"
+      "bundleVersion": "1004.0.50"
     }
   }
 }

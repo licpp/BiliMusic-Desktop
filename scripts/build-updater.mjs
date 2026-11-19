@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { mobileVersion } from './mobile-version.mjs'
 const env = { ...process.env }
 const fallback = join(homedir(), '.config/BiliMusic/keys/updater.key')
 if (!env.TAURI_SIGNING_PRIVATE_KEY && existsSync(fallback)) env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(fallback, 'utf8').trim()
@@ -12,6 +13,11 @@ const bundles = process.platform === 'darwin' ? 'app,dmg' : process.platform ===
 if (!bundles) throw new Error('Desktop updater builds require macOS or Windows.')
 const args = process.argv.slice(2)
 const command = args[0] === '--bundle-only' ? (args.shift(), 'bundle') : 'build'
-const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'tauri', '--', command, '--config', 'src-tauri/tauri.updater.conf.json', '--bundles', bundles, ...args], { env, stdio: 'inherit', shell: process.platform === 'win32' })
+const config = ['--config', 'src-tauri/tauri.updater.conf.json']
+if (process.platform === 'darwin') {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  config.push('--config', JSON.stringify({ bundle: { macOS: { bundleVersion: mobileVersion(version).iosBundleVersion } } }))
+}
+const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'tauri', '--', command, ...config, '--bundles', bundles, ...args], { env, stdio: 'inherit', shell: process.platform === 'win32' })
 if (result.error) throw result.error
 process.exit(result.status ?? 1)

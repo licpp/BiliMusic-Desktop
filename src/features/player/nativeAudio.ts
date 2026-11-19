@@ -9,6 +9,13 @@ import type { AutomaticResumePolicy } from './resumePolicy'
 
 import type { NativeAudioState as State, PlayerSnapshot } from './contracts'
 
+function mediaMetadata(track: Track) {
+  return {
+    id: track.id, title: track.title, artist: track.artist || '歌手未知',
+    album: track.album, coverUrl: track.coverUrl, durationSeconds: track.durationSeconds,
+  }
+}
+
 export function createNativeAudio(plugin: string, bind?: (callback: (state: State) => void) => Promise<unknown>) {
   let ready: Promise<unknown> | undefined
   let consumer: (state: PlayerSnapshot) => void = () => undefined
@@ -34,7 +41,7 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
   }
   async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0) {
     await ready
-    await invoke(`plugin:${plugin}|play`, { loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
+    await invoke(`plugin:${plugin}|play`, { ...mediaMetadata(track), loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
   }
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
   const control = (action: NativeControlAction, value = 0, settingsRevision?: number) => invoke(`plugin:${plugin}|control`, { action, value, ...(settingsRevision !== undefined ? {settingsRevision} : {}) })
@@ -46,7 +53,7 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
   }
   function playbackClock() { return clock.position(performance.now()) }
 
-  const prepare = (track: Track) => invoke(`plugin:${plugin}|control`, { action: 'prepare', id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl })
+  const prepare = (track: Track) => invoke(`plugin:${plugin}|control`, { action: 'prepare', ...mediaMetadata(track) })
 
   return { observe, play, setCollection, control, snapshot, playbackClock, prepare }
 }

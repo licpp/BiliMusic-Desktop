@@ -44,6 +44,8 @@ class PlaybackService : Service() {
     private var id = ""
     private var title = "BiliMusic"
     private var artist = ""
+    private var album = ""
+    private var metadataDuration = 0.0
     private var status = "paused"
     private var error: String? = null
     private val focusResume = FocusResume()
@@ -58,6 +60,7 @@ class PlaybackService : Service() {
     private var positionSavedAt = 0L
     private var didFinishTrack = false
     private val queue = NativeQueue()
+    private val systemQueue = SystemPlaybackQueue()
     private var nativeTrack: JSONObject? = null
     private var nativeRequest = 0L
     private var resolvingNative = false
@@ -70,22 +73,37 @@ class PlaybackService : Service() {
 
     fun attachController() { controllerListener?.invoke(session.controller) }
     fun updateQueue(data: String) {
-        val owner = queue.owner; val account = queue.accountSession
+        val owner = queue.owner; val account = queue.accountSession; val version = queue.version
         queue.update(JSONObject(data))
+        if (owner == queue.owner && version == queue.version) return
         if (resolvingNative && (owner != queue.owner || account != queue.accountSession || queue.find(id) == null)) control("pause")
+        if (account != queue.accountSession) systemQueue.resetAccount()
         queue.find(id)?.let { nativeTrack = it }
+        if (id.isNotEmpty()) {
+            updateMetadata()
+            updateSessionPlaybackState()
+        }
     }
     private fun currentProfile() = profilePath?.let { runCatching { java.io.File(it).readText() }.getOrNull() }
     private fun cancelResolution() {
         nativeRequest += 1; resolvingNative = false
         transitionWakeLock?.let { if (it.isHeld) it.release() }; transitionWakeLock = null
     }
-    private fun advance(direction: Int, ended: Boolean = false) {
+    private fun advance(direction: Int, ended: Boolean = false, restartCurrent: Boolean = true) {
         if (expireSleepIfNeeded()) return
-        if (direction < 0 && lastPosition > 4) { control("seek", 0.0); return }
+        if (direction < 0 && restartCurrent && lastPosition > 4) { control("seek", 0.0); return }
         val target = queue.target(id, direction, ended)
         if (target == null) { control("pause"); return }
         resolveTrack(target, restart = queue.restart(ended))
+    }
+    private fun hasOtherTracks() = id.isNotEmpty() && queue.tracks.any { it.optString("id") != id }
+
+    internal fun controlFromMediaSession(action: String) {
+        when (action) {
+            "previous" -> if (hasOtherTracks()) advance(-1, restartCurrent = false)
+            "next" -> if (hasOtherTracks()) advance(1)
+            else -> control(action)
+        }
     }
     private fun resolveTrack(track: JSONObject, restart: Boolean = false, refresh: Boolean = false, position: Double? = null) {
         focusResume.cancel()
@@ -98,11 +116,13 @@ class PlaybackService : Service() {
         if (scope == null || listeningProfile != null && scope != listeningProfile) { fail("播放账号已变更，请重新播放"); return }
         val resolver = resolveListener ?: run { fail("后台播放器尚未就绪，请重新播放"); return }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false; seeking = false
-        nativeTrack = track; id = track.getString("id"); title = track.optString("title", "BiliMusic"); artist = track.optString("artist")
+        nativeTrack = track; id = track.getString("id"); title = track.mediaText("title").ifBlank { "BiliMusic" }
+        artist = track.mediaText("artist"); album = track.mediaText("album")
+        metadataDuration = track.optDouble("durationSeconds", 0.0)
         requestedStartPosition = position ?: 0.0
         lastPosition = 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
         playbackRevision += 1; resolveProfile = scope; resolvingNative = true; status = "buffering"; error = null
-        prepareArtwork(track.optString("coverUrl")); updateMetadata()
+        prepareArtwork(track.mediaText("coverUrl")); updateMetadata(); updateSessionPlaybackState()
         startForeground(NOTIFICATION, notification())
         // MediaPlayer's wake lock does not cover the gap between two tracks.
         transitionWakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BiliMusic:queue").also { it?.acquire(30_000) }
@@ -134,8 +154,10 @@ class PlaybackService : Service() {
                 .put("lines", lyrics?.optJSONArray("lines") ?: org.json.JSONArray()).put("biasMs", lyrics?.optInt("biasMs") ?: 0).toString())
         }
         val intent = Intent(this, PlaybackService::class.java).setAction("load")
-            .putExtra("id", track.getString("id")).putExtra("title", track.optString("title"))
-            .putExtra("artist", track.optString("artist")).putExtra("coverUrl", track.optString("coverUrl"))
+            .putExtra("id", track.getString("id")).putExtra("title", track.mediaText("title"))
+            .putExtra("artist", track.mediaText("artist")).putExtra("album", track.mediaText("album"))
+            .putExtra("coverUrl", track.mediaText("coverUrl"))
+            .putExtra("durationSeconds", track.optDouble("durationSeconds", 0.0))
             .putExtra("url", url).putExtra("upgradeUrl", result.optString("upgradeUrl").takeIf { it.startsWith("http://127.0.0.1:") })
             .putExtra("loudnessGainDb", result.optDouble("loudnessGainDb", 0.0))
             .putExtra("position", result.optDouble("position", 0.0)).putExtra("volume", volume.toDouble())
@@ -231,7 +253,7 @@ class PlaybackService : Service() {
         }
         outputRamp=ramp;ramp.run()
     }
-    private var volume = .7f
+    private var volume = 1f
     private var artwork: Bitmap? = null
     private var artworkUrl: String? = null
     private val artworkCache = android.util.LruCache<String, Bitmap>(8)
@@ -303,7 +325,7 @@ class PlaybackService : Service() {
                 val key = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return super.onMediaButtonEvent(intent)
                 android.util.Log.i("BiliMusicPlayback", "media key=${key.keyCode} action=${key.action}")
                 if (MediaButtons.supports(key.keyCode)) {
-                    MediaButtons.action(key.keyCode,key.action == KeyEvent.ACTION_DOWN,key.repeatCount)?.let { control(it) }
+                    MediaButtons.action(key.keyCode,key.action == KeyEvent.ACTION_DOWN,key.repeatCount)?.let(::controlFromMediaSession)
                     return true
                 }
                 return super.onMediaButtonEvent(intent)
@@ -312,14 +334,15 @@ class PlaybackService : Service() {
             override fun onPause() { android.util.Log.i("BiliMusicPlayback", "remote transport=pause"); control("pause") }
             override fun onStop() { control("stop") }
             override fun onSeekTo(pos: Long) { control("seek", pos / 1000.0) }
-            override fun onSkipToNext() { android.util.Log.i("BiliMusicPlayback", "remote transport=next"); control("next") }
-            override fun onSkipToPrevious() { android.util.Log.i("BiliMusicPlayback", "remote transport=previous"); control("previous") }
+            override fun onSkipToNext() { android.util.Log.i("BiliMusicPlayback", "remote transport=next"); controlFromMediaSession("next") }
+            override fun onSkipToPrevious() { android.util.Log.i("BiliMusicPlayback", "remote transport=previous"); controlFromMediaSession("previous") }
+            override fun onSkipToQueueItem(queueId: Long) {
+                if (expireSleepIfNeeded()) return
+                val track = systemQueue.trackId(queueId)?.let(queue::find) ?: return
+                resolveTrack(track)
+            }
         },handler)
-        // Bluetooth/system controllers can observe the session as soon as it is
-        // activated. Publish its supported commands and metadata before then.
-        updateMetadata()
-        session.setPlaybackState(systemPlaybackState())
-        session.isActive = true
+        updateSessionPlaybackState()
         attachController()
         queueData?.let { updateQueue(it) }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(unplugged, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), RECEIVER_NOT_EXPORTED)
@@ -336,17 +359,20 @@ class PlaybackService : Service() {
                 accountListening(true)
                 seeking = false
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
-                id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
+                id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title").orEmpty().ifBlank { "BiliMusic" }
                 artist = intent.getStringExtra("artist") ?: ""; requestedStartPosition = intent.getDoubleExtra("position", 0.0)
-        lastPosition = 0.0; lastDuration = 0.0
+                album = intent.getStringExtra("album").orEmpty()
+                metadataDuration = intent.getDoubleExtra("durationSeconds", 0.0)
+                lastPosition = 0.0; lastDuration = 0.0
                 queue.observe(id)
                 nativeTrack = queue.find(id)
                 prepareArtwork(intent.getStringExtra("coverUrl"))
-                updateMetadata()
-                status = "buffering"; error = null; startForeground(NOTIFICATION, notification())
+                status = "buffering"; error = null
+                updateMetadata(); updateSessionPlaybackState()
+                startForeground(NOTIFICATION, notification())
             }
             "load" -> load(intent)
-            "next", "previous" -> control(intent.action!!)
+            "next", "previous" -> controlFromMediaSession(intent.action!!)
             "toggle" -> control(if (status == "playing" || status == "buffering") "pause" else "resume")
             "stop" -> control("stop")
         }
@@ -372,10 +398,12 @@ class PlaybackService : Service() {
         listeningSeconds = 0.0
         listeningProfile = profilePath?.let { runCatching { java.io.File(it).readText() }.getOrDefault("") }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
-        id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title") ?: "BiliMusic"
+        id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title").orEmpty().ifBlank { "BiliMusic" }
         queue.observe(id)
         nativeTrack = queue.find(id) ?: nativeTrack?.takeIf { it.optString("id") == id }
-        artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", .7).coerceIn(0.0,1.0).toFloat()
+        artist = intent.getStringExtra("artist") ?: ""; volume = intent.getDoubleExtra("volume", 1.0).coerceIn(0.0,1.0).toFloat()
+        album = intent.getStringExtra("album").orEmpty()
+        metadataDuration = intent.getDoubleExtra("durationSeconds", 0.0)
         if(intent.hasExtra("loudnessEnabled")) outputGain.configure(intent.getBooleanExtra("loudnessEnabled",false),intent.getLongExtra("loudnessRevision",0))
         outputGain.plan(intent.getDoubleExtra("loudnessGainDb",0.0))
         prepareArtwork(intent.getStringExtra("coverUrl"))
@@ -385,9 +413,9 @@ class PlaybackService : Service() {
         upgradeAfterPosition = intent.getDoubleExtra("position", 0.0) + 0.75
         status = if (intent.getBooleanExtra("playing", true)) "buffering" else "paused"
         error = null
-        updateMetadata()
+        updateMetadata(); updateSessionPlaybackState()
         startForeground(NOTIFICATION, notification())
-        if (status != "paused" && audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        if (status != "paused" && !requestFocus()) {
             fail("无法获得音频焦点，请稍后重试"); return
         }
         try {
@@ -510,7 +538,7 @@ class PlaybackService : Service() {
         accountListening(true)
         status = "error"; error = message; prepared = false
         player?.release(); player = null; handler.removeCallbacks(ticker)
-        audioManager.abandonAudioFocusRequest(focus); publish(); stopForeground(STOP_FOREGROUND_DETACH)
+        audioManager.abandonAudioFocusRequest(focus); focusDucked = false; publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
     private fun pause() {
         cancelResolution()
@@ -549,6 +577,14 @@ class PlaybackService : Service() {
             if (!media.isPlaying) media.start()
         }
     }
+    private fun requestFocus(): Boolean {
+        if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
+        if (focusDucked) {
+            focusDucked = false
+            applyOutput()
+        }
+        return true
+    }
     private fun emitAction(action: String) { listener?.invoke(snapshot().put("action",action)) }
     fun control(action: String, value: Double = 0.0) {
         if(action == "toggle") { control(if(status == "playing" || status == "buffering") "pause" else "resume");return }
@@ -565,7 +601,7 @@ class PlaybackService : Service() {
                 nativeTrack?.let { recoveryAttempted = false; resolveTrack(it, refresh = true, position = lastPosition) } ?: emitAction("resume")
             } else {
                 startForeground(NOTIFICATION, notification())
-                if (audioManager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                if (requestFocus()) {
                     if (prepared && !seeking) player?.let(::startAtRate)
                     status = if (!prepared || seeking) "buffering" else "playing"
                     handler.removeCallbacks(ticker); handler.post(ticker); publish()
@@ -615,6 +651,9 @@ class PlaybackService : Service() {
     fun lyricPosition(): Pair<String,Double> = Pair(id,if(prepared && !seeking) runCatching { (player?.currentPosition ?: 0)/1000.0 }.getOrDefault(lastPosition) else lastPosition)
     fun lyricTitle(): String = title
     fun notifyLyricsChanged() { updateMetadata();publish() }
+    internal fun refreshPlaybackNotification() {
+        if (id.isNotEmpty() && (player != null || status == "buffering")) updateSystemPlayback()
+    }
     private fun publish(notify: Boolean = true) {
         accountListening()
         // The app receives state first; OS presentation is coalesced separately.
@@ -630,25 +669,43 @@ class PlaybackService : Service() {
     }
     private fun updateSystemPlayback() {
         lastSystemStatus = status; lastSystemPosition = lastPosition
-        session.setPlaybackState(systemPlaybackState())
+        updateSessionPlaybackState()
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification())
+    }
+    private fun updateSessionPlaybackState() {
+        session.setPlaybackState(systemPlaybackState())
+        // Controllers can discover the session only after its first real item,
+        // metadata and state have been published.
+        if (id.isNotEmpty() && !session.isActive) session.isActive = true
     }
     private fun systemPlaybackState(): PlaybackState {
         val state = if (id.isEmpty()) PlaybackState.STATE_NONE else if (status == "playing") PlaybackState.STATE_PLAYING else if (status == "buffering") PlaybackState.STATE_BUFFERING else if (status == "error") PlaybackState.STATE_ERROR else PlaybackState.STATE_PAUSED
-        return PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_STOP)
-            .setState(state, if (prepared) (player?.currentPosition ?: 0).toLong() else 0, if (status == "playing") playbackRate else 0f)
+        var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_STOP
+        if (hasOtherTracks()) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_QUEUE_ITEM
+        return PlaybackState.Builder().setActions(actions)
+            .setActiveQueueItemId(systemQueue.activeId)
+            .setState(state, (lastPosition * 1000).toLong(), if (status == "playing") playbackRate else 0f)
             .build()
     }
     private var displayedTitle = ""
     private fun mediaTitle() = SystemTitleLyrics.title(id, lyricPosition().second, title)
     private fun updateMetadata() {
+        val current = id.takeIf(String::isNotEmpty)?.let {
+            val queued = nativeTrack?.takeIf { track -> track.optString("id") == id }
+            SystemTrack(id, title, artist, album.ifBlank { queued?.mediaText("album").orEmpty() },
+                ((lastDuration.takeIf { it > 0 } ?: metadataDuration.takeIf { it > 0 } ?: queued?.optDouble("durationSeconds", 0.0) ?: 0.0) * 1000).toLong())
+        }
+        systemQueue.update(session, queue.tracks, current)
         displayedTitle = mediaTitle()
-        val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, displayedTitle)
-            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, id).putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, displayedTitle)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, nativeTrack?.optString("album") ?: "")
-        if (lastDuration > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, (lastDuration * 1000).toLong())
-        artwork?.let { metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it).putBitmap(MediaMetadata.METADATA_KEY_ART, it) }
+        if (current == null) { session.setMetadata(null); return }
+        val metadata = MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, current.title)
+            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, current.id).putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, displayedTitle)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, current.artist)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, current.artist)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, current.album)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, current.album)
+        if (current.durationMs > 0) metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, current.durationMs)
+        artwork?.let { metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it).putBitmap(MediaMetadata.METADATA_KEY_ART, it).putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it) }
         session.setMetadata(metadata.build())
     }
     private fun prepareArtwork(value: String?) {

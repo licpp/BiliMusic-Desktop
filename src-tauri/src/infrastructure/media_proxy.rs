@@ -337,11 +337,12 @@ impl MediaProxy {
         Some(self.register_cached(variant, vec![]).await)
     }
     pub async fn complete_cached_audio(&self, track_id: &str, quality: u32) -> Option<String> {
-        let cache = self.state.cache.as_ref()?;
-        let variant = cache.find(track_id, quality)?;
-        if !cache.complete(&variant) {
-            return None;
-        }
+        let cache = self.state.cache.as_ref()?.clone();
+        let id = track_id.to_owned();
+        let variant =
+            tauri::async_runtime::spawn_blocking(move || cache.find_complete(&id, quality))
+                .await
+                .ok()??;
         Some(self.register_cached(variant, vec![]).await)
     }
     pub async fn guard_upgrade(&self, url: &str, bandwidth: u64) -> String {
@@ -2131,7 +2132,6 @@ mod tests {
             504,
             "missing offline data must fail, never fabricate silence"
         );
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
         let response = client
             .get(&offline)
             .header("range", "bytes=0-")
@@ -2143,6 +2143,35 @@ mod tests {
             format!("bytes 0-{}/{}", payload.len() - 1, payload.len())
         );
         drop(response);
+        assert!(proxy.complete_cached_audio("test:42", 0).await.is_none());
+        // A completed track remains seekable from a fresh cache/proxy process
+        // after the upstream has been stopped and its signed URL discarded.
+        let variant = reopened.find("test:42", 0).unwrap();
+        for (index, chunk) in payload.chunks(CHUNK_SIZE as usize).enumerate() {
+            reopened
+                .write(&variant, payload.len() as u64, index as u64, chunk, 0)
+                .unwrap();
+        }
+        drop(proxy);
+        drop(reopened);
+        let reopened =
+            Arc::new(PlaybackCache::open(root.join("media"), root.join("config.json")).unwrap());
+        let proxy = MediaProxy::start_inner(Some(reopened.clone()), None)
+            .await
+            .unwrap();
+        let complete = proxy.complete_cached_audio("test:42", 0).await.unwrap();
+        let response = client
+            .get(&complete)
+            .header("range", "bytes=-50")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(
+            &response.bytes().await.unwrap()[..],
+            &payload[payload.len() - 50..]
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(reopened.clear().unwrap().used_bytes, 0);
         std::fs::remove_dir_all(root).unwrap();
     }

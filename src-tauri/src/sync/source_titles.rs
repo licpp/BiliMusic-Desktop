@@ -42,17 +42,14 @@ pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize
         .map_err(|e| e.to_string())?;
         let previous = crate::infrastructure::repositories::source_titles::get(c, &id)
             .map_err(|e| e.to_string())?;
-        let context = crate::domain::source_title::SourceTitleContext {
+        let mut context = crate::domain::source_title::SourceTitleContext {
             video_title: video.title.clone(),
             part_title: part.title.clone(),
             part_count: video.parts.len(),
-            season: video
-                .season
-                .clone()
-                .or(previous.as_ref().and_then(|p| p.season.clone())),
-            chapter_context: video.season.is_some()
-                || previous.as_ref().is_some_and(|p| p.chapter_context),
+            season: video.season.clone(),
+            chapter_context: video.season.is_some(),
         };
+        context.preserve_membership(previous.as_ref());
         let title = context.title();
         changed += c
             .execute(
@@ -171,6 +168,7 @@ mod tests {
         .unwrap();
         c.execute("INSERT INTO tracks(id,source_item_id,title,cover_url) VALUES(?1,?1,'旧标题','https://bili.test/first.jpg')", [&id]).unwrap();
         let video = VideoParts {
+            access: None,
             play_count: Some(100),
             published_at: Some(1),
             bvid: bvid.into(),
@@ -231,6 +229,7 @@ mod tests {
         };
         LibraryRepository::upsert(&mut c, &input).unwrap();
         let video = VideoParts {
+            access: None,
             play_count: Some(0),
             published_at: None,
             bvid: input.bvid.clone(),

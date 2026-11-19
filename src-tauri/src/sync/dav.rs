@@ -177,6 +177,7 @@ impl Doc {
         }
         snapshot.records.retain(|k, _| !absent.contains(k));
         snapshot.compact(true);
+        snapshot.restore_missing_tracks();
         snapshot.validate(&self.uid)?;
         Ok((snapshot, conflicts))
     }
@@ -230,6 +231,7 @@ impl Doc {
             }
         }
         result.compact(true);
+        result.restore_missing_tracks();
         result.validate(&self.uid)?;
         Ok(result)
     }

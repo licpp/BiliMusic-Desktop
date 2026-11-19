@@ -2,9 +2,15 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
-const built=await build({entryPoints:['src/features/player/nativeAudio.ts'],bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'ipc',setup(b){b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const invoke=(...args)=>globalThis.mediaIPC(...args);export const addPluginListener=()=>{throw new Error("unexpected listener")};'}))}}]})
-const m={exports:{}};new Function('require','module','exports',built.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
-async function setup(){let receive;const events=[];const audio=m.exports.createNativeAudio('android-player',cb=>{receive=cb;return Promise.resolve()});await audio.observe(s=>events.push(s));return{audio,events,receive:s=>receive(s)}}
+const built=await build({entryPoints:['src/features/player/nativeAudio.ts','src/features/player/iosAudio.ts'],outdir:'out',bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'ipc',setup(b){b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const invoke=(...args)=>globalThis.mediaIPC(...args);export const addPluginListener=()=>{throw new Error("unexpected listener")};'}))}}]})
+function load(name) {
+ const m={exports:{}}
+ const file=built.outputFiles.find(file=>file.path.endsWith(`/${name}.js`))
+ new Function('require','module','exports',file.text)(createRequire(import.meta.url),m,m.exports)
+ return m.exports
+}
+const {createNativeAudio}=load('nativeAudio')
+async function setup(){let receive;const events=[];const audio=createNativeAudio('android-player',cb=>{receive=cb;return Promise.resolve()});await audio.observe(s=>events.push(s));return{audio,events,receive:s=>receive(s)}}
 test('notification and headset action-only events survive newer state revisions without replacing the playback clock',async()=>{
  const h=await setup();const sample={id:'a',revision:50,sequence:8,status:'playing',position:12};h.receive(sample)
  for(const action of ['next','previous','ended','resume'])h.receive({action})
@@ -33,4 +39,30 @@ test('rejected snapshots cannot replay a previously delivered navigation command
  assert.equal(snapshot.action,undefined)
  assert.equal(snapshot.position,10)
  assert.equal(h.events.filter(e=>e.action==='next').length,1)
+})
+
+test('mobile playback publishes track metadata during preparation and carries it into playback',async()=>{
+ const calls=[]
+ globalThis.mediaIPC=async(command, payload)=>calls.push({command,payload})
+ const track={id:'bilibili:BVTEST00001:1',title:'歌曲',artist:'歌手',album:'专辑',coverUrl:'https://example.test/song.jpg',durationSeconds:180,liked:false,
+  source:{provider:'bilibili',bvid:'BVTEST00001',cid:1,page:1}}
+ const url='http://127.0.0.1:43122/audio'
+ for(const plugin of ['android-player','ohos-player']){
+  const audio=createNativeAudio(plugin)
+  await audio.prepare(track)
+  await audio.play(track,url,0,.7)
+  const [prepare,play]=calls.splice(0)
+  assert.equal(prepare.command,`plugin:${plugin}|control`)
+  assert.equal(prepare.payload.action,'prepare')
+  assert.equal(play.command,`plugin:${plugin}|play`)
+  for(const {payload} of [prepare,play]){
+   for(const field of ['id','title','artist','album','coverUrl','durationSeconds'])assert.equal(payload[field],track[field])
+  }
+ }
+ const {prepareIOSAudio,playIOSAudio}=load('iosAudio')
+ await prepareIOSAudio(track)
+ await playIOSAudio(track,url,0,.7)
+ assert.deepEqual(calls.map(({command,payload})=>[command,payload.id,payload.track]),[
+  ['plugin:ios-player|control',track.id,track],['plugin:ios-player|play',track.id,track],
+ ])
 })

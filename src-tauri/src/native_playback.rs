@@ -1,4 +1,5 @@
 //! Shared native queue resolution. Android, iOS and Harmony do not need an active WebView.
+use crate::domain::source_title::{SeasonSummary, SourceTitleContext};
 use crate::infrastructure::{
     database::Database,
     media_proxy::MediaProxy,
@@ -66,7 +67,10 @@ fn resolved_title(
         .source_title_context
         .as_ref()
         .is_some_and(|c| c.season.is_some() || c.chapter_context || c.part_count > 1);
-    if stored.title_overridden || chapter {
+    if stored.title_overridden
+        || chapter
+        || queued_season(track).is_some_and(|season| season.is_legacy_catalog())
+    {
         stored.title.clone()
     } else {
         track["displayTitle"]
@@ -74,6 +78,10 @@ fn resolved_title(
             .unwrap_or(&stored.title)
             .to_owned()
     }
+}
+
+fn queued_season(track: &Value) -> Option<SeasonSummary> {
+    serde_json::from_value(track["sourceTitleContext"]["season"].clone()).ok()
 }
 
 fn input(track: &Value) -> Result<TrackInput, String> {
@@ -168,6 +176,8 @@ pub(crate) async fn resolve_with_guard(
         let source = &track["source"];
         if let Some(bvid) = source["bvid"].as_str() {
             let provider = app.state::<BilibiliProvider>();
+            let season = queued_season(&track);
+            let legacy_catalog = season.as_ref().is_some_and(SeasonSummary::is_legacy_catalog);
             let resolve_parts = async {
                 let aid = source["aid"].as_i64().unwrap_or_default();
                 if aid <= 0 {
@@ -175,6 +185,7 @@ pub(crate) async fn resolve_with_guard(
                 }
                 let pages = provider.video_pagelist(bvid).await?;
                 Ok(VideoParts {
+                    access: None,
                     play_count: None,
                     published_at: track["publishedAt"].as_u64(),
                     bvid: bvid.to_owned(),
@@ -191,27 +202,41 @@ pub(crate) async fn resolve_with_guard(
                         .unwrap_or_default()
                         .to_owned(),
                     parts: pages,
-                    season: serde_json::from_value(track["sourceTitleContext"]["season"].clone())
-                        .ok(),
+                    season: season.filter(|_| !legacy_catalog),
                 })
             };
             if let Ok(Ok(video)) =
                 tokio::time::timeout(std::time::Duration::from_secs(6), resolve_parts).await
             {
-                parts = video.parts.iter().map(|part| json!({
-                    "id": format!("bilibili:{}:{}", video.bvid, part.cid),
-                    "source": {"provider":"bilibili", "bvid":video.bvid, "cid":part.cid,
-                               "page":part.page, "aid":video.aid,
-                               "uploaderId":video.uploader_id, "uploaderName":video.uploader_name},
-                    "title":crate::domain::source_title::source_title(&video.title,&part.title,video.parts.len(),video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false), video.season.as_ref().map(|s|s.title.as_str()).unwrap_or("")),
-                    "displayTitle":crate::domain::source_title::source_title(&video.title,&part.title,video.parts.len(),video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false), video.season.as_ref().map(|s|s.title.as_str()).unwrap_or("")),
-                    "publishedAt":video.published_at,"playCount":video.play_count,
-                    "chapterContext":video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false),
-                    "videoTitle":video.title, "partCount":video.parts.len(),
-                    "sourceTitleContext":{"videoTitle":video.title,"partTitle":part.title,"partCount":video.parts.len(),"season":video.season,"chapterContext":video.season.is_some() || track["chapterContext"].as_bool().unwrap_or(false)},
-                    "coverUrl":if video.cover_url.is_empty() { &part.cover_url } else { &video.cover_url },
-                    "durationSeconds":part.duration_seconds, "liked":false,
-                })).collect();
+                let chapter = video.season.is_some()
+                    || !legacy_catalog && track["chapterContext"].as_bool().unwrap_or(false);
+                parts = video
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        let context = SourceTitleContext {
+                            video_title: video.title.clone(),
+                            part_title: part.title.clone(),
+                            part_count: video.parts.len(),
+                            season: video.season.clone(),
+                            chapter_context: chapter,
+                        };
+                        let title = context.title();
+                        json!({
+                            "id": format!("bilibili:{}:{}", video.bvid, part.cid),
+                            "source": {"provider":"bilibili", "bvid":video.bvid, "cid":part.cid,
+                                       "page":part.page, "aid":video.aid,
+                                       "uploaderId":video.uploader_id, "uploaderName":video.uploader_name},
+                            "title":title, "displayTitle":title,
+                            "publishedAt":video.published_at,"playCount":video.play_count,
+                            "chapterContext":chapter,
+                            "videoTitle":video.title, "partCount":video.parts.len(),
+                            "sourceTitleContext":context,
+                            "coverUrl":if video.cover_url.is_empty() { &part.cover_url } else { &video.cover_url },
+                            "durationSeconds":part.duration_seconds, "liked":false,
+                        })
+                    })
+                    .collect();
                 let _gate = sync.account_gate.lock().await;
                 let db = app.state::<Database>();
                 let c = db.0.lock().map_err(|_| "数据库正忙")?;
@@ -285,9 +310,9 @@ pub(crate) async fn resolve_with_guard(
         stored.id.clone(),
         Some(refresh),
         None,
+        payload["offlineOnly"].as_bool(),
     )
-    .await
-    .map_err(|e| e.message)?;
+    .await;
     let _gate = sync.account_gate.lock().await;
     if !current()
         || profile != current_profile(app)
@@ -302,6 +327,11 @@ pub(crate) async fn resolve_with_guard(
     {
         return Err("播放账号已变更，请重新播放".into());
     }
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) if error.code == "offline_unavailable" => return Ok(visibility_skip(&entry_id)),
+        Err(error) => return Err(error.message),
+    };
     {
         let db = app.state::<Database>();
         let c = db.0.lock().map_err(|_| "数据库正忙")?;

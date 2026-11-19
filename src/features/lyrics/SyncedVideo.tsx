@@ -1,19 +1,19 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { playbackClock, usePlayerStore } from '../player/playerStore'
 import { synchronizeVideo } from './videoSync'
-import { Artwork } from '../../shared/Artwork'
+import { VideoStartup } from './VideoStartup'
 import { createVideoRecovery } from './videoRecovery'
 import { commandErrorMessage } from '../../services/desktopApi'
-import { LoaderCircle } from 'lucide-react'
 
-export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onReady, onReload }: { src: string; poster?: string; active: boolean; onReady: (src: string) => void; onReload: () => Promise<void> }) {
+export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, suspended = false, onReady, onReload }: { src: string; poster?: string; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: () => Promise<void> }) {
   const ref = useRef<HTMLVideoElement>(null)
-  const activeRef = useRef(active)
+  const activeRef = useRef(active && !suspended)
   const syncRef = useRef<(force?: boolean) => void>(() => {})
   const [error, setError] = useState('')
-  const [visible, setVisible] = useState(false)
+  const [frame, setFrame] = useState<{ src: string; attempt: number }>()
   const [slow, setSlow] = useState(false)
   const [retry, setRetry] = useState(0)
+  const visible = frame?.src === src && frame.attempt === retry
   const [recovering, setRecovering] = useState(false)
   const reloadRef = useRef(onReload)
   reloadRef.current = onReload
@@ -31,7 +31,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
   useEffect(() => {
     const video = ref.current
     if (!video) return
-    setError(''); setVisible(false); setSlow(false)
+    setError(''); setSlow(false)
     let firstFrameShown = false
     let pendingAlignment = true
     let startupRequested = false
@@ -67,7 +67,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
       // WKWebView may not receive a compositor frame callback.
       if (!firstFrameShown && !pendingAlignment && !video.seeking && video.readyState >= 2) {
         firstFrameShown = true
-        setVisible(true); setError('')
+        setFrame({ src, attempt: retry }); setError('')
         onReady(src)
       }
     }
@@ -104,9 +104,19 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, active, onRe
     }
   }, [src, retry, onReady])
   useEffect(() => {
-    activeRef.current = active
-    if (active) syncRef.current(true)
+    activeRef.current = active && !suspended
+    if (activeRef.current) syncRef.current(true)
     else ref.current?.pause()
-  }, [active])
-  return <><video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />{active && !visible && !error && <div className="video-startup"><Artwork src={poster} /><div className="video-startup-status" role="status"><LoaderCircle size={16} className="spin" /><span>{slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}</span>{slow && <button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重试加载</button>}</div></div>}{active && error && <div className="video-error" role="alert"><span>{recovering ? '正在重新连接视频…' : error}</span><button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重新加载</button></div>}</>
+  }, [active, suspended])
+  return <>
+    <video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />
+    {active && <VideoStartup key={`${src}:${retry}`} poster={poster} ready={visible}
+      message={error || suspended ? undefined : slow ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}>
+      {slow && <button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重试加载</button>}
+    </VideoStartup>}
+    {active && error && <div className="video-error" role="alert">
+      <span>{recovering ? '正在重新连接视频…' : error}</span>
+      <button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重新加载</button>
+    </div>}
+  </>
 })

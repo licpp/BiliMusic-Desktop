@@ -1,3 +1,5 @@
+import { dispatchBack } from '../shared/overlayStack'
+import { usePageMotion } from '../shared/pageMotion'
 import { useUpdateStore } from '../services/updates'
 import { useVisibilityRules } from '../services/contentVisibility'
 import { accountQueryKey } from '../services/queryKeys'
@@ -5,12 +7,11 @@ import { LargeDownloadDialogHost } from './DownloadDialog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, ArrowLeft, Cloud, Download, Heart, Home, Library, ListMusic, Play, Search, Settings, Trash2 } from 'lucide-react'
-import { getVersion } from '@tauri-apps/api/app'
 import type { Track } from '../domain/track'
 import { Artwork } from '../shared/Artwork'
 import { captureBookmark, restoreView, type FocusBookmark } from './navigation'
 import { LargeKeyboardBar, dismissLargeKeyboard } from './keyboard'
-import { commandErrorMessage, inDesktopShell, listPlaylists, listRecentTracks, saveLibraryTrack, toggleStoredFavorite } from '../services/desktopApi'
+import { commandErrorMessage, listPlaylists, listRecentTracks, saveLibraryTrack, toggleStoredFavorite } from '../services/desktopApi'
 import { accountEpoch } from '../services/accountScope'
 import { hydrateVisibleTracks } from '../services/sync'
 import { useSyncAttention } from '../services/syncAttention'
@@ -27,7 +28,7 @@ import { LargeDialog } from './LargeDialog'
 import { LargeSettings } from './Settings'
 import { LargeTrackActions } from './TrackActions'
 import { LargeOffline } from './Offline'
-import { version } from '../../package.json'
+import { currentDisplayVersion } from '../shared/version'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
 export function LargeScreenApp() {
@@ -36,17 +37,24 @@ export function LargeScreenApp() {
   const [filters, setFilters] = useState<Record<string, string>>({}), [searchKind, setSearchKind] = useState<'video' | 'creator'>('video')
   const [route, setRoute] = useState<Route>({ kind: 'home' }), [tab, setTab] = useState<LibraryTab>('playlists'), [query, setQuery] = useState('')
   const history = useRef<ReturnPoint[]>([]), main = useRef<HTMLElement>(null), restore = useRef<ReturnPoint | undefined>(undefined), initialFocus = useRef(false)
+  const pageMotion = useRef<'back' | 'player' | undefined>(undefined)
+  const pageKey = route.kind === 'creator' || route.kind === 'collection' ? `${route.kind}:${route.item.bvid}`
+    : route.kind === 'folder' ? `folder:${route.id}` : route.kind === 'playlist' ? `playlist:${route.playlist.id}` : route.kind
+  const pageDepth = ['creator', 'collection', 'folder', 'playlist', 'player'].includes(route.kind) ? 1 : 0
+  usePageMotion(main, pageKey, pageDepth, false, pageMotion)
   const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean; visibilityScope?:string; replaceVideo?:()=>void }>(), [sleep, setSleep] = useState(false)
   const current = usePlayerStore(s => s.current), queue = usePlayerStore(s => s.queue)
   const attention = useSyncAttention(s => s.library || s.statistics), [message, setMessage] = useState(''), [actionError, setActionError] = useState('')
-  const [appVersion, setAppVersion] = useState(version), client = useQueryClient(), toggling = useRef(false)
+  const client = useQueryClient(), toggling = useRef(false)
   const navigate = useCallback((next: Route) => {
     const shell = main.current?.closest<HTMLElement>('.large-shell')
     history.current.push({ route, scroll: main.current?.scrollTop || 0, focus: shell ? captureBookmark(shell) : undefined })
+    pageMotion.current = next.kind === 'player' ? 'player' : undefined
     restore.current = undefined; initialFocus.current = true; setRoute(next)
   }, [route])
   const back = useCallback(() => {
     const previous = history.current.pop()
+    if (previous || route.kind !== 'home') pageMotion.current = 'back'
     if (previous) { restore.current = previous; setRoute(previous.route) }
     else if (route.kind !== 'home') { initialFocus.current = true; setRoute({ kind: 'home' }) }
     else return false
@@ -65,7 +73,6 @@ export function LargeScreenApp() {
   useEffect(connectMediaSession, [])
   useEffect(() => { if (queue.length) void hydrateSourceTitles(queue.slice(0, 50).map(t => t.id), client).catch(() => undefined) }, [queue, client])
   useEffect(() => {
-    if (inDesktopShell) void getVersion().then(setAppVersion).catch(() => undefined)
     const changed = () => { history.current = []; setFilters({}); setQuery(''); setSearchKind('video'); setMenu(undefined); setQueueOpen(false); setSleep(false); setActionError(''); setRoute({ kind: 'home' }) }
     const status = (event: Event) => setMessage(String((event as CustomEvent).detail || ''))
     const recent = () => { void client.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }
@@ -75,7 +82,7 @@ export function LargeScreenApp() {
   useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(''), 5000); return () => clearTimeout(timer) }, [message])
   useEffect(() => {
     const handle = (event: Event) => { if (event.defaultPrevented || document.querySelector('[data-overflow-panel],[aria-modal="true"],.sleep-timer-settings,.sleep-timer-notice')) return; if (back()) event.preventDefault() }
-    const keyboard = (event: KeyboardEvent) => { if (event.defaultPrevented || !['Escape', 'BrowserBack'].includes(event.key)) return; event.preventDefault(); window.dispatchEvent(new Event('bilimusic-back', { cancelable: true })) }
+    const keyboard = (event: KeyboardEvent) => { if (event.defaultPrevented || !['Escape', 'BrowserBack'].includes(event.key)) return; if (dispatchBack()) event.preventDefault() }
     window.addEventListener('bilimusic-back', handle); window.addEventListener('keydown', keyboard)
     return () => { window.removeEventListener('bilimusic-back', handle); window.removeEventListener('keydown', keyboard) }
   }, [back])
@@ -98,7 +105,7 @@ export function LargeScreenApp() {
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
   const active = ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
   return <div onSubmitCapture={dismissLargeKeyboard} className={`large-shell${route.kind === 'player' ? ' player-open' : route.kind === 'home' ? ' home-open' : ''}`}>
-    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && updateAvailable && !attention && <span className="update-nav-dot" aria-label="有新版本"/>}{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{appVersion}</small></nav>
+    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && updateAvailable && !attention && <span className="update-nav-dot" aria-label="有新版本"/>}{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{currentDisplayVersion}</small></nav>
     <main ref={main} className="large-main" aria-label="内容区">
       {route.kind !== 'player' && <div className="large-topbar"><button className="large-icon" aria-label="返回上一页" disabled={route.kind === 'home' && !history.current.length} onClick={() => back()}><ArrowLeft/></button><button className={attention ? 'large-sync attention' : 'large-sync'} onClick={() => navigate({ kind: 'settings' })}>{attention ? <AlertCircle/> : <Cloud/>}<span>{attention ? '同步待处理' : '账号与同步'}</span></button></div>}
       {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}

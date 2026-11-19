@@ -361,6 +361,102 @@ pub async fn bili_linked_change(
 }
 
 #[tauri::command]
+pub async fn bili_linked_remove_selected(
+    database: State<'_, Database>,
+    folder_id: i64,
+    bvids: Vec<String>,
+    expected_account_session: String,
+) -> Result<LinkedRemoval, CommandError> {
+    let bvids = bvids.into_iter().collect::<std::collections::BTreeSet<_>>();
+    if bvids.is_empty()
+        || bvids.len() > 50
+        || bvids.iter().any(|bvid| !super::commands::valid_bvid(bvid))
+    {
+        return Err(CommandError::validation("每次可从 B 站移除 1 至 50 个视频"));
+    }
+    let update = folder_update(&database, folder_id)?;
+    let _operation = update.lock().await;
+    {
+        let connection = database.0.lock().map_err(CommandError::database)?;
+        super::commands::check_account_session(&connection, &expected_account_session)?;
+    }
+    let (provider, active, uid, folder) = owned_folder(&database, folder_id).await?;
+    let cached = {
+        let connection = database.0.lock().map_err(CommandError::database)?;
+        super::commands::check_account_session(&connection, &expected_account_session)?;
+        ensure_active(&connection, &active, folder_id, uid)?;
+        read(&connection, folder_id)?.ok_or_else(|| CommandError::validation("请先关联此收藏夹"))?
+    };
+    let aids = cached
+        .videos
+        .iter()
+        .map(|video| (video.bvid.as_str(), video.aid))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for bvid in bvids {
+        {
+            let connection = database.0.lock().map_err(CommandError::database)?;
+            super::commands::check_account_session(&connection, &expected_account_session)?;
+            ensure_active(&connection, &active, folder_id, uid)?;
+            if read(&connection, folder_id)?.is_none() {
+                return Err(CommandError::validation("收藏夹已解除关联"));
+            }
+        }
+        // A missing membership already satisfies a removal. A cached resource
+        // without an aid cannot safely be sent as a mutation.
+        let result = match aids.get(bvid.as_str()).copied() {
+            Some(aid) if aid > 0 => provider
+                .change_favorite_video(folder_id, aid, false)
+                .await
+                .map_err(|cause| cause.to_string()),
+            Some(_) => Err("未获取到视频编号".into()),
+            None => Ok(()),
+        };
+        match result {
+            Ok(()) => removed.push(bvid),
+            Err(message) => failed.push(LinkedRemovalFailure { bvid, message }),
+        }
+    }
+    let videos = if removed.is_empty() {
+        cached.videos
+    } else {
+        // Refresh once. Membership reads can lag behind a successful mutation.
+        pull_videos(&provider, folder_id)
+            .await
+            .unwrap_or(cached.videos)
+            .into_iter()
+            .filter(|video| !removed.contains(&video.bvid))
+            .collect()
+    };
+    let connection = database.0.lock().map_err(CommandError::database)?;
+    super::commands::check_account_session(&connection, &expected_account_session)?;
+    ensure_active(&connection, &active, folder_id, uid)?;
+    if read(&connection, folder_id)?.is_none() {
+        return Err(CommandError::validation("收藏夹已解除关联"));
+    }
+    Ok(LinkedRemoval {
+        folder: save_folder(&connection, folder, uid, videos)?,
+        removed,
+        failed,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedRemoval {
+    folder: LinkedFolder,
+    removed: Vec<String>,
+    failed: Vec<LinkedRemovalFailure>,
+}
+
+#[derive(Serialize)]
+struct LinkedRemovalFailure {
+    bvid: String,
+    message: String,
+}
+
+#[tauri::command]
 pub fn bili_linked_unlink(
     database: State<'_, Database>,
     folder_id: i64,

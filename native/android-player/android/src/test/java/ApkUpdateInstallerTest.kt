@@ -6,6 +6,15 @@ import java.nio.file.Files
 import java.io.File
 
 class ApkUpdateInstallerTest {
+    @Test fun sameVersionUpdateMustMatchTheOfferedBuild() {
+        val signers = setOf("key")
+        fun check(installed: Long, candidate: Long) =
+            ApkUpdateInstaller.validateIdentity("phone", "phone", installed, candidate, "0.4.0", "0.4.0", signers, signers, 40001)
+        check(30700, 40001)
+        check(40000, 40001)
+        assertThrows(IllegalArgumentException::class.java) { check(40000, 40002) }
+        assertThrows(IllegalArgumentException::class.java) { check(40001, 40001) }
+    }
     @Test fun rejectsOtherEditionOlderVersionAndDifferentSigner() {
         fun check(pkg: String = "app.bilimusic.mobile", code: Long = 200, signers: Set<String> = setOf("key"), name: String = "0.4.0") =
             ApkUpdateInstaller.validateIdentity("app.bilimusic.mobile", pkg, 100, code, "0.4.0", name, setOf("key"), signers)

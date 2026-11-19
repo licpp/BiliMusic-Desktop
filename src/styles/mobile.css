@@ -180,13 +180,6 @@
     gap:0 6px;
   }
   :root[data-layout="mobile"] .dock-track-group { grid-area:1/1; }
-  :root[data-layout="mobile"] .dock-track-group { touch-action:pan-y;transform:translate3d(var(--dock-swipe-x,0),0,0);will-change:transform,opacity; }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-idle { transition:transform 190ms cubic-bezier(.2,.8,.2,1),opacity 160ms ease; }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-dragging { transition:none;opacity:.9; }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-commit-left { transform:translate3d(-115%,0,0);opacity:0;transition:transform 150ms cubic-bezier(.4,0,1,1),opacity 130ms ease; }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-commit-right { transform:translate3d(115%,0,0);opacity:0;transition:transform 150ms cubic-bezier(.4,0,1,1),opacity 130ms ease; }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-enter-left { animation:dock-enter-from-right 220ms cubic-bezier(.16,1,.3,1); }
-  :root[data-layout="mobile"] .dock-track-group.dock-swipe-enter-right { animation:dock-enter-from-left 220ms cubic-bezier(.16,1,.3,1); }
   :root[data-layout="mobile"] .dock-cover { width:46px;height:46px;flex-basis:46px;border-radius:9px; }
   :root[data-layout="mobile"] .dock-track strong { font-size:14px; }
   :root[data-layout="mobile"] .dock-track small { font-size:12px; }
@@ -204,7 +197,8 @@
   :root[data-layout="mobile"] .lyrics-view { bottom:calc(142px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
   :root[data-layout="mobile"] .playback-error { bottom:calc(142px + var(--native-safe-bottom,env(safe-area-inset-bottom,0px))); }
 
-  :root[data-layout="mobile"] .queue-sheet-backdrop { position:fixed;inset:0;z-index:229;border:0;background:rgba(2,8,13,.34); }
+  :root[data-layout="mobile"] .queue-sheet-backdrop { position:fixed;inset:0;z-index:229;border:0;background:var(--bottom-sheet-scrim);opacity:0;pointer-events:none;transition:opacity 160ms ease; }
+  :root[data-layout="mobile"] .queue-visible > .queue-sheet-backdrop { opacity:1;pointer-events:auto; }
   :root[data-layout="mobile"] .queue-drawer.queue-sheet {
     position:fixed;
     inset:auto 0 0;
@@ -212,16 +206,18 @@
     display:grid;
     grid-template-rows:28px auto minmax(0,1fr);
     width:100%;
-    height:min(74dvh,680px);
+    height:min(74vh,680px);
+    height:min(calc(var(--visible-height,100dvh) * .74),680px);
+    transform:translate3d(0,var(--panel-drag-y,0px),0);
     max-width:none;
     padding-bottom:var(--native-safe-bottom,env(safe-area-inset-bottom,0px));
     border:0;border-radius:24px 24px 0 0;
     background:var(--panel);
     box-shadow:0 -18px 50px #0005;
-    transition:transform 220ms cubic-bezier(.2,.8,.2,1),opacity 160ms ease;
+    transition:transform var(--bottom-sheet-motion),opacity 160ms ease;
   }
   :root[data-layout="mobile"] .app-shell:not(.queue-visible) .queue-drawer.queue-sheet { transform:translate3d(0,100%,0); }
-  :root[data-layout="mobile"] .queue-sheet-handle { display:grid;place-items:center;width:100%;height:28px;padding:0;border:0;background:transparent; }
+  :root[data-layout="mobile"] .queue-sheet-handle { touch-action:none;display:grid;place-items:center;width:100%;height:28px;padding:0;border:0;background:transparent; }
   :root[data-layout="mobile"] .queue-sheet-handle span { width:36px;height:4px;border-radius:999px;background:var(--muted);opacity:.42; }
   :root[data-layout="mobile"] .queue-drawer.queue-sheet > header { padding:4px 16px 12px; }
   :root[data-layout="mobile"] .queue-drawer.queue-sheet > header .eyebrow { display:none; }
@@ -287,11 +283,11 @@
   :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive)>.player-dock {
     grid-template-columns:minmax(0,1fr) 90px;
   }
-  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) .dock-controls {
+  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) > .player-dock .dock-controls {
     width:90px;min-width:0;max-width:90px;grid-template-columns:44px 44px;justify-content:start;column-gap:2px;
   }
-  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) .dock-controls>.play-toggle { grid-area:1/1;min-width:0;padding:0; }
-  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) .dock-controls>.queue-control { grid-area:1/2;min-width:0;padding:0; }
+  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) > .player-dock .dock-controls>.play-toggle { grid-area:1/1;min-width:0;padding:0; }
+  :root[data-layout="mobile"] .app-shell:not(.lyrics-immersive) > .player-dock .dock-controls>.queue-control { grid-area:1/2;min-width:0;padding:0; }
 }
 /* Native iOS button wrappers must not shift SVGs in either player layout. */
 @media(max-width:960px) {

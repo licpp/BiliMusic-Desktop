@@ -30,46 +30,7 @@ struct WindowMode {
 fn shape(window: &WebviewWindow, mini: bool) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        use objc2::{
-            class, msg_send,
-            runtime::{AnyObject, Bool},
-        };
-        window.set_background_color(if mini {
-            Some(tauri::window::Color(0, 0, 0, 0))
-        } else {
-            None
-        })?;
-        window.with_webview(move |webview| unsafe {
-            // Round the native window surface as well as the HTML content.
-            let native = webview.ns_window() as *mut AnyObject;
-            let color: *mut AnyObject = if mini {
-                msg_send![class!(NSColor), clearColor]
-            } else {
-                msg_send![class!(NSColor), windowBackgroundColor]
-            };
-            let _: () = msg_send![native, setOpaque: Bool::new(!mini)];
-            let _: () = msg_send![native, setBackgroundColor: color];
-            let view: *mut AnyObject = msg_send![native, contentView];
-            let _: () = msg_send![view, setWantsLayer: Bool::YES];
-            let layer: *mut AnyObject = msg_send![view, layer];
-            if !layer.is_null() {
-                let _: () =
-                    msg_send![layer, setCornerRadius: if mini { 16.0_f64 } else { 0.0_f64 }];
-                let _: () = msg_send![layer, setMasksToBounds: Bool::new(mini)];
-            }
-            let _: () = msg_send![native, invalidateShadow];
-            #[cfg(debug_assertions)]
-            {
-                let opaque: Bool = msg_send![native, isOpaque];
-                let radius: f64 = msg_send![layer, cornerRadius];
-                let color: *mut AnyObject = msg_send![native, backgroundColor];
-                let alpha: f64 = msg_send![color, alphaComponent];
-                eprintln!(
-                    "mini_shape active={mini} opaque={} radius={radius} background_alpha={alpha}",
-                    opaque.as_bool()
-                );
-            }
-        })?;
+        crate::window_lifecycle::set_corner_radius(window, mini.then_some(16.))?;
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (window, mini);

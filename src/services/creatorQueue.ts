@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { usePlayerStore } from '../features/player/playerStore'
-import { creatorVideoRow, seasonTracks, type SeasonVideo } from './mediaSources'
+import { creatorVideoRow } from './mediaSources'
 import { accountEpoch } from './accountScope'
 
 // Extend the existing queue before reaching the loaded page's last few videos.
@@ -17,6 +17,7 @@ export function startCreatorQueue() {
       !state.current
     )
       return
+    const creatorMid = source.creatorMid
     const videos = [...new Set(state.queue.map((track) => track.source.bvid))]
     const at = videos.indexOf(state.current.source.bvid)
     if (at < videos.length - 5 || videos.length >= (source.creatorTotal || 0))
@@ -55,20 +56,9 @@ export function startCreatorQueue() {
       )
         return
       const known = new Set(current.queue.map((track) => track.source.bvid))
-      const rows: SeasonVideo[] = result.data.list.vlist
+      const tracks = result.data.list.vlist
         .filter((video) => !known.has(video.bvid))
-        .map(creatorVideoRow)
-      const tracks = seasonTracks({
-        unavailable: 0,
-        summary: {
-          id: source.creatorMid,
-          uploaderId: source.creatorMid,
-          title: source.title,
-          uploaderName: source.title,
-          coverUrl: '',
-        },
-        tracks: rows,
-      })
+        .map(video => creatorVideoRow(video, creatorMid, source.title))
       usePlayerStore.setState({
         queue: [...current.queue, ...tracks],
         queueSource: {

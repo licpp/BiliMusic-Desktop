@@ -13,7 +13,7 @@ const compiled = await build({
     builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({path}) => ({contents: {
       invoke: 'export const invoke=(...args)=>globalThis.creatorQueueTest.invoke(...args)',
       store: 'export const usePlayerStore={subscribe(fn){globalThis.creatorQueueTest.listener=fn},getState:()=>globalThis.creatorQueueTest.state,setState(next){globalThis.creatorQueueTest.state={...globalThis.creatorQueueTest.state,...next}}}',
-      media: 'export const creatorVideoRow=v=>v;export const seasonTracks=c=>c.tracks.map(v=>({id:v.bvid,source:{bvid:v.bvid}}))',
+      media: 'export const creatorVideoRow=v=>({id:v.bvid,source:{bvid:v.bvid}})',
       account: 'export const accountEpoch=()=>0',
     }[path]}))
   } }],

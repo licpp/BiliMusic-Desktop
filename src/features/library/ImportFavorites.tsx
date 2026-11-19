@@ -1,3 +1,4 @@
+import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
 import { accountQueryKey } from '../../services/queryKeys'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -60,6 +61,11 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
   useEffect(()=>{const previous=document.activeElement as HTMLElement|null;dialog.current?.focus();return ()=>previous?.focus()},[])
   useEffect(()=>{window.addEventListener('bilimusic-account-changing',onClose);return ()=>window.removeEventListener('bilimusic-account-changing',onClose)},[onClose])
   const dismiss=()=>{cancelled.current=true;onClose()}
+  const back = () => {
+    if (page === 'sources' || page === 'progress') dismiss()
+    else if (!busy) { setPage('sources'); setError(''); setBiliStatus('') }
+  }
+  useOverlayDismiss(dialog, true, back)
   const endImport=()=>{clearPlaylistImport();void refresh();dismiss()}
   const startExternal=async()=>{
     setError('');setBusy(true)
@@ -117,7 +123,7 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
   const results=job?.rows.map((row,index)=>({row,index})).filter(({row})=>`${row.song.title} ${row.song.artists.join(' ')}`.toLocaleLowerCase().includes(resultQuery.toLocaleLowerCase())&&(filter==='all'||row.status==='missing'))||[]
   return <div className={`playlist-import-backdrop${page==='sources'?' source-picker':''}`} onClick={event=>{if(event.target===event.currentTarget)dismiss()}}>
     <div ref={dialog} className="playlist-import-dialog" role="dialog" aria-modal="true" aria-label="导入歌单" tabIndex={-1} onKeyDown={event=>{
-      if(event.key==='Escape'){event.stopPropagation();dismiss()}
+      if(event.key==='Escape'){event.stopPropagation();back()}
       if(event.key==='Tab') {const items=[...dialog.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input,textarea,[tabindex="0"]')].filter(el=>el.getClientRects().length);const first=items[0],last=items.at(-1);if(document.activeElement===dialog.current){event.preventDefault();(event.shiftKey?last:first)?.focus()}else if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}
     }}>
       <header className="import-header"><div>{page!=='sources'&&page!=='progress'&&<button className="import-icon" disabled={busy} aria-label="返回导入来源" onClick={()=>{setPage('sources');setError('');setBiliStatus('')}}><ArrowLeft size={20}/></button>}<h2>{title}</h2></div><button className="import-icon" aria-label={running?'收起导入进度':'关闭导入'} title={running?'收起后继续导入':undefined} onClick={dismiss}>{running?<Minus size={20}/>:<X size={20}/>}</button></header>

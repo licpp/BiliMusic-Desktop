@@ -1,16 +1,23 @@
 //! Lyrics remain in a mouse-transparent window while locked. A separate, tightly
 //! bounded window owns the unlock button, so its clicks can never leak down.
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
+use tauri_plugin_store::StoreExt;
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 const LYRICS: &str = "floating-lyrics";
 const UNLOCK: &str = "floating-lyrics-unlock";
 const UNLOCK_WIDTH: f64 = 64.0;
 const UNLOCK_HEIGHT: f64 = 28.0;
+const PLACEMENT_KEY: &str = "floatingLyricsPlacement";
 
 #[derive(Default)]
 pub struct FloatingLyrics {
@@ -18,6 +25,90 @@ pub struct FloatingLyrics {
     locked: AtomicBool,
     ready: AtomicBool,
     watcher: AtomicU64,
+    lifecycle: tokio::sync::Mutex<()>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+struct LyricsPlacement {
+    x: i32,
+    y: i32,
+    width: f64,
+    height: f64,
+}
+
+impl LyricsPlacement {
+    fn position_on_display(
+        self,
+        origin: PhysicalPosition<i32>,
+        size: PhysicalSize<u32>,
+    ) -> Option<PhysicalPosition<i32>> {
+        let dx = i64::from(self.x) - i64::from(origin.x);
+        let dy = i64::from(self.y) - i64::from(origin.y);
+        ((0..i64::from(size.width)).contains(&dx) && (0..i64::from(size.height)).contains(&dy))
+            .then_some(PhysicalPosition::new(self.x, self.y))
+    }
+}
+
+pub fn remember_placement(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window(LYRICS) else {
+        return;
+    };
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+        return;
+    }
+    let (Ok(position), Ok(size), Ok(scale)) = (
+        window.outer_position(),
+        window.inner_size(),
+        window.scale_factor(),
+    ) else {
+        return;
+    };
+    if size.width == 0 || size.height == 0 || !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    if let Ok(store) = app.store("settings.json") {
+        let size = size.to_logical::<f64>(scale);
+        let placement = LyricsPlacement {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        };
+        store.set(PLACEMENT_KEY, serde_json::json!(placement));
+        let _ = store.save();
+    }
+}
+
+fn restore_placement(window: &WebviewWindow) {
+    let saved = window
+        .app_handle()
+        .store("settings.json")
+        .ok()
+        .and_then(|store| store.get(PLACEMENT_KEY))
+        .and_then(|value| serde_json::from_value::<LyricsPlacement>(value).ok());
+    let Some(placement) = saved else {
+        // Earlier versions tracked this window with the generic window-state plugin.
+        let _ = window.restore_state(StateFlags::SIZE | StateFlags::POSITION);
+        return;
+    };
+    let position = window.available_monitors().ok().and_then(|monitors| {
+        monitors
+            .iter()
+            .find_map(|monitor| placement.position_on_display(*monitor.position(), *monitor.size()))
+    });
+    if let Some(position) = position {
+        let _ = window.set_position(position);
+    }
+    if placement.width.is_finite()
+        && placement.height.is_finite()
+        && placement.width >= 320.0
+        && placement.height >= 176.0
+    {
+        let _ = window.set_size(LogicalSize::new(placement.width, placement.height));
+    }
+    if position.is_none() {
+        let _ = window.center();
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -232,32 +323,16 @@ pub fn floating_lyrics_update(
 pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Result<(), String> {
     let app = window.app_handle();
     let state = app.state::<FloatingLyrics>();
+    let _lifecycle = state.lifecycle.lock().await;
     if !enabled {
-        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-        let _ =
-            app.save_window_state(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED);
         state.watcher.fetch_add(1, Ordering::AcqRel);
-        // Reuse macOS WebKit views between uses to avoid tearing down a
-        // scrolling tree while display-link callbacks may still be pending.
-        #[cfg(target_os = "macos")]
-        {
-            if let Some(button) = app.get_webview_window(UNLOCK) {
-                button.hide().map_err(|e| e.to_string())?;
-            }
-            if let Some(floating) = app.get_webview_window(LYRICS) {
-                floating.hide().map_err(|e| e.to_string())?;
-            }
+        remember_placement(app);
+        // Keep the native window at its current position between toggles.
+        if let Some(button) = app.get_webview_window(UNLOCK) {
+            button.hide().map_err(|e| e.to_string())?;
         }
-        #[cfg(not(target_os = "macos"))]
-        {
-            state.ready.store(false, Ordering::Release);
-            *state.frame.lock().unwrap() = Value::Null;
-            if let Some(button) = app.get_webview_window(UNLOCK) {
-                let _ = button.close();
-            }
-            if let Some(floating) = app.get_webview_window(LYRICS) {
-                floating.close().map_err(|e| e.to_string())?;
-            }
+        if let Some(floating) = app.get_webview_window(LYRICS) {
+            floating.hide().map_err(|e| e.to_string())?;
         }
         let _ = app.emit_to("main", "floating-lyrics-closed", ());
         return Ok(());
@@ -287,6 +362,7 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
     .skip_taskbar(true)
     .resizable(true)
     .focused(false)
+    .visible(false)
     .build()
     .map_err(|e| e.to_string())?;
     let button = WebviewWindowBuilder::new(
@@ -326,10 +402,11 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
         let _ = floating.close();
         return Err(error.to_string());
     }
-    let generation = state.watcher.fetch_add(1, Ordering::AcqRel) + 1;
-    watch_unlock(app.clone(), generation);
     let handle = app.clone();
     floating.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            remember_placement(&handle);
+        }
         if matches!(event, tauri::WindowEvent::Destroyed) {
             let state = handle.state::<FloatingLyrics>();
             let destroyed_generation = state.watcher.fetch_add(1, Ordering::AcqRel) + 1;
@@ -355,6 +432,17 @@ pub async fn floating_lyrics_enable(window: WebviewWindow, enabled: bool) -> Res
             }
         }
     });
+    let (shown, result) = tokio::sync::oneshot::channel();
+    let opening = floating.clone();
+    floating
+        .run_on_main_thread(move || {
+            restore_placement(&opening);
+            let _ = shown.send(opening.show().map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    result.await.map_err(|error| error.to_string())??;
+    let generation = state.watcher.fetch_add(1, Ordering::AcqRel) + 1;
+    watch_unlock(app.clone(), generation);
     Ok(())
 }
 
@@ -428,6 +516,28 @@ pub fn floating_lyrics_unlock(window: WebviewWindow) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saved_placement_survives_restart_and_ignores_a_disconnected_display() {
+        let saved = LyricsPlacement {
+            x: -1700,
+            y: 400,
+            width: 720.0,
+            height: 176.0,
+        };
+        let restored: LyricsPlacement =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!(restored, saved);
+        let display_size = PhysicalSize::new(1920, 1080);
+        assert_eq!(
+            restored.position_on_display(PhysicalPosition::new(-1920, 0), display_size),
+            Some(PhysicalPosition::new(-1700, 400))
+        );
+        assert_eq!(
+            restored.position_on_display(PhysicalPosition::new(0, 0), display_size),
+            None
+        );
+    }
+
     #[test]
     fn unlock_bounds_remain_small_on_scaled_and_negative_displays() {
         let point =

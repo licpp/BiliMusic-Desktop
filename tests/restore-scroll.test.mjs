@@ -11,6 +11,7 @@ test('return restores after layout grows and user input stops restoration',()=>{
  const host=Object.assign(new EventTarget(),{children:[{}],height:100,value:0})
  Object.defineProperty(host,'scrollTop',{get(){return this.value},set(n){this.value=Math.min(n,this.height)}})
  const stop=restoreScroll(host,650)
+ assert.equal(host.scrollTop,100)
  const paint=()=>{const work=[...frames.values()];frames.clear();work.forEach(fn=>fn())}
  paint();assert.equal(host.scrollTop,100)
  host.height=1000;resize();paint();assert.equal(host.scrollTop,650)

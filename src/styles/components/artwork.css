@@ -61,3 +61,33 @@
 .library-entry .cover-badge { width:14px;height:14px;right:3px;bottom:3px; }
 .library-entry .cover-badge>svg { width:12px;height:12px; }
 .library-entry :is(.collection-cover,.playlist-card-cover):not(:has(img))>.cover-badge-folder { display:none; }
+
+.video-access-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .2em;
+  width: max-content;
+  flex: none;
+  padding: .1em .45em;
+  border-radius: 4px;
+  background: #c5235b;
+  color: #fff;
+  font-size: .75rem;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.video-access-badge > svg { width: 1em; height: 1em; flex: none; }
+.video-access-badge[data-cover] {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  font-size: .625rem;
+  pointer-events: none;
+}
+.large-card-art > .video-access-badge[data-cover] { top: 8px; right: 8px; font-size: .82rem; }
+.video-with-cover .video-part-index { position: relative; }
+.collection-detail > header .video-access-badge,
+.mobile-parts-summary .video-access-badge { margin-top: 5px; }

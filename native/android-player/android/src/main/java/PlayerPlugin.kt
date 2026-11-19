@@ -23,12 +23,14 @@ class PlayArgs {
     lateinit var id: String
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
     var position: Double = 0.0
     var loudnessGainDb: Double = 0.0
     var loudnessEnabled: Boolean = false
     var loudnessRevision: Long = 0
-    var volume: Double = 0.7
+    var volume: Double = 1.0
     var playing: Boolean = true
     var seamless: Boolean = false
     var upgradeUrl: String? = null
@@ -47,6 +49,8 @@ class ControlArgs {
     var collectionRef: String? = null
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
 }
 
@@ -69,12 +73,13 @@ class ResolvedArgs { var request: Long = 0; var data: String = "{}" }
 class DownloadPathArgs { lateinit var path: String }
 
 @InvokeArg
-class InstallUpdateArgs { lateinit var path: String; lateinit var version: String }
+class InstallUpdateArgs { lateinit var path: String; lateinit var version: String; var versionCode: Long? = null }
 
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private val downloadStorage by lazy { DownloadStorage(activity.applicationContext) }
     private val downloadWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var playbackNotificationPermission: PlaybackNotificationPermission? = null
 
     // These storage commands are called by Rust only; they have no WebView ACL grant.
     @Command
@@ -126,7 +131,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(InstallUpdateArgs::class.java)
         downloadWorker.execute {
             try {
-                val file = ApkUpdateInstaller.prepare(activity, args.path, args.version)
+                val file = ApkUpdateInstaller.prepare(activity, args.path, args.version, args.versionCode)
                 activity.runOnUiThread {
                     try { invoke.resolve(JSObject().put("status", ApkUpdateInstaller.launch(activity, file))) }
                     catch (_: Exception) { invoke.reject("无法打开系统安装器，请检查安装权限或前往官网下载") }
@@ -293,6 +298,11 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         // CSP and the network security config limit HTTP media to loopback.
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         val owner = activity as? androidx.appcompat.app.AppCompatActivity
+        if (owner != null && playbackNotificationPermission == null) {
+            playbackNotificationPermission = PlaybackNotificationPermission(owner) {
+                PlaybackService.instance?.refreshPlaybackNotification()
+            }
+        }
         owner?.onBackPressedDispatcher?.addCallback(
             owner, object : androidx.activity.OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
@@ -328,7 +338,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
             .putExtra("url", args.url).putExtra("id", args.id)
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
-            .putExtra("title", args.title).putExtra("artist", args.artist)
+            .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+            .putExtra("durationSeconds", args.durationSeconds)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
             .putExtra("loudnessGainDb", args.loudnessGainDb).putExtra("loudnessEnabled", args.loudnessEnabled).putExtra("loudnessRevision", args.loudnessRevision)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)
@@ -339,6 +350,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         activity.startForegroundService(intent)
         invoke.resolve()
+        if (args.playing) activity.runOnUiThread { playbackNotificationPermission?.requestForPlayback() }
     }
     @Command
     fun control(invoke: Invoke) {
@@ -349,7 +361,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 // tracks still works after the activity goes into the background.
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
-                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("coverUrl", args.coverUrl))
+                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+                    .putExtra("durationSeconds", args.durationSeconds).putExtra("coverUrl", args.coverUrl))
             } else if (args.action == "largeScreen") {
                 largeScreen = args.value > 0
                 if (largeScreen) activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -382,6 +395,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 else if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
                 else try {
                     service?.control(args.action, args.value)
+                    if (args.action == "resume" && service != null) playbackNotificationPermission?.requestForPlayback()
                 } catch (_: IllegalArgumentException) {
                     invoke.reject("当前无法调整播放器设置，请重试")
                     return@runOnUiThread

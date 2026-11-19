@@ -25,6 +25,9 @@ import org.json.JSONObject
 // The service owns the renderer and reads the same MediaPlayer clock. No
 // WebView timer or second audio session is needed when the app is backgrounded.
 object FloatingLyricsOverlay {
+    private const val PREFS = "bilimusic-lyrics-style"
+    private const val POSITION_X = "positionX"
+    private const val POSITION_Y = "positionY"
     var enabled = false
         private set
     private var owner: PlaybackService? = null
@@ -110,23 +113,61 @@ object FloatingLyricsOverlay {
         }.apply{visibility=View.INVISIBLE};controls=tools
         row.addView(tools,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
         val metrics=context.resources.displayMetrics
-        val params=WindowManager.LayoutParams((metrics.widthPixels*.9).toInt(),WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START;x=(metrics.widthPixels*.05).toInt();y=(metrics.heightPixels*.65).toInt() }
+        val width = (metrics.widthPixels * .9).toInt()
+        row.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(metrics.heightPixels, View.MeasureSpec.AT_MOST))
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val saved = FloatingLyricsWindowPolicy.savedPosition(
+            prefs.getFloat(POSITION_X, Float.NaN), prefs.getFloat(POSITION_Y, Float.NaN)
+        )
+        fun maxX() = (metrics.widthPixels - row.measuredWidth).coerceAtLeast(0)
+        fun maxY() = (metrics.heightPixels - row.measuredHeight).coerceAtLeast(0)
+        val (startX, startY) = saved?.pixels(maxX(), maxY())
+            ?: ((metrics.widthPixels * .05).toInt().coerceAtMost(maxX()) to
+                (metrics.heightPixels * .65).toInt().coerceAtMost(maxY()))
+        val params=WindowManager.LayoutParams(width,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START;x=startX;y=startY }
         if(locked)params.flags=params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         params.alpha=windowAlpha(context)
         layout=params
         var moved=false
         var initialX=0;var initialY=0;var downX=0f;var downY=0f
-        val touch=android.view.View.OnTouchListener { _,event ->
-            when(event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { moved=false;initialX=params.x;initialY=params.y;downX=event.rawX;downY=event.rawY }
-                MotionEvent.ACTION_MOVE -> { if(kotlin.math.abs(event.rawX-downX)+kotlin.math.abs(event.rawY-downY)>8*density)moved=true;params.x=(initialX+event.rawX-downX).toInt().coerceIn(0,(metrics.widthPixels-row.width).coerceAtLeast(0));params.y=(initialY+event.rawY-downY).toInt().coerceIn(0,(metrics.heightPixels-row.height).coerceAtLeast(0));runCatching {window.updateViewLayout(row,params)} }
-                MotionEvent.ACTION_UP -> { if(!moved && !locked)controlVisibility.reveal(android.os.SystemClock.uptimeMillis()) }
-            };true
+        val touch = View.OnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    moved = false
+                    initialX = params.x
+                    initialY = params.y
+                    downX = event.rawX
+                    downY = event.rawY
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (kotlin.math.abs(dx) + kotlin.math.abs(dy) > 8 * density) moved = true
+                    if (moved) {
+                        params.x = (initialX + dx).toInt().coerceIn(0, maxX())
+                        params.y = (initialY + dy).toInt().coerceIn(0, maxY())
+                        runCatching { window.updateViewLayout(row, params) }
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (moved) {
+                        val position = FloatingLyricsWindowPolicy.capturePosition(params.x, params.y, maxX(), maxY())
+                        prefs.edit().putFloat(POSITION_X, position.horizontal)
+                            .putFloat(POSITION_Y, position.vertical).apply()
+                    } else if (event.actionMasked == MotionEvent.ACTION_UP && !locked) {
+                        controlVisibility.reveal(android.os.SystemClock.uptimeMillis())
+                    }
+                }
+            }
+            true
         }
         label.setOnTouchListener(touch);next.setOnTouchListener(touch)
+        var firstLayout = true
         row.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->
-            val x=params.x.coerceIn(0,(metrics.widthPixels-row.width).coerceAtLeast(0))
-            val y=params.y.coerceIn(0,(metrics.heightPixels-row.height).coerceAtLeast(0))
+            val restored = if (firstLayout) saved?.pixels(maxX(), maxY()) else null
+            firstLayout = false
+            val (x, y) = restored ?: (params.x.coerceIn(0, maxX()) to params.y.coerceIn(0, maxY()))
             if(params.x!=x || params.y!=y){params.x=x;params.y=y;runCatching{window.updateViewLayout(row,params)}}
             syncUnlock()
         }
@@ -143,7 +184,7 @@ object FloatingLyricsOverlay {
 
     private fun saveStyle(context: Context) {
         styleRevision=maxOf(styleRevision+1,android.os.SystemClock.elapsedRealtime())
-        context.getSharedPreferences("bilimusic-lyrics-style",Context.MODE_PRIVATE).edit().putFloat("fontSize",fontSize).putBoolean("locked",locked).apply()
+        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putFloat("fontSize",fontSize).putBoolean("locked",locked).apply()
         owner?.notifyLyricsChanged()
     }
     private fun windowAlpha(context: Context): Float {
@@ -174,12 +215,22 @@ object FloatingLyricsOverlay {
         val (x,y)=FloatingLyricsWindowPolicy.unlockPosition(params.x,params.y,row.width.takeIf{it>0} ?: params.width,row.height,metrics.widthPixels,metrics.heightPixels,size,gap)
         val existing=unlock
         if(existing!=null){unlockLayout?.let{if(it.x!=x || it.y!=y){it.x=x;it.y=y;runCatching{window.updateViewLayout(existing,it)}}};return}
-        val button=FloatingLyricsUnlockButton(context){unlockLyrics()}
-        val buttonParams=WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,android.graphics.PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;this.x=x;this.y=y}
+        val button = FloatingLyricsUnlockButton(context, ::updateUnlockVisibility) { unlockLyrics() }
+        val buttonParams=WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,FloatingLyricsWindowPolicy.unlockFlags(true),android.graphics.PixelFormat.TRANSLUCENT).apply{gravity=Gravity.TOP or Gravity.START;this.x=x;this.y=y}
         runCatching{window.addView(button,buttonParams);unlock=button;unlockLayout=buttonParams}.onFailure {
             // Do not leave a locked overlay without a usable unlock target.
             locked=false;applyLock(context);saveStyle(context)
         }
+    }
+    private fun updateUnlockVisibility(button: FloatingLyricsUnlockButton, revealed: Boolean) {
+        if (unlock !== button) return
+        val context = owner ?: return
+        val params = unlockLayout ?: return
+        params.flags = FloatingLyricsWindowPolicy.unlockFlags(revealed)
+        // Keep the window attached for ACTION_OUTSIDE, but fully transparent and
+        // non-touchable so its former bounds also pass touches through.
+        params.alpha = if (revealed) 1f else 0f
+        runCatching { (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).updateViewLayout(button, params) }
     }
     private fun render() {
         val service=owner ?: return

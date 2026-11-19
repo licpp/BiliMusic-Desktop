@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackInteractionTest {
+    @Test fun overlayRestoresAnExactPositionAndScalesItToTheNewDisplay() {
+        val place = FloatingLyricsWindowPolicy.capturePosition(62, 489, 108, 2120)
+        val saved = FloatingLyricsWindowPolicy.savedPosition(place.horizontal, place.vertical)!!
+        assertEquals(62 to 489, saved.pixels(108, 2120))
+        assertEquals(138 to 185, saved.pixels(240, 800))
+        assertEquals(0 to 0, saved.pixels(0, 0))
+        assertNull(FloatingLyricsWindowPolicy.savedPosition(Float.NaN, .5f))
+    }
     @Test fun unlockButtonCanBeHiddenWithoutChangingTheLockOrTouchThroughPolicy() {
         assertTrue(FloatingLyricsWindowPolicy.showUnlock(true,true,true,true))
         assertFalse(FloatingLyricsWindowPolicy.showUnlock(true,true,false,true))

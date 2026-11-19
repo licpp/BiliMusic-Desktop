@@ -1,3 +1,4 @@
+import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
 import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../../services/queryKeys'
 import { ProfileBadges } from './ProfileBadges'
 import { isMobile } from '../../services/platform'
@@ -5,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, LogOut, QrCode, UserRound, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { resetPlayerForAccount } from '../player/playerStore'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr } from '../../services/desktopApi'
 import type { QrLogin } from '../../domain/account'
 
@@ -13,6 +14,8 @@ export function AccountControl({ expanded = false }: { expanded?: boolean }) {
   const client = useQueryClient()
   const profile = useQuery({ queryKey: accountQueryKey('account'), queryFn: getAccountProfile, retry: false })
   const [open, setOpen] = useState(false)
+  const dialog = useRef<HTMLDivElement>(null)
+  useOverlayDismiss(dialog, open, () => setOpen(false))
   const [qr, setQr] = useState<QrLogin | null>(null)
   const [status, setStatus] = useState('')
 
@@ -73,5 +76,5 @@ export function AccountControl({ expanded = false }: { expanded?: boolean }) {
   }
   const account = profile.data
   const loggedIn = account?.loggedIn
-  return <><button type="button" className={expanded ? "account-entry" : "avatar"} title={profile.data?.loggedIn ? '查看账号信息' : '登录 B 站账号'} aria-label={profile.data?.loggedIn ? '查看账号信息' : '登录 B 站账号'} onClick={openAccount}><span className={expanded ? `account-entry-avatar${account?.vipActive ? ' vip-avatar' : ''}` : undefined}>{profile.data?.avatarUrl ? <img src={profile.data.avatarUrl} alt="" referrerPolicy="no-referrer" /> : <UserRound size={expanded ? 28 : 18} />}</span>{expanded && <span><strong>{profile.data?.loggedIn ? profile.data.name : '登录 B站账号'}</strong><small>{loggedIn ? `UID ${account?.userId}` : '导入收藏夹与同步自己的音乐资料'}</small>{loggedIn && <ProfileBadges level={account?.level} vipActive={account?.vipActive}/>}</span>}</button>{open && <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}><div className="account-dialog"><header><div><span className="eyebrow">BILIBILI</span><h3>{profile.data?.loggedIn ? '账号信息' : '扫码登录'}</h3></div><button type="button" onClick={() => setOpen(false)} aria-label="关闭账号窗口"><X /></button></header>{profile.data?.loggedIn ? <div className="account-profile"><span className={`account-profile-avatar${account?.vipActive ? ' vip-avatar' : ''}`}>{account?.avatarUrl ? <img src={account.avatarUrl} alt="" referrerPolicy="no-referrer"/> : <UserRound size={30}/>}</span><strong>{account?.name}</strong><small>UID {account?.userId}</small><ProfileBadges level={account?.level} vipActive={account?.vipActive}/><button type="button" disabled={loggingOut} onClick={() => void logout()}><LogOut />退出登录</button></div> : inDesktopShell ? <div className="qr-login">{qr ? <QRCodeSVG value={qr.url} size={190} level="M" marginSize={2} /> : <span><LoaderCircle className="spin" /></span>}<p>{status || '正在生成二维码'}</p>{isMobile && qr && <><button type="button" onClick={() => void navigator.clipboard.writeText(qr.url).then(() => setStatus('已复制登录链接，可在其他设备打开二维码扫码')).catch(() => setStatus('无法复制，请使用另一台设备扫码'))}>复制登录链接</button><small>可截图二维码后，在 B 站扫一扫中从相册识别；是否支持取决于 B 站客户端。</small></>}<small>登录用于收藏夹导入、评论与点赞。连接同步服务后，同一账号可汇总各设备的听歌统计。</small></div> : <div className="qr-login"><QrCode /><p>请在桌面应用中登录</p></div>}</div></div>}</>
+  return <><button type="button" className={expanded ? "account-entry" : "avatar"} title={profile.data?.loggedIn ? '查看账号信息' : '登录 B 站账号'} aria-label={profile.data?.loggedIn ? '查看账号信息' : '登录 B 站账号'} onClick={openAccount}><span className={expanded ? `account-entry-avatar${account?.vipActive ? ' vip-avatar' : ''}` : undefined}>{profile.data?.avatarUrl ? <img src={profile.data.avatarUrl} alt="" referrerPolicy="no-referrer" /> : <UserRound size={expanded ? 28 : 18} />}</span>{expanded && <span><strong>{profile.data?.loggedIn ? profile.data.name : '登录 B站账号'}</strong><small>{loggedIn ? `UID ${account?.userId}` : '导入收藏夹与同步自己的音乐资料'}</small>{loggedIn && <ProfileBadges level={account?.level} vipActive={account?.vipActive}/>}</span>}</button>{open && <div ref={dialog} className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}><div className="account-dialog"><header><div><span className="eyebrow">BILIBILI</span><h3>{profile.data?.loggedIn ? '账号信息' : '扫码登录'}</h3></div><button type="button" onClick={() => setOpen(false)} aria-label="关闭账号窗口"><X /></button></header>{profile.data?.loggedIn ? <div className="account-profile"><span className={`account-profile-avatar${account?.vipActive ? ' vip-avatar' : ''}`}>{account?.avatarUrl ? <img src={account.avatarUrl} alt="" referrerPolicy="no-referrer"/> : <UserRound size={30}/>}</span><strong>{account?.name}</strong><small>UID {account?.userId}</small><ProfileBadges level={account?.level} vipActive={account?.vipActive}/><button type="button" disabled={loggingOut} onClick={() => void logout()}><LogOut />退出登录</button></div> : inDesktopShell ? <div className="qr-login">{qr ? <QRCodeSVG value={qr.url} size={190} level="M" marginSize={2} /> : <span><LoaderCircle className="spin" /></span>}<p>{status || '正在生成二维码'}</p>{isMobile && qr && <><button type="button" onClick={() => void navigator.clipboard.writeText(qr.url).then(() => setStatus('已复制登录链接，可在其他设备打开二维码扫码')).catch(() => setStatus('无法复制，请使用另一台设备扫码'))}>复制登录链接</button><small>可截图二维码后，在 B 站扫一扫中从相册识别；是否支持取决于 B 站客户端。</small></>}<small>登录用于收藏夹导入、评论与点赞。连接同步服务后，同一账号可汇总各设备的听歌统计。</small></div> : <div className="qr-login"><QrCode /><p>请在桌面应用中登录</p></div>}</div></div>}</>
 }

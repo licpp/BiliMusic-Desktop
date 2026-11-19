@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { accountEpoch } from '../services/accountScope'
-import { cachedVideoPages, probeVideoPages } from '../services/videoPages'
-import type { BiliVideoPart } from '../domain/bilibili'
+import { cachedVideoDetail, cachedVideoPages, probeVideoPages } from '../services/videoPages'
+import type { BiliVideoPart, BiliVideoParts } from '../domain/bilibili'
 
-export function useVisibleVideoPages(bvid: string, enabled: boolean) {
-  const ref = useRef<HTMLDivElement>(null)
+export function useVisibleVideoPages<ElementType extends HTMLElement = HTMLDivElement>(bvid: string, enabled: boolean, withAccess = false) {
+  const ref = useRef<ElementType>(null)
   const scope = accountEpoch()
-  const [result, setResult] = useState<{ scope: number; bvid: string; pages: BiliVideoPart[] }>()
-  const pages = (result?.bvid === bvid && result.scope === scope ? result.pages : undefined) ?? cachedVideoPages(bvid)
+  const [result, setResult] = useState<{ scope: number; bvid: string; pages: BiliVideoPart[]; detail?: BiliVideoParts }>()
+  const matching = result?.bvid === bvid && result.scope === scope ? result : undefined
+  const detail = matching?.detail ?? cachedVideoDetail(bvid)
+  const pages = detail?.parts ?? matching?.pages ?? cachedVideoPages(bvid)
+  const complete = withAccess ? detail !== undefined : pages !== undefined
   useEffect(() => {
-    if (!enabled || pages || !ref.current) return
+    if (!enabled || complete || !ref.current) return
     let timer = 0
     let controller: AbortController | undefined
     const cancel = () => { window.clearTimeout(timer); controller?.abort() }
@@ -18,10 +21,10 @@ export function useVisibleVideoPages(bvid: string, enabled: boolean) {
       if (!entry.isIntersecting) return
       controller = new AbortController()
       const signal = controller.signal
-      timer = window.setTimeout(() => probeVideoPages({ scope, bvid, signal, onPages: pages => setResult({ scope, bvid, pages }) }), 140)
+      timer = window.setTimeout(() => probeVideoPages({ scope, bvid, signal, withAccess, onPages: (pages, detail) => setResult({ scope, bvid, pages, detail }) }), 140)
     }, { rootMargin: '100px' })
     observer.observe(ref.current)
     return () => { cancel(); observer.disconnect() }
-  }, [bvid, enabled, pages, scope])
-  return { ref, pages }
+  }, [bvid, enabled, complete, scope, withAccess])
+  return { ref, pages, access: detail?.access }
 }

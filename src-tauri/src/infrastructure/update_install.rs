@@ -40,36 +40,50 @@ impl UpdateState {
             return session.release.clone().ok_or("更新信息已失效".into());
         }
         let large = app.config().identifier == "app.bilimusic.large";
-        let checked = updates::fetch_selection(large).await;
+        let platform = updates::installed_platform(large);
+        let checked = updates::fetch_selection(platform).await;
         #[cfg(all(desktop, not(target_env = "ohos")))]
-        {
+        if let Some(target) = platform.and_then(updates::desktop_target) {
             use tauri_plugin_updater::UpdaterExt;
             for endpoint in updates::UPDATER_ENDPOINTS {
                 let updater = app
                     .updater_builder()
                     .endpoints(vec![endpoint.parse().map_err(|_| "更新地址配置无效")?])
                     .map_err(|e| e.to_string())?
+                    .target(target)
+                    // Tauri verifies the signature. The per-target build is checked below
+                    // after deserialization, where the plugin exposes the original JSON.
+                    .version_comparator(|current, remote| {
+                        remote.version.cmp_precedence(&current).is_ge()
+                    })
                     .timeout(Duration::from_secs(5))
                     .build()
                     .map_err(|e| e.to_string())?;
                 if let Ok(Some(mut update)) = updater.check().await {
+                    let Some(build) = updates::desktop_build(&update.raw_json, target) else {
+                        continue;
+                    };
                     if !updates::allowed_download(update.download_url.as_str())
                         || update.signature.is_empty()
+                        || !updates::compare_release(
+                            &update.version,
+                            build,
+                            &app.package_info().version,
+                        )
+                        .is_some_and(|order| order.is_gt())
+                        || !updates::desktop_matches_catalog(&checked, &update.version, build)
                     {
                         continue;
                     }
                     update.timeout = Some(Duration::from_secs(600));
                     let release = UpdateRelease {
                         version: update.version.clone(),
+                        build,
+                        current_build: updates::current_build(),
                         available: true,
                         installable: true,
                         request_id: Some(uuid::Uuid::new_v4().to_string()),
-                        platform: updates::platform_id(
-                            std::env::consts::OS,
-                            std::env::consts::ARCH,
-                            large,
-                        )
-                        .map(str::to_owned),
+                        platform: platform.map(str::to_owned),
                         size: None,
                     };
                     session.plan = Some(Plan::Desktop(update));
@@ -82,10 +96,8 @@ impl UpdateState {
         let (mut release, package) = checked?;
         session.plan = None;
         #[cfg(target_os = "android")]
-        if release
-            .version
-            .parse::<semver::Version>()
-            .is_ok_and(|v| v > app.package_info().version)
+        if updates::compare_release(&release.version, release.build, &app.package_info().version)
+            .is_some_and(|order| order.is_gt())
         {
             if let Some(package) = package {
                 release.installable = true;
@@ -318,8 +330,14 @@ pub async fn app_install_update(
                     .await
                     .map_err(|_| "安装包已清理，请重启应用后重新下载")?;
                 verify_download(&data, package)?;
-                return tauri_plugin_android_player::install_update(&app, path, &package.version)
-                    .await;
+                let code = updates::android_version_code(&package.version, package.build);
+                return tauri_plugin_android_player::install_update(
+                    &app,
+                    path,
+                    &package.version,
+                    code,
+                )
+                .await;
             }
             #[cfg(not(target_os = "android"))]
             {
@@ -356,6 +374,7 @@ mod tests {
             .collect();
         let package = DownloadPackage {
             version: "1.0.0".into(),
+            build: 1,
             platform: "android".into(),
             file: "app.apk".into(),
             size: bytes.len() as u64,

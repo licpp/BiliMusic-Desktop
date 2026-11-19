@@ -1,5 +1,10 @@
 // Keep the ignored Xcode scaffold reproducible; do not keep private signing settings in Git.
-import { readdir, cp, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { readdir, cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 const root = new URL('../src-tauri/gen/apple/', import.meta.url)
 const matches = []
 async function find(dir) {
@@ -11,8 +16,18 @@ async function find(dir) {
   }
 }
 await find(root)
+await cp(new URL('../src-tauri/LaunchScreen.ios.storyboard', import.meta.url), new URL('LaunchScreen.storyboard', root))
 if (matches.length !== 1) throw new Error(`Expected one iOS app icon set, found ${matches.length}`)
-await cp(new URL('../src-tauri/.ios-icons/ios/', import.meta.url), matches[0], { recursive: true })
+// Tauri keeps existing generated mobile icons, so use a fresh output directory.
+const generated = await mkdtemp(join(tmpdir(), 'bilimusic-ios-icons-'))
+try {
+  const cli = createRequire(import.meta.url).resolve('@tauri-apps/cli/tauri.js')
+  const source = fileURLToPath(new URL('../public/app-icon.png', import.meta.url))
+  execFileSync(process.execPath, [cli, 'icon', source, '--ios-color', '#102330', '--output', generated], { stdio: 'inherit' })
+  await cp(join(generated, 'ios'), matches[0], { recursive: true })
+} finally {
+  await rm(generated, { recursive: true, force: true })
+}
 const entries = [
   ['iphone','20x20','2x','20x20@2x'], ['iphone','20x20','3x','20x20@3x'],
   ['iphone','29x29','2x','29x29@2x'], ['iphone','29x29','3x','29x29@3x'],
@@ -28,4 +43,4 @@ await writeFile(new URL('Contents.json', matches[0]), JSON.stringify({
   images: entries.map(([idiom,size,scale,name]) => ({idiom,size,scale,filename:`AppIcon-${name}.png`})),
   info: {author:'xcode',version:1},
 }, null, 2))
-console.log('iOS app icons prepared; signing is performed separately on your own device account.')
+console.log('iOS app icons and launch screen prepared.')

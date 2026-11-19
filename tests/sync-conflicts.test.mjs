@@ -14,7 +14,7 @@ function setup(){let index=0;const states=[],effects=[],pending=[],calls=[];let 
  const module={exports:{}};new Function('require','module','exports',outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);
  const render=()=>{index=0;const tree=module.exports.SyncConflicts({conflicts,busy:false,onMerge:v=>calls.push(JSON.parse(v))});pending.splice(0).forEach(f=>f());return tree};
  const button=(text)=>elements(render(),n=>n.type==='button'&&n.props.children===text)[0];
- return{render,button,calls,cells,change(){token='b'.repeat(64);conflicts=[...conflicts]},text:module.exports.conflictText}
+ return{render,button,calls,cells,options,change(){token='b'.repeat(64);conflicts=[...conflicts]},text:module.exports.conflictText}
 }
 test('each field can keep a different candidate; choices need explicit submission and reset on fresh conflicts',async()=>{
  const s=setup();s.render();await new Promise(setImmediate);
@@ -29,7 +29,21 @@ test('each field can keep a different candidate; choices need explicit submissio
  s.change();s.render();await new Promise(setImmediate);
  assert.equal(s.button('按选择合并并同步').props.disabled,true);
  assert.equal(s.calls.length,1);
- s.button('全部保留云端').props.onClick();s.button('按选择合并并同步').props.onClick();
+ s.button('全部保留云端').props.onClick();
+ assert.equal(s.button('按选择合并并同步').props.disabled,true);
+ const cloud=elements(s.render(),n=>n.type==='button'&&n.props['aria-pressed']!==undefined);
+ cloud[1].props.onClick();
+ cloud[4].props.onClick();
+ s.button('按选择合并并同步').props.onClick();
  assert.equal(s.calls[1].token,'b'.repeat(64));
 })
 test('missing, explicit null, and deletion have distinct readable descriptions',()=>{const s=setup();assert.equal(s.text({type:'missing'},'name'),'未设置 / 已移除');assert.equal(s.text({type:'value',value:null},'name'),'清空此项');assert.equal(s.text({type:'value',value:false},'__present'),'删除这项资料')})
+test('bulk local selection never submits a cloud-only option', async () => {
+ const s=setup();s.options['["playlist:x","name"]'].shift();s.render();await new Promise(setImmediate)
+ s.button('全部保留本机').props.onClick()
+ assert.equal(s.button('按选择合并并同步').props.disabled,true)
+ s.button('全部保留云端').props.onClick()
+ assert.equal(s.button('按选择合并并同步').props.disabled,true)
+ elements(s.render(),n=>n.type==='button'&&n.props['aria-pressed']!==undefined)[0].props.onClick()
+ assert.equal(s.button('按选择合并并同步').props.disabled,false)
+})

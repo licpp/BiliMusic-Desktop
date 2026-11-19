@@ -35,9 +35,10 @@ pub(super) fn scope_key(c: &rusqlite::Connection, cfg: &super::Config) -> Result
     )
 }
 
-fn context(db: &Database, state: &SyncState) -> Result<String, String> {
+fn context(db: &Database, state: &SyncState) -> Result<(String, String), String> {
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
     let scope = context_key(db, &c)?;
+    let session = crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?;
     let saved: Option<String> = c
         .query_row(
             "SELECT json FROM sync_scheduler WHERE target=?1",
@@ -56,7 +57,7 @@ fn context(db: &Database, state: &SyncState) -> Result<String, String> {
         scheduler::now(),
         scheduler::wall(),
     );
-    Ok(scope)
+    Ok((scope, session))
 }
 
 pub async fn run<T>(
@@ -65,7 +66,7 @@ pub async fn run<T>(
     domain: Domain,
     automatic: bool,
     future: impl std::future::Future<Output = Result<T, String>>,
-    inspect: impl FnOnce(&T) -> (bool, bool),
+    inspect: impl FnOnce(&T) -> (bool, bool, bool),
 ) -> Result<Option<T>, String> {
     // One network exchange per installation; no SQLite/account lock is held during IO.
     let _gate = if automatic {
@@ -76,7 +77,7 @@ pub async fn run<T>(
     } else {
         state.exchange_gate.lock().await
     };
-    let scope = context(db, state)?;
+    let (scope, session) = context(db, state)?;
     {
         let mut runtime = state.scheduler.lock().map_err(|_| "同步调度正忙")?;
         if automatic && !runtime.due(domain, scheduler::now()) {
@@ -88,10 +89,14 @@ pub async fn run<T>(
         runtime.start(domain, scheduler::now());
     }
     let (result, usage) = traffic::capture(future).await;
-    let (changed, conflict) = result.as_ref().map(inspect).unwrap_or((false, false));
+    let (changed, conflict, partial_failure) =
+        result.as_ref().map(inspect).unwrap_or((false, false, false));
+    let failed = result.is_err() || partial_failure;
     // Account/connection replacement invalidates the completion. Never write the new profile.
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
-    if context_key(db, &c).ok().as_deref() == Some(&scope) {
+    if context_key(db, &c).ok().as_deref() == Some(&scope)
+        && crate::infrastructure::database::account_session(&c).ok().as_deref() == Some(&session)
+    {
         let saved = {
             let mut runtime = state.scheduler.lock().map_err(|_| "同步调度正忙")?;
             if runtime.scope() != scope {
@@ -101,8 +106,8 @@ pub async fn run<T>(
                 domain,
                 scheduler::now(),
                 changed,
-                result.is_err(),
-                conflict || (result.is_err() && usage.unauthorized),
+                failed,
+                conflict || (failed && usage.unauthorized),
                 usage.retry_after_ms,
                 uuid::Uuid::new_v4().as_u128() as u64,
             );
@@ -252,7 +257,7 @@ mod tests {
                 traffic::downloaded(7);
                 Ok(true)
             },
-            |_| (false, true),
+            |_| (false, true, false),
         )
         .await
         .unwrap();
@@ -268,7 +273,7 @@ mod tests {
                     #[allow(unreachable_code)]
                     Ok(())
                 },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .unwrap()
@@ -281,7 +286,7 @@ mod tests {
                 Domain::Statistics,
                 true,
                 async { Ok(()) },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .unwrap()
@@ -317,7 +322,7 @@ mod tests {
                     traffic::bridge_finished(Some(429));
                     Err("limited".into())
                 },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .is_err()
@@ -334,7 +339,7 @@ mod tests {
                     #[allow(unreachable_code)]
                     Ok(())
                 },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .unwrap()
@@ -347,7 +352,7 @@ mod tests {
                 Domain::Statistics,
                 false,
                 async { Ok(()) },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .unwrap_err()
@@ -377,7 +382,7 @@ mod tests {
                 std::fs::write(db.1.join("active-profile"), "43").unwrap();
                 Ok(())
             },
-            |_| (false, false),
+            |_| (false, false, false),
         )
         .await
         .unwrap();
@@ -412,7 +417,7 @@ mod tests {
                     .unwrap();
                 Ok(())
             },
-            |_| (false, false),
+            |_| (false, false, false),
         )
         .await
         .unwrap();
@@ -427,7 +432,7 @@ mod tests {
                     #[allow(unreachable_code)]
                     Ok(())
                 },
-                |_| (false, false)
+                |_| (false, false, false)
             )
             .await
             .unwrap()

@@ -1,3 +1,4 @@
+import { useOfflinePlayback } from './offlinePlayback'
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell } from '../../services/desktopApi'
 import { accountEpoch } from '../../services/accountScope'
@@ -11,7 +12,7 @@ export function startPreloadingNextTrack() {
   function update() {
     const { current, queue, status, shuffled, repeatMode, progressSeconds, durationSeconds } = usePlayerStore.getState()
     let next
-    if (current && status === 'playing' && durationSeconds > 0 && (progressSeconds >= 3 || durationSeconds - progressSeconds <= 20) && !shuffled && repeatMode !== 'one') {
+    if (!useOfflinePlayback.getState().offline && current && status === 'playing' && durationSeconds > 0 && (progressSeconds >= 3 || durationSeconds - progressSeconds <= 20) && !shuffled && repeatMode !== 'one') {
       const index = queue.findIndex(track => track.id === current.id)
       if (index >= 0) next = queue[index + 1] ?? (repeatMode === 'all' ? queue[0] : undefined)
     }
@@ -40,6 +41,7 @@ export function startPreloadingNextTrack() {
       state.status !== previous.status || state.repeatMode !== previous.repeatMode ||
       state.shuffled !== previous.shuffled || Math.floor(state.progressSeconds) !== Math.floor(previous.progressSeconds)) update()
   })
+  useOfflinePlayback.subscribe((state, previous) => { if (state.offline !== previous.offline) update() })
   document.addEventListener('visibilitychange', update)
   update()
 }

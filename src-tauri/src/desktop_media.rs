@@ -15,15 +15,22 @@ struct RemoteAction {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaSnapshot {
-    id: Option<String>,
-    title: String,
-    artist: String,
+    #[serde(flatten)]
+    track: crate::tray_player::Snapshot,
     album: String,
-    cover_url: Option<String>,
-    duration: f64,
-    position: f64,
-    playing: bool,
     metadata_changed: bool,
+}
+
+pub fn emit_action(
+    app: &tauri::AppHandle,
+    action: &'static str,
+    seconds: f64,
+) -> tauri::Result<()> {
+    app.emit_to(
+        "main",
+        "desktop-media-command",
+        RemoteAction { action, seconds },
+    )
 }
 
 pub fn initialize(app: &tauri::AppHandle) {
@@ -70,7 +77,7 @@ pub fn initialize(app: &tauri::AppHandle) {
                     ),
                     _ => return,
                 };
-                let _ = handle.emit("desktop-media-command", RemoteAction { action, seconds });
+                let _ = emit_action(&handle, action, seconds);
             })
             .ok()?;
         Some(controls)
@@ -81,6 +88,7 @@ pub fn initialize(app: &tauri::AppHandle) {
 pub fn desktop_media_update(app: tauri::AppHandle, snapshot: MediaSnapshot) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
+        crate::tray_player::update(&handle, &snapshot.track);
         let state = handle.state::<DesktopMedia>();
         let Ok(mut guard) = state.0.lock() else {
             return;
@@ -88,26 +96,27 @@ pub fn desktop_media_update(app: tauri::AppHandle, snapshot: MediaSnapshot) -> R
         let Some(controls) = guard.as_mut() else {
             return;
         };
+        let track = snapshot.track;
         if snapshot.metadata_changed {
             let _ = controls.set_metadata(MediaMetadata {
-                title: Some(&snapshot.title),
-                artist: Some(&snapshot.artist),
+                title: Some(&track.title),
+                artist: Some(&track.artist),
                 album: Some(&snapshot.album),
-                cover_url: snapshot.cover_url.as_deref(),
-                duration: (snapshot.duration.is_finite() && snapshot.duration > 0.)
-                    .then(|| Duration::from_secs_f64(snapshot.duration)),
+                cover_url: track.cover_url.as_deref(),
+                duration: (track.duration.is_finite() && track.duration > 0.)
+                    .then(|| Duration::from_secs_f64(track.duration)),
             });
         }
         let progress = Some(MediaPosition(Duration::from_secs_f64(
-            if snapshot.position.is_finite() {
-                snapshot.position.max(0.)
+            if track.position.is_finite() {
+                track.position.max(0.)
             } else {
                 0.
             },
         )));
-        let _ = controls.set_playback(if snapshot.id.is_none() {
+        let _ = controls.set_playback(if track.id.is_none() {
             MediaPlayback::Stopped
-        } else if snapshot.playing {
+        } else if track.playing {
             MediaPlayback::Playing { progress }
         } else {
             MediaPlayback::Paused { progress }

@@ -223,6 +223,7 @@ class Publisher:
         except ApiError as error:
             if error.status != 404:
                 raise
+            require('previousUpdater' not in self.plan, 'Platform patches require an existing published release')
             # New versions start as public prereleases so package URLs can be
             # verified before promotion and before the website is switched.
             self.api(channel, '/commits/' + self.plan['source'])
@@ -406,7 +407,8 @@ class Publisher:
         members = [a for a in self.plan['assets'] if not a['binary'] and a['name'] not in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')]
         if not members:
             return None
-        path = self.work / 'assets' / 'RELEASE_DOCUMENTS.tar.xz'
+        archive_name = f'RELEASE_DOCUMENTS-{self.plan["revision"]}.tar.xz' if 'previousUpdater' in self.plan else 'RELEASE_DOCUMENTS.tar.xz'
+        path = self.work / 'assets' / archive_name
         with tarfile.open(path, 'w:xz', preset=6) as archive:
             for asset in sorted(members, key=lambda a: a['name']):
                 data = (self.work / 'assets' / asset['name']).read_bytes()
@@ -444,7 +446,8 @@ class Publisher:
                 if not asset['binary'] and (channel != 'gitee' or not documents or asset['name'] in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')):
                     self.stage_asset(channel, release, asset)
             title = next(line[2:] for line in self.plan['notes'].splitlines() if line.startswith('# '))
-            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + ('\n许可及独立签名文件收录于 `RELEASE_DOCUMENTS.tar.xz`。\n' if documents else ''), 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
+            document_note = f'\n许可及独立签名文件收录于 `{documents["name"]}`。\n' if documents else ''
+            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + document_note, 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(upload_metadata, releases))
         self.record('releaseMetadata', {'channels': ['github', 'gitee'], 'assets': len(self.plan['assets'])})
@@ -463,6 +466,10 @@ class Publisher:
         updater = self.plan.get('updater')
         if updater is None:
             return
+        previous = self.plan.get('previousUpdater')
+        site_feed = Path(self.plan['siteRoot']) / 'updater.json'
+        if previous is not None:
+            require(site_feed.exists() and json.loads(site_feed.read_text()) in (previous, updater), 'Live updater changed concurrently')
         # Every archive/signature was uploaded and hash-verified before exposing this feed.
         for channel in ('github', 'gitee'):
             path = '/contents/website/updater.json'
@@ -472,17 +479,18 @@ class Publisher:
                 if error.status != 404:
                     raise
                 current = {}
-            if current.get('content') and json.loads(base64.b64decode(current['content'])) == updater:
+            installed = json.loads(base64.b64decode(current['content'])) if current.get('content') else None
+            if installed == updater:
                 continue
+            require(previous is None or installed == previous, 'Update feed changed concurrently: ' + channel)
             payload = {'message': f'Publish {self.plan["version"]} signed updater [skip ci]', 'branch': 'main',
                        'content': base64.b64encode((json.dumps(updater, ensure_ascii=False, indent=2) + '\n').encode()).decode()}
             if current.get('sha'):
                 payload['sha'] = current['sha']
             self.api(channel, path, 'PUT' if current.get('sha') or channel == 'github' else 'POST', payload)
-        path = Path(self.plan['siteRoot']) / 'updater.json'
-        temporary = path.with_suffix('.json.publish-tmp')
+        temporary = site_feed.with_suffix('.json.publish-tmp')
         save_json(temporary, updater)
-        temporary.replace(path)
+        temporary.replace(site_feed)
         self.record('updater', {'version': updater['version'], 'platforms': list(updater['platforms'])})
 
     site_filing_pending = False
@@ -540,7 +548,11 @@ class Publisher:
     def prune(self):
         require('publicManifests' in self.report, 'Cannot remove old assets before all update sources are verified')
         new = {a['name'] for a in self.plan['assets']} | {p['file'] for p in self.plan['manifest']['platforms']}
-        old = {p['file'] for p in self.plan['previous']['platforms']} - new
+        def updater_files(feed):
+            archives = {Path(urllib.parse.urlsplit(entry['url']).path).name for entry in feed.get('platforms', {}).values()}
+            return archives | {name + '.sig' for name in archives}
+        new |= updater_files(self.plan.get('updater', {}))
+        old = ({p['file'] for p in self.plan['previous']['platforms']} | updater_files(self.plan.get('previousUpdater', {}))) - new
         removed = []
         for channel in ('github', 'gitee'):
             release = self.release(channel)

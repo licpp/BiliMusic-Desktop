@@ -3,7 +3,13 @@ import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { mobileVersion } from '../scripts/mobile-version.mjs'
 const result = await build({ entryPoints: ['src/shared/version.ts'], bundle: true, write: false, format: 'esm' })
-const { compareVersions } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
+const { compareVersions, formatReleaseVersion } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
+test('release labels include each platform build and keep legacy versions readable', () => {
+  assert.equal(formatReleaseVersion('0.4.0', 1), '0.4.0.1')
+  assert.equal(formatReleaseVersion('0.4.0', 12), '0.4.0.12')
+  assert.equal(formatReleaseVersion('0.3.7'), '0.3.7')
+  assert.equal(formatReleaseVersion('0.3.7', 0), '0.3.7')
+})
 test('updates compare preview numbers numerically and do not suggest downgrades', () => {
   for (const [a,b] of [['0.1.6-preview.10','0.1.6-preview.9'],['0.1.6','0.1.6-preview.10'],['0.1.7-preview.1','0.1.6'],['1.0.0-beta','1.0.0-2']]) {
     assert.equal(compareVersions(a,b),1)

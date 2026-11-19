@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_BYTES: usize = 3 * 1024 * 1024;
 pub const HISTORY_LIMIT: usize = 200;
+pub const MISSING_TRACK: &str = "同步记录缺少歌曲";
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -157,6 +158,39 @@ impl Snapshot {
             !matches!(r.kind.as_str(), "track" | "lyric") || referenced.contains(text(r, "id"))
         });
     }
+    /// Song identity is encoded in every live membership or history reference.
+    /// Restore only identity. No title, user edits or existence of a membership
+    /// can be inferred from a song ID.
+    pub fn restore_missing_tracks(&mut self) -> BTreeSet<String> {
+        let missing: BTreeSet<_> = self
+            .records
+            .values()
+            .filter(|r| matches!(r.kind.as_str(), "favorite" | "item" | "history"))
+            .map(|r| text(r, "trackId").to_owned())
+            .filter(|id| !self.records.contains_key(&format!("track:{id}")))
+            .collect();
+        let mut restored = BTreeSet::new();
+        for id in missing {
+            let Some((bvid, cid)) = track_identity(&id) else {
+                continue;
+            };
+            let key = format!("track:{id}");
+            self.records.insert(
+                key.clone(),
+                Record {
+                    kind: "track".into(),
+                    fields: [
+                        ("id".into(), Value::from(id.as_str())),
+                        ("bvid".into(), Value::from(bvid)),
+                        ("cid".into(), Value::from(cid)),
+                    ]
+                    .into(),
+                },
+            );
+            restored.insert(key);
+        }
+        restored
+    }
     pub fn validate(&self, uid: &str) -> Result<(), String> {
         if self.schema != 1
             || self.uid != uid
@@ -234,10 +268,7 @@ impl Snapshot {
                 "view" => key == &format!("view:{id}") && matches!(id, "favorites" | "saved"),
                 "track" => {
                     key == &format!("track:{id}")
-                        && id == format!("bilibili:{}:{}", text(r, "bvid"), number(r, "cid"))
-                        && text(r, "bvid").starts_with("BV")
-                        && text(r, "bvid").bytes().all(|c| c.is_ascii_alphanumeric())
-                        && number(r, "cid") > 0
+                        && track_identity(id) == Some((text(r, "bvid"), number(r, "cid")))
                 }
                 "linkedFolder" => {
                     let folder_id = number(r, "folderId");
@@ -316,9 +347,12 @@ impl Snapshot {
                 return Err(format!("同步记录身份无效（{}）", r.kind));
             }
             if matches!(r.kind.as_str(), "favorite" | "history" | "item")
-                && !self.records.contains_key(&format!("track:{track}"))
+                && !self
+                    .records
+                    .get(&format!("track:{track}"))
+                    .is_some_and(|r| r.kind == "track")
             {
-                return Err("同步记录缺少歌曲".into());
+                return Err(MISSING_TRACK.into());
             }
             for name in ["coverUrl", "overrideCover"] {
                 if let Some(value) = r.fields.get(name).and_then(Value::as_str) {
@@ -345,6 +379,15 @@ impl Snapshot {
         }
         Ok(())
     }
+}
+pub fn track_identity(id: &str) -> Option<(&str, i64)> {
+    let (bvid, cid) = id.strip_prefix("bilibili:")?.split_once(':')?;
+    let value: i64 = cid.parse().ok()?;
+    (bvid.starts_with("BV")
+        && bvid.bytes().all(|c| c.is_ascii_alphanumeric())
+        && value > 0
+        && value.to_string() == cid)
+        .then_some((bvid, value))
 }
 fn valid_playlist_id(id: &str) -> bool {
     // Imported playlists retain this identity when matching is resumed or reviewed.

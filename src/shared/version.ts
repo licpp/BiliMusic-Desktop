@@ -1,3 +1,13 @@
+import { version } from '../../package.json'
+
+declare const __BILIMUSIC_BUILD_NUMBER__: number
+
+export function formatReleaseVersion(release: string, build?: number): string {
+  return typeof build === 'number' && Number.isInteger(build) && build > 0 ? `${release}.${build}` : release
+}
+
+export const currentDisplayVersion = formatReleaseVersion(version, typeof __BILIMUSIC_BUILD_NUMBER__ === 'number' ? __BILIMUSIC_BUILD_NUMBER__ : undefined)
+
 const versionPattern = /^(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
 function parseVersion(value: string) {

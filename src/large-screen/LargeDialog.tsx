@@ -1,3 +1,4 @@
+import { useOverlayDismiss } from '../shared/useOverlayDismiss'
 import { lockDialogBackground } from './dialogInert'
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -6,9 +7,9 @@ import { focusable } from './focus'
 import { captureBookmark, restoreView, type FocusBookmark } from './navigation'
 
 export function LargeDialog({ title, onClose, children, drawer = false, className = '' }: { title: string; onClose: () => void; children: ReactNode; drawer?: boolean; className?: string }) {
-  const ref = useRef<HTMLElement>(null), close = useRef(onClose)
+  const ref = useRef<HTMLElement>(null)
+  useOverlayDismiss(ref, true, onClose)
   const origin = useRef<{ element: HTMLElement | null; host: HTMLElement | null; bookmark?: FocusBookmark; top: number } | null>(null)
-  close.current = onClose
   useLayoutEffect(() => {
     if (!origin.current) {
       const element = document.activeElement as HTMLElement | null, host = element?.closest<HTMLElement>('.large-dialog,.large-shell') || null
@@ -16,14 +17,7 @@ export function LargeDialog({ title, onClose, children, drawer = false, classNam
     }
     const root = document.getElementById('root'), releaseBackground = root ? lockDialogBackground(root) : undefined
     focusable(ref.current!)[0]?.focus()
-    const back = (event: Event) => {
-      const dialogs = document.querySelectorAll('.large-dialog')
-      if (dialogs[dialogs.length - 1] !== ref.current) return
-      event.preventDefault(); event.stopImmediatePropagation(); close.current()
-    }
-    window.addEventListener('bilimusic-back', back, true)
     return () => {
-      window.removeEventListener('bilimusic-back', back, true)
       releaseBackground?.()
       const previous = origin.current!
       if (previous.element?.isConnected) previous.element.focus({ preventScroll: true })

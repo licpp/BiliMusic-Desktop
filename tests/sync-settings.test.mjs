@@ -15,10 +15,12 @@ const output = await build({
     builder.onResolve({ filter: /services\/(sync|desktopApi)$/ }, args => ({ path: args.path.endsWith('/sync') ? 'sync' : 'api', namespace: 'test' }))
     builder.onResolve({ filter: /player\/playerStore$/ }, () => ({ path: 'player', namespace: 'test' }))
     builder.onResolve({ filter: /shared\/ActionMenu$/ }, () => ({ path: 'menu', namespace: 'test' }))
+    builder.onResolve({ filter: /shared\/CollectionDialog$/ }, () => ({ path: 'dialog', namespace: 'test' }))
     builder.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({ contents: {
       icons: `export const Monitor=()=>null; export const Smartphone=()=>null; export const Cloud=()=>null; export const LoaderCircle=()=>null; export const RefreshCw=()=>null; export const Check=()=>null; export const ChevronDown=()=>null;`,
-      attention: `export const useSyncAttention=select=>select({outcome:null,library:'',statistics:''});export const clearSyncAttention=()=>{};export const reportSyncError=()=>{};`,
+      attention: `export const useSyncAttention=select=>select(globalThis.syncSettingsTest.attention);export const clearSyncAttention=()=>{};export const reportSyncError=()=>{};`,
       menu: `export const ActionMenu=()=>null;`,
+      dialog: `export const CollectionDialog=()=>null;`,
       'react-hooks': `export const useState = initial => globalThis.syncSettingsTest.useState(initial); export const useEffect = () => {};`,
       queries: `export const useQuery = () => globalThis.syncSettingsTest.query; export const useQueryClient = () => ({invalidateQueries:async()=>{}});`,
       invoke: `export const invoke = (...args) => globalThis.syncSettingsTest.invoke(...args);`,
@@ -41,6 +43,7 @@ function setup(fail = false) {
   const config = { enabled: false, provider: 'webdav', uid: '42', initialized: false }
   globalThis.window = {dispatchEvent(){}}
   globalThis.syncSettingsTest = {
+    attention: { outcome:null, library:'', statistics:'', libraryIssue:null, statisticsIssue:null },
     useState(initial) {
       const index = cursor++
       if (!(index in state)) state[index] = initial
@@ -68,6 +71,36 @@ async function connect(render) {
   await new Promise(setImmediate)
 }
 
+test('a missing track is archived only after confirmation and then retries sync', async () => {
+  const {calls,render} = setup()
+  const query = globalThis.syncSettingsTest.query
+  query.data.config.enabled = true
+  const preview = {revision:'preview-proof',total:1,entries:[{kind:'favorite',trackId:'legacy',label:''}]}
+  query.data.trackRepair = preview
+  globalThis.syncSettingsTest.invoke = async (command,args) => {
+    calls.push([command,args])
+    if (command === 'sync_archive_invalid_track_references') {
+      query.data.trackRepair = null
+      return '/app/sync-repair.json'
+    }
+  }
+  const open = () => elements(render(),node=>node.type==='button'&&node.props.children==='查看并修复')[0].props.onClick()
+  const dialog = () => elements(render(),node=>node.props?.preview===preview)[0]
+  open()
+  assert.deepEqual(calls, [])
+  dialog().props.onClose()
+  assert.equal(dialog(),undefined)
+  open()
+  dialog().props.onArchive(preview.revision)
+  await new Promise(setImmediate)
+  assert.deepEqual(calls.slice(0,2), [
+    ['sync_archive_invalid_track_references',{revision:'preview-proof'}],
+    ['preview',false],
+  ])
+  assert.equal(dialog(),undefined)
+  assert.ok(elements(render(),node=>node.type==='code'&&node.props.children==='/app/sync-repair.json').length)
+})
+
 test('connecting sync automatically merges without a confirmation when no conflict exists', async () => {
   const {calls,render} = setup()
   await connect(render)
@@ -85,6 +118,26 @@ test('automatic initial sync still presents genuine conflicts and never chooses 
   assert.equal(calls.filter(c=>c[0]==='preview').length,1)
   assert.ok(elements(render(),node=>node.props?.className==='sync-preview').length)
   assert.equal(elements(render(),node=>node.props?.role==='status')[0].props.children,'发现不同修改，请选择保留哪一侧。')
+  globalThis.syncSettingsTest.query.data.config.enabled = true
+  const dialog = elements(render(),node=>Array.isArray(node.props?.issues) && Boolean(node.props.outcome?.conflicts.length))[0]
+  assert.ok(dialog)
+  dialog.props.onRetry(false)
+  await new Promise(setImmediate)
+  assert.deepEqual(calls.at(-1), ['preview',true])
+})
+
+test('the recovery window shows partial failure and can retry statistics separately', async () => {
+  const { calls, render } = setup()
+  const app = globalThis.syncSettingsTest
+  app.query.data.config.enabled = true
+  app.query.data.importError = '读取同步对象失败：坚果云返回 HTTP 507'
+  app.attention.statisticsIssue = {kind:'retry',message:'请稍后重试'}
+  elements(render(),node=>node.type==='button'&&node.props.children==='处理同步问题')[0].props.onClick()
+  const dialog = elements(render(),node=>Array.isArray(node.props?.issues))[0]
+  assert.deepEqual(dialog.props.issues.map(({area,issue})=>[area,issue.kind]), [['导入歌单','limit'],['听歌统计','retry']])
+  dialog.props.onRetry(true)
+  await new Promise(setImmediate)
+  assert.deepEqual(calls,[['listening_sync',undefined]])
 })
 
 test('failed connection retains editable settings and shows the error without a merge', async () => {

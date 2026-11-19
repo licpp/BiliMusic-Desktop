@@ -101,6 +101,9 @@ impl Plan {
             if before == after {
                 continue;
             }
+            if after.is_none() && entity.starts_with("track:") {
+                continue;
+            }
             if before.is_none() || after.is_none() {
                 delta.insert(
                     causal::key(entity, "__present"),
@@ -123,6 +126,10 @@ impl Plan {
             }
         }
         super::projection::complete_lyric_selection(
+            &mut delta,
+            &super::projection::facts(&self.merged, causal::Domain::Library),
+        )?;
+        super::projection::complete_matched_metadata(
             &mut delta,
             &super::projection::facts(&self.merged, causal::Domain::Library),
         )?;
@@ -354,6 +361,7 @@ pub fn prepare(
         .chain(previous.iter_mut())
     {
         snapshot.normalize();
+        snapshot.restore_missing_tracks();
         snapshot.validate(&snapshot.uid)?;
     }
     if anchor.uid != local.uid
@@ -501,6 +509,7 @@ pub fn prepare(
     {
         return Err("升级合并冲突已变化，请重新预览".into());
     }
+    merged.restore_missing_tracks();
     Ok(Plan {
         merged,
         conflicts: state.conflicts,

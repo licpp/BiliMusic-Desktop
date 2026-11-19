@@ -4,7 +4,9 @@ export const shortcutMac = /Macintosh|Mac OS X/i.test(navigator.userAgent)
 export const shortcutWindows = /Windows/i.test(navigator.userAgent)
 export const shortcutDesktop = shortcutMac || shortcutWindows
 const storageKey='bilimusic-shortcuts-v1'
-const globalKey='bilimusic-global-shortcuts-v1'
+// The older opt-in covered playback only. Enabling this setting also allows
+// system-wide window shortcuts, so require a fresh choice and preserve bindings.
+const globalKey='bilimusic-global-shortcuts-v2'
 function initial() { try{return readShortcuts(localStorage.getItem(storageKey),shortcutMac,shortcutDesktop)}catch{return defaultShortcuts(shortcutMac)} }
 function initialGlobal() { try{return shortcutDesktop && localStorage.getItem(globalKey)==='true'}catch{return false} }
 function persist(bindings:ShortcutBindings) { localStorage.setItem(storageKey,JSON.stringify({version:1,bindings})) }
@@ -17,6 +19,7 @@ export const useShortcutStore=create<{bindings:ShortcutBindings;globalEnabled:bo
     set({globalEnabled:enabled})
   },
   setBinding:(action,key)=>{
+    if(action==='show'&&shortcutDesktop&&!get().globalEnabled)return '请先开启全局快捷键'
     if(key){const problem=shortcutProblem(key,get().bindings,action,shortcutDesktop)||globalShortcutConflict(key,get().bindings,action,shortcutMac,get().globalEnabled);if(problem)return problem}
     const bindings={...get().bindings,[action]:key}
     try{persist(bindings)}catch{return '无法保存快捷键，请重试'}

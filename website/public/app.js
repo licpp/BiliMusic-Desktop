@@ -1,4 +1,4 @@
-import { detectedDownloadFamily, downloadFamily, downloadVariant, groupDownloads, preferredDownloadFamily } from './download-options.js';
+import { detectedDownloadFamily, downloadFamily, downloadVariant, downloadVersion, groupDownloads, preferredDownloadFamily } from './download-options.js';
 const $ = selector => document.querySelector(selector);
 if (location.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(location.hostname)) {
   const note = document.createElement('p'); note.className='transport-note';
@@ -110,7 +110,8 @@ function renderDownloadPanel(group, item, panel) {
     if (item.note) body.append(element('p', item.note, 'download-package-note'));
     const version = element('div', null, 'download-build');
     const count = element('span', '累计下载 —', 'platform-download-count'); count.dataset.downloadCount = item.id;
-    version.append(element('strong', `v${item.version || releaseManifest.version}`), element('span', `${(item.size / 1048576).toFixed(1)} MB`), count);
+    version.append(element('strong', `v${downloadVersion(item, releaseManifest.version)}`));
+    version.append(element('span', `${(item.size / 1048576).toFixed(1)} MB`), count);
     body.append(version); article.append(body);
     const channels = element('div', null, 'channel-buttons');
     for (const channel of item.channels) {
@@ -139,7 +140,7 @@ async function loadDownloads() {
     releaseManifest = await response.json(); target.replaceChildren();
     $('#release-notes').href = releaseManifest.releaseNotes;
     renderReleaseHistory(releaseManifest);
-    $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
+    $('#feedback-form [name="version"]').placeholder = `例如 ${downloadVersion(releaseManifest.platforms[0] ?? {}, releaseManifest.version)}`;
     const groups = groupDownloads(releaseManifest.platforms);
     const detected = detectedDownloadFamily(navigator.userAgent, navigator.maxTouchPoints);
     const recommended = groups.find(group => group.id === detected && group.items.some(item => item.status === 'available'));

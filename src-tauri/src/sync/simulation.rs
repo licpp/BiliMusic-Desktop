@@ -261,18 +261,9 @@ async fn every_bootstrap_request_boundary_recovers_before_and_after_server_commi
                 "unvisited request {i} {method}"
             );
             assert!(
-                first.is_err()
-                    || a.0
-                        .0
-                        .lock()
-                        .unwrap()
-                        .query_row(
-                            "SELECT count(*) FROM visibility_runtime WHERE key='sync_error'",
-                            [],
-                            |r| r.get::<_, i64>(0)
-                        )
-                        .unwrap()
-                        > 0,
+                first.as_ref().map_or(true, |outcome| {
+                    outcome.visibility_error.is_some() || outcome.import_error.is_some()
+                }),
                 "failure was silently accepted at {i} {method}"
             );
             for _ in 0..2 {
@@ -1400,18 +1391,9 @@ async fn quota_exhaustion_at_every_bootstrap_boundary_resumes_without_losing_off
         )
         .await;
         assert!(
-            result.is_err()
-                || a.0
-                    .0
-                    .lock()
-                    .unwrap()
-                    .query_row(
-                        "SELECT count(*) FROM visibility_runtime WHERE key='sync_error'",
-                        [],
-                        |r| r.get::<_, i64>(0)
-                    )
-                    .unwrap()
-                    > 0,
+            result.as_ref().map_or(true, |outcome| {
+                outcome.visibility_error.is_some() || outcome.import_error.is_some()
+            }),
             "cutoff={cutoff}"
         );
         assert_eq!(store.lock().unwrap().requests.len(), cutoff);

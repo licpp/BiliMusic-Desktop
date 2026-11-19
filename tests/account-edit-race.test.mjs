@@ -6,8 +6,11 @@ const states=[],effects=[];let index=0,resolveSave
 const track={id:'bilibili:BV1oldAccount:42',source:{provider:'bilibili',bvid:'BV1oldAccount',cid:42,page:1},title:'旧账号歌曲'}
 const scope={
   useState(initial){const slot=index++;states[slot]=initial;return[states[slot],value=>{states[slot]=typeof value==='function'?value(states[slot]):value}]},
-  useRef(initial){return {current:initial}},useEffect(fn){effects.push(fn)},
+  useRef(initial){return {current:initial}},useEffect(fn){effects.push(fn)},useLayoutEffect(fn){effects.push(fn)},
+  useOverlayDismiss(){},
   useVisibilityRules(){return []},
+  useOfflinePlayback(){return {offline:false,library:null}},
+  offlineUnavailable(){return false},
   useQueryClient(){return {invalidateQueries:async()=>{}}},
   useTrackActions:Object.assign(()=>({menu:{track,x:0,y:0},adding:null}),{setState(){}}),
   saveLibraryTrack(){return new Promise(resolve=>{resolveSave=resolve})},

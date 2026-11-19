@@ -26,6 +26,8 @@ pub struct LyricCandidate {
     pub artist_name: String,
     #[serde(default)]
     pub album_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork_url: Option<String>,
     #[serde(default)]
     pub duration: f64,
     #[serde(default)]
@@ -221,12 +223,12 @@ impl LrclibProvider {
                 &self.client,
                 &self.fallback_origin,
                 keyword.trim(),
-                3,
+                8,
                 false,
             )
             .await
         } else {
-            domestic_music::search_qq(&self.client, &self.qq_origin, keyword.trim(), 3).await
+            domestic_music::search_qq(&self.client, &self.qq_origin, keyword.trim(), 8).await
         }
         .map_err(|_| LyricsProviderError::Unavailable)?;
         let responses = futures_util::future::join_all(songs.into_iter().map(|song| async move {
@@ -269,6 +271,7 @@ fn domestic_candidate(
             .as_ref()
             .and_then(|s| s.album.clone())
             .unwrap_or_default(),
+        artwork_url: song.as_ref().and_then(|s| s.cover.clone()),
         duration: song.as_ref().map(|s| s.duration).unwrap_or_default(),
         instrumental: false,
         plain_lyrics: None,

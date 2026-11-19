@@ -11,7 +11,7 @@ export function Artwork({ src, className = '', fallback = <Music2 aria-hidden="t
   const hasImage = Boolean(normalized && failed !== normalized)
   return <span ref={elementRef} className={`artwork ${className}`} data-artwork-fit={adaptAspect ? 'natural' : undefined}
     data-artwork-wide={adaptAspect && hasImage && wideImage === normalized ? true : undefined}>
-    {hasImage ? <img src={normalized} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailed(normalized); onError?.() }}
+    {hasImage ? <img src={normalized} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => { setFailed(normalized); onError?.() }}
       onLoad={adaptAspect || onAspectRatio ? event => {
         const { naturalWidth, naturalHeight } = event.currentTarget
         if (naturalWidth && naturalHeight) {

@@ -22,6 +22,10 @@ export function useTrackSelection(tracks: Track[]) {
   const exit = () => { setSelecting(false); setIds(new Set()) }
   return {
     selecting, ids, selected, toggle, exit,
+    forget: (removed: string[]) => {
+      const exclude = new Set(removed)
+      setIds(existing => new Set([...existing].filter(id => !tracks.some(track => track.id === id && exclude.has(track.source.bvid)))))
+    },
     enter: () => setSelecting(true),
     all: () => setIds(selected.length === tracks.length ? new Set() : new Set(tracks.map(track => track.id))),
   }

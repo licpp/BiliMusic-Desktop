@@ -63,6 +63,30 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual([a['name'] for a in assets], ['updater.json'])
             with self.assertRaisesRegex(ValueError, 'version/platform'): updater_assets(root, '0.3.4')
 
+    def test_platform_patch_replaces_only_its_signed_installer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output = root / 'bundle'
+            output.mkdir()
+            original, published = 'original.exe', 'BiliMusic_0.4.0_windows-build2_setup.exe'
+            (root / original).write_bytes(b'new installer')
+            (output / published).write_bytes(b'new installer')
+            (root / (original + '.sig')).write_text(self.signature())
+            previous = {'version': '0.4.0', 'platforms': {
+                'windows-x86_64': {'build': 1, 'url': 'prior-x64'},
+                'windows-aarch64': {'build': 1, 'url': 'prior-arm64'},
+            }}
+            build = {'version': '0.4.0', 'platforms': [
+                {'platform': 'Windows', 'architecture': 'x64', 'file': published, 'build': 2}
+            ]}
+            feed = prepare_updater(root, output, build, {'windows': original}, previous)
+            self.assertEqual(feed['platforms']['windows-aarch64'], previous['platforms']['windows-aarch64'])
+            checked, assets = updater_assets(output, '0.4.0', {'windows-x86_64': 2}, previous)
+            self.assertEqual(checked['platforms']['windows-x86_64']['build'], 2)
+            self.assertEqual({asset['name'] for asset in assets}, {'updater.json', published, published + '.sig'})
+            with self.assertRaisesRegex(ValueError, 'OTA build differs'):
+                updater_assets(output, '0.4.0', {'windows-x86_64': 3}, previous)
+
     def test_invalid_signature_is_not_published(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'app.sig'; path.write_text('not a signature')

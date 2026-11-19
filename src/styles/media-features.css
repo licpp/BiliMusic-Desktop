@@ -59,9 +59,9 @@
 .action-menu-panel.action-menu-sheet[data-touch-sheet] {
   width: min(100%, 560px); margin-inline: auto; max-height: 84dvh; padding-top: 0;
   padding-bottom: calc(16px + max(env(safe-area-inset-bottom), var(--native-safe-bottom, 0px)));
-  overscroll-behavior: contain; animation: touch-sheet-enter 180ms ease-out; transition: transform 160ms ease-out;
+  overscroll-behavior: contain; transform:translateY(var(--panel-drag-y,0px)); animation: touch-sheet-enter 180ms ease-out; transition: transform 160ms ease-out;
 }
-.action-menu-panel.action-menu-sheet[data-touch-dragging] { animation: none; transition: none; }
+.action-menu-panel.action-menu-sheet[data-panel-dragging] { animation: none; transition: none; }
 @keyframes touch-sheet-enter { from { transform: translateY(24px); opacity: .7; } }
 .touch-sheet-header { position: sticky; top: 0; z-index: 1; background: var(--panel); }
 .touch-sheet-header > div { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; }

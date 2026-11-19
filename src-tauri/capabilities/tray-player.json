@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-player-window",
+  "description": "Receive playback snapshots for the status area player",
+  "windows": ["tray-player"],
+  "platforms": ["macOS", "windows"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

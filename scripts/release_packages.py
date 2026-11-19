@@ -117,6 +117,12 @@ def license_name(package, packages):
     return 'THIRD_PARTY_LICENSES-' + package['platform'].replace(' ', '-') + '.json'
 
 
+def checksum_list(build, manifest):
+    if build.get('partialRelease'):
+        return ''.join(f"{p['sha256']}  {p['file']}\n" for p in manifest['platforms'] if p['status'] == 'available')
+    return ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
+
+
 def compatible_package_source(platform, built, release):
     changed = command(['git', 'diff', '--name-only', built, release]).splitlines()
     common = ('scripts/', 'tests/')
@@ -128,7 +134,12 @@ def compatible_package_source(platform, built, release):
     return bool(changed) and all(n.startswith(common + allowed) for n in changed)
 
 
-def verify_native(path, platform, version, certificate, architecture='arm64'):
+def apple_build(version, build):
+    major, minor, patch = map(int, version.split('.'))
+    return f'{1000 + major * 100 + minor}.{patch}.{49 + build}'
+
+
+def verify_native(path, platform, version, certificate, architecture='arm64', build=0):
     if platform == 'macOS':
         command(['hdiutil', 'verify', str(path)])
         with tempfile.TemporaryDirectory(prefix='bilimusic-release-mac-') as mount:
@@ -138,6 +149,8 @@ def verify_native(path, platform, version, certificate, architecture='arm64'):
                 info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
                 require(info['CFBundleIdentifier'] == 'app.resonance.desktop', 'Unexpected macOS identity')
                 require(info['CFBundleShortVersionString'] == version, 'Unexpected macOS version')
+                if build:
+                    require(info['CFBundleVersion'] == apple_build(version, build), 'Unexpected macOS build number')
                 binary = app / 'Contents/MacOS' / info['CFBundleExecutable']
                 expected_arch = 'x86_64' if '_x64' in path.name or '_intel' in path.name.lower() else 'arm64'
                 require(command(['lipo', '-archs', str(binary)]) == expected_arch, 'Unexpected macOS architecture')
@@ -151,6 +164,8 @@ def verify_native(path, platform, version, certificate, architecture='arm64'):
             info = plistlib.loads(archive.read(prefix + 'Info.plist'))
             require(info['CFBundleIdentifier'] == 'app.bilimusic.ios', 'Unexpected iOS identity')
             require(info['CFBundleShortVersionString'] == version, 'Unexpected iOS version')
+            if build:
+                require(info['CFBundleVersion'] == apple_build(version, build), 'Unexpected iOS build number')
             require('iPhoneOS' in info['CFBundleSupportedPlatforms'] and 'audio' in info['UIBackgroundModes'], 'Expected real-device app with background audio')
             require(not any(n.endswith('/libapp.a') for n in archive.namelist()), 'Unlinked Rust archive included in IPA')
             raw = archive.read(prefix + info['CFBundleExecutable'])
@@ -169,7 +184,7 @@ def verify_native(path, platform, version, certificate, architecture='arm64'):
             manifest = apk_manifest(archive.read('AndroidManifest.xml'))
             major, minor, patch = map(int, version.split('.'))
             expected_id = 'app.bilimusic.large' if platform == 'Android Large Screen' else 'app.bilimusic.mobile'
-            require(manifest['package'] == expected_id and manifest['versionName'] == version and manifest['versionCode'] == major * 1000000 + minor * 10000 + patch * 100, 'Android identity/versionCode mismatch')
+            require(manifest['package'] == expected_id and manifest['versionName'] == version and manifest['versionCode'] == major * 1000000 + minor * 10000 + patch * 100 + max(build - 1, 0), 'Android identity/versionCode mismatch')
             libraries = [x for x in archive.infolist() if x.filename.endswith('.so')]
             abi = {'arm64': 'arm64-v8a', 'armv7': 'armeabi-v7a'}.get(architecture)
             require(abi and libraries and all(x.filename.startswith(f'lib/{abi}/') and x.file_size < 30 * 1024 * 1024 for x in libraries), 'Unexpected Android native libraries')
@@ -184,7 +199,7 @@ def verify_native(path, platform, version, certificate, architecture='arm64'):
             require(archive.testzip() is None, 'Corrupt HAP')
             app = json.loads(archive.read('module.json'))['app']
             major, minor, patch = map(int, version.split('.'))
-            require(app['bundleName'] == 'app.bilimusic.harmony' and app['versionName'] == version and app['versionCode'] == major * 1000000 + minor * 10000 + patch * 100, 'Harmony identity/version mismatch')
+            require(app['bundleName'] == 'app.bilimusic.harmony' and app['versionName'] == version and app['versionCode'] == major * 1000000 + minor * 10000 + patch * 100 + max(build - 1, 0), 'Harmony identity/version mismatch')
             binary = archive.read('libs/arm64-v8a/libbilimusic_lib.so')
             require(binary[:4] == b'\x7fELF' and int.from_bytes(binary[18:20], 'little') == 183, 'Expected ARM64 Harmony binary')
             require(len(archive.read('ets/modules.abc')) > 1000, 'Harmony bytecode missing')
@@ -217,24 +232,48 @@ def verify_native(path, platform, version, certificate, architecture='arm64'):
         require(actual in (version, version + '.0'), 'Unexpected Windows installer version')
 
 
+def validate_release_scope(build, manifest, previous):
+    packages = build['platforms']
+    version = build['version']
+    require(manifest['version'] == version, 'Build and manifest versions differ')
+    ids = [package_id(p) for p in packages]
+    require(ids and len(ids) == len(set(ids)), 'Expected distinct built platforms, including every declared edition')
+    manifest_ids = [p['id'] for p in manifest['platforms']]
+    require(len(manifest_ids) == len(set(manifest_ids)), 'Duplicate manifest platform')
+    if build.get('partialRelease'):
+        prior = {p['id']: p for p in previous['platforms']}
+        require(version == previous['version'] and set(prior) == set(manifest_ids) and set(ids) <= set(prior), 'Platform patches must preserve the release and platform list')
+        require({k: v for k, v in manifest.items() if k != 'platforms'} == {k: v for k, v in previous.items() if k != 'platforms'}, 'Platform patches must preserve shared release information')
+        current = {p['id']: p for p in manifest['platforms']}
+        require(all(current[i] == prior[i] for i in prior.keys() - set(ids)), 'Unbuilt platform entry changed')
+        for package in packages:
+            key = package_id(package)
+            old, new = prior[key], current[key]
+            build_number = package.get('build')
+            require(old.get('version', version) == version and new.get('version', version) == version, 'Platform patch version mismatch')
+            require(type(build_number) is int and build_number > max(1, old.get('build', 0)) and build_number <= 50, 'Platform build must increase')
+            require(new.get('build') == build_number and new['file'] != old['file'], 'Platform patch must use a new asset name')
+        return
+    require({'macOS', 'iOS', 'Android', 'Windows'} <= {p['platform'] for p in packages}, 'Expected core release platforms')
+    require(set(manifest_ids) in (set(ids), set(ids) | {'ohos'}), 'Expected release platforms with optional retained Harmony test package')
+    require(all(type(p.get('build', 0)) is int and p.get('build', 0) in (0, 1) for p in packages), 'New release packages must use the first build')
+    if version == previous.get('version'):
+        require(not any(p.get('build', 0) for p in previous['platforms']), 'An active build-aware version must use platform patches')
+    if 'ohos' in manifest_ids and 'ohos' not in ids:
+        harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
+        require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Publication must preserve the existing Harmony package')
+        require(re.fullmatch(r'\d+\.\d+\.\d+', harmony.get('version', '')) and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
+
+
 def validate_bundle(bundle, native_verifier=verify_native):
     bundle = Path(bundle)
     build = json.loads((bundle / 'build-info.json').read_text())
     manifest = json.loads((bundle / 'candidate-releases.json').read_text())
     previous = json.loads((bundle / 'previous-releases.json').read_text())
     version, source = build['version'], build['source']
-    require(manifest['version'] == version, 'Build and manifest versions differ')
     require(len(source) == 40 and all(c in '0123456789abcdef' for c in source), 'Invalid source commit')
     packages = build['platforms']
-    require({'macOS', 'iOS', 'Android', 'Windows'} <= {p['platform'] for p in packages}, 'Expected core release platforms')
-    ids = [package_id(p) for p in packages]
-    require(len(ids) == len(set(ids)), 'Expected distinct built platforms, including every declared edition')
-    manifest_ids = [p['id'] for p in manifest['platforms']]
-    require(len(manifest_ids) == len(set(manifest_ids)) and set(manifest_ids) in (set(ids), set(ids) | {'ohos'}), 'Expected release platforms with optional retained Harmony test package')
-    if 'ohos' in manifest_ids and 'ohos' not in ids:
-        harmony = next(p for p in manifest['platforms'] if p['id'] == 'ohos')
-        require(harmony == next((p for p in previous.get('platforms', []) if p['id'] == 'ohos'), None), 'Publication must preserve the existing Harmony package')
-        require(re.fullmatch(r'\d+\.\d+\.\d+', harmony.get('version', '')) and harmony.get('signature') == 'unsigned' and harmony.get('releaseStatus') == 'experimental', 'Retained Harmony test package must have its own version and signing status')
+    validate_release_scope(build, manifest, previous)
     certificate = build['validation'].get('androidCertificateSha256')
     assets = []
     for package in build['platforms']:
@@ -248,22 +287,40 @@ def validate_bundle(bundle, native_verifier=verify_native):
         entry = next(p for p in manifest['platforms'] if p['id'] == package_id(package))
         require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
         require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
-        native_verifier(path, package['platform'], version, certificate, package.get('architecture', 'arm64'))
+        number = package.get('build', 0)
+        require(entry.get('build', 0) == number, 'Manifest build does not match package')
+        args = (path, package['platform'], version, certificate, package.get('architecture', 'arm64'))
+        native_verifier(*args, number) if number else native_verifier(*args)
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': True})
-    sums = ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
+    sums = checksum_list(build, manifest)
     require((bundle / 'SHA256SUMS.txt').read_text() == sums, 'SHA256SUMS does not match packages')
     notices = list(dict.fromkeys(license_name(p, packages) for p in packages))
     for package in packages:
         data = json.loads((bundle / license_name(package, packages)).read_text())
         require(data['version'] == version and data['sourceCommit'] == package['source'], 'Dependency notices source mismatch')
-    for name in ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + notices:
+    metadata = ['SHA256SUMS.txt', 'build-info.json', 'THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt'] + notices
+    if build.get('partialRelease'):
+        revision = build['packageRevision']
+        require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', revision), 'Invalid platform patch label')
+        patched = f'build-info-{revision}.json'
+        require((bundle / patched).read_bytes() == (bundle / 'build-info.json').read_bytes(), 'Patch provenance differs from build information')
+        metadata = ['SHA256SUMS.txt', patched]
+        for name in notices:
+            filename = f'{Path(name).stem}-{revision}.json'
+            require((bundle / filename).read_bytes() == (bundle / name).read_bytes(), 'Patch license notice differs from original')
+            metadata.append(filename)
+    for name in metadata:
         path = bundle / name
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': False})
-    from updater_artifacts import updater_assets
-    updater, extras = updater_assets(bundle, version)
+    from updater_artifacts import updater_assets, updater_target
+    previous_updater = json.loads((bundle / 'previous-updater.json').read_text()) if build.get('partialRelease') else None
+    targets = {target: p.get('build', 0) for p in packages if (target := updater_target(p))}
+    updater, extras = updater_assets(bundle, version, targets, previous_updater)
     known = {a['name'] for a in assets}
     assets.extend(a for a in extras if a['name'] not in known)
     notes = (bundle / 'RELEASE_NOTES.md').read_text()
     require(source in notes, 'Release notes must pin the package source commit')
     return {'version': version, 'source': source, 'tag': 'v' + version, 'manifest': manifest, 'previous': previous,
-            'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}), 'ciRuns': build.get('ciRuns', {}), 'platformSources': {**{p['platform']: p['source'] for p in build['platforms']}, **{package_id(p): p['source'] for p in build['platforms']}}, 'revision': build.get('packageRevision', source[:7])}
+            'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}),
+            **({'previousUpdater': previous_updater} if previous_updater is not None else {}),
+            'ciRuns': build.get('ciRuns', {}), 'platformSources': {**{p['platform']: p['source'] for p in build['platforms']}, **{package_id(p): p['source'] for p in build['platforms']}}, 'revision': build.get('packageRevision', source[:7])}

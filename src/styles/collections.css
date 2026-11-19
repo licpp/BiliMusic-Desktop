@@ -23,6 +23,12 @@
 .collection-dialog-layer{z-index:260;padding:20px;background:#030c1466;backdrop-filter:blur(8px)}
 .collection-dialog{width:min(420px,100%);max-height:80dvh;overflow:auto;padding:20px;border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);box-shadow:0 16px 70px #0002}
 .collection-dialog header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}.collection-dialog h3{margin:0;font-size:17px}.collection-dialog p{color:var(--muted);overflow-wrap:anywhere;font-size:13px;line-height:1.7}
+.sync-track-repair-list { list-style:none; margin:12px 0 0; padding:0; max-height:40dvh; overflow:auto; overscroll-behavior:contain; }
+.sync-track-repair-list li { display:grid; gap:4px; padding:10px 2px; border-bottom:1px solid var(--line); font-size:13px; overflow-wrap:anywhere; }
+.sync-track-repair-list small { color:var(--muted); font-size:12px; }
+.collection-dialog.sync-track-repair footer { flex-wrap:wrap; }
+.sync-track-repair footer button { min-height:44px; }
+.sync-repair-backup { overflow-wrap:anywhere; }
 .collection-dialog input:where(:not([type=checkbox]):not([type=radio])){width:100%;background:var(--base);color:var(--ink);border:1px solid var(--line);padding:10px 12px;border-radius:9px;font:inherit;min-width:0}.collection-dialog footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 .collection-folder-options{display:grid;gap:3px;margin-bottom:12px}.collection-folder-options>button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:12px;border:0;border-radius:9px;background:none;color:var(--ink);font:inherit;font-size:13px;cursor:pointer}.collection-folder-options>button span{flex:1}.collection-folder-options>button:hover{background:var(--panel-raised)}
 .collection-detail>header{display:flex;align-items:center;gap:16px;margin:20px 0}.collection-detail>header>.artwork{width:128px;height:72px;border-radius:10px;flex-shrink:0}.collection-detail>header>div{min-width:0;flex:1}.collection-detail h2{font-size:22px;overflow-wrap:anywhere;margin:0 0 8px}.collection-detail header p{color:var(--muted);font-size:12px;margin:0}.collection-detail header>.collection-bookmark{flex-shrink:0}
@@ -49,7 +55,11 @@
 .batch-actions > span, .batch-message { color: var(--muted); font-size: 13px; }
 .batch-message { padding: 10px 0; }
 .track-select { width: 18px; height: 18px; justify-self: center; accent-color: var(--coral); }
-.library-track.selecting { grid-template-columns: 44px minmax(0,1fr) auto; }
+.library-grid .library-track.selecting { grid-template-columns: auto minmax(0,1fr) auto; }
+:root[data-layout="mobile"] .library-grid .library-track.selecting { grid-template-columns:auto minmax(0,1fr) auto; }
+.library-art-select { display:flex;align-items:center;gap:8px;cursor:pointer; }
+.library-art-select .track-select,.linked-select-row .track-select { flex:none;margin:0; }
+.library-track.selecting .library-copy { cursor:pointer; }
 .import-mode { display: grid; gap: 9px; border: 1px solid var(--line); border-radius: 12px; margin: 8px 0 16px; padding: 10px; }
 .import-mode label { display: flex; align-items: start; gap: 8px; cursor: pointer; }
 .import-mode label span { display: grid; gap: 4px; }
@@ -94,6 +104,9 @@
 .video-part-select:hover { background: var(--panel-raised); }
 .video-part-select > span { color: var(--coral); font-size: 10px; }
 .video-part-select input { margin: 0; }
+.video-part-select:has(.video-part-select-art) { grid-template-columns:26px clamp(40px,8vw,76px) minmax(0,1fr) auto; }
+.video-part-select .video-part-select-art { position:relative;width:100%;aspect-ratio:16/10;overflow:hidden;border-radius:6px; }
+.video-part-select-art > .artwork { width:100%;height:100%; }
 
 .collection-actions { align-items: center; }
 .collection-actions > button:not(.collection-primary):not(.action-menu-trigger),
@@ -313,7 +326,6 @@
 .listening-library { position:relative; }
 /* Toolbars share the tab row; transformed panels would make them reserve
    space or anchor to the list instead of this header. */
-.listening-library #listening-panel>.segmented-panel { animation:none; }
 .listening-library>.listening-tabs { padding-right:84px; }
 .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) {
  position:absolute;top:26px;right:0;height:30px;min-height:30px;margin:0;

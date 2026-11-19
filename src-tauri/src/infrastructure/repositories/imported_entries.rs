@@ -698,7 +698,10 @@ pub fn project(c: &Connection) -> Result<(), String> {
         c.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![t.id,t.bvid,t.aid,t.cid,t.page,t.source_title,t.uploader_id,t.uploader_name]).map_err(err)?;
         c.execute("INSERT INTO tracks(id,source_item_id,title,artist,album,cover_url,duration_seconds) VALUES(?1,?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO NOTHING",params![t.id,t.title,t.artist,t.album,t.cover_url,t.duration_seconds]).map_err(err)?;
         if let Some(context) = &t.source_title_context {
-            super::source_titles::save(c, &t.id, context).map_err(err)?;
+            let mut context = context.clone();
+            let previous = super::source_titles::get(c, &t.id).map_err(err)?;
+            context.preserve_membership(previous.as_ref());
+            super::source_titles::save(c, &t.id, &context).map_err(err)?;
         }
         c.execute("INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3) ON CONFLICT(playlist_id,track_id) DO UPDATE SET position=excluded.position",params![v.playlist_id,t.id,v.order as i64]).map_err(err)?;
     }

@@ -5,7 +5,7 @@ use crate::{
     infrastructure::{
         database::{Database, account_session},
         repositories::{
-            library::{LibraryRepository, MetadataPatch},
+            library::{LibraryRepository, MetadataPatch, TrackRecord},
             lyrics::{LyricsRepository, SaveLyricsInput, StoredLyrics},
         },
     },
@@ -22,6 +22,44 @@ pub struct MatchSnapshot {
     session: String,
     lyric_token: Option<String>,
     protected: bool,
+}
+
+/// Includes the explicit override values and the full local lyric selection.
+/// A network enrichment cannot trample an edit made while it was loading.
+pub(super) fn pair_version(c: &Connection, track_id: &str) -> Result<String, CommandError> {
+    let metadata = c.query_row(
+        "SELECT title,artist,album,cover_url FROM metadata_overrides WHERE track_id=?1",
+        [track_id],
+        |r| {
+            Ok([
+                r.get::<_, Option<String>>(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+            ])
+        },
+    );
+    let metadata = match metadata {
+        Ok(value) => Some(value),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(error) => return Err(CommandError::database(error)),
+    };
+    let lyrics = LyricsRepository::get(c, track_id).map_err(CommandError::database)?;
+    Ok(causal::hash(
+        &serde_json::to_vec(&(metadata, lyrics.as_ref().map(token)))
+            .expect("pair snapshot serializes"),
+    ))
+}
+
+#[tauri::command]
+pub fn lyric_match_version(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    track_id: String,
+) -> Result<String, CommandError> {
+    let c = database.0.lock().map_err(CommandError::database)?;
+    super::commands::check_account_session(&c, &expected_account_session)?;
+    pair_version(&c, &track_id)
 }
 
 /// This is an opaque operation token, not the provider ID. Include the local
@@ -124,7 +162,8 @@ fn validate(metadata: &MetadataPatch, lyrics: &SaveLyricsInput) -> Result<(), Co
     }
     let parsed: Vec<LyricLine> = serde_json::from_str(&lyrics.parsed_json)
         .map_err(|_| CommandError::validation("歌词解析数据无效"))?;
-    if parsed.len() > 100_000
+    if parsed.is_empty()
+        || parsed.len() > 100_000
         || parsed.iter().any(|line| {
             !time_valid(line.time_ms)
                 || line.text.len() > 16_000
@@ -186,6 +225,43 @@ fn commit(
     LyricsRepository::save(c, track_id, lyrics, false).map_err(CommandError::database)?;
     tx.commit().map_err(CommandError::database)?;
     Ok(true)
+}
+
+pub(super) fn save_manual_pair(
+    c: &Connection,
+    track_id: &str,
+    mut metadata: MetadataPatch,
+    lyrics: &SaveLyricsInput,
+) -> Result<(StoredLyrics, TrackRecord), CommandError> {
+    validate(&metadata, lyrics)?;
+    let tx = c.unchecked_transaction().map_err(CommandError::database)?;
+    // Preserve existing overrides for fields the selected provider didn't supply.
+    let previous = c.query_row(
+        "SELECT artist,album,cover_url FROM metadata_overrides WHERE track_id=?1",
+        [track_id],
+        |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        },
+    );
+    match previous {
+        Ok((artist, album, cover)) => {
+            metadata.artist = metadata.artist.or(artist);
+            metadata.album = metadata.album.or(album);
+            metadata.cover_url = metadata.cover_url.or(cover);
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {}
+        Err(error) => return Err(CommandError::database(error)),
+    }
+    let track = LibraryRepository::update_metadata(c, track_id, &metadata)
+        .map_err(CommandError::database)?;
+    let lyrics =
+        LyricsRepository::save(c, track_id, lyrics, true).map_err(CommandError::database)?;
+    tx.commit().map_err(CommandError::database)?;
+    Ok((lyrics, track))
 }
 
 #[tauri::command]
@@ -278,6 +354,50 @@ mod tests {
         assert!(!chosen.selected_manually);
         assert!(snapshot(&c, TRACK).unwrap().protected);
         assert!(!apply(&c, &s).unwrap());
+    }
+    #[test]
+    fn manual_pair_preserves_unavailable_fields_and_rejects_invalid_lyrics_without_changing_metadata()
+     {
+        let c = db();
+        LibraryRepository::update_metadata(&c, TRACK, &metadata()).unwrap();
+        let patch = MetadataPatch {
+            title: "新曲名".into(),
+            artist: None,
+            album: None,
+            cover_url: None,
+        };
+        let (saved, track) = save_manual_pair(&c, TRACK, patch.clone(), &lyrics("41")).unwrap();
+        assert!(saved.selected_manually);
+        assert_eq!(track.id, TRACK);
+        assert_eq!(track.title, "新曲名");
+        assert_eq!(track.cover_url, metadata().cover_url);
+        let invalid = SaveLyricsInput {
+            parsed_json: "[]".into(),
+            ..lyrics("99")
+        };
+        assert!(
+            save_manual_pair(
+                &c,
+                TRACK,
+                MetadataPatch {
+                    title: "不能写入".into(),
+                    ..patch
+                },
+                &invalid
+            )
+            .is_err()
+        );
+        assert_eq!(
+            LibraryRepository::get(&c, TRACK).unwrap().unwrap().title,
+            "新曲名"
+        );
+        assert_eq!(
+            LyricsRepository::get(&c, TRACK)
+                .unwrap()
+                .unwrap()
+                .provider_lyric_id,
+            "41"
+        );
     }
     #[test]
     fn manual_metadata_or_lyrics_wins_a_late_automatic_result() {

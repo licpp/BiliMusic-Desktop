@@ -137,3 +137,10 @@
  :root[data-layout="mobile"] .lyrics-meta-actions { gap:0; }
  :root[data-layout="mobile"] .lyrics-meta-actions>button { width:44px;flex-basis:44px; }
 }
+
+.lyric-match-option { display: flex; align-items: center; gap: 10px; margin-block: 6px 10px; min-height: 42px; padding: 6px 10px; color: var(--ink); font-size: .85rem; cursor: pointer; }
+.lyric-match-option input { appearance: none; display: grid; place-items: center; flex: 0 0 19px; width: 19px; height: 19px; margin: 0; border: 1px solid var(--muted); border-radius: 5px; background: var(--panel); }
+.lyric-match-option input:checked { border-color: var(--cyan); color: var(--cyan); }
+.lyric-match-option input:checked::after { content: '✓'; font: 700 14px/1 system-ui; }
+.mobile-lyrics-chooser .lyric-match-option { margin-inline: 12px; }
+.lyric-chooser .lyric-match-option { margin-inline: 22px; padding-inline: 0; }

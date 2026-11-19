@@ -16,6 +16,7 @@ export function SegmentedTabs<T extends string>({ tabs, value, onChange, idPrefi
       onChange(tabs[index].id)
       event.currentTarget.querySelectorAll<HTMLButtonElement>('button')[index]?.focus()
     }}>
+    <span className="segmented-tab-indicator" data-swipe-indicator aria-hidden="true" />
     {tabs.map(tab => <button key={tab.id} id={`${idPrefix}-${tab.id}`} role="tab" aria-selected={tab.id === value} aria-controls={panelId}
       tabIndex={tab.id === value ? 0 : -1} onClick={() => onChange(tab.id)}>
       {tab.label}

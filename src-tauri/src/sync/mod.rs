@@ -16,6 +16,7 @@ pub mod migration_material;
 pub mod model;
 pub mod outbox;
 mod projection;
+pub(crate) mod repair;
 pub mod protocol_v2;
 pub mod publication;
 mod recovery;
@@ -106,6 +107,9 @@ impl Default for Config {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub visibility_error: Option<String>,
+    pub import_error: Option<String>,
+    pub local_error: Option<String>,
+    pub track_repair: Option<repair::Preview>,
     pub config: Config,
     pub last_success: Option<String>,
     pub records: usize,
@@ -116,6 +120,8 @@ pub struct Status {
 pub struct Outcome {
     pub skipped: bool,
     pub conflicts: Vec<Conflict>,
+    pub visibility_error: Option<String>,
+    pub import_error: Option<String>,
     pub records: usize,
     pub bytes: usize,
     pub changed: bool,
@@ -201,7 +207,8 @@ fn secret(
 }
 #[tauri::command]
 pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
-    let mut cfg = config(&database)?;
+    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    let mut cfg = config_from_connection(&c)?.unwrap_or_default();
     // Local import/export remains available even when no cloud connection was made.
     if cfg.uid.is_empty() {
         let uid = std::fs::read_to_string(database.1.join("active-profile")).unwrap_or_default();
@@ -209,7 +216,6 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
             cfg.uid = uid;
         }
     }
-    let c = database.0.lock().map_err(|_| "数据库正忙")?;
     let last = c
         .query_row(
             "SELECT value FROM sync_info WHERE key='last_success:' || (SELECT value FROM sync_info WHERE key='active_target')",
@@ -218,25 +224,42 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let snap = if cfg.uid.is_empty() {
-        Snapshot::empty("0")
+    let (snapshot, track_repair, local_error) = if cfg.uid.is_empty() {
+        (None, None, None)
     } else {
-        storage::export(&c, &cfg.uid, cfg.history)?
+        match storage::export(&c, &cfg.uid, cfg.history) {
+            Ok(snap) => (Some(snap), None, None),
+            Err(error) if error.ends_with(model::MISSING_TRACK) => {
+                let repair = repair::preview(&c, cfg.history)?;
+                let local_error = repair.is_none().then_some(error);
+                (None, repair, local_error)
+            }
+            Err(error) => (None, None, Some(error)),
+        }
     };
     Ok(Status {
-        visibility_error: c
-            .query_row(
-                "SELECT value FROM visibility_runtime WHERE key='sync_error'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?,
+        visibility_error: sync_area_error(&c, "visibility-error")?,
+        import_error: sync_area_error(&c, "import-error")?,
+        local_error,
         config: cfg,
+        track_repair,
         last_success: last,
-        records: snap.records.len(),
-        bytes: serde_json::to_vec(&snap).unwrap().len(),
+        records: snapshot.as_ref().map_or(0, |s| s.records.len()),
+        bytes: snapshot.as_ref().map_or(0, |s| serde_json::to_vec(s).unwrap().len()),
     })
+}
+
+fn sync_area_error(c: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
+    c.query_row(
+        "SELECT json FROM sync_v2_state WHERE target=(SELECT value FROM sync_info WHERE key='active_target') AND key=?1",
+        [key],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .map(|value| serde_json::from_str::<Option<String>>(&value).map_err(|e| e.to_string()))
+    .transpose()
+    .map(Option::flatten)
 }
 #[tauri::command]
 pub async fn sync_connect(
@@ -420,9 +443,9 @@ fn preserve_history(base: &mut Snapshot, local: &mut Snapshot, remote: &Snapshot
 pub fn sync_conflict_options(
     database: State<'_, Database>,
 ) -> Result<engine::ConflictMenu, String> {
-    let cfg = config(&database)?;
-    active(&database, &cfg.uid)?;
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    let cfg = config_from_connection(&c)?.ok_or("尚未连接同步服务")?;
+    active(&database, &cfg.uid)?;
     let target: String = c
         .query_row(
             "SELECT value FROM sync_info WHERE key='active_target'",
@@ -455,13 +478,21 @@ pub async fn sync_now(
             preview,
             automatic,
         ),
-        |outcome| (outcome.changed, !outcome.conflicts.is_empty()),
+        |outcome| {
+            (
+                outcome.changed,
+                !outcome.conflicts.is_empty(),
+                outcome.import_error.is_some() || outcome.visibility_error.is_some(),
+            )
+        },
     )
     .await
     .map(|value| {
         value.unwrap_or(Outcome {
             skipped: true,
             conflicts: vec![],
+            visibility_error: None,
+            import_error: None,
             records: 0,
             bytes: 0,
             changed: false,
@@ -591,6 +622,7 @@ async fn sync_now_inner(
             merge(&baseline, &local, &effective_remote, resolution.as_deref());
         conflicts.extend(remote.conflicts.clone());
         merged.compact(true);
+        merged.restore_missing_tracks();
         merged.validate(&cfg.uid)?;
         let bytes = serde_json::to_vec(&merged).unwrap().len();
         let count = merged.records.len();
@@ -598,6 +630,8 @@ async fn sync_now_inner(
             return Ok(Outcome {
                 skipped: false,
                 conflicts,
+                visibility_error: None,
+                import_error: None,
                 records: count,
                 bytes,
                 changed: merged != remote.snapshot,
@@ -680,11 +714,12 @@ async fn sync_now_inner(
                 }
             }
             final_local.compact(true);
+            let inferred = final_local.restore_missing_tracks();
             if !post_conflicts.is_empty() {
                 return Err("同步期间本机数据发生冲突，已保留本机修改，请再次同步".into());
             }
             let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
-            storage::apply(&c, &final_local, cfg.history)?;
+            storage::apply_with_inferred_tracks(&c, &final_local, cfg.history, &inferred)?;
             c.execute("INSERT INTO sync_target_base(target,json) VALUES(?1,?2) ON CONFLICT(target) DO UPDATE SET json=excluded.json",params![target,serde_json::to_string(&merged).unwrap()]).map_err(|e|e.to_string())?;
             c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(|e|e.to_string())?;
             c.execute("INSERT INTO sync_info(key,value) VALUES('active_target',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
@@ -698,6 +733,8 @@ async fn sync_now_inner(
         return Ok(Outcome {
             skipped: false,
             conflicts: vec![],
+            visibility_error: None,
+            import_error: None,
             records: count,
             bytes,
             changed: initial != final_local,

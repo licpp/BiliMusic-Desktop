@@ -17,7 +17,7 @@ const mocks={
  useArtworkFit:`export const useArtworkFit=()=>({stage:{current:null},onRatio(){}});`,
  mobileAudio:`export const controlMobileAudio=async()=>{};`,
  trackActionStore:`export const chooseTrackPlaylist=()=>{};`,
- desktopApi:`${['getDanmaku','getVideoSource','getStoredLyrics','enrichStoredLyricLines','getVideoParts','saveStoredLyrics','searchLyrics','setStoredLyricsBias'].map(n=>`export const ${n}=async()=>null;`).join('')}export const commandErrorMessage=String;`,
+ desktopApi:`${['getDanmaku','getVideoSource','getStoredLyrics','enrichStoredLyricLines','getVideoParts','saveStoredLyrics','lyricMatchVersion','saveLyricsWithMetadata','searchMetadataCatalog','searchLyrics','setStoredLyricsBias'].map(n=>`export const ${n}=async()=>null;`).join('')}export const commandErrorMessage=String;`,
 }
 for(const [module,names] of Object.entries({SeekRange:['SeekRange'],FloatingLyricsToggle:['FloatingLyricsToggle'],SeasonBrowser:['SeasonBrowser'],MobilePlaybackRate:['MobilePlaybackRate','PlaybackRateEntry'],PlaybackSettings:['PlaybackSettings'],SleepTimer:['SleepTimerEntry'],MetadataDialog:['MetadataDialog'],PlayingVideoReplacement:['PlayingVideoReplacement'],TouchOptions:['TouchOptions'],MobilePartsPage:['MobilePartsPage'],CommentsPanel:['CommentsPanel'],LyricsChooser:['LyricsChooser'],DanmakuCanvas:['DanmakuCanvas'],SyncedVideo:['SyncedVideo'],LyricsBiasControl:['LyricsBiasControl']}))mocks[module]=names.map(n=>`export const ${n}=()=>null;`).join('')
 
@@ -29,13 +29,13 @@ async function renderer(mobile){
   b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:mocks[args.path],loader:'js'}))
  }}]})
  const m={exports:{}};new Function('require','module','exports',bundle.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
- return (compact,mode)=>{
+ return (compact,mode,fullscreenRequested=false)=>{
   globalThis.mediaLayout.compact=compact
   globalThis.document={getElementById:()=>null}
   globalThis.localStorage={getItem:key=>key==='lyrics-media-mode'?mode:null}
   globalThis.mediaLayout.state={current:{id:'bilibili:BV1GJ411x7h7:1',source:{provider:'bilibili',bvid:'BV1GJ411x7h7',cid:1,page:1,aid:1},title:'测试歌曲',durationSeconds:240},status:'paused',durationSeconds:240,progressSeconds:0}
   const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
-  try{return renderToStaticMarkup(createElement(QueryClientProvider,{client},createElement(m.exports.LyricsView,{onOpenSleepTimer(){},onClose(){},onFavorite(){},favoritePending:false,onOpenCollection(){}})))}finally{client.clear()}
+  try{return renderToStaticMarkup(createElement(QueryClientProvider,{client},createElement(m.exports.LyricsView,{fullscreenRequested,setVideoFullscreen(){},onOpenSleepTimer(){},onClose(){},onFavorite(){},favoritePending:false,onOpenCollection(){}})))}finally{client.clear()}
  }
 }
 
@@ -52,9 +52,10 @@ function nodes(html){
 }
 const hasClass=(node,name)=>new RegExp(`class="[^"]*\\b${name}\\b`).test(node.attrs)
 const mobileRender=await renderer(true)
-test('tablet video controls stay inside the video frame; cover mode has one toggle outside it',()=>{
+test('tablet cover and video controls use the same external media-stage toolbar as desktop',()=>{
  const video=nodes(mobileRender(false,'video')),tools=video.find(n=>hasClass(n,'video-tools'))
- assert.ok(hasClass(tools.parent,'lyrics-cover'));assert.ok(hasClass(tools.parent,'video-active'))
+ assert.ok(hasClass(tools.parent,'lyrics-media'))
+ assert.ok(tools.parent.children.some(n=>n!==tools&&hasClass(n,'video-active')))
  assert.equal(tools.children.filter(n=>n.tag==='button').length,4)
  assert.equal(video.some(n=>hasClass(n,'lyrics-meta-actions')),false,'phone action row must not leak into tablet layout')
  const cover=nodes(mobileRender(false,'cover')),coverTools=cover.find(n=>hasClass(n,'video-tools'))
@@ -64,6 +65,16 @@ test('phone keeps its existing media-stage controls and compact song action row 
  for(const mode of ['cover','video']){
   const html=nodes(mobileRender(true,mode)),tools=html.find(n=>hasClass(n,'video-tools'))
   assert.ok(hasClass(tools.parent,'lyrics-media'));assert.equal(html.filter(n=>hasClass(n,'lyrics-meta-actions')).length,1)
+ }
+})
+test('mobile fullscreen keeps its media stage and transport together in both layouts',()=>{
+ for(const compact of [true,false]){
+  const html=nodes(mobileRender(compact,'video',true))
+  const fullscreen=html.find(n=>hasClass(n,'video-fullscreen'))
+  const media=fullscreen.children.find(n=>hasClass(n,'lyrics-media'))
+  assert.ok(media.children.some(n=>hasClass(n,'video-active')))
+  assert.ok(media.children.some(n=>hasClass(n,'video-tools')))
+  assert.ok(media.children.some(n=>hasClass(n,'video-fullscreen-transport')))
  }
 })
 test('desktop keeps its existing media-stage toolbar without the phone-only action row',async()=>{

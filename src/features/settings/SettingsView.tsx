@@ -22,12 +22,13 @@ import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/se
 import { syncStatus } from '../../services/sync'
 
 export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?: boolean; onOpenDownloads?: () => void }) {
-  const attention = useSyncAttention(state => state.library || state.statistics)
+  const runtimeAttention = useSyncAttention(state => state.library || state.statistics)
   const reveal = useSyncAttention(state => state.reveal)
   const theme = useThemeStore(state => state.theme), setTheme = useThemeStore(state => state.setTheme)
   const [downloadDirectory, setDownloadDirectory] = useState('')
   const [loading, setLoading] = useState(true), [error, setError] = useState('')
   const sync = useQuery({ queryKey:accountQueryKey('sync-status'), queryFn:syncStatus, enabled:inDesktopShell, retry:false })
+  const attention = runtimeAttention || (sync.data?.trackRepair || sync.data?.localError || sync.data?.importError || sync.data?.visibilityError || sync.error ? '同步待处理' : '')
   useEffect(() => {
     if (!inDesktopShell || isAndroid) { setLoading(false); return }
     void getDownloadDirectory().then(setDownloadDirectory).catch(cause => setError(commandErrorMessage(cause))).finally(() => setLoading(false))

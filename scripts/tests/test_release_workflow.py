@@ -19,6 +19,45 @@ from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_android_patch_retains_other_installers_and_ota_feed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            version, source = '0.4.0', 'a' * 40
+            name = f'BiliMusic_{version}_Android_arm64.apk'
+            data = b'android build 2'
+            (root / name).write_bytes(data)
+            (root / 'build-info.json').write_text(json.dumps({
+                'version': version, 'source': source, 'validation': {},
+                'platforms': [{'platform': 'Android', 'architecture': 'arm64', 'file': name,
+                               'source': source, 'version': version, 'build': 2, 'bytes': len(data),
+                               'sha256': hashlib.sha256(data).hexdigest()}],
+            }))
+            for filename in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
+                (root / filename).write_text('# BiliMusic 0.4.0')
+            (root / 'THIRD_PARTY_LICENSES-Android.json').write_text(json.dumps({'version': version, 'sourceCommit': source}))
+            channels = [{'id': 'github'}, {'id': 'gitee'}]
+            previous = {'version': version, 'history': [{'version': version}], 'platforms': [
+                {'id': 'android', 'build': 1, 'file': 'phone.apk', 'channels': channels, 'status': 'available', 'sha256': '1' * 64},
+                {'id': 'android-large', 'build': 1, 'file': 'large.apk', 'channels': channels, 'status': 'available', 'sha256': '2' * 64},
+                {'id': 'mac', 'build': 1, 'file': 'mac.dmg', 'channels': channels, 'status': 'available', 'sha256': '3' * 64},
+            ]}
+            ota = {'version': version, 'platforms': {'darwin-aarch64': {'build': 1, 'url': 'existing'}}}
+            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'android-build-2', previous, ota)
+            verifier = Mock()
+            plan = validate_bundle(output, verifier)
+            self.assertEqual(plan['manifest']['platforms'][0]['build'], 2)
+            self.assertEqual(plan['manifest']['platforms'][1:], previous['platforms'][1:])
+            self.assertEqual(plan['updater'], ota)
+            self.assertEqual(verifier.call_args.args[-1], 2)
+            self.assertIn('  large.apk', (output / 'SHA256SUMS.txt').read_text())
+            self.assertIn('build-info-android-build-2.json', {asset['name'] for asset in plan['assets']})
+            package = root / 'staged' / 'candidate-releases.json'
+            candidate = json.loads(package.read_text())
+            candidate['platforms'][1]['build'] = 2
+            package.write_text(json.dumps(candidate))
+            with self.assertRaisesRegex(ValueError, 'Unbuilt platform'):
+                validate_bundle(output, verifier)
+
     def test_large_upload_timeout_scales_with_payload_size(self):
         with tempfile.TemporaryDirectory() as folder:
             p=Publisher({'version':'0.3.5','source':'a'*40,'revision':'stable','repos':{'github':'owner/repo'}},{'github':'TOKEN'},folder)

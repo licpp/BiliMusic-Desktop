@@ -50,7 +50,7 @@ function check() {
   console.log(`JDK: ${java}\nSDK: ${sdk}\nNDK: ${ndk}\nRust: ${selected.rust}`)
 }
 
-if (task === 'build' || task === 'large-screen') await syncMobileVersion()
+if (task === 'build' || task === 'large-screen') await syncMobileVersion(undefined, task === 'build' ? 'android' : 'large-screen')
 check()
 if (task === 'doctor') {
   run(join(java, 'bin/java'), ['-version'])

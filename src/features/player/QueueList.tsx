@@ -1,7 +1,7 @@
 import { trackSubtitle, hasSeriesHeading, knownArtist, withoutSeriesPrefix } from '../../domain/sourceTitle'
 import { useQueryClient } from '@tanstack/react-query'
 import { hydrateSourceTitles } from '../../services/sourceTitles'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ListMusic, Play, ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { isMobile } from '../../services/platform'
@@ -15,7 +15,20 @@ import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { presentQueue } from './queueGroups'
 import { prepareSeasonQueueEntry, usePlayerStore } from './playerStore'
 
-export function QueueList({ open }: { open: boolean }) {
+type QueueViewMemory = { scroll?: number; expanded: Record<string, boolean> }
+
+export function QueueList({ open, visible }: { open: boolean; visible: boolean }) {
+  const source = usePlayerStore(state => state.queueSource)
+  const key = source ? JSON.stringify([source.kind, source.collectionRef, source.creatorMid, source.creatorKeyword, source.title]) : ''
+  return <QueueListLifetime key={key} open={open} visible={visible}/>
+}
+
+function QueueListLifetime({ open, visible }: { open: boolean; visible: boolean }) {
+  const memory = useRef<QueueViewMemory>({ expanded: {} })
+  return visible ? <QueueListRows open={open} memory={memory.current} /> : null
+}
+
+function QueueListRows({ open, memory }: { open: boolean; memory: QueueViewMemory }) {
   const queue = usePlayerStore(state => state.queue)
   const client = useQueryClient()
   useEffect(() => { if (open && queue.length) void hydrateSourceTitles(queue.map(track => track.id), client) }, [open, queue, client])
@@ -23,20 +36,28 @@ export function QueueList({ open }: { open: boolean }) {
   const currentId = usePlayerStore(state => state.current?.id)
   const { structured, groups, partsOnly } = useMemo(() => presentQueue(queue, source?.kind), [queue, source?.kind])
   const root = useRef<HTMLDivElement>(null)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState(memory.expanded)
+  const restore = useRef(memory.scroll)
   const activeGroup = groups.find(item => item.tracks.some(track => track.id === currentId))
   const activeFolder = activeGroup && activeGroup.tracks.length > 1
   const activeExpanded = activeGroup ? expanded[activeGroup.key] ?? true : false
   const rowId = activeFolder && !activeExpanded ? activeGroup.key : activeGroup ? currentId : undefined
 
-  useEffect(() => { if (!open) setExpanded({}) }, [open])
-  useLocateCurrentRow(root, open, rowId)
+  useLayoutEffect(() => {
+    if (!root.current || restore.current === undefined) return
+    root.current.scrollTop = restore.current
+  }, [])
+  useLocateCurrentRow(root, open && restore.current === undefined, rowId, true)
+  const setGroupOpen = (key: string, value: boolean) => {
+    memory.expanded = { ...memory.expanded, [key]: value }
+    setExpanded(memory.expanded)
+  }
 
-  return <div className="queue-list queue-tree" ref={root}>
+  return <div className="queue-list queue-tree" ref={root} onScroll={event => { memory.scroll = event.currentTarget.scrollTop }}>
     {groups.map((item, index) => {
       const active = item === activeGroup
       return item.tracks.length > 1 ? <QueueVideo key={item.key} id={item.key} tracks={item.tracks} activeId={active ? currentId : undefined}
-        expanded={open && (expanded[item.key] ?? active)} onToggle={() => setExpanded(value => ({ ...value, [item.key]: !(value[item.key] ?? active) }))}
+        expanded={expanded[item.key] ?? active} onToggle={() => setGroupOpen(item.key, !(expanded[item.key] ?? active))}
         index={index} count={groups.length}/> :
         <QueueTrack key={item.key} track={item.tracks[0]} active={active} observe={open} group={structured} label={partsOnly ? `P${item.tracks[0].source.page}` : String(index + 1)} groupIndex={index} groupCount={groups.length}/>
     })}

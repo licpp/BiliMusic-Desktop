@@ -1,6 +1,11 @@
 name: ios-self-sign-build
 on:
   workflow_dispatch:
+    inputs:
+      build_number:
+        description: iOS build number
+        type: number
+        default: 1
   push:
     branches: [main, codex/release-0.3.0]
     paths: ['src/**', 'src-tauri/**', 'native/ios-player/**', 'scripts/ios-*', 'package*', 'tests/**', '.github/workflows/ios.yml']
@@ -13,6 +18,8 @@ jobs:
   ios:
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      BILIMUSIC_BUILD_NUMBER: ${{ inputs.build_number || 1 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
