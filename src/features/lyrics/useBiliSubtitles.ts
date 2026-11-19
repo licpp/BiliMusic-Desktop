@@ -118,6 +118,7 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
       sessionStorage.setItem('lyrics-subtitles-override', choice)
       setOverride(choice)
       setEnabled(next)
+      window.dispatchEvent(new Event('bilimusic-subtitle-preference'))
     },
   }
 }

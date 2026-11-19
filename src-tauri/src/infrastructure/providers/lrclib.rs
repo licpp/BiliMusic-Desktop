@@ -1,4 +1,5 @@
 use super::domestic_music::{self, MusicLyrics, MusicSong};
+use crate::domain::lyrics::has_lrc_timing;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -38,6 +39,22 @@ pub struct LyricCandidate {
     pub translated_lyrics: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub romanized_lyrics: Option<String>,
+}
+
+impl LyricCandidate {
+    pub fn normalize_domestic_timing(&mut self) {
+        if matches!(self.provider.as_str(), "netease" | "qq")
+            && self
+                .synced_lyrics
+                .as_deref()
+                .is_some_and(|raw| !has_lrc_timing(raw))
+        {
+            let original = self.synced_lyrics.take();
+            if self.plain_lyrics.is_none() {
+                self.plain_lyrics = original;
+            }
+        }
+    }
 }
 
 fn default_provider() -> String {
@@ -262,7 +279,7 @@ fn domestic_candidate(
     song: Option<MusicSong>,
 ) -> Option<LyricCandidate> {
     let original = lyrics.original.filter(|s| !s.trim().is_empty())?;
-    Some(LyricCandidate {
+    let mut candidate = LyricCandidate {
         provider: provider.into(),
         id,
         track_name: song.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
@@ -278,7 +295,9 @@ fn domestic_candidate(
         synced_lyrics: Some(original),
         translated_lyrics: lyrics.translated,
         romanized_lyrics: lyrics.romanized,
-    })
+    };
+    candidate.normalize_domestic_timing();
+    Some(candidate)
 }
 
 #[cfg(test)]
@@ -293,6 +312,31 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn netease_text_without_timestamps_is_readable_and_not_marked_as_synced() {
+        let raw = "作词：测试\n示例第一行\r\n示例第二行";
+        let candidate = domestic_candidate(
+            "netease",
+            1,
+            MusicLyrics {
+                original: Some(raw.into()),
+                ..MusicLyrics::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(candidate.plain_lyrics.as_deref(), Some(raw));
+        assert!(candidate.synced_lyrics.is_none());
+
+        let mut cached: LyricCandidate = serde_json::from_value(serde_json::json!({
+            "provider": "netease", "id": 1, "syncedLyrics": raw
+        }))
+        .unwrap();
+        cached.normalize_domestic_timing();
+        assert_eq!(cached.plain_lyrics, candidate.plain_lyrics);
+        assert_eq!(cached.synced_lyrics, candidate.synced_lyrics);
+    }
 
     async fn fixture(
         failures: usize,

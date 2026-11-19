@@ -22,7 +22,8 @@ internal class NativeQueue {
     private var threshold = 0.0
     private var origins = JSONObject()
     private var entryOrder: List<String> = emptyList()
-    private var offlineOnly = false
+    var offlineOnly = false
+        private set
     private var collection = false
     var collectionRef: String? = null
         private set

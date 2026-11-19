@@ -4,11 +4,11 @@ import { parseLrc } from '../domain/lrc'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { create } from 'zustand'
-import { isMobile, isIOS, isOHOS } from './platform'
+import { isAndroid, isMobile, isIOS, isOHOS } from './platform'
 import { accountEpoch } from './accountScope'
 import { getStoredLyrics, enrichStoredLyricLines, inDesktopShell } from './desktopApi'
 import type { LyricLine, StoredLyrics } from '../domain/lyrics'
-import { usePlayerStore, playbackClock } from '../features/player/playerStore'
+import { usePlayerStore, playbackClock, nativeLyricPlaybackSession } from '../features/player/playerStore'
 import { useThemeStore } from './theme'
 import { storedLyricLines, systemLrc, floatingTimeline } from '../domain/lyricTimeline'
 import { subtitleScope, useSubtitleState } from '../features/lyrics/useBiliSubtitles'
@@ -49,7 +49,10 @@ export function startFloatingLyrics() {
   let revision = 0, trackKey = '', stored: StoredLyrics | null = null, lines: LyricLine[] = [], lastNative = ''
   let pending = false, dirty = false
   let displaySource: LyricLine[] | undefined, displayLines: LyricLine[] = [], timelineRevision = 0
-  const currentKey = () => `${accountEpoch()}:${usePlayerStore.getState().current?.id || ''}`
+  const currentKey = () => {
+    const id = usePlayerStore.getState().current?.id || ''
+    return `${accountEpoch()}:${id}:${isAndroid ? nativeLyricPlaybackSession(id) ?? '' : ''}`
+  }
   const publish = async () => {
     if (pending) { dirty = true; return }
     const state = usePlayerStore.getState(), current = state.current, style = useFloatingPreferences.getState()
@@ -63,7 +66,11 @@ export function startFloatingLyrics() {
     const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,capturedAt:Date.now()}
     if (isMobile) {
       // Native renderers read their own player's clock, even with JS suspended.
-      const signature = JSON.stringify([frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
+      const session = isAndroid ? nativeLyricPlaybackSession(frame.id) : undefined
+      // Android can already hold lyrics from its native background lookup. Only
+      // publish a resolved timeline for the same playing session from the WebView.
+      if (isAndroid && (!session || !frame.lines.length)) return
+      const signature = JSON.stringify([session,frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
       if (signature === lastNative) return
       lastNative = signature; pending = true
       try {
@@ -71,7 +78,7 @@ export function startFloatingLyrics() {
           const lines = frame.lines.map(({ timeMs, endTimeMs, text }) => ({ timeMs, endTimeMs, text }))
           await nativeLyrics({ action: 'update', id: frame.id, lines, biasMs: frame.biasMs, subtitles: frame.subtitles })
         } else {
-          await nativeLyrics({action:'update',...frame,lrc:systemLrc(frame.lines,frame.biasMs)})
+          await nativeLyrics({action:'update',session,...frame,lrc:systemLrc(frame.lines,frame.biasMs)})
         }
       }
       catch { if (signature === lastNative) lastNative = '' }
@@ -134,6 +141,13 @@ export function startFloatingLyrics() {
     window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
   }
   if (isMobile && !isIOS) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
+  if (isAndroid) {
+    const syncSubtitles = () => void nativeLyrics({
+      action: 'subtitle-preference', enabled: localStorage.getItem('lyrics-subtitles') === 'true',
+    }).catch(() => undefined)
+    window.addEventListener('bilimusic-subtitle-preference', syncSubtitles)
+    syncSubtitles()
+  }
   void load()
 }
 

@@ -10,6 +10,9 @@ use crate::interface::commands::{library_record_play, track_playback_plan};
 use serde_json::{Value, json};
 use tauri::Manager;
 
+#[cfg(any(target_os = "android", test))]
+pub(crate) mod lyrics;
+
 /// Resolve playlist presentation from the canonical binding, never treat queue
 /// display text as a user edit or persist it into the Bilibili source record.
 fn imported_presentation(c: &rusqlite::Connection, track: &mut Value) -> Result<(), String> {
@@ -384,6 +387,7 @@ pub(crate) async fn resolve_with_guard(
             "durationSeconds": stored.duration_seconds,
         })
     };
+    #[cfg(not(target_os = "android"))]
     let lyrics = {
         let db = app.state::<Database>();
         let connection = db.0.lock().map_err(|_| "数据库正忙")?;
@@ -391,15 +395,21 @@ pub(crate) async fn resolve_with_guard(
             .ok()
             .flatten()
     };
+    #[cfg(not(target_os = "android"))]
     let lyrics = lyrics.map(|stored| {
         let lines = crate::domain::lyrics::timed_lines(&stored.raw_text, &stored.parsed_json);
         let mut value = serde_json::to_value(stored).unwrap_or(Value::Null);
         value["lines"] = json!(lines);
         value
     });
-    Ok(
-        json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "loudnessGainDb":plan.loudness_gain_db, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts, "lyrics":lyrics}),
-    )
+    let result = json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "loudnessGainDb":plan.loudness_gain_db, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts});
+    #[cfg(not(target_os = "android"))]
+    let result = {
+        let mut result = result;
+        result["lyrics"] = json!(lyrics);
+        result
+    };
+    Ok(result)
 }
 
 #[cfg(test)]

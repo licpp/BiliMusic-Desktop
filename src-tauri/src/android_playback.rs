@@ -16,6 +16,22 @@ pub fn initialize(app: tauri::AppHandle) {
         if let Ok(request) = body.deserialize::<Request>() {
             let app = handle.clone();
             tauri::async_runtime::spawn(async move {
+                if request.payload["kind"] == "lyrics" {
+                    let timeline = tokio::time::timeout(
+                        std::time::Duration::from_secs(12),
+                        crate::native_playback::lyrics::resolve(&app, &request.payload),
+                    )
+                    .await
+                    .ok()
+                    .flatten();
+                    let result = json!({"kind":"lyrics", "timeline":timeline});
+                    if let Err(error) =
+                        tauri_plugin_android_player::resolved(&app, request.request, &result).await
+                    {
+                        eprintln!("Native lyric reply failed: {error}");
+                    }
+                    return;
+                }
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(20),
                     crate::native_playback::resolve(&app, request.payload),

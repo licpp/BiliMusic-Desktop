@@ -1,18 +1,31 @@
 //! Native notification/overlay lyrics use the same saved time axis on each platform.
 use serde_json::Value;
 
+pub fn has_lrc_timing(raw: &str) -> bool {
+    fn digits(value: &str, max: usize) -> bool {
+        (1..=max).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+    }
+
+    raw.split('[').skip(1).any(|rest| {
+        let Some((stamp, _)) = rest.split_once(']') else {
+            return false;
+        };
+        let Some((minutes, remainder)) = stamp.split_once(':') else {
+            return false;
+        };
+        let (seconds, fraction) = remainder
+            .split_once(['.', ':'])
+            .map_or((remainder, None), |(seconds, fraction)| {
+                (seconds, Some(fraction))
+            });
+        digits(minutes, 3)
+            && digits(seconds, 2)
+            && fraction.is_none_or(|fraction| digits(fraction, 3))
+    })
+}
+
 pub fn timed_lines(raw: &str, parsed: &str) -> Vec<Value> {
-    let timed = raw.split('[').skip(1).any(|rest| {
-        rest.split_once(':').is_some_and(|(minutes, seconds)| {
-            (1..=3).contains(&minutes.len())
-                && minutes.bytes().all(|b| b.is_ascii_digit())
-                && seconds
-                    .as_bytes()
-                    .first()
-                    .is_some_and(|b| b.is_ascii_digit())
-        })
-    });
-    if !timed {
+    if !has_lrc_timing(raw) {
         return vec![];
     }
     let Ok(mut lines) = serde_json::from_str::<Vec<Value>>(parsed) else {
@@ -38,6 +51,16 @@ pub fn timed_lines(raw: &str, parsed: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recognizes_the_timestamp_forms_used_by_the_lyric_view() {
+        assert!(has_lrc_timing("[00:01]one"));
+        assert!(has_lrc_timing("[0:1.23]two"));
+        assert!(has_lrc_timing("[123:45:678]three"));
+        assert!(!has_lrc_timing(
+            "[ti:title]\n[00:01分]\n[01:23.4567]\n[01:23"
+        ));
+    }
+
     #[test]
     fn native_time_axis_preserves_words_and_filters_invalid_lines() {
         let lines = timed_lines(

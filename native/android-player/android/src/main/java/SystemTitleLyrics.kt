@@ -7,7 +7,8 @@ import org.json.JSONArray
 /** Reuses the audio service clock; never creates another media session. */
 internal object SystemTitleLyrics {
     private var data = JSONObject()
-    private var enabled = false
+    var enabled = false
+        private set
     fun configure(context: Context, value: Boolean) {
         enabled = value
         context.getSharedPreferences("bilimusic-media", Context.MODE_PRIVATE).edit().putBoolean("lyricTitle", value).apply()

@@ -661,11 +661,14 @@ async function nativeTransport(action:'next'|'previous') {
 function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
 let nativeHistorySession: string | undefined
 let nativeSession: string | undefined
+let nativeLyricsScope: { id: string; session: string } | undefined
+export const nativeLyricPlaybackSession = (id: string) => nativeLyricsScope?.id === id ? nativeLyricsScope.session : undefined
 let floatingStyleRevision=0
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
   if (accountResetting) return
   nativeAutonomousQueue = state.capabilities?.autonomousQueue ?? state.autonomousQueue ?? false
   const session = state.engineInstanceId && state.sessionId ? `${state.engineInstanceId}:${state.sessionId}` : undefined
+  if (!state.action) nativeLyricsScope = session && state.id ? { id: state.id, session } : undefined
   if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
   if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
