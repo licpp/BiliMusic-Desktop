@@ -306,6 +306,26 @@ fn parse_subtitle_lines(value: &Value) -> Vec<SubtitleLine> {
     lines
 }
 
+#[cfg(any(target_os = "android", test))]
+fn preferred_subtitle_entry(data: &Value) -> Option<&Value> {
+    let entries = data["subtitle"]["subtitles"]
+        .as_array()?
+        .iter()
+        .filter(|entry| {
+            entry["lan"]
+                .as_str()
+                .is_some_and(|language| !language.is_empty())
+        });
+    entries
+        .clone()
+        .find(|entry| {
+            entry["lan"]
+                .as_str()
+                .is_some_and(|language| language.starts_with("ai-"))
+        })
+        .or_else(|| entries.into_iter().next())
+}
+
 impl BilibiliProvider {
     pub(super) async fn remember_pages(&self, epoch: u64, bvid: &str, parts: Vec<VideoPart>) {
         if parts.is_empty() {
@@ -580,6 +600,24 @@ impl BilibiliProvider {
                 code: -1,
                 message: "当前字幕不可用，请刷新字幕列表".into(),
             })?;
+        self.subtitle_entry_lines(entry).await
+    }
+    #[cfg(target_os = "android")]
+    pub async fn default_subtitle_lines(
+        &self,
+        bvid: &str,
+        cid: i64,
+    ) -> Result<Vec<SubtitleLine>, ProviderError> {
+        let data = self.subtitle_data(bvid, cid).await?;
+        match preferred_subtitle_entry(&data) {
+            Some(entry) => self.subtitle_entry_lines(entry).await,
+            None => Ok(vec![]),
+        }
+    }
+    async fn subtitle_entry_lines(
+        &self,
+        entry: &Value,
+    ) -> Result<Vec<SubtitleLine>, ProviderError> {
         let url = Url::parse(&normalize_url(&text(entry, "subtitle_url"))).map_err(|_| {
             ProviderError::Api {
                 code: -1,
@@ -771,6 +809,15 @@ mod catalog_tests {
 #[cfg(test)]
 mod subtitle_regression_tests {
     use super::*;
+    #[test]
+    fn background_default_matches_foreground_selection_policy() {
+        let choices = |entries| serde_json::json!({"subtitle": {"subtitles": entries}});
+        let both = choices(serde_json::json!([{"lan":"zh-CN"},{"lan": "ai-zh"}]));
+        let manual = choices(serde_json::json!([{"lan":""},{"lan":"en-US"}]));
+        assert_eq!(preferred_subtitle_entry(&both).unwrap()["lan"], "ai-zh");
+        assert_eq!(preferred_subtitle_entry(&manual).unwrap()["lan"], "en-US");
+        assert!(preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}]))).is_none());
+    }
     #[test]
     fn subtitles_keep_late_cues_in_multi_day_recordings() {
         let body: Vec<Value> = (0..40_001).rev().map(|i| serde_json::json!({

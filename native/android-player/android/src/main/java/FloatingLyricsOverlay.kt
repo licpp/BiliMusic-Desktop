@@ -28,6 +28,7 @@ object FloatingLyricsOverlay {
     private const val PREFS = "bilimusic-lyrics-style"
     private const val POSITION_X = "positionX"
     private const val POSITION_Y = "positionY"
+    private const val SUBTITLES = "preferBilibiliSubtitles"
     var enabled = false
         private set
     private var owner: PlaybackService? = null
@@ -54,7 +55,16 @@ object FloatingLyricsOverlay {
         override fun run() { if (enabled) { render(); syncControls();syncUnlock();handler.postDelayed(this,33) } }
     }
     fun attach(service: PlaybackService) { owner=service;SystemTitleLyrics.attach(service); if(enabled) show() }
-    fun detach() { hide(); owner=null; enabled=false }
+    fun detach() { hide(); owner=null; enabled=false; setTimeline(JSONObject()) }
+    internal fun needsPlaybackTimeline() = enabled || SystemTitleLyrics.enabled
+    internal fun wantsSubtitles(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(SUBTITLES, false)
+    internal fun hasTimeline(id: String, session: String) = data.optString("id") == id &&
+        data.optString("session") == session && (data.optJSONArray("lines")?.length() ?: 0) > 0
+    internal fun setTimeline(timeline: JSONObject) {
+        data = timeline
+        SystemTitleLyrics.update(timeline)
+        render()
+    }
     fun command(context: Context, raw: String): JSONObject {
         require(raw.length <= 48 * 1024 * 1024)
         val args=JSONObject(raw)
@@ -66,15 +76,31 @@ object FloatingLyricsOverlay {
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
                 applyLock(context);owner?.notifyLyricsChanged()
             }
-            "update" -> { data=args;SystemTitleLyrics.update(args); render();owner?.notifyLyricsChanged() }
-            "system-title" -> { SystemTitleLyrics.configure(context,args.optBoolean("enabled"));owner?.notifyLyricsChanged() }
+            "update" -> owner?.acceptForegroundLyrics(args)
+            "subtitle-preference" -> {
+                val preferred = args.optBoolean("enabled")
+                if (preferred != wantsSubtitles(context)) {
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(SUBTITLES, preferred).apply()
+                    if (!preferred && data.optBoolean("subtitles")) setTimeline(JSONObject())
+                    owner?.refreshPlaybackLyrics()
+                    owner?.notifyLyricsChanged()
+                }
+            }
+            "system-title" -> {
+                val changed = SystemTitleLyrics.enabled != args.optBoolean("enabled")
+                SystemTitleLyrics.configure(context,args.optBoolean("enabled"))
+                if (changed) owner?.refreshPlaybackLyrics()
+                owner?.notifyLyricsChanged()
+            }
             "enable" -> {
                 if(args.optBoolean("enabled") && !Settings.canDrawOverlays(context)) {
                     if(args.optBoolean("requestPermission")) context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     return status(context).put("reason","请允许悬浮窗权限，然后重新开启")
                 }
+                val changed = enabled != args.optBoolean("enabled")
                 enabled=args.optBoolean("enabled")
                 if(enabled) show() else hide()
+                if (changed) owner?.refreshPlaybackLyrics()
                 owner?.notifyLyricsChanged()
             }
         }

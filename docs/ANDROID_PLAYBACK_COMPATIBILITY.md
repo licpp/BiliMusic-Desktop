@@ -56,7 +56,7 @@ cd src-tauri/gen/android
 ## 后续统一方案
 
 1. 维持“前端只呈现状态；原生服务拥有播放、队列、系统控制与恢复”的边界，新增功能不再把后台工作放回 WebView。
-2. 将 Android 媒体系统层逐步迁移到官方推荐的 Media3 `MediaSessionService`；保留共享前端、Rust 业务逻辑与本地代理。它能统一系统控制器发现、媒体通知、音频焦点和播放恢复接口，迁移应另有音质切换、缓存和进度回归后再替换现有实现。
+2. Android 系统媒体会话已迁移到 Media3 `MediaSessionService`。播放队列、解码器、音频焦点及通知生命周期由原生服务维护。Media3 通过 `SimpleBasePlayer` 发布队列、进度与曲目信息，并把系统命令交回同一个服务。
 3. 固定覆盖 Android API 版本、前后台／锁屏、焦点打断、蓝牙控制和网络失败；厂商云真机用于补充系统行为验收。模拟测试不能证明某款耳机固件或 OriginOS／HyperOS 策略已经兼容。
 4. 厂商专属卡片／岛以能力和官方准入独立接入，避免在核心播放器里散落按品牌判断的补丁。
 
@@ -65,3 +65,32 @@ cd src-tauri/gen/android
 本轮只修改代码并进行自动化检查，未构建安装包、推送源码或发布。
 
 2026-11-15 本机结果：前端／桥接 281 项通过；Rust 211 项通过、21 项默认忽略；Android JVM 原生测试 21 项通过（16 个后台服务场景覆盖 API 28／35，另有 5 个队列及续播用例）；iOS Swift 恢复用例、目标编译及 TypeScript 检查通过。Android 使用实际服务及相关组件配合 Robolectric，尚未执行本轮完整 NDK／APK 集成构建或这些用户设备的真机验收。原始记录位于忽略目录 `artifacts/checks/android-background-2026-11-15/`。
+
+## 系统媒体卡片、厂商卡片和音量
+
+| 展示或控制 | 接入方式 | 验收 |
+| --- | --- | --- |
+| 通知栏、锁屏媒体卡片、蓝牙 | 原生服务发布一个本地 `MediaSession` 和一张 `MediaStyle` 通知。曲名、歌手、队列和可用命令跟随当前播放。开启系统标题歌词时在 `DISPLAY_TITLE` 和通知标题提供当前歌词。 | 锁屏或退到后台后验证播放、暂停、单击和双击耳机键、专用上一首／下一首、断开耳机和快速切歌。车机应继续显示真实曲名。 |
+| 小米状态栏和超级岛 | 支持自动上岛的版本可沿用小米标准媒体通知。小米焦点通知／超级岛的自定义文案有独立准入和模板。 | 分别核对 HyperOS 2 焦点通知、HyperOS 3 超级岛和标准媒体卡片三种展示。自定义逐行歌词按正式包名、签名和提交的场景验收。 |
+| OPPO／一加 ColorOS 流体云、vivo／iQOO OriginOS 原子通知 | 申请厂商对应场景和资源授权。复用同一条播放状态和当前歌词，厂商适配只负责该系统表面的显示与关闭。 | 在授权 ROM 上实测更新、暂时隐藏、暂停、停止和多应用媒体切换。 |
+| 系统单应用音量 | 系统决定是否列出当前音源。初始播放和换源、焦点请求以及媒体会话使用同一套本地媒体音频属性。 | 开启 ROM 的独立音量选项，用 BiliMusic 和另一个可同时出声的应用测试，同时核对扬声器、蓝牙和前后台。 |
+
+Android 13 起系统媒体控件主要读会话。AOSP 标准媒体卡片优先读取 `DISPLAY_TITLE`。车机仍从标准曲名和队列获得曲目信息。每行歌词更新时可以修改显示字段，同一个会话可继续响应耳机或车机指令。 [Android 后台媒体服务](https://developer.android.com/media/media3/session/background-playback) · [AOSP 媒体卡片取值](https://android.googlesource.com/platform/frameworks/base/+/c03ab432b762d16b20fd5f9366ebb9207be76820/packages/SystemUI/src/com/android/systemui/media/controls/domain/pipeline/MediaDataLoader.kt) · [小米媒体通知](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2161)
+
+开启桌面歌词或系统标题歌词后，Android 服务在换曲时通过原生通道加载已匹配歌词。根据用户的字幕偏好，缺少匹配歌词时可加载该分 P 的 B 站字幕。桌面歌词与系统媒体卡片共享时间轴和原生播放时钟。前端可以提交当前播放会话的有效歌词，后台查询结果按账号会话、播放会话与最新歌词请求校验。歌词查询有独立超时，播放会继续。
+
+通知动作、蓝牙传输指令和原始媒体键使用同一套播放命令。原始耳机键使用 Android 的双击时间窗口，并合并对同一按键事件的重复投递。旧控制器可以读队列并使用上下曲。Media3 提供给旧控制器的队列 ID 是列表位置，修改队列后旧 ID 可能指向另一首，因此只向 Media3 控制器接受指定条目跳转。进程被杀后的耳机续播仍依赖后续接入 Media3 的恢复回调，使用持久化队列与进度重新解析音源。
+
+小米、OPPO 和 vivo 的卡片适配以正式文档和项目权限为依据。Android 16 的实时通知也有样式资格和系统策略，需单独判断。小米的单应用音量属于声音助手，Android 公共接口提供的是音量流和播放器自身增益。 [小米超级岛接入](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2132) · [OPPO 流体云接入](https://open.oppomobile.com/documentation/page/info?id=12639) · [vivo 原子通知接入](https://dev.vivo.com.cn/documentCenter/doc/894) · [Android 实时通知](https://developer.android.com/develop/ui/views/notifications/live-update) · [Android 音频输出](https://developer.android.com/media/platform/output) · [小米声音助手](https://www.mi.com/global/support/article/KA-08490/)
+
+Android 在音频服务中按调用进程的 UID 登记播放器。BiliMusic 的 `MediaPlayer` 运行在本应用的播放服务中。排查音量面板缺项时，用 `adb shell pm list packages -U app.bilimusic.mobile` 取得应用 UID，再与 `dumpsys audio` 中正在出声的 `started`、`USAGE_MEDIA` 播放器记录比对。若 UID、播放状态或路由与实际出声不符，继续排查播放器。若音频服务已有完整记录，再核对厂商面板的显示条件。 [AOSP 播放器登记](https://android.googlesource.com/platform/frameworks/base/+/0d29f42497f93df5e09d5a2180afd8226f8eefca/services/core/java/com/android/server/audio/PlaybackActivityMonitor.java#243)
+
+开源实现中，Auxio 可参考 Media3 后台播放，YAQMC 可参考共享播放状态与厂商歌词展示的边界。厂商适配接入时应复用已经解析的当前行，再按系统能力决定是否展示。可独立验证服务、标准通知和各厂商卡片。 [Auxio](https://github.com/OxygenCobalt/Auxio) · [Media3 官方服务示例](https://github.com/androidx/media/blob/release/demos/session_service/src/main/java/androidx/media3/demo/session/DemoPlaybackService.kt) · [YAQMC Android](https://github.com/YAQMC/YAQMC/blob/main/docs/zh-CN/android.md)
+
+获取新机型反馈时记录手机型号、ROM 完整版本、耳机型号、受影响的按键，以及问题发生在前台、后台、锁屏还是停止后。播放期间可通过 `adb shell dumpsys media_session` 核对活跃会话、媒体状态和支持命令，使用 `adb shell dumpsys audio` 检查活动音频客户端、用途和路由，使用 `adb logcat -s BiliMusicPlayback` 判断按键是否到达服务。共享诊断节选前移除曲名、设备标识和无关应用信息。
+
+## Media3 迁移回归
+
+迁移前先验证了暂停时换音质、备用音源失败时保留原音源，以及离线队列切歌后从已解析的断点启动。迁移后在 Android API 28 和 35 重跑相同用例，并验证会话初次激活时已经发布曲目信息、队列改序后系统仍指向当前曲目、歌词更新保留标准曲名，以及滑掉应用任务时后台切歌可以继续。Android 手机版、平板布局和大屏版共用同一服务。
+
+通知沿用现有频道和前台服务的启动时机，包括音源仍由 Rust 解析的阶段。系统媒体通知和 Activity 关联同一个 Media3 平台令牌。服务保留应用内绑定，系统媒体控件通过平台令牌使用播放命令。 [Media3 后台播放](https://developer.android.com/media/media3/session/background-playback) · [SimpleBasePlayer](https://developer.android.com/reference/androidx/media3/common/SimpleBasePlayer)

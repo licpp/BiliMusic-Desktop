@@ -4,15 +4,19 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.session.MediaSession
+import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.LinearLayout
+import androidx.media3.common.Player
+import androidx.media3.session.MediaSession as Media3Session
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -47,7 +51,8 @@ class BackgroundPlaybackTest {
         .put("source", JSONObject().put("provider", "bilibili").put("bvid", "BV123").put("cid", id.toInt()).put("page", id.toInt()))
     private fun field(name: String): Any? = PlaybackService::class.java.getDeclaredField(name).apply { isAccessible = true }.get(service)
     private fun player() = field("player") as MediaPlayer
-    private fun mediaSession() = Shadow.extract<RecordingMediaSessionShadow>(field("session") as MediaSession)
+    private fun session() = field("session") as Media3Session
+    private fun mediaSession() = checkNotNull(RecordingMediaSessionShadow.active)
     private fun idle() { shadowOf(android.os.Looper.getMainLooper()).idle() }
     private fun load() {
         service.onStartCommand(Intent(service, PlaybackService::class.java).setAction("load").putExtra("id", "1")
@@ -60,6 +65,7 @@ class BackgroundPlaybackTest {
         idle()
     }
     @Before fun setup() {
+        RecordingMediaSessionShadow.active = null
         profile = File.createTempFile("bilimusic-native-profile", ".txt").apply { writeText("account") }
         PlaybackService.profilePath = profile.path; PlaybackService.listener = null
         PlaybackService.queueData = JSONObject().put("tracks", JSONArray(listOf(track("1"), track("2"), track("3"))))
@@ -168,9 +174,10 @@ class BackgroundPlaybackTest {
         service.refreshPlaybackNotification()
 
         val notification = manager.activeNotifications.single().notification
+        assertEquals(Notification.CATEGORY_TRANSPORT, notification.category)
         assertEquals("song 2", notification.extras.getCharSequence(Notification.EXTRA_TITLE))
         @Suppress("DEPRECATION")
-        assertEquals((field("session") as MediaSession).sessionToken,
+        assertEquals(session().platformToken,
             notification.extras.getParcelable<MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION))
         assertSame(currentPlayer, player())
         assertEquals("playing", service.snapshot().getString("status"))
@@ -197,6 +204,58 @@ class BackgroundPlaybackTest {
         service.control("resume"); reply(requests.last())
         assertEquals("playing", service.snapshot().getString("status"))
         service.control("seek", 45.0); idle(); assertEquals(45.0, service.snapshot().getDouble("position"), 0.1)
+    }
+    @Test fun qualityChangePreservesPausedPositionAndPlaybackSession() {
+        val alternate = "$url-quality"
+        ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(alternate), ShadowMediaPlayer.MediaInfo(120_000, 0))
+        load()
+        service.control("seek", 27.0)
+        idle()
+        service.control("pause")
+        val previous = service.snapshot()
+        val original = player()
+        val replies = mutableListOf<String?>()
+        service.switchSource(alternate, "1", reply = { replies.add(it) })
+        idle()
+        val current = service.snapshot()
+        assertEquals(listOf<String?>(null), replies)
+        assertNotSame(original, player())
+        assertEquals("paused", current.getString("status"))
+        assertEquals(27.0, current.getDouble("position"), 0.1)
+        assertEquals(previous.getString("sessionId"), current.getString("sessionId"))
+        assertTrue(current.getLong("sourceRevision") > previous.getLong("sourceRevision"))
+        service.control("resume")
+        assertEquals("playing", service.snapshot().getString("status"))
+    }
+    @Test fun qualityFailureKeepsOriginalAudioAndDoesNotResolveTheQueue() {
+        val alternate = "$url-unavailable"
+        ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(alternate), ShadowMediaPlayer.MediaInfo(120_000, 1000))
+        load()
+        val original = player()
+        val revision = service.snapshot().getLong("sourceRevision")
+        val replies = mutableListOf<String?>()
+        service.switchSource(alternate, "1", reply = { replies.add(it) })
+        shadowOf(field("sourceCandidate") as MediaPlayer)
+            .invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_IO)
+        idle()
+        assertEquals(listOf("新音源无法播放，已保留原音质"), replies)
+        assertSame(original, player())
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(revision, service.snapshot().getLong("sourceRevision"))
+        assertTrue(requests.isEmpty())
+    }
+    @Test fun backgroundQueueKeepsOfflinePolicyAndAppliesResolvedResumePosition() {
+        load()
+        service.updateQueue(JSONObject().put("tracks", JSONArray(listOf(track("1"), track("2"))))
+            .put("version", 1).put("owner", "test").put("repeatMode", "off").put("offlineOnly", true).toString())
+        service.control("next")
+        val request = requests.single()
+        assertTrue(request.second.getBoolean("offlineOnly"))
+        service.resolved(request.first, JSONObject().put("url", url).put("track", track("2")).put("position", 29.0))
+        idle()
+        assertEquals("2", service.snapshot().getString("id"))
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(29.0, service.snapshot().getDouble("position"), 0.1)
     }
     @Test fun failureBeforePreparationStillAppliesTheAutomaticDurationThreshold() {
         ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(url), ShadowMediaPlayer.MediaInfo(120_000, 10_000))
@@ -243,55 +302,207 @@ class BackgroundPlaybackTest {
     @Test fun headsetReceiverTargetsThisServiceAndConsumesKeyUpOnce() {
         load()
         val receiver = MediaButtonReceiver()
-        for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) receiver.onReceive(service,
-            Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, KeyEvent.KEYCODE_MEDIA_NEXT)))
+        val keys = listOf(
+            KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT),
+            KeyEvent(0, 50, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT, 1),
+            KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_NEXT),
+        )
+        for (key in keys) receiver.onReceive(service, mediaKeyIntent(key))
         assertEquals(1, requests.size); assertEquals("2", requests.single().second.getJSONObject("track").getString("id"))
+    }
+    private fun mediaKeyIntent(key: KeyEvent) = Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, key)
+    private fun waitForHeadsetTap() = shadowOf(android.os.Looper.getMainLooper())
+        .idleFor(java.time.Duration.ofMillis(android.view.ViewConfiguration.getDoubleTapTimeout().toLong() + 1))
+
+    @Test fun headsetSingleTapTogglesAndDoubleTapSkipsAcrossDeliveryPaths() {
+        load()
+        val callback = mediaSession().transportCallback!!
+        val receiver = MediaButtonReceiver()
+        fun hook(at: Long) = mediaKeyIntent(KeyEvent(at, at, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HEADSETHOOK, 0))
+        assertTrue(callback.onMediaButtonEvent(hook(100)))
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertTrue(callback.onMediaButtonEvent(mediaKeyIntent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_HEADSETHOOK))))
+        receiver.onReceive(service, hook(100))
+        assertTrue(requests.isEmpty())
+        waitForHeadsetTap()
+        assertEquals("paused", service.snapshot().getString("status"))
+
+        callback.onPlay()
+        assertTrue(callback.onMediaButtonEvent(hook(600)))
+        receiver.onReceive(service, hook(700))
+        assertTrue(callback.onMediaButtonEvent(hook(700)))
+        receiver.onReceive(service, hook(600))
+        assertEquals("buffering", service.snapshot().getString("status"))
+        assertEquals("2", requests.single().second.getJSONObject("track").getString("id"))
+        reply(requests.single())
+        waitForHeadsetTap()
+        assertEquals("playing", service.snapshot().getString("status"))
+    }
+
+    @Test fun explicitTransportCancelsPendingTapAndPlayDoesNotRestartResolution() {
+        load()
+        val callback = mediaSession().transportCallback!!
+        callback.onMediaButtonEvent(mediaKeyIntent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)))
+        callback.onPause()
+        waitForHeadsetTap()
+        assertEquals("paused", service.snapshot().getString("status"))
+
+        callback.onSkipToNext()
+        callback.onPlay()
+        callback.onPlay()
+        assertEquals(1, requests.size)
+        reply(requests.single())
+        assertEquals("2", service.snapshot().getString("id"))
+        assertEquals("playing", service.snapshot().getString("status"))
     }
     @Test fun systemTitleLyricsUpdateDisplayWithoutReplacingBluetoothTrackTitle() {
         load()
         val session = mediaSession()
+        val originalQueue = session.publishedQueue
         fun metadata(key: String) = session.publishedMetadata!!.getString(key)
-        FloatingLyricsOverlay.command(service,"""{"action":"update","id":"1","lines":[{"timeMs":0,"text":"正在唱的歌词"}]}""")
+        val playback = service.snapshot()
+        val lyricSession = playback.getString("engineInstanceId") + ":" + playback.getString("sessionId")
+        FloatingLyricsOverlay.command(service, """{"action":"update","id":"1","session":"$lyricSession","lines":[{"timeMs":0,"text":"正在唱的歌词"}]}""")
         try {
             FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":true}""")
+            idle()
             assertEquals("正在唱的歌词",metadata(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
             assertEquals("song 1",metadata(MediaMetadata.METADATA_KEY_TITLE))
             assertEquals("song 1",session.publishedQueue!!.first().description.title)
+            assertSame(originalQueue, session.publishedQueue)
             assertEquals("song 1",service.snapshot().getJSONObject("track").getString("title"))
         } finally { FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":false}""") }
+        idle()
         assertEquals("song 1",metadata(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
+    }
+
+    @Test fun nativeQueueRefreshesMatchedLyricsAndSubtitlesWithTheWebViewSuspended() {
+        fun displayed(): String {
+            idle()
+            return mediaSession().publishedMetadata!!.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+        }
+        fun overlayLine(): String {
+            val manager = service.getSystemService(Context.WINDOW_SERVICE)
+            val row = Shadow.extract<ShadowWindowManagerImpl>(manager).views.filterIsInstance<LinearLayout>().single()
+            return row.getChildAt(0).contentDescription.toString()
+        }
+        fun lyricsReply(request: Pair<Long, JSONObject>, text: String, subtitles: Boolean = false) {
+            val line = JSONObject().put("timeMs", 0).put("endTimeMs", 2_000).put("text", text)
+            service.resolved(request.first, JSONObject().put("kind", "lyrics")
+                .put("timeline", JSONObject().put("lines", JSONArray(listOf(line))).put("subtitles", subtitles)))
+        }
+        ShadowSettings.setCanDrawOverlays(true)
+        FloatingLyricsOverlay.command(service, """{"action":"enable","enabled":true}""")
+        FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true}""")
+        FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
+        try {
+            load()
+            val old = requests.single()
+            assertEquals("lyrics", old.second.getString("kind"))
+            assertEquals("1", old.second.getString("id"))
+
+            mediaSession().transportCallback!!.onSkipToNext()
+            reply(requests[1])
+            val matched = requests[2]
+            assertEquals("2", matched.second.getString("id"))
+            assertEquals("playing", service.snapshot().getString("status"))
+            lyricsReply(old, "上一首迟到的歌词")
+            assertEquals("song 2", displayed())
+            lyricsReply(matched, "已匹配歌词")
+            assertEquals("已匹配歌词", displayed())
+            assertEquals("已匹配歌词", overlayLine())
+            val playback = service.snapshot()
+            val scope = playback.getString("engineInstanceId") + ":" + playback.getString("sessionId")
+            FloatingLyricsOverlay.command(service, """{"action":"update","id":"2","session":"$scope","lines":[]}""")
+            assertEquals("已匹配歌词", displayed())
+
+            mediaSession().transportCallback!!.onSkipToNext()
+            reply(requests[3])
+            val captions = requests[4]
+            assertTrue(captions.second.getBoolean("subtitles"))
+            assertEquals("3", captions.second.getString("id"))
+            lyricsReply(captions, "AI 字幕", subtitles = true)
+            assertEquals("AI 字幕", displayed())
+            assertEquals("AI 字幕", overlayLine())
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false}""")
+            assertEquals("song 3", displayed())
+            assertFalse(requests.last().second.getBoolean("subtitles"))
+        } finally {
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false}""")
+            FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""")
+            FloatingLyricsOverlay.command(service, """{"action":"enable","enabled":false}""")
+        }
+    }
+    @Test fun freshGuestPlaybackUsesTheNativeTimelineBeforeTheAccountMarkerExists() {
+        assertTrue(profile.delete())
+        load()
+        FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
+        try {
+            val request = requests.single().second
+            assertEquals("lyrics", request.getString("kind"))
+            assertEquals("", request.getString("profile"))
+        } finally { FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""") }
     }
     @Test fun sessionPublishesMetadataAndControllerWithoutOpeningAnActivity() {
         var controller: android.media.session.MediaController? = null
         PlaybackService.controllerListener = { controller = it }; service.attachController(); load()
-        val session = field("session") as MediaSession
-        assertNotNull(controller); assertSame(session.controller, controller)
+        assertNotNull(controller)
+        assertSame(field("controller"), controller)
         // Robolectric's controller shadow does not receive Binder metadata updates.
-        val metadata = Shadow.extract<RecordingMediaSessionShadow>(session).publishedMetadata!!
+        val metadata = mediaSession().publishedMetadata!!
         assertEquals("1", metadata.getString(android.media.MediaMetadata.METADATA_KEY_MEDIA_ID))
-        assertTrue(session.isActive)
+        assertEquals(listOf(session()), service.sessions)
+    }
+    @Test fun systemCoverIsPublishedWithItsTrackAndClearedOnTheNextTrack() {
+        load()
+        val field = PlaybackService::class.java.getDeclaredField("artwork").apply { isAccessible = true }
+        val cover = field.type.getDeclaredConstructor(Bitmap::class.java, ByteArray::class.java).apply { isAccessible = true }
+        field.set(service, cover.newInstance(Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888), byteArrayOf(1, 2, 3)))
+        service.notifyLyricsChanged()
+        idle()
+        assertEquals(16, mediaSession().publishedMetadata!!.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART).width)
+        mediaSession().transportCallback!!.onSkipToNext()
+        reply(requests.single())
+        val metadata = mediaSession().publishedMetadata!!
+        assertEquals("2", metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID))
+        assertNull(metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART))
+    }
+    @Test fun removingActivityTaskWhileResolvingKeepsTheNativeSessionAvailable() {
+        load()
+        val token = session().platformToken
+        mediaSession().transportCallback!!.onSkipToNext()
+        assertEquals("buffering", service.snapshot().getString("status"))
+        service.onTaskRemoved(null)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+        reply(requests.single())
+        assertEquals("2", service.snapshot().getString("id"))
+        assertSame(token, session().platformToken)
+        assertFalse(session().player.isCommandAvailable(Player.COMMAND_SET_MEDIA_ITEM))
+        assertFalse(session().player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS))
     }
     @Test fun bluetoothSeesCommandsAndMetadataAtTheFirstActivation() {
-        val session = field("session") as MediaSession
-        val recording = mediaSession()
-        assertFalse(session.isActive)
-        assertEquals(PlaybackState.STATE_NONE, recording.publishedPlaybackState!!.state)
+        assertNull(RecordingMediaSessionShadow.active)
+        assertTrue(service.sessions.isEmpty())
         load()
+        val recording = mediaSession()
         assertTrue(recording.readyAtActivation)
         val initial = recording.stateAtActivation!!
         assertEquals(PlaybackState.STATE_BUFFERING, initial.state)
-        for (action in listOf(PlaybackState.ACTION_PLAY, PlaybackState.ACTION_PAUSE,
-            PlaybackState.ACTION_SKIP_TO_NEXT, PlaybackState.ACTION_SKIP_TO_PREVIOUS, PlaybackState.ACTION_SKIP_TO_QUEUE_ITEM)) {
+        for (action in listOf(PlaybackState.ACTION_PLAY_PAUSE, PlaybackState.ACTION_PAUSE,
+            PlaybackState.ACTION_SKIP_TO_NEXT, PlaybackState.ACTION_SKIP_TO_PREVIOUS)) {
             assertEquals(action, initial.actions and action)
         }
         assertEquals("song 1", recording.publishedMetadata!!.getString(MediaMetadata.METADATA_KEY_TITLE))
         assertEquals("album 1", recording.publishedMetadata!!.getString(MediaMetadata.METADATA_KEY_ALBUM))
         assertEquals(120_000L, recording.publishedMetadata!!.getLong(MediaMetadata.METADATA_KEY_DURATION))
         assertEquals(PlaybackState.STATE_PLAYING, recording.publishedPlaybackState!!.state)
+        recording.transportCallback!!.onPause()
+        idle()
+        assertEquals(PlaybackState.ACTION_PLAY, recording.publishedPlaybackState!!.actions and PlaybackState.ACTION_PLAY)
     }
     @Test fun remoteTransportCallbacksWorkWithoutAWebView() {
         load()
-        val callback = Shadow.extract<RecordingMediaSessionShadow>(field("session") as MediaSession).transportCallback!!
+        val callback = mediaSession().transportCallback!!
         callback.onPause(); idle(); assertEquals("paused",service.snapshot().getString("status"))
         callback.onPlay(); idle(); assertEquals("playing",service.snapshot().getString("status"))
         callback.onSkipToNext(); reply(requests.last()); assertEquals("2",service.snapshot().getString("id"))
@@ -306,27 +517,36 @@ class BackgroundPlaybackTest {
         assertTrue(callback.onMediaButtonEvent(previous))
         reply(requests.last()); assertEquals("3", service.snapshot().getString("id"))
     }
-    @Test fun nowPlayingExposesActiveIdAndRejectsRemovedQueueItems() {
+    @Test fun nowPlayingKeepsTimelineIdentityAndRejectsAmbiguousLegacyQueueJumps() {
         load()
         val session = mediaSession()
-        val original = session.publishedQueue!!.associate { it.description.mediaId to it.queueId }
+        val player = session().player
+        val uid = androidx.media3.common.Timeline.Window()
+        val third = player.currentTimeline.getWindow(2, uid).uid
+        val staleLegacyId = session.publishedQueue!!.first { it.description.mediaId == "1" }.queueId
         service.updateQueue(JSONObject().put("tracks", JSONArray(listOf(track("3"), track("1")))).put("repeatMode", "off").toString())
+        idle()
         assertEquals(listOf("3", "1"), session.publishedQueue!!.map { it.description.mediaId })
-        assertEquals(original["1"], session.publishedPlaybackState!!.activeQueueItemId)
-        assertEquals(original["3"], session.publishedQueue!!.first().queueId)
-        session.transportCallback!!.onSkipToQueueItem(original["2"]!!)
+        assertEquals(session.publishedQueue!!.last().queueId, session.publishedPlaybackState!!.activeQueueItemId)
+        assertEquals(third, player.currentTimeline.getWindow(0, uid).uid)
+        session.transportCallback!!.onSkipToQueueItem(staleLegacyId)
+        idle()
         assertTrue(requests.isEmpty())
-        session.transportCallback!!.onSkipToQueueItem(original["3"]!!)
+        player.seekToDefaultPosition(0)
         reply(requests.single())
         assertEquals("3", service.snapshot().getString("id"))
-        assertEquals(original["3"], session.publishedPlaybackState!!.activeQueueItemId)
+        assertEquals(session.publishedQueue!!.first().queueId, session.publishedPlaybackState!!.activeQueueItemId)
     }
     @Test fun singleTrackKeepsPlayingWithoutAdvertisingUnavailableSkips() {
         load()
+        val manager = service.getSystemService(NotificationManager::class.java)
+        fun actions() = manager.activeNotifications.single().notification.actions.map { it.title.toString() }
+        assertEquals(listOf("上一首", "暂停", "下一首"), actions())
         service.updateQueue(JSONObject().put("tracks", JSONArray(listOf(track("1")))).put("repeatMode", "off").toString())
         val session = mediaSession()
         assertEquals(0L, session.publishedPlaybackState!!.actions and
             (PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT))
+        assertEquals(listOf("暂停"), actions())
         session.transportCallback!!.onSkipToNext()
         session.transportCallback!!.onSkipToPrevious()
         assertEquals("playing", service.snapshot().getString("status"))
@@ -336,6 +556,9 @@ class BackgroundPlaybackTest {
 
 @Implements(MediaSession::class)
 class RecordingMediaSessionShadow : ShadowMediaSession() {
+    companion object {
+        var active: RecordingMediaSessionShadow? = null
+    }
     @RealObject private lateinit var realSession: MediaSession
     var publishedMetadata: android.media.MediaMetadata? = null
         private set
@@ -352,8 +575,11 @@ class RecordingMediaSessionShadow : ShadowMediaSession() {
     @Implementation protected fun setMetadata(value: android.media.MediaMetadata?) { publishedMetadata = value }
     @Implementation protected fun setPlaybackState(value: android.media.session.PlaybackState?) { publishedPlaybackState = value }
     @Implementation protected fun setQueue(value: List<MediaSession.QueueItem>?) { publishedQueue = value }
+    @Implementation protected fun getCurrentControllerInfo() =
+        MediaSessionManager.RemoteUserInfo("android", 1, android.os.Process.SYSTEM_UID)
     @Implementation protected fun setActive(value: Boolean) {
         if (value) {
+            active = this
             stateAtActivation = publishedPlaybackState
             val active = publishedQueue?.firstOrNull { it.queueId == stateAtActivation?.activeQueueItemId }
             readyAtActivation = transportCallback != null && active?.description?.mediaId != null &&

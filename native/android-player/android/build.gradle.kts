@@ -18,5 +18,6 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.16.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.media3:media3-session:1.9.4")
     implementation(project(":tauri-android"))
 }

@@ -775,7 +775,12 @@ pub async fn lyrics_search(
             .and_then(|(json, fresh)| {
                 serde_json::from_str::<Vec<LyricCandidate>>(&json)
                     .ok()
-                    .map(|candidates| (candidates, fresh))
+                    .map(|mut candidates| {
+                        for candidate in &mut candidates {
+                            candidate.normalize_domestic_timing();
+                        }
+                        (candidates, fresh)
+                    })
             })
     };
     if !force_refresh.unwrap_or(false) {
