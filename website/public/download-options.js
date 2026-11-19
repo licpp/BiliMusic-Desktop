@@ -1,8 +1,4 @@
 const names = { mac: 'macOS', windows: 'Windows', android: 'Android', 'android-large': '车机 / TV', ios: 'iOS', ohos: '鸿蒙 NEXT', linux: 'Linux' };
-export function downloadVersion(item, release) {
-  const version = item.version || release;
-  return Number.isInteger(item.build) && item.build > 0 ? `${version}.${item.build}` : version;
-}
 export function downloadFamily(item) {
   const id = item.id.toLowerCase();
   if (id === 'android' || id.startsWith('android-')) return 'android';

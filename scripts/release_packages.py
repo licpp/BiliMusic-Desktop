@@ -139,6 +139,13 @@ def apple_build(version, build):
     return f'{1000 + major * 100 + minor}.{patch}.{49 + build}'
 
 
+def verify_android_bridge(dex):
+    # Rust looks up the getter by name through JNI. Keep it through R8 shrinking.
+    require(b'getPluginManager\0' in dex, 'Android Tauri plugin manager getter removed')
+    for name in ['PlayerPlugin', 'PlayArgs', 'ControlArgs', 'SecretArgs']:
+        require(('Lapp/bilimusic/player/' + name + ';').encode() in dex, 'Android bridge removed: ' + name)
+
+
 def verify_native(path, platform, version, certificate, architecture='arm64', build=0):
     if platform == 'macOS':
         command(['hdiutil', 'verify', str(path)])
@@ -192,8 +199,7 @@ def verify_native(path, platform, version, certificate, architecture='arm64', bu
                 raw = archive.read(library.filename)
                 require(raw[:6] == (b'\x7fELF\x01\x01' if architecture == 'armv7' else b'\x7fELF\x02\x01') and struct.unpack_from('<H', raw, 18)[0] == (40 if architecture == 'armv7' else 183), 'Android ELF architecture mismatch')
             dex = b''.join(archive.read(x.filename) for x in archive.infolist() if x.filename.endswith('.dex'))
-            for name in ['PlayerPlugin', 'PlayArgs', 'ControlArgs', 'SecretArgs']:
-                require(('Lapp/bilimusic/player/' + name + ';').encode() in dex, 'Android bridge removed: ' + name)
+            verify_android_bridge(dex)
     elif platform == 'HarmonyOS NEXT':
         with zipfile.ZipFile(path) as archive:
             require(archive.testzip() is None, 'Corrupt HAP')

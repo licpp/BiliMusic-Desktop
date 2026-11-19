@@ -1,12 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectedDownloadFamily, groupDownloads, downloadVariant, downloadVersion, preferredDownloadFamily } from '../public/download-options.js';
-
-test('download cards show the individual build and support legacy manifests', () => {
-  assert.equal(downloadVersion({ build: 1 }, '0.4.0'), '0.4.0.1');
-  assert.equal(downloadVersion({ version: '0.4.0', build: 2 }, '0.4.0'), '0.4.0.2');
-  assert.equal(downloadVersion({ version: '0.3.7' }, '0.4.0'), '0.3.7');
-});
+import { detectedDownloadFamily, groupDownloads, downloadVariant, preferredDownloadFamily } from '../public/download-options.js';
 const item = (id, architecture, file = '') => ({ id, architecture, file, name: id, status: 'available', channels: [{ id: 'github', url: `https://example.invalid/${id}` }] });
 const items = [item('mac', 'Apple Silicon'), item('mac-intel', 'Intel x64'), item('windows', 'x64'), item('windows-arm64', 'ARM64'), item('android', 'ARM64'), item('android-large', 'ARM64'), item('ios', 'ARM64'), item('ohos', 'ARM64'), item('linux-x64-appimage', 'x64', 'BiliMusic.AppImage'), item('linux-x64-deb', 'x64', 'BiliMusic.deb'), item('linux-arm64-appimage', 'aarch64', 'BiliMusic.AppImage'), item('linux-arm64-deb', 'ARM64', 'BiliMusic.deb')];
 test('architecture grouping preserves each original download identity and channel', () => {

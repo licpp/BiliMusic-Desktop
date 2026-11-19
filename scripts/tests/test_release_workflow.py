@@ -14,11 +14,20 @@ from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
-from release_packages import validate_bundle
+from release_packages import validate_bundle, verify_android_bridge
 from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_android_release_keeps_tauri_plugin_manager_for_jni(self):
+        player_bridge = b'\0'.join(
+            b'Lapp/bilimusic/player/' + name + b';'
+            for name in (b'PlayerPlugin', b'PlayArgs', b'ControlArgs', b'SecretArgs')
+        )
+        with self.assertRaisesRegex(ValueError, 'plugin manager getter removed'):
+            verify_android_bridge(player_bridge)
+        verify_android_bridge(player_bridge + b'\0getPluginManager\0')
+
     def test_android_patch_retains_other_installers_and_ota_feed(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
