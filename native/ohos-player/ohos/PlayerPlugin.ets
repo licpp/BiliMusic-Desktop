@@ -2,6 +2,7 @@ import { OutputGain } from './OutputGain';
 import { common, Want, wantAgent } from '@kit.AbilityKit';
 import { avSession } from '@kit.AVSessionKit';
 import { media } from '@kit.MediaKit';
+import { connection } from '@kit.NetworkKit';
 import { audio } from '@kit.AudioKit';
 import { image } from '@kit.ImageKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
@@ -294,6 +295,14 @@ export class PlayerPlugin {
     }
     if (request.plugin === 'ohos-player' && request.command === 'control') {
       const args = JSON.parse(request.payload) as Args;
+      if (args.action === 'networkOnline') {
+        try {
+          native.tauriOhosPluginResponse(request.id, true, JSON.stringify(connection.hasDefaultNetSync()));
+        } catch (error) {
+          native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: String(error) } as BridgeError));
+        }
+        return;
+      }
       if (args.action === 'theme' || args.action === 'windowInsets') {
         this.respondToWindowControl(request, args);
         return;

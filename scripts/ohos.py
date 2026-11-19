@@ -177,7 +177,7 @@ const fs=require('fs'); const JSON5=require(process.argv[1]); const root=process
 const edit=(file,fn)=>{const path=root+'/'+file; const value=JSON5.parse(fs.readFileSync(path,'utf8'));fn(value);fs.writeFileSync(path,JSON.stringify(value,null,2)+'\\n')};
 edit('build-profile.json5',v=>{for(const p of v.app.products){delete p.signingConfig;p.compatibleSdkVersion='6.0.0(20)';p.targetSdkVersion='26.0.0';}});
 edit('AppScope/app.json5',v=>{v.app.bundleName='app.bilimusic.harmony';v.app.icon='$media:app_icon';v.app.versionName='0.3.0';v.app.versionCode=30000;});
-edit('entry/src/main/module.json5',v=>{v.module.abilities[0].icon='$media:app_icon';v.module.abilities[0].startWindowIcon='$media:app_icon';v.module.abilities[0].backgroundModes=['audioPlayback'];v.module.requestPermissions=[{name:'ohos.permission.INTERNET'},{name:'ohos.permission.KEEP_BACKGROUND_RUNNING'}];});
+edit('entry/src/main/module.json5',v=>{v.module.abilities[0].icon='$media:app_icon';v.module.abilities[0].startWindowIcon='$media:app_icon';v.module.abilities[0].backgroundModes=['audioPlayback'];v.module.requestPermissions=[{name:'ohos.permission.INTERNET'},{name:'ohos.permission.GET_NETWORK_INFO'},{name:'ohos.permission.KEEP_BACKGROUND_RUNNING'}];});
 edit('entry/src/main/resources/base/element/string.json',v=>{for(const s of v.string){if(s.name==='EntryAbility_label'||s.name==='module_desc')s.value='BiliMusic';}});
 """
     env, _ = sdk_env('aarch64')
@@ -264,6 +264,8 @@ def verify_hap(target):
         expected = mobile_version(version)
         if metadata['app']['versionName'] != version or metadata['app']['versionCode'] != expected['androidVersionCode'] or metadata['app']['bundleName'] != 'app.bilimusic.harmony':
             raise RuntimeError('Unexpected HAP bundle identity/version')
+        if not any(permission['name'] == 'ohos.permission.GET_NETWORK_INFO' for permission in metadata['module']['requestPermissions']):
+            raise RuntimeError('HAP is missing the permission required for network status')
         if metadata['app']['icon'] != '$media:app_icon' or metadata['module']['abilities'][0]['icon'] != '$media:app_icon':
             raise RuntimeError('HAP is using a template icon')
         if package.read('resources/base/media/app_icon.png') != (ROOT / 'public/app-icon.png').read_bytes():

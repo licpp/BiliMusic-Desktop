@@ -1,5 +1,7 @@
 import { create } from 'zustand'
+import { invoke } from '@tauri-apps/api/core'
 import { accountEpoch } from '../../services/accountScope'
+import { isOHOS } from '../../services/platform'
 import type { Track } from '../../domain/track'
 
 type OfflineLibrary = { byId: ReadonlyMap<string, Track>; byVideo: ReadonlyMap<string, Track[]> }
@@ -43,17 +45,27 @@ export function startOfflinePlayback(load: () => Promise<Track[]>) {
   let changingAccount = false
   const refresh = () => {
     if (changingAccount) return
-    const offline = navigator.onLine === false
     const epoch = accountEpoch(), request = ++revision
-    if (!offline) {
-      pending = undefined
-      useOfflinePlayback.setState({ offline, library: null })
-      return
+    const current = () => request === revision && epoch === accountEpoch()
+    const update = (offline: boolean) => {
+      if (!current()) return
+      if (!offline) {
+        pending = undefined
+        useOfflinePlayback.setState({ offline, library: null })
+        return
+      }
+      useOfflinePlayback.setState({ offline })
+      pending = load().then(tracks => {
+        if (current()) useOfflinePlayback.setState({ library: indexOfflineTracks(tracks) })
+      }).catch(() => undefined)
     }
-    useOfflinePlayback.setState({ offline })
-    pending = load().then(tracks => {
-      if (request === revision && epoch === accountEpoch()) useOfflinePlayback.setState({ library: indexOfflineTracks(tracks) })
-    }).catch(() => undefined)
+    if (isOHOS) {
+      // ArkWeb can report offline even when HarmonyOS has a usable default network.
+      void invoke<boolean>('plugin:ohos-player|control', { action: 'networkOnline' })
+        .then(online => update(online === false), () => update(navigator.onLine === false))
+    } else {
+      update(navigator.onLine === false)
+    }
   }
   window.addEventListener('online', refresh)
   window.addEventListener('offline', refresh)
@@ -69,6 +81,8 @@ export function startOfflinePlayback(load: () => Promise<Track[]>) {
   })
   window.addEventListener('bilimusic-offline-files-changed', refresh)
   window.addEventListener('bilimusic-library-synced', refresh)
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine === false) refresh() })
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && (isOHOS || navigator.onLine === false || useOfflinePlayback.getState().offline)) refresh()
+  })
   refresh()
 }
