@@ -115,22 +115,22 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build2_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build2_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.4.0_stable_Android_arm64.apk",
-      "size": 17095671,
-      "sha256": "b9b38d6b74a6c93702f716352a21502bc6831fc0353bdd017a4064794334b3a7",
+      "file": "BiliMusic_0.4.0_android-build2_Android_arm64.apk",
+      "size": 17502420,
+      "sha256": "1a53c547b03162a5ed914afda3e19cba973e992a9559e32e64cc373678de1a99",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk",
       "version": "0.4.0",
-      "build": 1
+      "build": 2
     },
     {
       "id": "android-large",
