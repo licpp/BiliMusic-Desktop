@@ -69,7 +69,6 @@
   .download-card .download-requirements { font-size:11px; }
 }
 @media(min-width:761px) and (max-width:1000px) { .download-tabs { padding-inline:14px;gap:6px; }.download-tab { font-size:11px; } }
-.major-release-label { display:inline-flex;align-items:center;justify-content:center;width:fit-content;padding:4px 10px;border:1px solid var(--mint);border-radius:6px;color:var(--mint);font-size:12px;font-weight:600;white-space:nowrap; }
 .release-history-card.major-release-card { border-color:var(--mint); }
 .release-history-summary { margin:14px 0 0;color:var(--muted);font-size:14px;line-height:1.8; }
 .platform-note { flex-wrap:wrap;row-gap:8px; }

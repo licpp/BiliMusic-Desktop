@@ -59,7 +59,6 @@ function renderReleaseHistory(manifest) {
     const heading = element('div', null, 'release-history-version');
     heading.append(element('h3', `v${entry.version}`));
     if (current) heading.append(element('span', '当前版本', 'current-release-label'));
-    if (entry.kind === 'major') heading.append(element('span', '大版本更新', 'major-release-label'));
     if (entry.publishedAt) {
       const date = new Date(entry.publishedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
       heading.append(element('small', date));
