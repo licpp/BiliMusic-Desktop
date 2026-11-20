@@ -51,6 +51,18 @@ pub(super) fn select_audio(dash: &DashData, requested: u32) -> Option<&DashStrea
                 .max_by_key(|stream| rank(stream))
         })
 }
+pub(super) fn compatible_audio(dash: &DashData) -> Option<&DashStream> {
+    audio_streams(dash)
+        .into_iter()
+        .filter(|stream| !lossless(stream) && stream.id != 30251)
+        .min_by_key(|stream| {
+            (
+                !stream.codecs.eq_ignore_ascii_case("mp4a.40.2"),
+                stream.bandwidth == 0,
+                stream.bandwidth,
+            )
+        })
+}
 pub(super) fn audio_options(dash: &DashData) -> Vec<QualityOption> {
     let mut streams = audio_streams(dash);
     streams.sort_by_key(|stream| std::cmp::Reverse(rank(stream)));
@@ -107,6 +119,23 @@ mod tests {
         assert!(startup_audio(&only, select_audio(&only, 0).unwrap()).is_none());
         assert!(!prefer_progressive_startup("mp4a.40.2", 192000, 64000));
         assert!(prefer_progressive_startup("mp4a.40.2", 512000, 64000));
+    }
+    #[test]
+    fn compatible_retry_prefers_aac_lc_without_affecting_the_requested_quality() {
+        let dash: DashData = serde_json::from_value(json!({"audio":[
+            {"id":30216,"codecs":"mp4a.40.5","bandwidth":64000,"base_url":"https://cdn/he"},
+            {"id":30280,"codecs":"mp4a.40.2","bandwidth":192000,"base_url":"https://cdn/high"},
+            {"id":30232,"codecs":"MP4A.40.2","bandwidth":128000,"baseUrl":"https://cdn/standard"},
+            {"id":999,"codecs":"mp4a.40.2","base_url":"https://cdn/unknown-bandwidth"},
+            {"id":997,"codecs":"mp4a.40.2","bandwidth":32000,"base_url":""}],
+            "flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}
+        })).unwrap();
+        assert_eq!(compatible_audio(&dash).unwrap().id, 30232);
+        assert_eq!(select_audio(&dash, 30251).unwrap().id, 30251);
+        let only_flac: DashData = serde_json::from_value(json!({
+            "flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}
+        })).unwrap();
+        assert!(compatible_audio(&only_flac).is_none());
     }
     #[test]
     fn hires_is_a_separate_track_and_ids_are_not_quality_ranks() {

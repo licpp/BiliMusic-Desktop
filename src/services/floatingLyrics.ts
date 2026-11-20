@@ -12,6 +12,7 @@ import { usePlayerStore, playbackClock, nativeLyricPlaybackSession } from '../fe
 import { useThemeStore } from './theme'
 import { storedLyricLines, systemLrc, floatingTimeline } from '../domain/lyricTimeline'
 import { subtitleScope, useSubtitleState } from '../features/lyrics/useBiliSubtitles'
+import { readSubtitlePreference } from './subtitlePreference'
 
 export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; capturedAt?:number; revision?:number }
 export type FloatingCapability = { supported: boolean; enabled: boolean; permissionRequired?: boolean; fontSizeSupported?: boolean; lockSupported?: boolean; colorSupported?:boolean; reason?: string }
@@ -141,10 +142,14 @@ export function startFloatingLyrics() {
     window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
   }
   if (isMobile && !isIOS) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
-  if (isAndroid) {
-    const syncSubtitles = () => void nativeLyrics({
-      action: 'subtitle-preference', enabled: localStorage.getItem('lyrics-subtitles') === 'true',
-    }).catch(() => undefined)
+  if (isMobile) {
+    let pendingSubtitles = Promise.resolve<unknown>(undefined)
+    const syncSubtitles = () => {
+      const enabled = localStorage.getItem('lyrics-subtitles') === 'true'
+      const language = readSubtitlePreference()?.language ?? ''
+      pendingSubtitles = pendingSubtitles.then(() => nativeLyrics({ action: 'subtitle-preference', enabled, language }))
+        .catch(() => undefined)
+    }
     window.addEventListener('bilimusic-subtitle-preference', syncSubtitles)
     syncSubtitles()
   }

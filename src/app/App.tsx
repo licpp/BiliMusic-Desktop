@@ -77,6 +77,7 @@ import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
 import { clearSearchHistory, commandErrorMessage, createPlaylist, getVideoParts, saveLibraryTrack, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { toTrack } from '../services/collectionTrack'
 import { accountEpoch } from '../services/accountScope'
 import { AccountControl } from '../features/account/AccountControl'
@@ -768,7 +769,14 @@ export function App() {
         {renderLyrics()}
         {renderDock(true)}
       </div>}
-      {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}{playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
+      {(playbackError || actionError) && <div className="playback-error" role="alert">
+        {playbackError ? <PlaybackErrorText issue={playbackError}/> : <span>{actionError}</span>}
+        <div className="playback-issue-actions">
+          {playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}
+          {playbackError && <CopyPlaybackDiagnostics issue={playbackError} track={current}/>}
+          <button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button>
+        </div>
+      </div>}
       <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>
       {immersivePresent && !compactPlayer && renderLyrics()}
       {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id) => {
@@ -782,6 +790,6 @@ export function App() {
       {creatingPlaylist && <div ref={createDialog} className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus aria-label="歌单名称" maxLength={createLinked ? 40 : 80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" /><label className="create-linked-option"><input type="checkbox" checked={createLinked} disabled={createList.isPending} onChange={event => setCreateLinked(event.target.checked)}/><span>与 B 站收藏夹同步<small>在 B 站账号下新建私密收藏夹</small></span></label>{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
     </div>{miniMode&&<MiniPlayer busy={miniBusy} onRestore={(lyrics,queue)=>void changeMiniMode(false,lyrics,queue)} onFavorite={()=>void toggleCurrentFavorite()} favoritePending={favoritePending} onError={cause=>setActionError(commandErrorMessage(cause))}/>}
-    {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError}</span><button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
+    {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError?.message}</span>{playbackError && !actionError && <CopyPlaybackDiagnostics issue={playbackError} track={current}/>}<button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
   )
 }

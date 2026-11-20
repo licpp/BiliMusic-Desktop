@@ -1,9 +1,9 @@
-//! Resolve the Android service timeline independently from audio startup.
+//! Resolve the native lyric timeline independently from audio startup.
 use crate::domain::lyrics::timed_lines;
 use crate::infrastructure::repositories::lyrics::{LyricsRepository, StoredLyrics};
 use serde_json::{Value, json};
 
-fn saved_timeline(saved: &StoredLyrics) -> Option<Value> {
+pub(super) fn saved_timeline(saved: &StoredLyrics) -> Option<Value> {
     if saved.provider == "bilibili" {
         return None; // Older builds cached subtitles in the song-lyric slot.
     }
@@ -12,7 +12,54 @@ fn saved_timeline(saved: &StoredLyrics) -> Option<Value> {
 }
 
 fn timeline(lines: Vec<Value>, bias_ms: i64, subtitles: bool) -> Value {
-    json!({ "lines": lines, "biasMs": bias_ms, "subtitles": subtitles })
+    let raw_text = lines
+        .iter()
+        .filter_map(|line| {
+            let ms = (line["timeMs"].as_f64()?.round() as i64)
+                .saturating_add(bias_ms)
+                .max(0);
+            let text = line["text"].as_str()?.replace(['\r', '\n'], " ");
+            Some(format!(
+                "[{:02}:{:02}.{:03}]{text}",
+                ms / 60_000,
+                ms / 1000 % 60,
+                ms % 1000
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    json!({ "lines": lines, "biasMs": bias_ms, "subtitles": subtitles, "rawText": raw_text })
+}
+
+// iOS and Harmony already receive a local lyric seed with the audio response.
+// Send a separate update when the shared resolver has to restore or fetch lines.
+#[cfg(any(target_os = "ios", target_env = "ohos", test))]
+fn follow_up_payload(payload: &Value, audio: &Value) -> Option<Value> {
+    if !audio["url"].is_string() || !audio["lyrics"].is_null() {
+        return None;
+    }
+    Some(json!({
+        "id": audio["track"]["id"].as_str()?,
+        "profile": payload["profile"], "accountSession": payload["accountSession"],
+        "offlineOnly": payload["offlineOnly"], "subtitles": payload["subtitles"],
+        "subtitleLanguage": payload["subtitleLanguage"],
+    }))
+}
+
+#[cfg(any(target_os = "ios", target_env = "ohos"))]
+pub(crate) async fn follow_up(
+    app: &tauri::AppHandle,
+    payload: &Value,
+    audio: &Value,
+) -> Option<Value> {
+    let lookup = follow_up_payload(payload, audio)?;
+    let timeline = tokio::time::timeout(std::time::Duration::from_secs(12), resolve(app, &lookup))
+        .await
+        .ok()??;
+    Some(
+        json!({"kind":"lyrics", "id":lookup["id"], "timeline":timeline,
+        "accountSession":lookup["accountSession"], "subtitleRevision":payload["subtitleRevision"]}),
+    )
 }
 
 fn source_identity(id: &str) -> Option<(&str, i64)> {
@@ -96,7 +143,7 @@ fn read_selection(
     Ok((session, saved))
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
 pub(crate) async fn resolve(app: &tauri::AppHandle, payload: &Value) -> Option<Value> {
     use crate::infrastructure::{
         database::Database,
@@ -105,11 +152,12 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: &Value) -> Option<V
     use tauri::Manager;
 
     let id = payload["id"].as_str()?;
-    let profile = payload["profile"].as_str()?;
+    let fallback = super::current_profile(app).ok()?;
+    let profile = payload["profile"].as_str().unwrap_or(&fallback);
     let database = app.state::<Database>();
     let current_selection = || {
         let connection = database.0.lock().ok()?;
-        if super::current_profile(app) != profile {
+        if super::current_profile(app).ok()?.as_str() != profile {
             return None;
         }
         read_selection(&connection, id).ok()
@@ -148,12 +196,16 @@ pub(crate) async fn resolve(app: &tauri::AppHandle, payload: &Value) -> Option<V
     let captions = if restored.is_none() && payload["subtitles"].as_bool() == Some(true) {
         let (bvid, cid) = source_identity(id)?;
         let provider = app.state::<BilibiliProvider>();
+        let language = payload["subtitleLanguage"]
+            .as_str()
+            .filter(|tag| !tag.is_empty());
         provider
-            .default_subtitle_lines(bvid, cid)
+            .preferred_subtitle_lines(bvid, cid, language)
             .await
             .ok()
             .filter(|lines| !lines.is_empty())
-            .map(|lines| json!({"lines": lines, "biasMs": 0, "subtitles": true}))
+            .and_then(|lines| serde_json::to_value(lines).ok())
+            .and_then(|lines| Some(timeline(lines.as_array()?.clone(), 0, true)))
     } else {
         None
     };
@@ -197,10 +249,26 @@ mod tests {
         };
         let frame = saved_timeline(&saved).unwrap();
         assert_eq!(frame["biasMs"], -200);
+        assert_eq!(frame["rawText"], "[00:00.800]一句");
         assert_eq!(frame["lines"][0]["words"][0]["text"], "一句");
         assert_eq!(frame["subtitles"], false);
         saved.provider = "bilibili".into();
         assert!(saved_timeline(&saved).is_none());
+    }
+
+    #[test]
+    fn native_follow_up_uses_the_resolved_part_and_keeps_queue_preferences() {
+        let payload = json!({"profile":"a", "accountSession":"S1", "subtitles":true,
+            "subtitleLanguage":"ai-en", "track":{"id":"placeholder"}});
+        let mut audio =
+            json!({"url":"http://127.0.0.1:1/media", "track":{"id":"bilibili:BV1VV4y157pr:24"}});
+        let lookup = follow_up_payload(&payload, &audio).unwrap();
+        assert_eq!(lookup["id"], "bilibili:BV1VV4y157pr:24");
+        assert_eq!(lookup["accountSession"], "S1");
+        assert_eq!(lookup["subtitleLanguage"], "ai-en");
+        audio["lyrics"] = json!({"lines":[{"timeMs":0,"text":"缓存歌词"}]});
+        assert!(follow_up_payload(&payload, &audio).is_none());
+        assert!(follow_up_payload(&payload, &json!({"error":"音频无法播放"})).is_none());
     }
 
     #[test]

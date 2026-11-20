@@ -26,6 +26,7 @@ struct PlayerSnapshot: Encodable {
     var stopped = true
     var floatingLyricsEnabled = false
     var error: String?
+    var errorCode: String?
     var track: QueueTrack?
     var revision: Int64 = 0
     var sequence: Int64 = 0

@@ -5,10 +5,10 @@ import { AutomaticResumePolicy } from './ResumePolicy';
 export interface QueueSource { provider: string; bvid: string; cid: number; page: number; aid?: number; uploaderId?: number; uploaderName?: string }
 export interface QueueTrack { id: string; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; source: QueueSource; resolveParts?: boolean; partCount?: number; videoTitle?: string; displayTitle?: string; chapterContext?: boolean; publishedAt?: number; playCount?: number }
 export interface QueueUpdate { offlineOnly?: boolean; entryOrder?: string[]; entryOrigins?: Record<string,string[]>; tracks: QueueTrack[]; repeatMode: string; shuffled: boolean; autoResume?: boolean; resumeThresholdSeconds?: number; collectionPlayback?: boolean; collectionRef?: string; accountSession: string; version: number; owner: string }
-export interface ResolvePayload { offlineOnly?: boolean; visibilityScopes: string[]; track: QueueTrack; accountSession: string; restart: boolean; autoResume: boolean; resumeThresholdSeconds: number; collectionPlayback: boolean }
+export interface ResolvePayload { offlineOnly?: boolean; visibilityScopes: string[]; track: QueueTrack; accountSession: string; restart: boolean; autoResume: boolean; resumeThresholdSeconds: number; collectionPlayback: boolean; subtitles?: boolean; subtitleLanguage?: string; subtitleRevision?: number }
 export interface NotificationLyricLine { timeMs: number; text: string; endTimeMs?: number }
-export interface NativeLyrics { rawText: string; lines: NotificationLyricLine[]; biasMs: number }
-export interface ResolveResult { skip?: boolean; loudnessGainDb?: number; lyrics?: NativeLyrics; url?: string; upgradeUrl?: string; error?: string; track?: QueueTrack; position?: number; entryId?: string; parts?: QueueTrack[]; automaticResume?: AutomaticResumePolicy }
+export interface NativeLyrics { rawText: string; lines: NotificationLyricLine[]; biasMs: number; subtitles?: boolean }
+export interface ResolveResult { skip?: boolean; loudnessGainDb?: number; lyrics?: NativeLyrics; url?: string; upgradeUrl?: string; error?: string; errorCode?: string; track?: QueueTrack; position?: number; entryId?: string; parts?: QueueTrack[]; automaticResume?: AutomaticResumePolicy; kind?: string; id?: string; timeline?: NativeLyrics; subtitleRevision?: number }
 interface SessionNeighbors { previous?: string; next?: string }
 export class NativeQueue {
   private shuffle: ShuffleDeck = new ShuffleDeck();

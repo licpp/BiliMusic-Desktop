@@ -35,17 +35,21 @@ interface Snapshot {
   engineInstanceId: string; sessionId: string; sourceRevision: number; autonomousQueue: boolean; queueVersion: number; track?: QueueTrack; expandedEntries?: Record<string, QueueTrack[]>;
   id: string; status: string; position: number; duration: number; rate: number;
   sleepDeadline: number; sleepDuration: number; sleepExpired: boolean;
-  stopped: boolean; error?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
+  stopped: boolean; error?: string; errorCode?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
 }
-interface LyricsPayload { lines?: NotificationLyricLine[]; biasMs?: number; subtitles?: boolean; action: string; enabled?: boolean; id?: string; lrc?: string; fontSize?: number; locked?: boolean }
+interface LyricsPayload { lines?: NotificationLyricLine[]; biasMs?: number; subtitles?: boolean; action: string; enabled?: boolean; id?: string; lrc?: string; language?: string; fontSize?: number; locked?: boolean }
 interface LyricsResult { supported: boolean; enabled: boolean; reason?: string; fontSizeSupported?: boolean; lockSupported?: boolean }
 class EmptyResult {}
-interface BridgeError { message: string }
+interface BridgeError { message: string; code?: string }
 interface SecretResult { value?: string }
 interface WindowInsets { active: boolean; top: number; right: number; bottom: number; left: number }
 interface ListeningSample {
   scope: string; trackId: string; seconds?: number; position?: number;
   observedAt: number; sessionId?: string; collectionRef?: string;
+}
+
+function mediaErrorCode(code?: number): string | undefined {
+  return typeof code === 'number' && Number.isSafeInteger(code) ? `ohos_media:${code}` : undefined;
 }
 
 // Only Harmony system APIs live here. Search, playlists, lyrics, database and
@@ -65,10 +69,20 @@ export class PlayerPlugin {
     pending?.({error:'播放已取消'});
   }
   private receiveResolution(args: Args): void {
-    if (args.request !== this.nativeRequest || !this.pendingResolve) return;
+    if (args.request !== this.nativeRequest || this.destroyed) return;
+    const result = JSON.parse(args.data ?? '{}') as ResolveResult;
+    if (result.kind === 'lyrics') {
+      const timeline = result.timeline;
+      if (!this.pendingResolve && result.id === this.id && result.subtitleRevision === this.subtitleRevision && timeline &&
+        (!timeline.subtitles || this.subtitlesEnabled) && (this.lyricId !== this.id || !this.lyricLines.length)) {
+        this.applyLyricTimeline({action:'update',id:this.id,lines:timeline.lines,biasMs:timeline.biasMs,lrc:timeline.rawText,subtitles:timeline.subtitles}, true);
+      }
+      return;
+    }
+    if (!this.pendingResolve) return;
     clearTimeout(this.resolveTimer);
     const pending = this.pendingResolve; this.pendingResolve = null;
-    pending(JSON.parse(args.data ?? '{}') as ResolveResult);
+    pending(result);
   }
   private async advance(direction: number, ended: boolean = false, override?: QueueTrack, remote: boolean = false): Promise<void> {
     if (this.sleepExpired || this.destroyed) return;
@@ -79,6 +93,7 @@ export class PlayerPlugin {
     this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
     this.accountListening(true);
     this.sessionId = util.generateRandomUUID(true);
+    this.lyricId = '';
     const previous=this.player; this.player=null; this.pendingSeek=-1;
     const request = this.nativeRequest;
     this.setTrackMetadata(track.id, track.title, track.artist, track.album, track.durationSeconds);
@@ -91,8 +106,12 @@ export class PlayerPlugin {
       if (request !== this.nativeRequest || !this.desiredPlaying) return;
       const result = await new Promise<ResolveResult>((resolve) => {
         this.pendingResolve = resolve;
-        this.resolveTimer = setTimeout(()=>{ if(request===this.nativeRequest) {native.bilimusicOhosCancelResolve();this.receiveResolution({request,data:JSON.stringify({error:'后台加载超时，请重新播放'} as ResolveResult)});} },25000);
-        native.bilimusicOhosResolve(request, JSON.stringify(this.queue.payload(track, ended)));
+        this.resolveTimer = setTimeout(()=>{ if(request===this.nativeRequest) {native.bilimusicOhosCancelResolve();this.receiveResolution({request,data:JSON.stringify({error:'后台加载超时，请重新播放',errorCode:'source_timeout'} as ResolveResult)});} },25000);
+        const payload = this.queue.payload(track, ended);
+        payload.subtitles = this.subtitlesEnabled;
+        payload.subtitleLanguage = this.subtitleLanguage;
+        payload.subtitleRevision = this.subtitleRevision;
+        native.bilimusicOhosResolve(request, JSON.stringify(payload));
       });
       if (request !== this.nativeRequest || !this.queue.find(track.id) || !this.desiredPlaying || this.destroyed) return;
       if (result.skip && result.entryId) {
@@ -100,14 +119,23 @@ export class PlayerPlugin {
         if(next) {await this.advance(1,false,next);} else {await this.control({action:'pause'});}
         return;
       }
-      if (result.error || !result.track || !result.url) throw new Error(result.error ?? '后台播放地址无效');
+      if (result.error || !result.track || !result.url) {
+        this.setPlaybackError(result.error ?? '后台播放地址无效', result.errorCode ?? (result.error ? 'source_unavailable' : 'invalid_source'));
+        this.desiredPlaying = false; this.emit(); await this.stopBackground();
+        return;
+      }
       this.queue.resolved(result);
+      if (result.lyrics?.lines.length) {
+        this.applyLyricTimeline({action:'update',id:result.track.id,lines:result.lyrics.lines,biasMs:result.lyrics.biasMs,lrc:result.lyrics.rawText,subtitles:result.lyrics.subtitles}, true);
+      }
       await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,album:result.track.album,durationSeconds:result.track.durationSeconds,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
         loudnessGainDb:result.loudnessGainDb,automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
-      await this.lyrics({action:'update',id:result.track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,lrc:result.lyrics?.lines.length ? result.lyrics.rawText : '',subtitles:false}).catch(()=>{});
     } catch(error) {
       if(request!==this.nativeRequest || !this.desiredPlaying) return;
-      this.error=String(error); this.status='error'; this.desiredPlaying=false; this.emit(); await this.stopBackground();
+      if (this.status !== 'error' || !this.error) {
+        this.setPlaybackError('无法启动音频，请重新播放', mediaErrorCode((error as BusinessError).code) ?? 'audio_prepare_failed');
+      }
+      this.desiredPlaying=false; this.emit(); await this.stopBackground();
     }
   }
   private context: common.UIAbilityContext;
@@ -169,6 +197,7 @@ export class PlayerPlugin {
   private background: boolean = false;
   private destroyed: boolean = false;
   private error: string = '';
+  private errorCode: string = '';
   private artwork: Artwork = new Artwork();
   private artworkReady: Promise<void> = Promise.resolve();
   private mediaRevision: number = 0;
@@ -180,6 +209,10 @@ export class PlayerPlugin {
   private lyricLines: NotificationLyricLine[] = [];
   private lyricBias: number = 0;
   private lyricSubtitles: boolean = false;
+  private lyricFromBackground: boolean = false;
+  private subtitlesEnabled: boolean = false;
+  private subtitleLanguage: string = '';
+  private subtitleRevision: number = 0;
   private cover: image.PixelMap | undefined = undefined;
   private coverRevision: number = 0;
   private metadataSignature: string = '';
@@ -202,7 +235,7 @@ export class PlayerPlugin {
         if (position > this.watchdogPosition + 10 && this.watchdogPosition >= 0) this.mediaAdvancedAt = Date.now();
         this.watchdogPosition = position;
         if (Date.now() - this.mediaAdvancedAt >= 12000) {
-          this.accountListening(true); this.desiredPlaying = false; this.error = '音频缓冲超时，请重试'; this.status = 'error';
+          this.accountListening(true); this.desiredPlaying = false; this.setPlaybackError('音频缓冲超时，请重试', 'audio_stalled');
           this.player.pause().catch(() => {});
           hilog.warn(0xB110, 'BiliMusicPlayer', 'Playback stalled; revision=%{public}d', this.mediaRevision);
         }
@@ -321,7 +354,9 @@ export class PlayerPlugin {
         const result = await this.command(request.command, JSON.parse(request.payload) as Args);
         native.tauriOhosPluginResponse(request.id, true, JSON.stringify(result));
       } catch (error) {
-        native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: String(error) } as BridgeError));
+        const code = mediaErrorCode((error as BusinessError).code);
+        const message = code && request.command === 'play' ? '无法启动音频，请重新播放' : String(error);
+        native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message, code } as BridgeError));
       }
     });
   }
@@ -354,7 +389,13 @@ export class PlayerPlugin {
     return { capabilities:{autonomousQueue:this.queue.accountSession.length>0,seamlessSourceSwitch:true,nativeSleepTimer:true,snapshotRebind:true},engineInstanceId:this.engineInstanceId,sessionId:this.sessionId,sourceRevision:this.mediaRevision,autonomousQueue:this.queue.accountSession.length>0,queueVersion:this.queue.version,track:this.queue.find(this.id),expandedEntries:this.queue.expanded,revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
       duration: Math.max(0, (this.player?.duration ?? 0) / 1000), rate: this.rate,
       sleepDeadline: this.sleepingAt, sleepDuration: this.sleepDuration, sleepExpired: this.sleepExpired,
-      stopped: this.id.length === 0, error: this.error || undefined };
+      stopped: this.id.length === 0, error: this.error || undefined, errorCode: this.error ? this.errorCode || undefined : undefined };
+  }
+
+  private setPlaybackError(message: string, code: string): void {
+    this.error = message;
+    this.errorCode = code;
+    this.status = 'error';
   }
 
   private emit(action?: string): void {
@@ -395,15 +436,31 @@ export class PlayerPlugin {
       store.putSync('lyricTitle',args.enabled === true); await store.flush();
       this.systemTitleLyrics = args.enabled === true; void this.setMetadata(this.mediaRevision);
     }
-    if (args.action === 'update') {
-      if ((args.lrc?.length ?? 0) > 16 * 1024 * 1024) throw new Error('歌词内容过大');
-      this.lyricId = args.id ?? ''; this.lyricText = (args.lrc ?? '').replace(/[♪♫♬♩🎵🎶]/g,'');
-      this.lyricLines = (args.lines ?? []).filter(line => Number.isFinite(line.timeMs) && typeof line.text === 'string');
-      this.lyricBias = Number.isFinite(args.biasMs) ? args.biasMs ?? 0 : 0; this.lyricSubtitles = args.subtitles === true;
-      void this.setMetadata(this.mediaRevision);
+    if (args.action === 'subtitle-preference') {
+      const enabled = args.enabled === true, language = args.language ?? '';
+      if (enabled !== this.subtitlesEnabled || language !== this.subtitleLanguage) {
+        this.subtitlesEnabled = enabled; this.subtitleLanguage = language; this.subtitleRevision += 1;
+        if (this.lyricSubtitles) this.applyLyricTimeline({action:'update'}, false);
+      }
+    }
+    if (args.action === 'update' && !(this.lyricFromBackground && this.lyricId === args.id && !args.lines?.length)) {
+      this.applyLyricTimeline(args, false);
     }
     // Notification lyrics are automatic; retain compatibility with older clients.
     return { supported:false,enabled:false,reason:'当前歌词自动显示在通知栏',fontSizeSupported:false,lockSupported:false };
+  }
+
+  private applyLyricTimeline(args: LyricsPayload, fromBackground: boolean): void {
+    const lrc = args.lrc ?? '';
+    if (lrc.length > 16 * 1024 * 1024) {
+      if (fromBackground) return;
+      throw new Error('歌词内容过大');
+    }
+    this.lyricId = args.id ?? ''; this.lyricText = lrc.replace(/[♪♫♬♩🎵🎶]/g,'');
+    this.lyricLines = (args.lines ?? []).filter(line => Number.isFinite(line.timeMs) && typeof line.text === 'string');
+    this.lyricBias = Number.isFinite(args.biasMs) ? args.biasMs ?? 0 : 0; this.lyricSubtitles = args.subtitles === true;
+    this.lyricFromBackground = fromBackground;
+    void this.setMetadata(this.mediaRevision);
   }
 
   private notificationLine(): string | undefined {
@@ -422,7 +479,7 @@ export class PlayerPlugin {
       return;
     }
     this.tasks = this.tasks.catch(() => {}).then(() => this.control({ action, value })).catch((error: BusinessError) => {
-      this.error = String(error); this.status = 'error'; this.emit();
+      this.setPlaybackError('无法控制播放，请重试', mediaErrorCode(error.code) ?? 'native_request_failed'); this.emit();
     });
   }
 
@@ -536,9 +593,7 @@ export class PlayerPlugin {
       // Build from live authoritative state when the queued task executes. A
       // lyric update queued before image decoding must never erase that image.
       const currentLine = this.notificationLine() ?? '';
-      // Car stereos display the title and artist fields as track information.
-      // Send the live lyric in its own field when playback is routed over Bluetooth.
-      const title = !this.bluetoothOutput && this.systemTitleLyrics && currentLine ? currentLine : this.title;
+      const title = this.systemTitleLyrics && currentLine ? currentLine : this.title;
       const artist = !this.bluetoothOutput && !this.systemTitleLyrics && currentLine ? currentLine : this.artist;
       const actualDuration = this.player?.duration ?? 0;
       const duration = actualDuration > 0 ? actualDuration : this.listedDuration;
@@ -607,8 +662,8 @@ export class PlayerPlugin {
         if (this.player !== player) return;
         hilog.error(0xB110, 'BiliMusicPlayer', 'AVPlayer error code=%{public}d', error.code);
         clearTimeout(timeout); this.accountListening(true);
-        this.error = error.message; this.status = 'error'; this.emit();
-        reject(new Error(error.message));
+        this.setPlaybackError('音频加载失败，请重新播放', mediaErrorCode(error.code) ?? 'audio_prepare_failed'); this.emit();
+        reject(error);
       });
       // AVPlayer retains one callback per event. Register preparation and live
       // playback transitions together so the ready callback cannot replace them.
@@ -631,7 +686,7 @@ export class PlayerPlugin {
         } catch (error) { clearTimeout(timeout); reject(new Error(String(error))); }
       });
       player.url = args.url ?? '';
-    }); } catch(error) { if(revision !== this.mediaRevision) return; throw new Error(String(error)); } finally { this.cancelPreparation=null; }
+    }); } catch(error) { if(revision !== this.mediaRevision) return; throw error as Error; } finally { this.cancelPreparation=null; }
     this.applyOutput(); this.applyRate(this.rate);
     const position = playbackStartPosition(args.position ?? 0, player.duration / 1000, args.automaticResume);
     this.upgradeAfterPosition = position * 1000 + 750;
@@ -677,7 +732,7 @@ export class PlayerPlugin {
     let ready: (()=>void) | null=null;let failed: ((error:Error)=>void) | null=null;let seekDone: (()=>void) | null=null;
     const cancel=()=>{cancelled=true;failed?.(new Error('音质切换已取消'));};this.cancelSourceSwitch=cancel;
     const valid=():boolean=>!cancelled && this.player===original && this.mediaRevision===revision && this.seekRevision===seek;
-    candidate.on('error',error=>{if(this.player===candidate){this.error=error.message;this.status='error';this.emit();}else failed?.(new Error('新音源无法播放，已保留原音质'));});
+    candidate.on('error',error=>{if(this.player===candidate){this.setPlaybackError('音频加载失败，请重新播放',mediaErrorCode(error.code) ?? 'audio_prepare_failed');this.emit();}else failed?.(new Error('新音源无法播放，已保留原音质'));});
     candidate.on('audioInterrupt',event=>this.audioInterrupted(candidate,event));
     candidate.on('seekDone',()=>{seekDone?.();seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
     candidate.on('stateChange',async state=>{

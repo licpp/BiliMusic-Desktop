@@ -29,6 +29,8 @@ object FloatingLyricsOverlay {
     private const val POSITION_X = "positionX"
     private const val POSITION_Y = "positionY"
     private const val SUBTITLES = "preferBilibiliSubtitles"
+    private const val SUBTITLE_LANGUAGE = "bilibiliSubtitleLanguage"
+    private val languageTag = Regex("[a-zA-Z0-9_-]{1,48}")
     var enabled = false
         private set
     private var owner: PlaybackService? = null
@@ -58,6 +60,8 @@ object FloatingLyricsOverlay {
     fun detach() { hide(); owner=null; enabled=false; setTimeline(JSONObject()) }
     internal fun needsPlaybackTimeline() = enabled || SystemTitleLyrics.enabled
     internal fun wantsSubtitles(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(SUBTITLES, false)
+    internal fun subtitleLanguage(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUBTITLE_LANGUAGE, "").orEmpty()
     internal fun hasTimeline(id: String, session: String) = data.optString("id") == id &&
         data.optString("session") == session && (data.optJSONArray("lines")?.length() ?: 0) > 0
     internal fun setTimeline(timeline: JSONObject) {
@@ -78,10 +82,14 @@ object FloatingLyricsOverlay {
             }
             "update" -> owner?.acceptForegroundLyrics(args)
             "subtitle-preference" -> {
-                val preferred = args.optBoolean("enabled")
-                if (preferred != wantsSubtitles(context)) {
-                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(SUBTITLES, preferred).apply()
-                    if (!preferred && data.optBoolean("subtitles")) setTimeline(JSONObject())
+                val enabled = args.optBoolean("enabled")
+                val previousLanguage = subtitleLanguage(context)
+                val language = args.optString("language", previousLanguage).takeIf { it.isEmpty() || languageTag.matches(it) }
+                    ?: previousLanguage
+                if (enabled != wantsSubtitles(context) || language != previousLanguage) {
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putBoolean(SUBTITLES, enabled).putString(SUBTITLE_LANGUAGE, language).apply()
+                    if (data.optBoolean("subtitles")) setTimeline(JSONObject())
                     owner?.refreshPlaybackLyrics()
                     owner?.notifyLyricsChanged()
                 }

@@ -125,16 +125,19 @@ test('cross-region focus enters the nearest menu row rather than its active page
 })
 
 const layoutCode=(await build({entryPoints:['src/large-screen/playerLayout.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
-const {fitMediaFrame,centeredLyricScroll,playerDensity,lyricRowCount}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
-test('player density uses the safe window, including when a car screen reserves system bars',()=>{
- assert.equal(playerDensity(1280,800),'regular')
- assert.equal(playerDensity(1280,720),'regular')
- assert.equal(playerDensity(1920,720),'regular')
- assert.equal(playerDensity(1864,612),'compact')
- assert.equal(playerDensity(1280,480),'compact')
- assert.equal(playerDensity(1224,372),'compact')
- assert.equal(playerDensity(968,312),'tight')
- assert.equal(playerDensity(740,430),'compact')
+const {fitMediaFrame,centeredLyricScroll,playerViewportLayout,lyricRowCount}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
+test('the safe width and height select the expanded media layout only when the controls fit in one row',()=>{
+ assert.deepEqual(playerViewportLayout(1280,800),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1280,720),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1920,720),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1864,612),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(1280,480),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(1224,372),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(968,312),{density:'tight',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(814,256),{density:'tight',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(740,430),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(720,372),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(719,372),{density:'compact',wideMedia:false})
 })
 test('short lyric windows prioritize the current line and budget room for translations',()=>{
  assert.equal(lyricRowCount(140,false),1)

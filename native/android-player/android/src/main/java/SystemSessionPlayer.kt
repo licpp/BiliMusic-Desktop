@@ -69,7 +69,9 @@ internal class SystemSessionPlayer(
             this.artwork = artwork
             state.setPlaylist(playlist.mapIndexed { index, item ->
                 if (index != queue.currentIndex) item else item.buildUpon().setMediaMetadata(
-                    item.mediaItem.mediaMetadata.buildUpon().setDisplayTitle(displayTitle)
+                    item.mediaItem.mediaMetadata.buildUpon()
+                        .setTitle(displayTitle)
+                        .setDisplayTitle(displayTitle)
                         .setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER).build(),
                 ).build()
             })

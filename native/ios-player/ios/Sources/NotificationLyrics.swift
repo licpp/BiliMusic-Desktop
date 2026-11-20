@@ -6,16 +6,18 @@ struct NativeLyricLine: Decodable {
 struct NativeLyricsRequest: Decodable {
     var enabled: Bool? = nil
     let action: String; let id: String?; let lines: [NativeLyricLine]?; let biasMs: Double?; let subtitles: Bool?
+    var language: String? = nil
 }
 struct NativeSavedLyrics: Decodable {
-    let lines: [NativeLyricLine]; let biasMs: Double
+    let lines: [NativeLyricLine]; let biasMs: Double; let subtitles: Bool
 
-    private enum CodingKeys: String, CodingKey { case lines, biasMs }
+    private enum CodingKeys: String, CodingKey { case lines, biasMs, subtitles }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         lines = (try? values.decode([NativeLyricLine].self, forKey: .lines)) ?? []
         biasMs = (try? values.decode(Double.self, forKey: .biasMs)) ?? 0
+        subtitles = (try? values.decode(Bool.self, forKey: .subtitles)) ?? false
     }
 }
 struct LyricsArgs: Decodable { let data: String }
@@ -29,9 +31,22 @@ struct LyricsCapability: Encodable {
 final class NotificationLyrics {
     private var request: NativeLyricsRequest?
     private var saved: NativeLyricsRequest?
+    private(set) var subtitleRevision = 0
+    private(set) var subtitlesEnabled = false
+    private(set) var subtitleLanguage = ""
     func update(_ value: NativeLyricsRequest) { request=value }
     func seed(_ value: NativeLyricsRequest) { saved=value }
     func clear() { request=nil; saved=nil }
+    func setSubtitlePreference(enabled: Bool, language: String) {
+        guard enabled != subtitlesEnabled || language != subtitleLanguage else { return }
+        subtitlesEnabled = enabled; subtitleLanguage = language; subtitleRevision += 1
+        if request?.subtitles == true { request = nil }
+        if saved?.subtitles == true { saved = nil }
+    }
+    func seedBackground(_ value: NativeSavedLyrics, id: String, revision: Int?) {
+        guard revision == subtitleRevision, !value.subtitles || subtitlesEnabled else { return }
+        seed(NativeLyricsRequest(action: "update", id: id, lines: value.lines, biasMs: value.biasMs, subtitles: value.subtitles))
+    }
     func line(for trackID: String?, at position: Double, carAudio: Bool = false) -> String? {
         guard !carAudio, let trackID, !trackID.isEmpty, position.isFinite else { return nil }
         let live = request?.id == trackID && request?.lines?.isEmpty == false ? request : nil

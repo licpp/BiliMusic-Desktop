@@ -4,10 +4,11 @@ export function fitMediaFrame(width: number, height: number, ratio: number) {
   return { width: h * aspect, height: h }
 }
 
-export function playerDensity(width: number, height: number) {
-  if (height < 350) return 'tight'
-  if (height < 540 || (height < 680 && width / height >= 2.05)) return 'compact'
-  return 'regular'
+export function playerViewportLayout(width: number, height: number) {
+  const density = height < 350 ? 'tight'
+    : height < 540 || (height < 680 && width / height >= 2.05) ? 'compact' : 'regular'
+  // The horizontal control row needs room for progress and touch targets.
+  return { density, wideMedia: density !== 'regular' && width >= 720 } as const
 }
 
 export function lyricRowCount(availableHeight: number, supplemental: boolean) {

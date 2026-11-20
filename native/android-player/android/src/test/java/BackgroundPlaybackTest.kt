@@ -194,16 +194,83 @@ class BackgroundPlaybackTest {
     @Test fun accountChangeRejectsAnOldBackgroundReply() {
         load(); service.control("next"); profile.writeText("different-account"); reply(requests.last())
         assertEquals("error", service.snapshot().getString("status")); assertTrue(service.snapshot().getBoolean("stopped"))
+        assertEquals("account_changed", service.snapshot().getString("errorCode"))
+    }
+    @Test fun aFreshGuestCanAdvanceAndRecoverBeforeTheAccountMarkerExists() {
+        assertTrue(profile.delete())
+        load()
+        service.control("next")
+        val next = requests.single()
+        assertEquals("", next.second.getString("profile"))
+        reply(next)
+        assertEquals("2", service.snapshot().getString("id"))
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_IO)
+        val recovery = requests.last()
+        assertTrue(recovery.second.getBoolean("refresh"))
+        assertEquals("", recovery.second.getString("profile"))
+        reply(recovery)
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertFalse(service.snapshot().has("errorCode"))
+    }
+    @Test fun aDamagedProfileMarkerIsNotAnAccountChange() {
+        load()
+        profile.writeBytes(byteArrayOf(0xff.toByte()))
+        service.control("next")
+        assertTrue(requests.isEmpty())
+        assertEquals("profile_unavailable", service.snapshot().getString("errorCode"))
     }
     @Test fun networkFailureRefreshesNativelyOnceAndExplicitRetryWorks() {
         load(); service.control("seek", 32.0); idle()
         shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_IO)
         assertTrue(requests.last().second.getBoolean("refresh")); assertEquals(32.0, requests.last().second.getDouble("position"), 0.1)
+        assertFalse(requests.last().second.optBoolean("compatibleAudio"))
         reply(requests.last()); shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_IO)
         assertEquals(1, requests.size); assertEquals("error", service.snapshot().getString("status"))
         service.control("resume"); reply(requests.last())
         assertEquals("playing", service.snapshot().getString("status"))
         service.control("seek", 45.0); idle(); assertEquals(45.0, service.snapshot().getDouble("position"), 0.1)
+    }
+    @Test fun unrecognizedStreamRetriesWithCompatibleAudioWithoutLosingResumePosition() {
+        val broken = "$url-broken"
+        ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(broken), ShadowMediaPlayer.MediaInfo(120_000, 1000))
+        service.onStartCommand(Intent(service, PlaybackService::class.java).setAction("load")
+            .putExtra("id", "1").putExtra("title", "song 1").putExtra("url", broken).putExtra("position", 32.0), 0, 1)
+        val sessionId = service.snapshot().getString("sessionId")
+        // AOSP reports UNKNOWN / status_t::UNKNOWN_ERROR for an unrecognizable stream.
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, Int.MIN_VALUE)
+        val recovery = requests.single()
+        assertTrue(recovery.second.getBoolean("compatibleAudio"))
+        assertTrue(recovery.second.getBoolean("refresh"))
+        assertEquals(32.0, recovery.second.getDouble("position"), 0.1)
+        reply(recovery)
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(sessionId, service.snapshot().getString("sessionId"))
+        assertEquals(32.0, service.snapshot().getDouble("position"), 0.1)
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_UNSUPPORTED)
+        assertEquals(1, requests.size)
+        assertEquals("error", service.snapshot().getString("status"))
+        assertEquals("当前音源无法解码，请尝试更换音质", service.snapshot().getString("error"))
+        assertEquals("android_media:1:-1010", service.snapshot().getString("errorCode"))
+    }
+    @Test fun staleCompatibleAudioCannotReplaceANewerTrack() {
+        load()
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_MALFORMED)
+        val recovery = requests.single()
+        assertTrue(recovery.second.getBoolean("compatibleAudio"))
+        service.control("next")
+        reply(recovery)
+        assertEquals("2", service.snapshot().getString("id"))
+        assertTrue(service.snapshot().getBoolean("stopped"))
+        reply(requests.last())
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals("2", service.snapshot().getString("id"))
+    }
+    @Test fun malformedOfflineAudioDoesNotRequestACompatibleNetworkSource() {
+        service.updateQueue(JSONObject(PlaybackService.queueData!!).put("offlineOnly", true).toString())
+        load()
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_MALFORMED)
+        assertTrue(requests.isEmpty())
+        assertEquals("本地音频无法播放，请联网后重新下载", service.snapshot().getString("error"))
     }
     @Test fun qualityChangePreservesPausedPositionAndPlaybackSession() {
         val alternate = "$url-quality"
@@ -355,25 +422,40 @@ class BackgroundPlaybackTest {
         assertEquals("2", service.snapshot().getString("id"))
         assertEquals("playing", service.snapshot().getString("status"))
     }
-    @Test fun systemTitleLyricsUpdateDisplayWithoutReplacingBluetoothTrackTitle() {
+    @Test fun systemTitleLyricsUseTheSameTitleForMediaSessionAndNotification() {
         load()
         val session = mediaSession()
         val originalQueue = session.publishedQueue
-        fun metadata(key: String) = session.publishedMetadata!!.getString(key)
+        val notifications = service.getSystemService(NotificationManager::class.java)
+        fun assertPublishedTitle(expected: String) {
+            idle()
+            val metadata = session.publishedMetadata!!
+            assertEquals(expected, metadata.getString(MediaMetadata.METADATA_KEY_TITLE))
+            assertEquals(expected, metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
+            val notification = notifications.activeNotifications.single().notification
+            assertEquals(expected, notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        }
         val playback = service.snapshot()
         val lyricSession = playback.getString("engineInstanceId") + ":" + playback.getString("sessionId")
-        FloatingLyricsOverlay.command(service, """{"action":"update","id":"1","session":"$lyricSession","lines":[{"timeMs":0,"text":"正在唱的歌词"}]}""")
+        FloatingLyricsOverlay.command(service, """{"action":"update","id":"1","session":"$lyricSession","lines":[
+            {"timeMs":0,"text":"第一行歌词"},{"timeMs":1000,"text":"第二行歌词"}]}""")
+        assertPublishedTitle("song 1")
         try {
-            FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":true}""")
-            idle()
-            assertEquals("正在唱的歌词",metadata(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
-            assertEquals("song 1",metadata(MediaMetadata.METADATA_KEY_TITLE))
-            assertEquals("song 1",session.publishedQueue!!.first().description.title)
+            FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
+            assertPublishedTitle("第一行歌词")
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1500))
+            assertPublishedTitle("第二行歌词")
+            service.control("pause")
+            assertPublishedTitle("第二行歌词")
+            service.control("resume")
+            assertPublishedTitle("第二行歌词")
+            assertEquals("song 1", session.publishedQueue!!.first().description.title)
             assertSame(originalQueue, session.publishedQueue)
-            assertEquals("song 1",service.snapshot().getJSONObject("track").getString("title"))
-        } finally { FloatingLyricsOverlay.command(service,"""{"action":"system-title","enabled":false}""") }
-        idle()
-        assertEquals("song 1",metadata(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
+            assertEquals("song 1", service.snapshot().getJSONObject("track").getString("title"))
+        } finally {
+            FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""")
+        }
+        assertPublishedTitle("song 1")
     }
 
     @Test fun nativeQueueRefreshesMatchedLyricsAndSubtitlesWithTheWebViewSuspended() {
@@ -393,7 +475,7 @@ class BackgroundPlaybackTest {
         }
         ShadowSettings.setCanDrawOverlays(true)
         FloatingLyricsOverlay.command(service, """{"action":"enable","enabled":true}""")
-        FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true}""")
+        FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true,"language":"ai-en"}""")
         FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
         try {
             load()
@@ -420,11 +502,17 @@ class BackgroundPlaybackTest {
             reply(requests[3])
             val captions = requests[4]
             assertTrue(captions.second.getBoolean("subtitles"))
+            assertEquals("ai-en", captions.second.getString("subtitleLanguage"))
             assertEquals("3", captions.second.getString("id"))
-            lyricsReply(captions, "AI 字幕", subtitles = true)
-            assertEquals("AI 字幕", displayed())
-            assertEquals("AI 字幕", overlayLine())
-            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false}""")
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true,"language":"ai-ja"}""")
+            val changed = requests.last()
+            assertEquals("ai-ja", changed.second.getString("subtitleLanguage"))
+            lyricsReply(captions, "Previous preference", subtitles = true)
+            assertEquals("song 3", displayed())
+            lyricsReply(changed, "日本語の字幕", subtitles = true)
+            assertEquals("日本語の字幕", displayed())
+            assertEquals("日本語の字幕", overlayLine())
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false,"language":""}""")
             assertEquals("song 3", displayed())
             assertFalse(requests.last().second.getBoolean("subtitles"))
         } finally {

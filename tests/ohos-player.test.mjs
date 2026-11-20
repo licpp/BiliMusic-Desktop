@@ -249,7 +249,7 @@ test('Harmony notification lyrics follow the native clock automatically, preserv
   } finally { await h.plugin.destroy() }
 })
 
-test('Bluetooth media metadata keeps the song title, artist and album through live lyrics and route changes', async () => {
+test('Bluetooth and speaker metadata both follow the system title lyrics setting', async () => {
   const h = setup()
   const devices = h.mock.audio.DeviceType
   h.mock.preferredDevices = [{ deviceType: devices.BLUETOOTH_A2DP }]
@@ -257,9 +257,10 @@ test('Bluetooth media metadata keeps the song title, artist and album through li
     await h.command('play', { id: 'song', title: '歌曲', artist: '歌手', album: '专辑', url: 'http://127.0.0.1:1234/media' })
     await h.command('lyrics', { data: JSON.stringify({ action: 'update', id: 'song', lrc: '[00:00]当前歌词',
       lines: [{ timeMs: 0, text: '当前歌词' }] }) })
+    assert.equal(h.metadata.at(-1).title, '歌曲')
     await h.command('lyrics', { data: JSON.stringify({ action: 'system-title', enabled: true }) })
     const bluetoothMetadata = h.metadata.at(-1)
-    assert.equal(bluetoothMetadata.title, '歌曲')
+    assert.equal(bluetoothMetadata.title, '当前歌词')
     assert.equal(bluetoothMetadata.artist, '歌手')
     assert.equal(bluetoothMetadata.album, '专辑')
     assert.equal(bluetoothMetadata.singleLyricText, '当前歌词')
@@ -269,8 +270,13 @@ test('Bluetooth media metadata keeps the song title, artist and album through li
     assert.equal(h.metadata.at(-1).title, '当前歌词')
     routeChanged({ devices: [{ deviceType: devices.BLUETOOTH_A2DP }] })
     await h.plugin.metadataTasks
+    assert.equal(h.metadata.at(-1).title, '当前歌词')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'system-title', enabled: false }) })
     assert.equal(h.metadata.at(-1).title, '歌曲')
     assert.equal(h.metadata.at(-1).artist, '歌手')
+    routeChanged({ devices: [{ deviceType: devices.SPEAKER }] })
+    await h.plugin.metadataTasks
+    assert.equal(h.metadata.at(-1).title, '歌曲')
   } finally { await h.plugin.destroy() }
 })
 
@@ -453,6 +459,29 @@ const nativeTracks = ['A','B','C'].map((id,i)=>({id,title:id,durationSeconds:180
 const mirror = (tracks=nativeTracks,repeatMode='off',version=1,extra={})=>({tracks,repeatMode,version,shuffled:false,accountSession:'opaque-account',owner:'webview',...extra})
 const drain = async()=>{for(let i=0;i<12;i++)await new Promise(setImmediate)}
 async function answer(h,request,track){await h.command('resolved',{request,data:JSON.stringify({track,url:'http://127.0.0.1:1234/'+track.id,position:0})});await drain()}
+
+test('Harmony forwards both native AVPlayer and background resolver error codes', async () => {
+  const h = setup()
+  try {
+    const [first, second] = nativeTracks
+    assert.equal((await h.command('queue', mirror([first, second]))).ok, true)
+    await h.command('play', { id: first.id, url: 'http://127.0.0.1:1234/media' })
+    h.player.callbacks.error[0]({ code: 5400106, message: 'https://example.invalid/signed?token=test' })
+    const failed = (await h.command('snapshot')).value
+    assert.equal(failed.status, 'error')
+    assert.equal(failed.errorCode, 'ohos_media:5400106')
+    assert.doesNotMatch(failed.error, /token|https:/)
+
+    h.mediaControls.get('playNext')()
+    await drain()
+    const { request } = h.mock.resolveRequests.at(-1)
+    await h.command('resolved', { request, data: JSON.stringify({ error: '无法读取当前播放账号', errorCode: 'profile_unavailable' }) })
+    await drain()
+    const background = (await h.command('snapshot')).value
+    assert.equal(background.id, second.id)
+    assert.equal(background.errorCode, 'profile_unavailable')
+  } finally { await h.plugin.destroy() }
+})
 
 test('Harmony AVSession next and previous switch tracks in the native queue and refresh media metadata', async () => {
   const h = setup()
@@ -651,6 +680,34 @@ test('Harmony background transition replaces notification lyrics from shared nat
   await h.command('resolved',{request:pending.request,data:JSON.stringify({track:nativeTracks[1],url:'http://127.0.0.1:1234/B',lyrics:{rawText:'[00:00]新的歌词',lines:[{timeMs:0,text:'新的歌词'}],biasMs:0}})})
   await drain();assert.equal(h.plugin.notificationLine(),'新的歌词');assert.equal(h.plugin.lyricId,nativeTracks[1].id)
  }finally{await h.plugin.destroy()}
+})
+
+test('Harmony background subtitles use the selected language and arrive after audio starts', async () => {
+  const h = setup()
+  try {
+    await h.command('queue', mirror())
+    await h.command('play', { ...nativeTracks[0], url: 'http://127.0.0.1:1234/A' })
+    await h.command('lyrics', { data: JSON.stringify({ action: 'subtitle-preference', enabled: true, language: 'ai-en' }) })
+    h.player.emit('completed')
+    await drain()
+    const next = h.mock.resolveRequests.at(-1)
+    assert.equal(next.payload.subtitleLanguage, 'ai-en')
+    assert.equal(next.payload.subtitles, true)
+    await answer(h, next.request, nativeTracks[1])
+    assert.equal(h.player.state, 'playing')
+    const caption = { kind: 'lyrics', id: nativeTracks[1].id, subtitleRevision: next.payload.subtitleRevision,
+      timeline: { subtitles: true, biasMs: 0, rawText: '[00:00.000]Background caption', lines: [{ timeMs: 0, endTimeMs: 1000, text: 'Background caption' }] } }
+    await h.command('resolved', { request: next.request, data: JSON.stringify(caption) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, 'Background caption')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'update', id: nativeTracks[1].id, lines: [] }) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, 'Background caption')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'subtitle-preference', enabled: false, language: 'ai-en' }) })
+    await h.command('resolved', { request: next.request, data: JSON.stringify(caption) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, '')
+  } finally { await h.plugin.destroy() }
 })
 
 

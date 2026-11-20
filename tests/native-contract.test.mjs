@@ -26,11 +26,14 @@ state.sessionId = value["sessionId"] as! String
 state.sourceRevision = Int64(value["sourceRevision"] as! Int)
 state.sequence = Int64(value["sequence"] as! Int)
 state.track = track
+state.error = "音频加载失败"
+state.errorCode = "ios_media:NSURLErrorDomain:-1009"
 FileHandle.standardOutput.write(try JSONEncoder().encode(state))
 `)
   execFileSync('xcrun',['swiftc','native/ios-player/ios/Sources/PlaybackContract.swift',join(dir,'main.swift'),'-o',join(dir,'contract')],{stdio:'pipe'})
   const actual=JSON.parse(execFileSync(join(dir,'contract'),[resolve('tests/fixtures/native-playback.json')],{encoding:'utf8'}))
   assert.deepEqual(actual.track,fixture.track)
+  assert.equal(actual.errorCode,'ios_media:NSURLErrorDomain:-1009')
   for(const key of ['engineInstanceId','sessionId','sourceRevision','sequence'])assert.equal(actual[key],fixture[key])
  }finally{await rm(dir,{recursive:true,force:true})}
 })

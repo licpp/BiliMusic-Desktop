@@ -6,12 +6,26 @@ use crate::infrastructure::{
     providers::bilibili::{BilibiliProvider, VideoParts},
     repositories::library::{LibraryRepository, TrackInput},
 };
-use crate::interface::commands::{library_record_play, track_playback_plan};
+use crate::interface::commands::{
+    compatible_playback_plan, library_record_play, track_playback_plan,
+};
+use crate::interface::error::CommandError;
 use serde_json::{Value, json};
 use tauri::Manager;
 
-#[cfg(any(target_os = "android", test))]
 pub(crate) mod lyrics;
+
+fn playback_error(code: &'static str, message: &'static str) -> CommandError {
+    CommandError { code, message: message.into(), retryable: true }
+}
+
+pub(crate) fn resolution_response(result: Result<Value, CommandError>) -> Value {
+    result.unwrap_or_else(|error| json!({"error":error.message,"errorCode":error.code}))
+}
+
+pub(crate) fn resolution_timeout() -> CommandError {
+    playback_error("source_timeout", "后台音源解析超时，请重新播放")
+}
 
 /// Resolve playlist presentation from the canonical binding, never treat queue
 /// display text as a user edit or persist it into the Bilibili source record.
@@ -141,37 +155,60 @@ fn visibility_skip(entry_id: &str) -> Value {
     json!({"skip":true,"entryId":entry_id,"parts":[]})
 }
 
-pub(crate) fn current_profile(app: &tauri::AppHandle) -> String {
-    std::fs::read_to_string(app.state::<Database>().1.join("active-profile")).unwrap_or_default()
+fn read_profile(path: &std::path::Path) -> Result<String, CommandError> {
+    match std::fs::read_to_string(path) {
+        Ok(profile) => Ok(profile),
+        // Guest playback starts before a profile marker has been created.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(_) => Err(playback_error("profile_unavailable", "无法读取当前播放账号，请重新播放")),
+    }
 }
 
-pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, String> {
+pub(crate) fn current_profile(app: &tauri::AppHandle) -> Result<String, CommandError> {
+    read_profile(&app.state::<Database>().1.join("active-profile"))
+}
+
+// The caller holds the account gate on every check, including after network I/O.
+fn validate_scope(
+    app: &tauri::AppHandle,
+    profile: Option<&str>,
+    expected_session: Option<&str>,
+    current: &impl Fn() -> bool,
+) -> Result<String, CommandError> {
+    let changed = || playback_error("account_changed", "播放账号已变更，请重新播放");
+    if !current() {
+        return Err(changed());
+    }
+    let active = current_profile(app)?;
+    if profile.is_some_and(|expected| expected != active) {
+        return Err(changed());
+    }
+    if let Some(expected) = expected_session {
+        let db = app.state::<Database>();
+        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let session = crate::infrastructure::database::account_session(&c)
+            .map_err(CommandError::database)?;
+        if expected != session {
+            return Err(changed());
+        }
+    }
+    Ok(active)
+}
+
+pub(crate) async fn resolve(app: &tauri::AppHandle, payload: Value) -> Result<Value, CommandError> {
     resolve_with_guard(app, payload, || true).await
 }
 pub(crate) async fn resolve_with_guard(
     app: &tauri::AppHandle,
     payload: Value,
     current: impl Fn() -> bool,
-) -> Result<Value, String> {
-    let fallback = current_profile(app);
-    let profile = payload["profile"].as_str().unwrap_or(&fallback);
+) -> Result<Value, CommandError> {
+    let expected_session = payload["accountSession"].as_str();
     let mut track = payload["track"].clone();
     // Check briefly under the account gate; sync network requests must not block playback.
     let sync = app.state::<crate::sync::SyncState>();
     let gate = sync.account_gate.lock().await;
-    if !current()
-        || profile != current_profile(app)
-        || payload["accountSession"].as_str().is_some_and(|expected| {
-            let db = app.state::<Database>();
-            let Ok(c) = db.0.lock() else { return true };
-            crate::infrastructure::database::account_session(&c)
-                .ok()
-                .as_deref()
-                != Some(expected)
-        })
-    {
-        return Err("播放账号已变更，请重新播放".into());
-    }
+    let profile = validate_scope(app, payload["profile"].as_str(), expected_session, &current)?;
     drop(gate);
     let entry_id = track["id"].as_str().unwrap_or_default().to_owned();
     let mut parts = Vec::new();
@@ -241,22 +278,12 @@ pub(crate) async fn resolve_with_guard(
                     })
                     .collect();
                 let _gate = sync.account_gate.lock().await;
+                validate_scope(app, Some(&profile), expected_session, &current)?;
                 let db = app.state::<Database>();
-                let c = db.0.lock().map_err(|_| "数据库正忙")?;
-                if !current()
-                    || profile != current_profile(app)
-                    || payload["accountSession"].as_str().is_some_and(|expected| {
-                        crate::infrastructure::database::account_session(&c)
-                            .ok()
-                            .as_deref()
-                            != Some(expected)
-                    })
-                {
-                    return Err("播放账号已变更，请重新播放".into());
-                }
+                let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
                 let mut selected = None;
                 for part in &parts {
-                    if visibility_allowed(&c, &payload, part)? {
+                    if visibility_allowed(&c, &payload, part).map_err(CommandError::database)? {
                         selected = Some(part.clone());
                         break;
                     }
@@ -269,76 +296,67 @@ pub(crate) async fn resolve_with_guard(
             }
         }
     }
+    let gate = sync.account_gate.lock().await;
+    validate_scope(app, Some(&profile), expected_session, &current)?;
     if track["source"]["provider"] == "bilibili"
         && track["source"]["cid"].as_i64().unwrap_or_default() <= 0
     {
-        return Err("无法读取合集中的这个视频".into());
-    }
-    let gate = sync.account_gate.lock().await;
-    if !current()
-        || profile != current_profile(app)
-        || payload["accountSession"].as_str().is_some_and(|expected| {
-            let db = app.state::<Database>();
-            let Ok(c) = db.0.lock() else { return true };
-            crate::infrastructure::database::account_session(&c)
-                .ok()
-                .as_deref()
-                != Some(expected)
-        })
-    {
-        return Err("播放账号已变更，请重新播放".into());
+        return Err(CommandError::validation("无法读取合集中的这个视频"));
     }
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| "数据库正忙")?;
-        if !visibility_allowed(&c, &payload, &track)? {
+        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        if !visibility_allowed(&c, &payload, &track).map_err(CommandError::database)? {
             return Ok(visibility_skip(&entry_id));
         }
     }
     let refresh = payload["refresh"].as_bool() == Some(true);
     let stored = if refresh {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
         LibraryRepository::get(&connection, &entry_id)
-            .map_err(|_| "无法读取歌曲信息")?
-            .ok_or("歌曲不存在")?
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("歌曲不存在"))?
     } else {
-        library_record_play(app.state::<Database>(), input(&track)?).map_err(|e| e.message)?
+        library_record_play(app.state::<Database>(), input(&track).map_err(CommandError::validation)?)?
     };
     drop(gate);
-    let plan = track_playback_plan(
-        app.state::<Database>(),
-        app.state::<BilibiliProvider>(),
-        app.state::<MediaProxy>(),
-        stored.id.clone(),
-        Some(refresh),
-        None,
-        payload["offlineOnly"].as_bool(),
-    )
-    .await;
-    let _gate = sync.account_gate.lock().await;
-    if !current()
-        || profile != current_profile(app)
-        || payload["accountSession"].as_str().is_some_and(|expected| {
-            let db = app.state::<Database>();
-            let Ok(c) = db.0.lock() else { return true };
-            crate::infrastructure::database::account_session(&c)
-                .ok()
-                .as_deref()
-                != Some(expected)
-        })
+    let offline = payload["offlineOnly"].as_bool();
+    let plan = if cfg!(target_os = "android")
+        && refresh
+        && offline != Some(true)
+        && payload["compatibleAudio"] == true
     {
-        return Err("播放账号已变更，请重新播放".into());
-    }
+        compatible_playback_plan(
+            app.state::<Database>(),
+            app.state::<BilibiliProvider>(),
+            app.state::<MediaProxy>(),
+            stored.id.clone(),
+        )
+        .await
+    } else {
+        track_playback_plan(
+            app.state::<Database>(),
+            app.state::<BilibiliProvider>(),
+            app.state::<MediaProxy>(),
+            stored.id.clone(),
+            Some(refresh),
+            None,
+            offline,
+        )
+        .await
+    };
+    let _gate = sync.account_gate.lock().await;
+    validate_scope(app, Some(&profile), expected_session, &current)?;
     let plan = match plan {
         Ok(plan) => plan,
         Err(error) if error.code == "offline_unavailable" => return Ok(visibility_skip(&entry_id)),
-        Err(error) => return Err(error.message),
+        Err(error) => return Err(error),
     };
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| "数据库正忙")?;
-        if !visibility_allowed(&c, &payload, &track)? {
+        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        if !visibility_allowed(&c, &payload, &track).map_err(CommandError::database)? {
             return Ok(visibility_skip(&entry_id));
         }
     }
@@ -356,8 +374,8 @@ pub(crate) async fn resolve_with_guard(
     track["liked"] = json!(stored.liked);
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| "数据库正忙")?;
-        imported_presentation(&c, &mut track)?;
+        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        imported_presentation(&c, &mut track).map_err(CommandError::database)?;
     }
     // Select the saved checkpoint here, but apply duration policy only after
     // AVPlayer has read this video's real media duration. No cloud read is needed.
@@ -371,9 +389,9 @@ pub(crate) async fn resolve_with_guard(
         0.0
     } else {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
         LibraryRepository::playback_position(&connection, &stored.id)
-            .map_err(|_| "无法读取播放进度")?
+            .map_err(CommandError::database)?
     };
     let automatic_resume = if explicit.is_some() || restart {
         Value::Null
@@ -390,18 +408,13 @@ pub(crate) async fn resolve_with_guard(
     #[cfg(not(target_os = "android"))]
     let lyrics = {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| "数据库正忙")?;
+        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
         crate::infrastructure::repositories::lyrics::LyricsRepository::get(&connection, &stored.id)
             .ok()
             .flatten()
     };
     #[cfg(not(target_os = "android"))]
-    let lyrics = lyrics.map(|stored| {
-        let lines = crate::domain::lyrics::timed_lines(&stored.raw_text, &stored.parsed_json);
-        let mut value = serde_json::to_value(stored).unwrap_or(Value::Null);
-        value["lines"] = json!(lines);
-        value
-    });
+    let lyrics = lyrics.as_ref().and_then(lyrics::saved_timeline);
     let result = json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "loudnessGainDb":plan.loudness_gain_db, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts});
     #[cfg(not(target_os = "android"))]
     let result = {
@@ -415,6 +428,21 @@ pub(crate) async fn resolve_with_guard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_profile_starts_as_guest_but_unreadable_profile_keeps_its_diagnostic() {
+        let dir = std::env::temp_dir().join(format!("bilimusic-profile-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let profile = dir.join("active-profile");
+        assert_eq!(read_profile(&profile).unwrap(), "");
+        std::fs::write(&profile, "42").unwrap();
+        assert_eq!(read_profile(&profile).unwrap(), "42");
+        std::fs::write(&profile, [0xff]).unwrap();
+        let failure = resolution_response(read_profile(&profile).map(|p| json!(p)));
+        assert_eq!(failure["errorCode"], "profile_unavailable");
+        assert_eq!(resolution_response(Err(resolution_timeout()))["errorCode"], "source_timeout");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn imported_queue_presentation_uses_canonical_binding_without_changing_recording_or_manual_edits()
      {

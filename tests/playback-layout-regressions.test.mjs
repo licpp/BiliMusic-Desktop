@@ -72,8 +72,13 @@ test('comment emotes honor explicit locks and insert at cursor without splitting
   assert.ok(insertCommentEmote('😀','[笑]',2,2,4))
   assert.equal(insertCommentEmote('😀','[笑]',2,2,3),undefined)
 })
-const { parseLrc } = await moduleAt('src/domain/lrc.ts')
+const { hasTimedLyrics, parseLrc } = await moduleAt('src/domain/lrc.ts')
 const { storedLyricLines, lyricAt, systemLrc } = await moduleAt('src/domain/lyricTimeline.ts')
+test('only lyrics with readable timestamped lines can control the playback clock', () => {
+  assert.equal(hasTimedLyrics('[ar:歌手]\n第一行歌词'), false)
+  assert.equal(hasTimedLyrics('[00:01.000]  \n第二行歌词'), false)
+  assert.equal(hasTimedLyrics('[0:01:000]第一行歌词'), true)
+})
 test('enhanced lyrics preserve exact word times, Unicode and instrumental gaps through storage and bias', () => {
   const raw='[00:01.000]<00:01.000>你😀<00:01.500><00:01.700>好<00:02.000>\n[00:04.000]下一句'
   const lines=parseLrc(raw)

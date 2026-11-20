@@ -524,12 +524,14 @@ pub async fn bili_warm_playback(
 
 #[tauri::command]
 pub async fn bili_video_source(
+    app: tauri::AppHandle,
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     media_proxy: State<'_, MediaProxy>,
     bvid: String,
     cid: i64,
     refresh: Option<bool>,
+    compatible: Option<bool>,
 ) -> Result<VideoSource, CommandError> {
     if !valid_bvid(&bvid) || cid <= 0 {
         return Err(CommandError::validation("无效的视频源标识"));
@@ -545,7 +547,15 @@ pub async fn bili_video_source(
         provider.invalidate_playback(&bvid, cid).await;
     }
     let mut source = provider
-        .video_source_with_quality(&bvid, cid, quality.video_height)
+        .video_source_with_quality(
+            &bvid,
+            cid,
+            quality.video_height,
+            compatible.unwrap_or(false)
+                || (cfg!(target_os = "android")
+                    && app.config().identifier == "app.bilimusic.large"
+                    && quality.video_height == 0),
+        )
         .await
         .map_err(CommandError::provider)?;
     media_proxy
@@ -1015,6 +1025,13 @@ impl PlaybackPlan {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlaybackStartup {
+    Selected,
+    Progressive,
+    Compatible,
+}
+
 #[tauri::command]
 pub async fn track_playback_url(
     database: State<'_, Database>,
@@ -1031,7 +1048,7 @@ pub async fn track_playback_url(
         track_id,
         refresh,
         prefer_online,
-        false,
+        PlaybackStartup::Selected,
         false,
     )
     .await
@@ -1057,8 +1074,31 @@ pub async fn track_playback_plan(
         track_id,
         refresh,
         prefer_online,
-        !prefer_online.unwrap_or(false),
+        if prefer_online == Some(true) {
+            PlaybackStartup::Selected
+        } else {
+            PlaybackStartup::Progressive
+        },
         offline_only,
+    )
+    .await
+}
+
+pub(crate) async fn compatible_playback_plan(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    track_id: String,
+) -> Result<PlaybackPlan, CommandError> {
+    playback_plan(
+        database,
+        provider,
+        media_proxy,
+        track_id,
+        Some(true),
+        Some(true),
+        PlaybackStartup::Compatible,
+        false,
     )
     .await
 }
@@ -1070,7 +1110,7 @@ async fn playback_plan(
     track_id: String,
     refresh: Option<bool>,
     prefer_online: Option<bool>,
-    progressive: bool,
+    startup: PlaybackStartup,
     offline_only: bool,
 ) -> Result<PlaybackPlan, CommandError> {
     media_proxy
@@ -1153,15 +1193,18 @@ async fn playback_plan(
             .map_err(CommandError::provider)?;
         provider.invalidate_playback(&track.bvid, track.cid).await;
     }
-    let sources = if progressive {
-        provider
+    let sources = match startup {
+        PlaybackStartup::Progressive => provider
             .playback_startup_sources(&track.bvid, track.cid, quality.audio_id)
-            .await
-    } else {
-        provider
+            .await,
+        PlaybackStartup::Selected => provider
             .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
             .await
-            .map(|source| (source, None))
+            .map(|source| (source, None)),
+        PlaybackStartup::Compatible => provider
+            .compatible_audio_source(&track.bvid, track.cid)
+            .await
+            .map(|source| (source, None)),
     };
     let (source, initial) = match sources {
         Ok(source) => source,
@@ -1194,6 +1237,13 @@ async fn playback_plan(
                 );
             }
         }
+    }
+    if startup == PlaybackStartup::Compatible {
+        // The decoder might have rejected the cached bytes of this same rendition.
+        let url = media_proxy
+            .register_stream(source.audio_url, source.backup_urls, source.mime_type)
+            .await;
+        return Ok(PlaybackPlan::direct(url, loudness_gain_db));
     }
     let target_bandwidth = source.bandwidth;
     let target_codecs = source.codecs.clone();

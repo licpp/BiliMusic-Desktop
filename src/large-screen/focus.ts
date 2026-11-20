@@ -53,6 +53,7 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
   let lastMain: HTMLElement | undefined
   let lastPlayer: HTMLElement | undefined
   let lastHeader: HTMLElement | undefined
+  const playerControlRow = '.large-player-info>.large-progress,.large-player-info>.large-controls,.large-player-footer'
   const remember = (event: FocusEvent) => { const el = event.target as HTMLElement; if (el.closest('.large-main') && !el.closest('[aria-modal="true"]')) lastMain = el; if (el.closest('.large-player-info,.large-lyrics') && !el.closest('[aria-modal="true"]')) lastPlayer = el; if (el.closest('.large-player-header') && !el.closest('[aria-modal="true"]')) lastHeader = el }
   const regionSelector = '.large-nav,.large-dock,.large-player-header,.large-player-info,.large-lyrics,.large-player-footer,.large-resume,.large-home-shortcuts'
   const editable = (target: HTMLElement) => target.matches('input:not([type="range"]):not([type="checkbox"]),textarea,[contenteditable="true"]')
@@ -95,10 +96,11 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
     const main = document.querySelector<HTMLElement>('.large-main'), nav = document.querySelector<HTMLElement>('.large-nav'), dock = document.querySelector<HTMLElement>('.large-dock')
     const modal = scope !== document.querySelector('.large-shell')
     const region = current.closest<HTMLElement>(regionSelector) || (main?.contains(current) ? main : scope)
-    if (!modal && (region.matches('.large-player-header') || region.matches('.large-player-footer')) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const wideControl = !modal && current.closest('.large-player[data-wide-media]') && current.closest(playerControlRow)
+    if (!modal && (wideControl || region.matches('.large-player-header') || region.matches('.large-player-footer')) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       // Clipped lyric rows still have DOM rectangles, sometimes level with the
       // footer. A toolbar follows its visible controls, never those rectangles.
-      const controls = elements.filter(el => region.contains(el))
+      const controls = elements.filter(el => wideControl ? el.closest(playerControlRow) : region.contains(el))
       controls[controls.indexOf(current) + (event.key === 'ArrowRight' ? 1 : -1)]?.focus()
       return
     }
@@ -152,7 +154,16 @@ export function installDirectionalFocus(options: { onEdit?: () => void } = {}) {
       return
     }
     if (!modal && region.matches('.large-player-footer') && event.key === 'ArrowUp') {
-      if (lastPlayer?.isConnected && elements.includes(lastPlayer)) lastPlayer.focus()
+      if (wideControl) {
+        const content = elements.filter(el => {
+          const panel = el.closest('.large-media-stage,.large-lyrics')
+          if (!panel) return false
+          const box = panel.getBoundingClientRect(), row = el.getBoundingClientRect()
+          return row.bottom > box.top && row.top < box.bottom
+        })
+        if (content.length) transfer(content)
+        else enterHeader()
+      } else if (lastPlayer?.isConnected && elements.includes(lastPlayer)) lastPlayer.focus()
       else transfer(elements.filter(el => el.closest('.large-player-info,.large-lyrics')))
       return
     }

@@ -68,7 +68,7 @@ export async function saveLibraryTrack(track: Track): Promise<Track> {
   }
   return fromStoredTrack(await scopedInvoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
 }
-export const getVideoSource = (bvid: string, cid: number, refresh = false) => invoke<VideoSource>('bili_video_source', { bvid, cid, refresh })
+export const getVideoSource = (bvid: string, cid: number, refresh = false, compatible = false) => invoke<VideoSource>('bili_video_source', { bvid, cid, refresh, compatible })
 export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku', { cid })
 
 export async function recordPlayedTrack(track: Track): Promise<Track> {

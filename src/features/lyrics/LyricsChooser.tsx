@@ -7,6 +7,7 @@ import { ActionMenu } from '../../shared/ActionMenu'
 import { ListFilter } from 'lucide-react'
 import { isMobile } from '../../services/platform'
 import type { LyricCandidate, StoredLyrics } from '../../domain/lyrics'
+import { hasTimedLyrics } from '../../domain/lrc'
 import { MobilePage } from '../../shared/MobilePage'
 
 type Props = {
@@ -46,7 +47,7 @@ export function LyricsChooser(p: Props) {
     {p.saving && <div className="chooser-status" role="status"><LoaderCircle className="spin"/>正在保存</div>}
     {p.loading ? <div className="chooser-status"><LoaderCircle className="spin"/>搜索中</div> : candidates.length ? <div className="candidate-list">{candidates.map(candidate => <button disabled={p.saving} key={`${candidate.provider}:${candidate.id}`} onClick={() => void p.onChoose(candidate, updateMetadata)}>
       <span><strong>{candidate.trackName}</strong><small>{candidate.artistName || '歌手未知'} · {candidate.albumName || '专辑未知'}</small></span>
-      <span className="candidate-features"><small>{candidate.provider === 'netease' ? '网易云' : candidate.provider === 'qq' ? 'QQ 音乐' : 'LRCLIB'} · {candidate.syncedLyrics ? '逐行' : '文本'}</small><span className="lyric-language-tags">{candidate.romanizedLyrics && <span className="lyric-language-tag romanization" title="含音译">音</span>}{candidate.translatedLyrics && <span className="lyric-language-tag translation" title="含翻译">译</span>}</span></span>
+      <span className="candidate-features"><small>{candidate.provider === 'netease' ? '网易云' : candidate.provider === 'qq' ? 'QQ 音乐' : 'LRCLIB'} · {hasTimedLyrics(candidate.syncedLyrics) ? '逐行' : '文本'}</small><span className="lyric-language-tags">{candidate.romanizedLyrics && <span className="lyric-language-tag romanization" title="含音译">音</span>}{candidate.translatedLyrics && <span className="lyric-language-tag translation" title="含翻译">译</span>}</span></span>
       {p.stored?.provider === candidate.provider && p.stored?.providerLyricId === String(candidate.id) ? <Check className="candidate-selected" size={17}/> : <ChevronRight className="candidate-arrow" size={17}/>}
     </button>)}</div> : !p.error && <div className="chooser-status">{p.searched ? '没有搜索到可用歌词，可以更换关键词或导入歌词。' : '确认歌曲名和歌手后搜索。'}</div>}
   </>

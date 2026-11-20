@@ -38,6 +38,7 @@ pub struct SeasonTrack {
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleChoice {
     pub language: String,
+    pub language_key: String,
     pub label: String,
     pub ai: bool,
 }
@@ -306,24 +307,55 @@ fn parse_subtitle_lines(value: &Value) -> Vec<SubtitleLine> {
     lines
 }
 
-#[cfg(any(target_os = "android", test))]
-fn preferred_subtitle_entry(data: &Value) -> Option<&Value> {
-    let entries = data["subtitle"]["subtitles"]
+fn subtitle_language_key(language: &str) -> String {
+    let tag = language.trim().to_ascii_lowercase();
+    let tag = tag.strip_prefix("ai-").unwrap_or(&tag);
+    let primary = if tag == "chi-yue" {
+        "yue"
+    } else {
+        tag.split(['-', '_']).next().unwrap_or_default()
+    };
+    match primary {
+        "cn" | "cmn" | "zho" | "chi" => "zh",
+        "eng" => "en",
+        "jp" | "jpn" => "ja",
+        "kr" | "kor" => "ko",
+        "iw" => "he",
+        "in" => "id",
+        other => other,
+    }
+    .to_string()
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos", test))]
+fn preferred_subtitle_entry<'a>(data: &'a Value, preferred: Option<&str>) -> Option<&'a Value> {
+    let preferred_key = preferred.map(subtitle_language_key);
+    let preferred_ai = preferred.is_some_and(|tag| tag.starts_with("ai-"));
+    data["subtitle"]["subtitles"]
         .as_array()?
         .iter()
-        .filter(|entry| {
-            entry["lan"]
+        .filter_map(|entry| {
+            let language = entry["lan"]
                 .as_str()
-                .is_some_and(|language| !language.is_empty())
-        });
-    entries
-        .clone()
-        .find(|entry| {
-            entry["lan"]
-                .as_str()
-                .is_some_and(|language| language.starts_with("ai-"))
+                .filter(|language| !language.is_empty())?;
+            Some((entry, language))
         })
-        .or_else(|| entries.into_iter().next())
+        .min_by_key(|(_, language)| {
+            let ai = language.starts_with("ai-");
+            if preferred == Some(*language) {
+                0
+            } else if preferred_key
+                .as_ref()
+                .is_some_and(|key| !key.is_empty() && *key == subtitle_language_key(language))
+            {
+                if ai == preferred_ai { 1 } else { 2 }
+            } else if ai {
+                3
+            } else {
+                4
+            }
+        })
+        .map(|(entry, _)| entry)
 }
 
 impl BilibiliProvider {
@@ -577,10 +609,14 @@ impl BilibiliProvider {
             .as_array()
             .into_iter()
             .flatten()
-            .map(|s| SubtitleChoice {
-                language: text(s, "lan"),
-                label: text(s, "lan_doc"),
-                ai: text(s, "lan").starts_with("ai-"),
+            .map(|s| {
+                let language = text(s, "lan");
+                SubtitleChoice {
+                    language_key: subtitle_language_key(&language),
+                    ai: language.starts_with("ai-"),
+                    label: text(s, "lan_doc"),
+                    language,
+                }
             })
             .collect())
     }
@@ -602,14 +638,15 @@ impl BilibiliProvider {
             })?;
         self.subtitle_entry_lines(entry).await
     }
-    #[cfg(target_os = "android")]
-    pub async fn default_subtitle_lines(
+    #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
+    pub async fn preferred_subtitle_lines(
         &self,
         bvid: &str,
         cid: i64,
+        language: Option<&str>,
     ) -> Result<Vec<SubtitleLine>, ProviderError> {
         let data = self.subtitle_data(bvid, cid).await?;
-        match preferred_subtitle_entry(&data) {
+        match preferred_subtitle_entry(&data, language) {
             Some(entry) => self.subtitle_entry_lines(entry).await,
             None => Ok(vec![]),
         }
@@ -812,11 +849,27 @@ mod subtitle_regression_tests {
     #[test]
     fn background_default_matches_foreground_selection_policy() {
         let choices = |entries| serde_json::json!({"subtitle": {"subtitles": entries}});
-        let both = choices(serde_json::json!([{"lan":"zh-CN"},{"lan": "ai-zh"}]));
+        let both = choices(serde_json::json!([
+            {"lan":"zh-CN"}, {"lan":"ai-zh"}, {"lan":"en-US"}, {"lan":"ai-en-GB"}
+        ]));
         let manual = choices(serde_json::json!([{"lan":""},{"lan":"en-US"}]));
-        assert_eq!(preferred_subtitle_entry(&both).unwrap()["lan"], "ai-zh");
-        assert_eq!(preferred_subtitle_entry(&manual).unwrap()["lan"], "en-US");
-        assert!(preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}]))).is_none());
+        assert_eq!(preferred_subtitle_entry(&both, None).unwrap()["lan"], "ai-zh");
+        assert_eq!(preferred_subtitle_entry(&manual, None).unwrap()["lan"], "en-US");
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("ai-en")).unwrap()["lan"],
+            "ai-en-GB"
+        );
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("en-AU")).unwrap()["lan"],
+            "en-US"
+        );
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("ai-ja")).unwrap()["lan"],
+            "ai-zh"
+        );
+        assert!(preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}])), None).is_none());
+        assert_eq!(subtitle_language_key("ai-cmn-Hans"), "zh");
+        assert_eq!(subtitle_language_key("AI-jpn"), "ja");
     }
     #[test]
     fn subtitles_keep_late_cues_in_multi_day_recordings() {

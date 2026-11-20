@@ -9,7 +9,7 @@ const load = async path => {
 const { installDirectionalFocus, focusable } = await load('src/large-screen/focus.ts')
 const { progressKeyAction } = await load('src/large-screen/playerNavigation.ts')
 
-function fixture(run) {
+function fixture(run, wide = false) {
   const saved = { document: globalThis.document, window: globalThis.window, getComputedStyle: globalThis.getComputedStyle }
   const handlers = new Map()
   const region = name => ({ name, matches: selector => selector.split(',').includes(`.${name}`), contains: el => el.region?.name === name })
@@ -18,7 +18,13 @@ function fixture(run) {
   const el = (id, region, left, top, width = 80, height = 44) => ({
     id, region, tabIndex: 0, isConnected: true, dataset: { focus: id },
     matches: selector => selector === 'input[type="range"]' && id === 'playback-seek',
-    closest: selector => selector === '.large-main' ? main : selector === '.large-progress' && id === 'playback-seek' ? {} : selector.split(',').includes(`.${region.name}`) ? region : null,
+    closest: selector => {
+      if (selector === '.large-main') return main
+      if (selector === '.large-player[data-wide-media]') return wide ? main : null
+      if (selector === '.large-progress' && id === 'playback-seek' ||
+          selector.includes('.large-player-info>.large-progress') && ['playback-seek', 'play'].includes(id)) return {}
+      return selector.split(',').includes(`.${region.name}`) ? region : null
+    },
     getAttribute: () => null, hasAttribute: () => false, getClientRects: () => [{}],
     getBoundingClientRect: () => ({ left, top, width, height }),
     focus() { document.activeElement = this; handlers.get('focusin')?.({ target: this }) },
@@ -87,6 +93,13 @@ test('video progress up visits fullscreen before the header, while cover mode ha
     h.video.focus()
     assert.equal(h.press(h.progress, 'ArrowUp'), 'player-video')
   })
+})
+test('the short player navigates between transport and the tools in its single horizontal row', () => {
+  fixture(h => {
+    assert.equal(h.press(h.progress, 'ArrowRight'), 'play')
+    assert.equal(h.press(h.play, 'ArrowRight'), 'tools')
+    assert.equal(h.press(h.tools, 'ArrowLeft'), 'play')
+  }, true)
 })
 test('closed settings disclosures exclude retained rectangles, including nested summaries', () => {
   fixture(h => {

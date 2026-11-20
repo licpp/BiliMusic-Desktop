@@ -7,6 +7,7 @@ import { toTrack } from './collectionTrack'
 import { accountEpoch } from './accountScope'
 import type { FavoriteVideo } from '../domain/bilibili'
 import type { LyricLine } from '../domain/lyrics'
+import type { SubtitleChoice } from '../domain/subtitleLanguage'
 import type { Collection } from './collections'
 export type QualityPreferences = { audioId:number; videoHeight:number }
 export type MediaOptions = { audio:{id:number;label:string}[]; video:{id:number;label:string}[] }
@@ -43,7 +44,7 @@ export function seasonTracks(season: Season): Track[] {
     return video.parts.map(part => toTrack(detail, part))
   })
 }
-export const getSubtitles = (bvid:string,cid:number) => invoke<{language:string;label:string;ai:boolean}[]>('bili_subtitles',{bvid,cid})
+export const getSubtitles = (bvid:string,cid:number) => invoke<SubtitleChoice[]>('bili_subtitles',{bvid,cid})
 export const getSubtitleLines = (bvid: string, cid: number, language: string) =>
   invoke<LyricLine[]>('bili_subtitle_lines', { bvid, cid, language })
 export const getMediaOptions = (bvid:string,cid:number) => invoke<MediaOptions>('bili_media_options',{bvid,cid})

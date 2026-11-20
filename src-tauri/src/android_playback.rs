@@ -37,11 +37,9 @@ pub fn initialize(app: tauri::AppHandle) {
                     crate::native_playback::resolve(&app, request.payload),
                 )
                 .await;
-                let result = match result {
-                    Ok(Ok(value)) => value,
-                    Ok(Err(error)) => json!({"error":error}),
-                    Err(_) => json!({"error":"加载超时，请重新播放"}),
-                };
+                let result = crate::native_playback::resolution_response(
+                    result.unwrap_or_else(|_| Err(crate::native_playback::resolution_timeout())),
+                );
                 if let Err(error) =
                     tauri_plugin_android_player::resolved(&app, request.request, &result).await
                 {

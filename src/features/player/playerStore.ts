@@ -27,7 +27,8 @@ import { automaticResumePolicy, automaticResumePosition, isCollectionPlayback, n
 import { preparePlaybackStart } from './playbackStart'
 import { moveQueueTracks } from './queueGroups'
 import { replaceSeasonEntry } from './seasonQueue'
-import { commandErrorMessage, isConnectionError } from '../../services/userErrors'
+import { isConnectionError } from '../../services/userErrors'
+import { playbackIssue, type PlaybackIssue } from './playbackIssue'
 import { demoTracks } from '../library/demoTracks'
 import { createDesktopSleepTimer, noSleep, type SleepState } from './desktopSleepTimer'
 
@@ -35,7 +36,7 @@ export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'p
 export const playbackRates = [0.75, 1, 1.25, 1.5, 1.75, 2] as const
 export type RepeatMode = 'off' | 'all' | 'one'
 export type QueueSource = { offlineOnly?: boolean; visibilityManaged?: boolean; entryOrder?:string[]; entryOrigins?: Record<string, VisibilityOrigin[]>; creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
-type PlayerState = { queueBase?: Track[]; queueOrigins?: Record<string,VisibilityOrigin[]>; shuffleState?: ShuffleState; queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number, originPlayback?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+type PlayerState = { queueBase?: Track[]; queueOrigins?: Record<string,VisibilityOrigin[]>; shuffleState?: ShuffleState; queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: PlaybackIssue | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number, originPlayback?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let shuffleDeck = new ShuffleDeck()
 const shuffleItems = (tracks: Track[]) => tracks.map(track => ({ id:track.id, artist:track.artist ?? '', bvid:track.source.bvid }))
@@ -172,7 +173,7 @@ async function ensurePlaying() {
   } catch (error) {
     if (!valid()) return
     const snapshot = isMobile ? await snapshotMobileAudio().catch(() => null) : null
-    if (valid()) usePlayerStore.setState({ status: snapshot?.id === state.current.id ? snapshot.status as PlaybackStatus : 'paused', error: commandErrorMessage(error, '恢复播放失败') })
+    if (valid()) usePlayerStore.setState({ status: snapshot?.id === state.current.id ? snapshot.status as PlaybackStatus : 'paused', error: playbackIssue('audio-control', error, '恢复播放失败') })
   }
 }
 
@@ -230,7 +231,7 @@ function bindAudioEvents(element:HTMLAudioElement) {
       stallTimer = undefined
       if (id && id === loadedTrackId && usePlayerStore.getState().status === 'buffering' &&
           (audio?.currentTime || 0) < position + .1) {
-        if (!recoverPlayback('Network error')) usePlayerStore.setState({ status: 'error', error: '音频缓冲停滞，请重新播放' })
+        if (!recoverPlayback('Network error')) usePlayerStore.setState({ status: 'error', error: playbackIssue('audio-buffer', null, '音频缓冲停滞，请重新播放', 'audio_stalled') })
       }
     }, 12000)
   })
@@ -245,7 +246,9 @@ function bindAudioEvents(element:HTMLAudioElement) {
   on('error', () => {
     if (loadedTrackId !== usePlayerStore.getState().current?.id) return
     if (audio?.error?.code === 2 && recoverPlayback('Network error')) return
-    usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重试' })
+    const mediaCode = audio?.error?.code
+    usePlayerStore.setState({ status: 'error', error: playbackIssue(mediaCode === 3 ? 'audio-decode' : 'audio-playback',
+      null, mediaCode === 3 ? '音频解码失败，请尝试更换音质' : '音频流加载失败，请重试', `html_media:${mediaCode}`) })
   })
 }
 function playerAudio() {
@@ -294,6 +297,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null, queueFeedback: undefined })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
+    let stage: 'audio-source' | 'audio-start' = 'audio-source'
     try {
       if (track.resolveParts) {
         if (isMobile && previous.current) await controlMobileAudio('pause').catch(() => undefined)
@@ -342,6 +346,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (resumePolicy) resumePolicy = automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, resumePolicy.collection)
       if (desktopSeekRevision !== seekRevision) { position = get().progressSeconds; resumePolicy = undefined }
       loadedCollectionRef = get().queueSource?.collectionRef
+      stage = 'audio-start'
       if (isMobile) {
         loadedTrackId = storedTrack.id
         initialPositionPending = position > 0
@@ -374,7 +379,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
         await controlMobileAudio(action).catch(() => undefined)
         if (request !== playRequest) return
       }
-      if (!recoverPlayback(error)) set({ status: 'error', error: commandErrorMessage(error, '暂时无法播放这首歌，请重试') })
+      if (!recoverPlayback(error)) set({ status: 'error', error: playbackIssue(stage, error, '暂时无法播放这首歌，请重试') })
     }
   },
   playFromList: async (tracks, trackId, queueSource, startAt, resumeCheckpoint = false) => {
@@ -450,7 +455,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     const { current, status } = get(); if (!current) return
     if (!isMobile && (status === 'paused' || status === 'error')) desktopSleep.dismiss()
     const valid = controlScope.begin('transport')
-    const failed = (error: unknown) => { if (valid()) set({ error: commandErrorMessage(error, '无法控制播放，请重试') }) }
+    const failed = (error: unknown) => { if (valid()) set({ error: playbackIssue('audio-control', error, '无法控制播放，请重试') }) }
     // A newly opened player reads the same database checkpoint as selecting a
     // song. Only recovery of an interrupted attempt uses the live position.
     const resumeAt = () => status === 'error' ? initialPositionPending || loadedTrackId !== current.id ? requestedStartAt : Math.max(0, get().progressSeconds) : undefined
@@ -474,7 +479,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
           if (!valid()) return
           const snapshot = await snapshotMobileAudio().catch(() => null)
           if (!valid()) return
-          set({ status: snapshot?.id === current.id ? snapshot.status as PlaybackStatus : status, error: commandErrorMessage(error, '无法控制播放，请重试') })
+          set({ status: snapshot?.id === current.id ? snapshot.status as PlaybackStatus : status, error: playbackIssue('audio-control', error, '无法控制播放，请重试') })
         }
         return
       }
@@ -491,7 +496,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     const element = playerAudio()
     if (status === 'resolving') { ++playRequest; loadedTrackId = null; initialPositionPending = false; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
-    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => { if (valid()) set({ status: 'error', error: '恢复播放失败' }) })
+    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => { if (valid()) set({ status: 'error', error: playbackIssue('audio-control', null, '恢复播放失败') }) })
     else await get().play(current, resumeAt())
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
@@ -541,7 +546,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (isMobile && loadedTrackId) await controlMobileAudio('rate', rate)
       else if (audio) audio.playbackRate = rate
     } catch {
-      if (valid()) set({ rate: previous, error: '当前无法调整播放速度，请重试' })
+      if (valid()) set({ rate: previous, error: playbackIssue('audio-control', null, '当前无法调整播放速度，请重试') })
     }
   },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
@@ -658,9 +663,10 @@ async function nativeTransport(action:'next'|'previous') {
     if(valid()) await controlMobileAudio(action)
   } catch(error) { if(valid()) nativeError(error) }
 }
-function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
+function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: playbackIssue('audio-control', error, '播放器暂时不可用，请重试') }) }
 let nativeHistorySession: string | undefined
 let nativeSession: string | undefined
+let nativeFailureKey: string | undefined
 let nativeLyricsScope: { id: string; session: string } | undefined
 export const nativeLyricPlaybackSession = (id: string) => nativeLyricsScope?.id === id ? nativeLyricsScope.session : undefined
 let floatingStyleRevision=0
@@ -710,7 +716,7 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
   if (state.action === 'ended' && state.autonomousQueue) return
   if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
-  if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
+  if (!state.id) { nativeFailureKey = undefined; loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
   if (state.id !== usePlayerStore.getState().current?.id) return
   if (state.status === 'playing') initialPositionPending = false
   if (state.status === 'paused' && usePlayerStore.getState().status === 'resolving') ++playRequest
@@ -723,8 +729,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
     nativeHistorySession = session ?? state.id
     window.dispatchEvent(new Event('bilimusic-recent-changed'))
   }
+  let error: PlaybackIssue | null | undefined = null
+  if (state.error) {
+    const key = JSON.stringify([accountEpoch(), session, state.id, state.sourceRevision, state.errorCode, state.error])
+    error = key === nativeFailureKey ? undefined : playbackIssue('audio-playback', state.error, '音频流加载失败，请重试', state.errorCode)
+    nativeFailureKey = key
+  } else nativeFailureKey = undefined
   usePlayerStore.setState({ status: state.stopped && state.status === 'buffering' ? 'resolving' : state.status || 'paused', progressSeconds: state.position || 0,
-    ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error ? commandErrorMessage(state.error, '音频流加载失败，请重试') : null })
+    ...(state.duration ? { durationSeconds: state.duration } : {}), ...(error === undefined ? {} : { error }) })
 }
 let nativeReady: Promise<void> | undefined
 function ensureNativeReady() {

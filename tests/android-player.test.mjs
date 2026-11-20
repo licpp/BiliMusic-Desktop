@@ -81,7 +81,7 @@ test('Android notification pause while resolving prevents deferred autoplay', as
 test('Android source errors show a localized playback message', async () => {
   const s = setup(); nativeTest.resolve = async () => { throw 'source service returned HTTP 403' }
   await s.getState().play(track)
-  assert.equal(s.getState().error, '暂时无法播放这首歌，请重试')
+  assert.equal(s.getState().error.message, '暂时无法播放这首歌，请重试')
 })
 
 test('system navigation changes the Android queue and late commands for a previous track are ignored',async()=>{

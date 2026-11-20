@@ -1,7 +1,7 @@
 import { subtitleCoverageEnd } from '../../domain/subtitleCoverage'
 import { formatDuration } from '../../shared/time'
 import { accountKeyAt } from '../../services/queryKeys'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { create } from 'zustand'
 import type { TrackSource } from '../../domain/track'
@@ -11,8 +11,9 @@ import type { LyricLine, StoredLyrics } from '../../domain/lyrics'
 import { getSubtitles, getSubtitleLines } from '../../services/mediaSources'
 import { usePlayerStore } from '../player/playerStore'
 import { storedLyricLines } from '../../domain/lyricTimeline'
+import { displaySubtitleChoice, lyricSubtitleLanguages, type SubtitleChoice } from '../../domain/subtitleLanguage'
+import { readSubtitlePreference, storeSubtitlePreference } from '../../services/subtitlePreference'
 
-type SubtitleChoice = { language:string; label:string; ai:boolean }
 type SubtitleState = {
   scope:string; active:boolean; preferred:boolean; busy:boolean; choice?:SubtitleChoice;
   choices:SubtitleChoice[]; lines?:LyricLine[]; message:string;
@@ -49,20 +50,22 @@ export function SubtitleController() {
     window.addEventListener('bilimusic-lyrics-updated',update)
     return()=>{window.removeEventListener('bilimusic-account-changing',change);window.removeEventListener('bilimusic-lyrics-updated',update)}
   },[client,epoch,current?.id])
-  const subtitles = useSubtitleSession(current?.source,Boolean(saved.data&&storedLyricLines(saved.data).length),saved.isLoading)
+  const lyrics = useMemo(() => saved.data ? storedLyricLines(saved.data) : [], [saved.data])
+  const subtitles = useSubtitleSession(current?.source, lyrics, saved.isLoading)
   useEffect(()=>{useSubtitleState.setState({...subtitles,scope:subtitleScope(current?.source,epoch)})},[subtitles,current?.source,epoch])
   return null
 }
 
-function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean, lyricsLoading: boolean) {
+function useSubtitleSession(source: TrackSource | undefined, lyrics: readonly LyricLine[], lyricsLoading: boolean) {
   const [enabled, setEnabled] = useState(() => localStorage.getItem('lyrics-subtitles') === 'true')
   const scope = subtitleScope(source)
   const [override, setOverride] = useState<string>(() => sessionStorage.getItem('lyrics-subtitles-override') || '')
   const currentScope = scope && scope === override && sessionStorage.getItem('lyrics-subtitles-override') === scope
   const usable = Boolean(inDesktopShell && scope && source && source.cid > 0)
   const [notice, setNotice] = useState('')
-  const [selected, setSelected] = useState<{ key: string; language: string }>()
-  const active = usable && enabled && (Boolean(currentScope) || (!hasLyrics && !lyricsLoading))
+  const [languagePreference, setLanguagePreference] = useState(readSubtitlePreference)
+  const languages = useMemo(() => lyricSubtitleLanguages(lyrics), [lyrics])
+  const active = usable && enabled && (Boolean(currentScope) || (!lyrics.length && !lyricsLoading))
   const bvid = active ? source!.bvid : ''
   const cid = active ? source!.cid : 0
   const epoch = accountEpoch()
@@ -75,10 +78,7 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
     retry: false,
   })
   const choices = list.data?.filter(choice => choice.language) ?? []
-  const selectedChoice = selected?.key === key
-    ? choices.find(choice => choice.language === selected.language)
-    : undefined
-  const choice = selectedChoice ?? choices.find(choice => choice.ai) ?? choices[0]
+  const choice = displaySubtitleChoice(choices, languagePreference, languages)
   const captions = useQuery({
     queryKey: accountKeyAt(epoch, 'bili-subtitle-lines', bvid, cid, choice?.language),
     queryFn: () => getSubtitleLines(bvid, cid, choice.language),
@@ -110,7 +110,13 @@ function useSubtitleSession(source: TrackSource | undefined, hasLyrics: boolean,
     choices,
     lines: active ? captions.data : undefined,
     message: message && notice === message ? notice : '',
-    select: (language: string) => setSelected({ key, language }),
+    select: (language: string) => {
+      if (!active || epoch !== accountEpoch() || usePlayerStore.getState().current?.source !== source) return
+      const selected = choices.find(candidate => candidate.language === language)
+      if (!selected) return
+      setLanguagePreference(selected)
+      storeSubtitlePreference(selected)
+    },
     toggle: () => {
       const next = !active
       const choice = next ? scope : ''

@@ -39,14 +39,16 @@ struct ResolveRequest: Encodable {
     let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
     let resumeThresholdSeconds: Double; let collectionPlayback: Bool
     let refresh: Bool; let position: Double?
+    let subtitles: Bool; let subtitleLanguage: String; let subtitleRevision: Int
 }
 struct ResolvedTrack: Decodable {
     let skip: Bool?
     let loudnessGainDb: Double?
-    let url: String?; let track: QueueTrack?; let error: String?
+    let url: String?; let track: QueueTrack?; let error: String?; let errorCode: String?
     let upgradeUrl: String?
     let automaticResume: AutomaticResumePolicy?
     let position: Double?; let entryId: String?; let parts: [QueueTrack]?; let lyrics: NativeSavedLyrics?
+    let kind: String?; let id: String?; let timeline: NativeSavedLyrics?; let subtitleRevision: Int?; let accountSession: String?
 }
 
 @_silgen_name("bilimusic_ios_resolve")
@@ -380,7 +382,11 @@ class PlayerPlugin: Plugin {
             userVolume = Float(min(1, max(0, args.volume ?? 1)))
             outputGain.plan(args.loudnessGainDb ?? 0)
             do { try start(url, at: max(0, args.position ?? 0), autoplay: args.playing ?? true, upgrade:args.upgradeUrl.flatMap(localMediaURL), automaticResume:args.automaticResume); invoke.resolve() }
-            catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
+            catch {
+                let code = mediaErrorCode(error as NSError)
+                fail("无法启动音频，请重新播放", code: code)
+                invoke.reject("无法启动音频，请重新播放", code: code)
+            }
         }
     }
     @objc public func queue(_ invoke: Invoke) throws {
@@ -428,7 +434,7 @@ class PlayerPlugin: Plugin {
                 savePosition(force: true)
                 accountListening(flush: true)
                 listeningSession = UUID().uuidString
-                guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
+                guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号，请重新播放", code: "profile_unavailable"); return }
                 profile = String(cString: raw); freeProfile(raw)
                 generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; desiredPlaying = false; itemStatus = nil
                 player.pause(); player.replaceCurrentItem(with: nil)
@@ -547,7 +553,10 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(LyricsArgs.self)
         guard args.data.utf8.count <= 48 * 1024 * 1024, let data=args.data.data(using:.utf8), let request=try? JSONDecoder().decode(NativeLyricsRequest.self,from:data) else { invoke.reject("歌词内容无效");return }
         onMain { [self] in
-            if request.action == "update" {
+            if request.action == "subtitle-preference" {
+                notificationLyrics.setSubtitlePreference(enabled: request.enabled == true, language: request.language ?? "")
+                nowPlaying()
+            } else if request.action == "update" {
                 notificationLyrics.update(request)
                 nowPlaying()
             }
@@ -617,7 +626,7 @@ class PlayerPlugin: Plugin {
         positionSavedAt = ProcessInfo.processInfo.systemUptime - 15
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
-        state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = 0; startPosition = position; initialSeekPending = position > 0
+        state.error = nil; state.errorCode = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = 0; startPosition = position; initialSeekPending = position > 0
         mediaSourceInvalidated = false
         NSLog("BiliMusic audio start: host=%@ port=%ld position=%.3f", url.host ?? "", url.port ?? 0, position)
         let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 2
@@ -650,7 +659,7 @@ class PlayerPlugin: Plugin {
                     if duration.isFinite && duration > 0 { self.state.duration = duration }
                     let position: Double
                     do { position = try playbackStartPosition(self.startPosition, duration: duration, policy: automaticResume) }
-                    catch { self.fail(error.localizedDescription); return }
+                    catch { self.fail(error.localizedDescription, code: "duration_unavailable"); return }
                     self.playbackRecovery.chosePosition()
                     self.startPosition = 0; self.state.position = position
                     self.initialSeekPending = position > 0
@@ -767,7 +776,11 @@ class PlayerPlugin: Plugin {
         // Recreate failed items natively so lock-screen playback recovers while
         // the WebView is suspended. One refresh is allowed per user attempt.
         if desiredPlaying && recoverCurrentPlayback() { return }
-        fail(player.currentItem?.status == .failed ? "音频加载失败，请重新播放" : "音频缓冲超时，请检查网络后重试")
+        if player.currentItem?.status == .failed {
+            fail("音频加载失败，请重新播放", code: player.currentItem?.error.map { mediaErrorCode($0 as NSError) } ?? "audio_prepare_failed")
+        } else {
+            fail("音频缓冲超时，请检查网络后重试", code: "audio_stalled")
+        }
     }
     private func cancelPlaybackWatchdog() {
         playbackWatchdog?.cancel()
@@ -844,13 +857,24 @@ class PlayerPlugin: Plugin {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         publish()
     }
-    private func fail(_ message: String) {
+    private func mediaErrorCode(_ error: NSError) -> String {
+        var cause = error
+        for _ in 0..<4 {
+            if cause.domain == NSURLErrorDomain { break }
+            guard let underlying = cause.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+            cause = underlying
+        }
+        let domains = [NSURLErrorDomain, NSOSStatusErrorDomain, NSPOSIXErrorDomain, AVFoundationErrorDomain, "CoreMediaErrorDomain"]
+        let domain = domains.contains(cause.domain) ? cause.domain : "other"
+        return "ios_media:\(domain):\(cause.code)"
+    }
+    private func fail(_ message: String, code: String? = nil) {
         nativeResolutionPending = false
         pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         accountListening(flush: true)
         cancelInterruptionResume()
-        desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
+        desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; state.errorCode = code; endBackgroundTask(); publish()
     }
     private func accountListening(flush: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -1018,32 +1042,43 @@ class PlayerPlugin: Plugin {
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
         prepareArtwork(for: track)
-        state.error = nil; state.status = "buffering"; state.stopped = true
+        state.error = nil; state.errorCode = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
         let request = generation
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in
             guard let self, self.generation == request, self.desiredPlaying else { return }
-            self.fail("后台加载超时，请返回应用继续播放")
+            self.fail("后台加载超时，请返回应用继续播放", code: "source_timeout")
         }
         nativeResolutionPending = true
         publish()
         let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
-        guard let data = try? JSONEncoder().encode(ResolveRequest(offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position)),
-              let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
+        guard let data = try? JSONEncoder().encode(ResolveRequest(offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
+              let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息", code: "invalid_input"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
     fileprivate func resolved(_ request: Int64, _ data: Data) {
-        guard request == generation, desiredPlaying else { return }
+        guard request == generation else { return }
+        guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else {
+            if nativeResolutionPending && desiredPlaying { fail("无法解析播放地址", code: "invalid_source") }
+            return
+        }
+        if result.kind == "lyrics" {
+            if !nativeResolutionPending, result.accountSession == queueSession, let id = result.id, id == state.id, let timeline = result.timeline {
+                notificationLyrics.seedBackground(timeline, id: id, revision: result.subtitleRevision)
+                nowPlaying()
+            }
+            return
+        }
+        guard nativeResolutionPending, desiredPlaying else { return }
         nativeResolutionPending = false
-        guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else { fail("无法解析播放地址"); return }
         if result.skip == true, let id=result.entryId {
             let index=tracks.firstIndex(where:{$0.id==id}) ?? 0
             tracks.removeAll(where:{$0.id==id}); expandedEntries[id]=nil
             if tracks.isEmpty || index >= tracks.count && repeatMode != "all" { pause(); endBackgroundTask() } else { resolve(tracks[index >= tracks.count ? 0 : index]) }
             return
         }
-        if let error = result.error { fail(error); return }
-        guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址"); return }
+        if let error = result.error { fail(error, code: result.errorCode ?? "source_unavailable"); return }
+        guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址", code: "invalid_source"); return }
         if let id = result.entryId, let parts = result.parts, !parts.isEmpty,
            let index = tracks.firstIndex(where: { $0.id == id && $0.resolveParts == true }) {
             for part in parts {entryOrigins[part.id]=entryOrigins[id] ?? []}
@@ -1059,7 +1094,8 @@ class PlayerPlugin: Plugin {
         let policy = result.automaticResume ?? recoveryResumePolicy
         recoveryResumePolicy = nil
         outputGain.plan(result.loudnessGainDb ?? 0)
-        do { try start(url, at: result.position ?? 0, upgrade:result.upgradeUrl.flatMap(localMediaURL), automaticResume:policy) } catch { fail(error.localizedDescription) }
+        do { try start(url, at: result.position ?? 0, upgrade:result.upgradeUrl.flatMap(localMediaURL), automaticResume:policy) }
+        catch { fail("无法启动音频，请重新播放", code: mediaErrorCode(error as NSError)) }
     }
     private func returnedToForeground() {
         mediaLifecycle(false)

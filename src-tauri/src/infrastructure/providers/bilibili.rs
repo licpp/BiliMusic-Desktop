@@ -1141,6 +1141,18 @@ impl BilibiliProvider {
         Ok((Self::audio_source(target.clone()), initial))
     }
 
+    pub(crate) async fn compatible_audio_source(
+        &self,
+        bvid: &str,
+        cid: i64,
+    ) -> Result<PlaybackSource, ProviderError> {
+        let dash = self.play_dash(bvid, cid, false).await?;
+        compatible_audio(&dash)
+            .cloned()
+            .map(Self::audio_source)
+            .ok_or(ProviderError::NoAudio)
+    }
+
     fn audio_source(stream: DashStream) -> PlaybackSource {
         let audio_url = if stream.base_url_camel.is_empty() {
             stream.base_url
@@ -1168,28 +1180,34 @@ impl BilibiliProvider {
     }
 
     pub async fn video_source(&self, bvid: &str, cid: i64) -> Result<VideoSource, ProviderError> {
-        self.video_source_with_quality(bvid, cid, 0).await
+        self.video_source_with_quality(bvid, cid, 0, false).await
     }
     pub async fn video_source_with_quality(
         &self,
         bvid: &str,
         cid: i64,
         video_height: u32,
+        compatible: bool,
     ) -> Result<VideoSource, ProviderError> {
-        let expanded = video_height > 1080;
+        let expanded = !compatible && video_height > 1080;
         if video_height != 0 && !expanded {
             let cache = self.dash_cache.read().await;
             let key = (bvid.to_owned(), cid, true);
             if let Some((expires, dash)) = cache.get(&key).and_then(|entry| entry.get()) {
                 if *expires > Instant::now() {
-                    if let Ok(source) = Self::select_video_quality(&dash.video, video_height) {
+                    if let Ok(source) = Self::select_video_for_platform(
+                        &dash.video,
+                        video_height,
+                        cfg!(target_os = "ios"),
+                        compatible,
+                    ) {
                         return Ok(source);
                     }
                 }
             }
         }
         let dash = self.play_dash(bvid, cid, expanded).await?;
-        Self::select_video_quality(&dash.video, video_height)
+        Self::select_video_for_platform(&dash.video, video_height, cfg!(target_os = "ios"), compatible)
     }
 
     pub async fn invalidate_playback(&self, bvid: &str, cid: i64) {
@@ -1318,12 +1336,6 @@ impl BilibiliProvider {
         preview.then_some(ProviderError::PreviewOnly)
     }
 
-    fn select_video_quality(
-        streams: &[DashStream],
-        height: u32,
-    ) -> Result<VideoSource, ProviderError> {
-        Self::select_video_for_platform(streams, height, cfg!(target_os = "ios"))
-    }
     #[cfg(test)]
     pub(crate) async fn video_probe_for_platform(
         &self,
@@ -1333,21 +1345,24 @@ impl BilibiliProvider {
         ios: bool,
     ) -> Result<VideoSource, ProviderError> {
         let dash = self.play_dash(bvid, cid, height > 1080).await?;
-        Self::select_video_for_platform(&dash.video, height, ios)
+        Self::select_video_for_platform(&dash.video, height, ios, false)
     }
     fn select_video_for_platform(
         streams: &[DashStream],
         height: u32,
         ios: bool,
+        compatible: bool,
     ) -> Result<VideoSource, ProviderError> {
-        let maximum = if height > 0 {
+        let maximum = if compatible {
+            if height > 0 { height.min(480) } else { 480 }
+        } else if height > 0 {
             height
         } else if ios {
             480
         } else {
             720
         };
-        let preferred = if ios { "hvc1" } else { "avc" };
+        let preferred = if ios && !compatible { "hvc1" } else { "avc" };
         let within_limit = |prefix: &str| {
             streams
                 .iter()
@@ -1356,8 +1371,8 @@ impl BilibiliProvider {
         };
         let preferred_stream = within_limit(preferred);
         let avc_stream = within_limit("avc");
-        let stream = if height == 0 {
-            let budget = if ios { 650_000 } else { 1_200_000 };
+        let stream = if height == 0 || compatible {
+            let budget = if ios || compatible { 650_000 } else { 1_200_000 };
             let compatible = || {
                 streams.iter().filter(|s| {
                     s.codecs.starts_with(preferred) && s.height > 0 && s.height <= maximum
@@ -1835,10 +1850,15 @@ mod tests {
             {"height":480,"bandwidth":500000,"codecs":"hvc1.1.6.L93.90","baseUrl":"https://cdn.test/hevc480","mimeType":"video/mp4"},
             {"height":360,"bandwidth":300000,"codecs":"avc1.64001e","baseUrl":"https://cdn.test/avc360","mimeType":"video/mp4"}
         ])).unwrap();
-        let mac = super::BilibiliProvider::select_video_for_platform(&streams, 0, false).unwrap();
-        let ios = super::BilibiliProvider::select_video_for_platform(&streams, 0, true).unwrap();
+        let mac = super::BilibiliProvider::select_video_for_platform(&streams, 0, false, false).unwrap();
+        let ios = super::BilibiliProvider::select_video_for_platform(&streams, 0, true, false).unwrap();
         assert_eq!(mac.video_url, "https://cdn.test/avc720");
         assert_eq!(ios.video_url, "https://cdn.test/hevc480");
+        let car = super::BilibiliProvider::select_video_for_platform(&streams, 0, false, true).unwrap();
+        assert_eq!(car.video_url, "https://cdn.test/avc360");
+        let compatible_retry =
+            super::BilibiliProvider::select_video_for_platform(&streams, 1080, false, true).unwrap();
+        assert_eq!(compatible_retry.video_url, car.video_url);
         assert!(crate::infrastructure::fragmented_mp4::prefer_segmented(
             1800,
             &mac.codecs

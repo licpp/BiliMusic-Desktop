@@ -3,6 +3,7 @@ import { usePageMotion } from '../shared/pageMotion'
 import { useUpdateStore } from '../services/updates'
 import { useVisibilityRules } from '../services/contentVisibility'
 import { accountQueryKey } from '../services/queryKeys'
+import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { LargeDownloadDialogHost } from './DownloadDialog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -44,6 +45,8 @@ export function LargeScreenApp() {
   usePageMotion(main, pageKey, pageDepth, false, pageMotion)
   const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean; visibilityScope?:string; replaceVideo?:()=>void }>(), [sleep, setSleep] = useState(false)
   const current = usePlayerStore(s => s.current), queue = usePlayerStore(s => s.queue)
+  const playbackError = usePlayerStore(s => s.error)
+  const playbackFailed = usePlayerStore(s => s.status === 'error')
   const attention = useSyncAttention(s => s.library || s.statistics), [message, setMessage] = useState(''), [actionError, setActionError] = useState('')
   const client = useQueryClient(), toggling = useRef(false)
   const navigate = useCallback((next: Route) => {
@@ -125,7 +128,14 @@ export function LargeScreenApp() {
     <LargeDownloadDialogHost/>
     <LargeKeyboardBar/>
     <LargeSleep open={sleep} onClose={() => setSleep(false)}/>
-    {(actionError || message) && <button className="large-toast" role="status" onClick={() => { setActionError(''); setMessage('') }}>{actionError || message}</button>}
+    {route.kind !== 'player' && playbackError ? <div className="large-toast large-playback-error" role="alert">
+      <PlaybackErrorText issue={playbackError}/>
+      <div className="playback-issue-actions">
+        {current && playbackFailed && <button type="button" onClick={() => void usePlayerStore.getState().toggle()}>重试</button>}
+        <CopyPlaybackDiagnostics issue={playbackError} track={current}/>
+        <button type="button" onClick={() => usePlayerStore.setState({ error: null })}>关闭</button>
+      </div>
+    </div> : (actionError || message) && <button className="large-toast" role="status" onClick={() => { setActionError(''); setMessage('') }}>{actionError || message}</button>}
   </div>
 }
 function LargeHome({ navigate, onMore }: { navigate: (r: Route) => void; onMore: (t: Track) => void }) {

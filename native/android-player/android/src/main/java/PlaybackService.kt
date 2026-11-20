@@ -20,6 +20,10 @@ import app.tauri.plugin.JSObject
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.Paths
 
 /** Audio lives outside the WebView so backgrounding and screen lock do not stop it. */
 @OptIn(UnstableApi::class)
@@ -67,6 +71,7 @@ class PlaybackService : MediaSessionService() {
     private var metadataDuration = 0.0
     private var status = "paused"
     private var error: String? = null
+    private var errorCode: String? = null
     private val focusResume = FocusResume()
     private var prepared = false
     private var seeking = false
@@ -117,9 +122,17 @@ class PlaybackService : MediaSessionService() {
             if (couldSkip != hasOtherTracks()) updateSystemPlayback() else updateSessionPlaybackState()
         }
     }
-    private fun currentProfile() = profilePath?.let { path ->
-        // A fresh install uses the guest database before its account marker exists.
-        runCatching { java.io.File(path).let { if (it.exists()) it.readText() else "" } }.getOrNull()
+    private fun currentProfile(): String? {
+        val path = profilePath ?: return null
+        return try {
+            val bytes = Files.readAllBytes(Paths.get(path))
+            Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: NoSuchFileException) {
+            // A fresh install uses the guest database before its account marker exists.
+            ""
+        } catch (_: java.io.IOException) {
+            null
+        }
     }
     private fun lyricSession() = "$engineInstanceId:$listeningSession"
     internal fun refreshPlaybackLyrics() {
@@ -134,7 +147,8 @@ class PlaybackService : MediaSessionService() {
             resolve(request, JSONObject().put("kind", "lyrics").put("id", id).put("profile", profile)
                 .put("accountSession", queue.accountSession.takeIf { it.isNotEmpty() })
                 .put("offlineOnly", queue.offlineOnly)
-                .put("subtitles", FloatingLyricsOverlay.wantsSubtitles(this)))
+                .put("subtitles", FloatingLyricsOverlay.wantsSubtitles(this))
+                .put("subtitleLanguage", FloatingLyricsOverlay.subtitleLanguage(this)))
         }
     }
     internal fun acceptForegroundLyrics(frame: JSONObject) {
@@ -177,16 +191,19 @@ class PlaybackService : MediaSessionService() {
             else -> control(action)
         }
     }
-    private fun resolveTrack(track: JSONObject, restart: Boolean = false, refresh: Boolean = false, position: Double? = null) {
+    private fun resolveTrack(
+        track: JSONObject, restart: Boolean = false, refresh: Boolean = false,
+        position: Double? = null, compatibleAudio: Boolean = false,
+    ) {
         focusResume.cancel()
         resumeDuringResolution = if (refresh && !prepared) initialResumePolicy else null
         if (!refresh) initialResumePolicy = null
         savePosition(force = true); accountListening(true); cancelResolution(); cancelSourceSwitch()
         pendingUpgradeUrl = null
         if (!refresh) { recoveryAttempted = false; listeningSession = java.util.UUID.randomUUID().toString() }
-        val scope = currentProfile()
-        if (scope == null || listeningProfile != null && scope != listeningProfile) { fail("播放账号已变更，请重新播放"); return }
-        val resolver = resolveListener ?: run { fail("后台播放器尚未就绪，请重新播放"); return }
+        val resolver = resolveListener ?: run { fail("后台播放器尚未就绪，请重新播放", "native_not_ready"); return }
+        val scope = currentProfile() ?: run { fail("无法读取当前播放账号，请重新播放", "profile_unavailable"); return }
+        if (listeningProfile != null && scope != listeningProfile) { fail("播放账号已变更，请重新播放", "account_changed"); return }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false; seeking = false
         nativeTrack = track; id = track.getString("id"); title = track.mediaText("title").ifBlank { "BiliMusic" }
         lyricRequests.supersede()
@@ -201,12 +218,14 @@ class PlaybackService : MediaSessionService() {
         // MediaPlayer's wake lock does not cover the gap between two tracks.
         transitionWakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BiliMusic:queue").also { it?.acquire(30_000) }
         val request = nativeRequest
-        android.util.Log.i("BiliMusicPlayback", "resolve request=$request refresh=$refresh")
-        handler.postDelayed({ if (resolvingNative && request == nativeRequest) fail("后台加载超时，请重新播放") }, 25_000)
+        android.util.Log.i("BiliMusicPlayback", "resolve request=$request refresh=$refresh compatibleAudio=$compatibleAudio")
+        handler.postDelayed({ if (resolvingNative && request == nativeRequest) fail("后台音源解析超时，请重新播放", "source_timeout") }, 25_000)
         publish()
         if (request != nativeRequest || !resolvingNative) return
-        try { resolver(request, queue.payload(scope, track, restart, refresh, position)) }
-        catch (_: Exception) { fail("后台播放请求失败，请重新播放") }
+        val payload = queue.payload(scope, track, restart, refresh, position)
+        if (compatibleAudio) payload.put("compatibleAudio", true)
+        try { resolver(request, payload) }
+        catch (_: Exception) { fail("后台播放请求失败，请重新播放", "native_request_failed") }
     }
     fun resolved(request: Long, result: JSONObject) {
         if (result.optString("kind") == "lyrics") {
@@ -218,16 +237,17 @@ class PlaybackService : MediaSessionService() {
             return
         }
         if (request != nativeRequest || !resolvingNative) return
-        if (resolveProfile != currentProfile()) { fail("播放账号已变更，请重新播放"); return }
+        val scope = currentProfile() ?: run { fail("无法读取当前播放账号，请重新播放", "profile_unavailable"); return }
+        if (resolveProfile != scope) { fail("播放账号已变更，请重新播放", "account_changed"); return }
         if (result.optBoolean("skip")) {
             val next = queue.skip(result.optString("entryId"))
             if (next == null) { control("pause"); cancelResolution() } else resolveTrack(next)
             return
         }
-        if (result.has("error")) { fail(result.getString("error")); return }
+        if (result.has("error")) { fail(result.getString("error"), result.optString("errorCode", "source_unavailable")); return }
         val url = result.optString("url")
         val uri = android.net.Uri.parse(url)
-        if (uri.scheme != "http" || uri.host != "127.0.0.1") { fail("无效的本地播放地址"); return }
+        if (uri.scheme != "http" || uri.host != "127.0.0.1") { fail("无效的本地播放地址", "invalid_source"); return }
         queue.resolved(result)
         val track = result.getJSONObject("track"); nativeTrack = track
         val intent = Intent(this, PlaybackService::class.java).setAction("load")
@@ -253,11 +273,12 @@ class PlaybackService : MediaSessionService() {
         }
         load(intent)
     }
-    private fun recover(): Boolean {
+    private fun recover(compatibleAudio: Boolean = false): Boolean {
         val track = nativeTrack ?: return false
         if (recoveryAttempted || resolveListener == null) return false
+        if (compatibleAudio && (queue.offlineOnly || track.optJSONObject("source")?.optString("provider") != "bilibili")) return false
         recoveryAttempted = true
-        resolveTrack(track, refresh = true, position = if (prepared) lastPosition else requestedStartPosition)
+        resolveTrack(track, refresh = true, position = if (prepared) lastPosition else requestedStartPosition, compatibleAudio = compatibleAudio)
         return true
     }
 
@@ -350,7 +371,7 @@ class PlaybackService : MediaSessionService() {
                 val position = if (prepared && !seeking) runCatching { player?.currentPosition ?: -1 }.getOrDefault(-1) else -1
                 if (position >= 0 && watchdogPosition >= 0 && position > watchdogPosition + 10) mediaAdvancedAt = SystemClock.elapsedRealtime()
                 watchdogPosition = position
-                if (SystemClock.elapsedRealtime() - mediaAdvancedAt >= 12_000) { if (!recover()) fail("音频缓冲超时，请重试"); return }
+                if (SystemClock.elapsedRealtime() - mediaAdvancedAt >= 12_000) { if (!recover()) fail("音频缓冲超时，请重试", "audio_stalled"); return }
             }
             if (status == "playing") savePosition()
             if (status == "playing" && prepared && !seeking && sourceCandidate == null && lastPosition + 0.001 >= upgradeAfterPosition) {
@@ -514,7 +535,7 @@ class PlaybackService : MediaSessionService() {
         updateMetadata(); updateSessionPlaybackState()
         startForeground(NOTIFICATION, notification())
         if (status != "paused" && !requestFocus()) {
-            fail("无法获得音频焦点，请稍后重试"); return
+            fail("无法获得音频焦点，请稍后重试", "audio_focus_denied"); return
         }
         try {
             resetPlaybackWatchdog()
@@ -532,7 +553,7 @@ class PlaybackService : MediaSessionService() {
             bindMedia(media,intent.getDoubleExtra("position",0.0),resumePolicy)
             media.setDataSource(intent.getStringExtra("url")); media.prepareAsync(); publish(); handler.removeCallbacks(ticker); handler.post(ticker)
             refreshPlaybackLyrics()
-        } catch (cause: Exception) { fail("音频加载失败，请重新播放") }
+        } catch (_: Exception) { fail("音频加载失败，请重新播放", "audio_prepare_failed") }
     }
     private fun bindMedia(media:MediaPlayer,initialPosition:Double,resumePolicy:AutomaticResumePolicy? = null) {
             media.setOnPreparedListener {
@@ -540,7 +561,7 @@ class PlaybackService : MediaSessionService() {
                 prepared = true
                 lastDuration = it.duration / 1000.0
                 val position = runCatching { playbackStartPosition(initialPosition,lastDuration,resumePolicy) }.getOrElse {
-                    prepared = false; fail(it.message ?: "无法读取视频总时长"); return@setOnPreparedListener
+                    prepared = false; fail(it.message ?: "无法读取视频总时长", "duration_unavailable"); return@setOnPreparedListener
                 }
                 transitionWakeLock?.let { lock -> if (lock.isHeld) lock.release() }; transitionWakeLock = null
                 val offset = (position * 1000).toLong()
@@ -576,8 +597,19 @@ class PlaybackService : MediaSessionService() {
             media.setOnErrorListener { candidate, what, extra ->
                 if (player === candidate) {
                     android.util.Log.w("BiliMusicPlayback", "media error what=$what extra=$extra status=$status")
-                    val connectionFailed = what == MediaPlayer.MEDIA_ERROR_IO || extra == MediaPlayer.MEDIA_ERROR_IO
-                    if (!connectionFailed || !recover()) fail(if (connectionFailed) "无法连接音频服务，请重试" else "音频播放失败，请重试")
+                    val code = "android_media:$what:$extra"
+                    val connectionFailed = what == MediaPlayer.MEDIA_ERROR_IO || extra == MediaPlayer.MEDIA_ERROR_IO ||
+                        what == MediaPlayer.MEDIA_ERROR_TIMED_OUT || extra == MediaPlayer.MEDIA_ERROR_TIMED_OUT
+                    val incompatible = what == MediaPlayer.MEDIA_ERROR_MALFORMED || extra == MediaPlayer.MEDIA_ERROR_MALFORMED ||
+                        what == MediaPlayer.MEDIA_ERROR_UNSUPPORTED || extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED ||
+                        (what == MediaPlayer.MEDIA_ERROR_UNKNOWN && !prepared)
+                    when {
+                        connectionFailed -> if (status == "paused" || !recover()) fail("无法连接音频服务，请重试", code)
+                        incompatible -> if (status == "paused" || !recover(compatibleAudio = true)) {
+                            fail(if (queue.offlineOnly) "本地音频无法播放，请联网后重新下载" else "当前音源无法解码，请尝试更换音质", code)
+                        }
+                        else -> fail("音频播放失败，请重试", code)
+                    }
                 }
                 true
             }
@@ -628,13 +660,13 @@ class PlaybackService : MediaSessionService() {
             candidate.setDataSource(url);candidate.prepareAsync()
         }catch(_:Exception){cancelSourceSwitch("新音源无法加载，已保留原音质")}
     }
-    private fun fail(message: String) {
-        android.util.Log.w("BiliMusicPlayback", "failed: $message")
+    private fun fail(message: String, code: String) {
+        android.util.Log.w("BiliMusicPlayback", "failed: $code")
         cancelResolution()
         pendingUpgradeUrl = null; cancelSourceSwitch()
         focusResume.cancel()
         accountListening(true)
-        status = "error"; error = message; prepared = false
+        status = "error"; error = message; errorCode = code; prepared = false
         player?.release(); player = null; handler.removeCallbacks(ticker)
         audioManager.abandonAudioFocusRequest(focus); focusDucked = false; publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
@@ -744,6 +776,7 @@ class PlaybackService : MediaSessionService() {
             .put("track", nativeTrack).put("expandedEntries", queue.expanded).put("recoveryAttempted", recoveryAttempted)
             .put("duration", lastDuration).put("rate", playbackRate).put("stopped", player == null).put("error", error).put("floatingLyricsEnabled",FloatingLyricsOverlay.enabled)
             .put("sleepDeadline", sleepDeadline).put("sleepDuration", sleepDuration).put("sleepExpired", sleepExpired)
+        if (error != null) snapshot.put("errorCode", errorCode)
         if (lastFloatingStyle != FloatingLyricsOverlay.styleRevision.toLong()) {
             lastFloatingStyle = FloatingLyricsOverlay.styleRevision.toLong()
             snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize).put("floatingLyricsLocked",FloatingLyricsOverlay.locked)
@@ -779,7 +812,7 @@ class PlaybackService : MediaSessionService() {
             playbackRate, hasOtherTracks(), error)
         if (session == null && id.isNotEmpty()) createSession()
     }
-    private var displayedTitle = ""
+    private var displayedTitle = title
     private fun mediaTitle() = SystemTitleLyrics.title(id, lyricPosition().second, title)
     private fun updateMetadata() {
         val current = id.takeIf(String::isNotEmpty)?.let {
@@ -843,7 +876,7 @@ class PlaybackService : MediaSessionService() {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
         val canSkip = hasOtherTracks()
         val isPlaying = status == "playing" || status == "buffering"
-        val builder=Notification.Builder(this, CHANNEL).setContentTitle(mediaTitle()).setContentText(artist).setLargeIcon(artwork?.bitmap)
+        val builder=Notification.Builder(this, CHANNEL).setContentTitle(displayedTitle).setContentText(artist).setLargeIcon(artwork?.bitmap)
             .setSmallIcon(app.bilimusic.player.R.drawable.ic_music_notification).setColor(Color.rgb(255,115,88))
             .setCategory(Notification.CATEGORY_TRANSPORT).setShowWhen(false)
             .setContentIntent(open).setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true)
