@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
+import { readFile } from 'node:fs/promises'
 const compiled = await build({entryPoints:['src/services/updates.ts'],bundle:true,write:false,format:'cjs',platform:'node',plugins:[{name:'update-boundaries',setup(b){
  b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}))
  b.onResolve({filter:/player\/playerStore$/},()=>({path:'player',namespace:'mock'}))
@@ -49,12 +50,13 @@ test('legacy releases without an OTA artifact retain the website fallback',async
 })
 
 test('a larger build of the installed version is offered only when the selected platform changed', async () => {
- const result = { version: '0.4.0', available: true, currentBuild: 1 }
+ const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+ const result = { version, available: true, currentBuild: 1 }
  for (const [build, status] of [[2, 'available'], [1, 'current'], [0, 'ahead']]) {
   const app = setup(async () => ({ ...result, build }))
   assert.equal((await app.checkForUpdate()).status, status)
  }
- const next = setup(async () => ({ ...result, version: '0.4.1', build: 1, currentBuild: 50 }))
+ const next = setup(async () => ({ ...result, version: '9.0.0', build: 1, currentBuild: 50 }))
  assert.equal((await next.checkForUpdate()).status, 'available')
 })
 
