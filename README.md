@@ -40,7 +40,7 @@
 
 [iOS 自签安装](https://bilimusic.cn/ios.html) · [鸿蒙签名与安装](https://bilimusic.cn/harmony.html)
 
-**0.4.0 已发布。** 改进移动端过渡与播放控制，新增桌面托盘播放器和同步修复入口。[查看更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.0)。
+**0.4.1 已发布。** 改善 AI 字幕和小窗歌词，优化 Android 后台播放与车机矮屏布局。[查看更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.1)。
 
 ## 功能
 

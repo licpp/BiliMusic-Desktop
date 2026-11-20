@@ -1,6 +1,6 @@
 {
-  "version": "0.4.0",
-  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.0",
+  "version": "0.4.1",
+  "releaseNotes": "https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.1",
   "platforms": [
     {
       "id": "mac",
@@ -8,26 +8,27 @@
       "status": "available",
       "architecture": "Apple Silicon · M1 / M2 / M3 / M4 等",
       "requirements": "macOS 12+",
-      "file": "BiliMusic_0.4.0_stable_macOS_arm64.dmg",
-      "size": 6933826,
-      "sha256": "6e5e37e46b85cdfc63e41f02d7483e186a590a1e29cbc9e5abe724ad07e2f738",
+      "file": "BiliMusic_0.4.1_stable_macOS_arm64.dmg",
+      "size": 6938945,
+      "sha256": "e42866a0e201c1a09251ac28dc8403e09d0663189b1858c763522fdef7ec4e61",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_macOS_arm64.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_macOS_arm64.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_macOS_arm64.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_macOS_arm64.dmg"
         }
       ],
       "signature": "adhoc",
       "notarized": false,
-      "version": "0.4.0",
-      "build": 1
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "mac-intel",
@@ -35,26 +36,27 @@
       "status": "available",
       "architecture": "Intel · x64",
       "requirements": "macOS 12+",
-      "file": "BiliMusic_0.4.0_stable_macOS_x64.dmg",
-      "size": 7446904,
-      "sha256": "b0cd720bc063375c84492744fe1076df611e1b90e1259f1d2278166cf78a5b5d",
+      "file": "BiliMusic_0.4.1_stable_macOS_x64.dmg",
+      "size": 7432958,
+      "sha256": "26b86b9f85a142be726fffe753d95b38c4a5d822be6dbe2caeaad11bf2de1eb8",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_macOS_x64.dmg"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_macOS_x64.dmg"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_macOS_x64.dmg"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_macOS_x64.dmg"
         }
       ],
       "signature": "adhoc",
       "notarized": false,
-      "version": "0.4.0",
-      "build": 1
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "windows",
@@ -62,24 +64,25 @@
       "status": "available",
       "architecture": "x64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.4.0_stable_Windows_x64_setup.exe",
-      "size": 5211822,
-      "sha256": "e1c616ef35e13dd2f9ad89285b6b4c6d2c6d7ca1422b6af4e4610a0622c8c7f3",
+      "file": "BiliMusic_0.4.1_stable_Windows_x64_setup.exe",
+      "size": 5220672,
+      "sha256": "b3c40e91d8d16eb7fafbfdbd7912966ba4716960ecd87939a78e64ed2406468e",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Windows_x64_setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Windows_x64_setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Windows_x64_setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Windows_x64_setup.exe"
         }
       ],
-      "version": "0.4.0",
-      "build": 1
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "windows-arm64",
@@ -87,24 +90,25 @@
       "status": "available",
       "architecture": "ARM64 · 64 位",
       "requirements": "Windows 10 / 11 · 需要 WebView2",
-      "file": "BiliMusic_0.4.0_stable_Windows_arm64_setup.exe",
-      "size": 4633559,
-      "sha256": "0351c72adb98bcb9df9e84110998f41e2e8c12f66c80cf9add77bed8088c27e7",
+      "file": "BiliMusic_0.4.1_stable_Windows_arm64_setup.exe",
+      "size": 4641342,
+      "sha256": "d054ee528a8161235f11d73b03e1c03d58ccbce256662e9d4eef2029e565302f",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Windows_arm64_setup.exe"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Windows_arm64_setup.exe"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Windows_arm64_setup.exe"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Windows_arm64_setup.exe"
         }
       ],
-      "version": "0.4.0",
-      "build": 1
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "android",
@@ -115,22 +119,23 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build3_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_android-build3_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.4.0_android-build3_Android_arm64.apk",
-      "size": 17502420,
-      "sha256": "7d5b811fc4f638d917e66ad0779cb9f858618ee6dffe7134b4b69c947903a923",
+      "file": "BiliMusic_0.4.1_stable_Android_arm64.apk",
+      "size": 17522900,
+      "sha256": "926249d3ab5a781c61f9b27dc23a6d72d5ad983ebaab222a023732cd6d49da42",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk",
-      "version": "0.4.0",
-      "build": 3
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "android-large",
@@ -138,24 +143,25 @@
       "status": "available",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 支持触控与遥控器",
-      "version": "0.4.0",
-      "file": "BiliMusic_0.4.0_stable_Android_LargeScreen_arm64.apk",
-      "size": 17026095,
-      "sha256": "b479a43063e3ef627be667b78022f551e46b8b1b9e671a12a3677a7bfad9feab",
+      "version": "0.4.1",
+      "file": "BiliMusic_0.4.1_stable_Android_LargeScreen_arm64.apk",
+      "size": 17449228,
+      "sha256": "0343603f5cea5d3c703a6225255eda5901a60a2faf44484796e8959c67166baa",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_LargeScreen_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_LargeScreen_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_LargeScreen_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_LargeScreen_arm64.apk"
         }
       ],
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "android-large-armv7",
@@ -163,25 +169,26 @@
       "status": "available",
       "architecture": "ARMv7 · 32 位",
       "requirements": "Android 8+ · 支持触控与遥控器",
-      "version": "0.4.0",
-      "file": "BiliMusic_0.4.0_stable_Android_LargeScreen_armv7.apk",
-      "size": 12393521,
-      "sha256": "274ce0100c4147503d921f26536cebd7c7292a7789e22830c8149964c934e13d",
+      "version": "0.4.1",
+      "file": "BiliMusic_0.4.1_stable_Android_LargeScreen_armv7.apk",
+      "size": 12808462,
+      "sha256": "d9bd80b6301af37bc4e75eedd6b5186a216bf84cb240f4c4b3d56e7786681cce",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_LargeScreen_armv7.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_LargeScreen_armv7.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Android_LargeScreen_armv7.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Android_LargeScreen_armv7.apk"
         }
       ],
       "note": "适用于仅支持 32 位应用的车机 / TV。",
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "ios",
@@ -196,48 +203,49 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_iOS_arm64-unsigned.ipa"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_iOS_arm64-unsigned.ipa"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_iOS_arm64-unsigned.ipa"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_iOS_arm64-unsigned.ipa"
         }
       ],
-      "file": "BiliMusic_0.4.0_stable_iOS_arm64-unsigned.ipa",
-      "size": 6415667,
-      "sha256": "f3dcf21c0a357358054d5d8245bb1ff0960dd01ad6eeed3350d6e2d4c3131105",
-      "version": "0.4.0",
-      "build": 1
+      "file": "BiliMusic_0.4.1_stable_iOS_arm64-unsigned.ipa",
+      "size": 6441120,
+      "sha256": "6918ceaf23e34c6b7f83c27de11be22c5c22da08c4a3ca0f6af8cb974b25d797",
+      "version": "0.4.1",
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "ohos",
       "name": "HarmonyOS NEXT",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "status": "available",
       "architecture": "ARM64 · 手机 / 平板",
       "requirements": "HarmonyOS 6.0+ · 未签名 HAP 测试包，真机需自行签名",
       "packageFormat": "hap",
       "signature": "unsigned",
       "releaseStatus": "experimental",
-      "file": "BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap",
-      "size": 14272449,
-      "sha256": "fd264415d5940c131e4382534a730a54f85085005caffc340def2c8576eab674",
-      "sourceCommit": "a1fc126a4454a5234d5d1c2645cf7c596207df99",
+      "file": "BiliMusic_0.4.1_stable_HarmonyOS_NEXT_arm64-unsigned.hap",
+      "size": 14306873,
+      "sha256": "5eed747fa4a512ca9c7cc201a19c8b803199a972f117ad683c4528a19a908a38",
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_HarmonyOS_NEXT_arm64-unsigned.hap"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_ohos-build2_HarmonyOS_NEXT_arm64-unsigned.hap"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_HarmonyOS_NEXT_arm64-unsigned.hap"
         }
       ],
-      "build": 2
+      "build": 1
     },
     {
       "id": "linux-x64-appimage",
@@ -245,25 +253,26 @@
       "status": "available",
       "architecture": "X64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.0_stable_Linux_x64-test.AppImage",
-      "size": 85207544,
-      "sha256": "f86513d442041db8cc53d3ac4b69e61ab40ee4903452c9041df03faf139ee0d7",
+      "file": "BiliMusic_0.4.1_stable_Linux_x64-test.AppImage",
+      "size": 85211640,
+      "sha256": "55a9d2e889bf21a4bb3ed93969859b42f7ab46470a399cd12fcff0e28f889330",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_x64-test.AppImage"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_x64-test.AppImage"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_x64-test.AppImage"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_x64-test.AppImage"
         }
       ],
-      "version": "0.4.0",
+      "version": "0.4.1",
       "releaseStatus": "experimental",
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "linux-x64-deb",
@@ -271,25 +280,26 @@
       "status": "available",
       "architecture": "X64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.0_stable_Linux_x64-test.deb",
-      "size": 7438380,
-      "sha256": "05725069467a711021b77d18582d58b5e22659f6dff4522f7c9e7ee7e6c753b9",
+      "file": "BiliMusic_0.4.1_stable_Linux_x64-test.deb",
+      "size": 7445482,
+      "sha256": "6ce27d5bfc512cd37625a351952340e729bdeb57313cc6a59a0bed670501b6f3",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_x64-test.deb"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_x64-test.deb"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_x64-test.deb"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_x64-test.deb"
         }
       ],
-      "version": "0.4.0",
+      "version": "0.4.1",
       "releaseStatus": "experimental",
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "linux-arm64-appimage",
@@ -297,25 +307,26 @@
       "status": "available",
       "architecture": "ARM64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.0_stable_Linux_arm64-test.AppImage",
-      "size": 83102216,
-      "sha256": "5d8d2123fb910770548220ebc27690ee770335ebe52fe96ff7b6513713e08019",
+      "file": "BiliMusic_0.4.1_stable_Linux_arm64-test.AppImage",
+      "size": 83114504,
+      "sha256": "2877af26e65dd1cc3a191b36096953e67be9745599393beacc08fb79d80e1bf2",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_arm64-test.AppImage"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_arm64-test.AppImage"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_arm64-test.AppImage"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_arm64-test.AppImage"
         }
       ],
-      "version": "0.4.0",
+      "version": "0.4.1",
       "releaseStatus": "experimental",
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     },
     {
       "id": "linux-arm64-deb",
@@ -323,28 +334,40 @@
       "status": "available",
       "architecture": "ARM64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.0_stable_Linux_arm64-test.deb",
-      "size": 7060152,
-      "sha256": "4749e9af9191af94a9afe28d41d1d382c530e97991477786cd41ce50e5bf9b9a",
+      "file": "BiliMusic_0.4.1_stable_Linux_arm64-test.deb",
+      "size": 7065710,
+      "sha256": "f7819038d8febcabba3142d4e47462bde7e6999dd7de4147d168cd261c3320f2",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_arm64-test.deb"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_arm64-test.deb"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/BiliMusic_0.4.0_stable_Linux_arm64-test.deb"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.1/BiliMusic_0.4.1_stable_Linux_arm64-test.deb"
         }
       ],
-      "version": "0.4.0",
+      "version": "0.4.1",
       "releaseStatus": "experimental",
-      "build": 1
+      "build": 1,
+      "sourceCommit": "db39d300637d3dd1839fdf58bda4793cb2ae1ca7"
     }
   ],
   "history": [
+    {
+      "version": "0.4.1",
+      "publishedAt": "2026-11-20T08:47:28.704617+00:00",
+      "kind": "major",
+      "changes": [
+        "改善 AI 字幕语言匹配、歌词自动校准和小窗歌词。",
+        "Android 更新后台播放服务，改善通知、蓝牙控制和后台歌词。",
+        "优化车机矮屏布局和视频起播，细化播放失败提示。",
+        "修复鸿蒙离线状态误判。"
+      ]
+    },
     {
       "version": "0.4.0",
       "publishedAt": "2026-11-19T10:21:54.501267+00:00",
