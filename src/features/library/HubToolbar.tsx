@@ -7,8 +7,10 @@ export function HubToolbar({ className, summary, actions, actionsHost }: {
   actions: ReactNode
   actionsHost?: HTMLElement | null
 }) {
-  return <div className={`${className} hub-list-toolbar`} data-actions-in-header={actionsHost ? '' : undefined}>
+  // The wide layout reserves the header slot even before it mounts and for inactive panes.
+  const inHeader = actionsHost !== undefined
+  return <div className={`${className} hub-list-toolbar`} data-actions-in-header={inHeader ? '' : undefined}>
     <span className="hub-summary">{summary}</span>
-    {actionsHost ? createPortal(actions, actionsHost) : actions}
+    {inHeader ? actionsHost && createPortal(actions, actionsHost) : actions}
   </div>
 }

@@ -44,7 +44,8 @@ export function PlaylistsView({ playlists, loading, onOpen, onRemoved, onCreate,
       label="个人音乐收藏" className="listening-tabs"
       tabActions={tabletWide && <div className="hub-tab-actions" ref={setHeaderActions}/>}
       renderPanel={(pane, active) => {
-        const actionsHost = tabletWide && active ? headerActions : null
+        let actionsHost: HTMLDivElement | null | undefined
+        if (tabletWide) actionsHost = active ? headerActions : null
         if (pane === 'creators') return <CreatorsView followed actionsHost={actionsHost} onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/>
         if (pane === 'collections') return <CollectionsView hideHeading actionsHost={actionsHost} onOpenFolder={onOpenFolder}
           onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>
