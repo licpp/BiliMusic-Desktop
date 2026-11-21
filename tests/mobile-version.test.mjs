@@ -5,6 +5,9 @@ import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {pathToFileURL} from 'node:url'
+
+// Historical release fixtures always use the first platform build.
+process.env.BILIMUSIC_BUILD_NUMBER = '1'
 test('0.4.0 uses stable platform build numbers and preserves native upgrade order',()=>{
  const previous=mobileVersion('0.3.7',1), basic=mobileVersion('0.4.0',1)
  const patch=mobileVersion('0.4.0',2), next=mobileVersion('0.4.1',1)
