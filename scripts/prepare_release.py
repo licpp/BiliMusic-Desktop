@@ -10,7 +10,7 @@ from pathlib import Path
 from release_packages import checksum_list, digest, require, package_id, package_ids, license_name, validate_release_scope
 
 
-def prepare(build_dir, template, notes_path, output, revision, previous, previous_updater=None):
+def prepare(build_dir, template, notes_path, output, revision, previous, previous_updater=None, patch_changes=()):
     build_dir, output = Path(build_dir), Path(output)
     require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', revision), 'Use a short lowercase revision, e.g. sync-fix-1')
     require(not output.exists() or not any(output.iterdir()), 'Output must be empty; resume with publish_release.py instead')
@@ -21,12 +21,14 @@ def prepare(build_dir, template, notes_path, output, revision, previous, previou
         require(previous_updater is not None and previous_updater['version'] == version, 'A platform patch requires the current updater feed')
         build['partialRelease'] = True
     candidate = copy.deepcopy(previous if partial else template)
-    if partial and template['version'] == version:
-        candidate['history'] = copy.deepcopy(template['history'])
     require(candidate['version'] == version, 'Update the release manifest/history template to the build version first')
     require(re.fullmatch(r'\d+\.\d+\.\d+', version), 'Only stable release versions are supported')
     require(tuple(map(int, version.split('.'))) >= tuple(map(int, previous['version'].split('.'))), 'Refusing a version downgrade')
-    require(any(h['version'] == version for h in candidate['history']), 'Release history entry missing')
+    history_entry = next((entry for entry in candidate['history'] if entry['version'] == version), None)
+    require(history_entry is not None, 'Release history entry missing')
+    if patch_changes:
+        require(partial, 'Use the history template for a new release')
+        history_entry['changes'] = [*patch_changes, *history_entry.get('changes', [])]
     output.mkdir(parents=True, exist_ok=True)
     original_names = {package_id(p): p['file'] for p in build['platforms']}
     for package in build['platforms']:
@@ -88,6 +90,7 @@ if __name__ == '__main__':
     parser.add_argument('--revision', required=True)
     parser.add_argument('--previous-manifest', help='Local baseline manifest for preparing an offline candidate')
     parser.add_argument('--previous-updater', help='Current signed updater feed, required for platform patches')
+    parser.add_argument('--patch-change', action='append', default=[], help='Prepend an entry to the current version website changelog')
     args = parser.parse_args()
     if args.previous_manifest:
         previous = json.loads(Path(args.previous_manifest).read_text())
@@ -95,5 +98,5 @@ if __name__ == '__main__':
         with urllib.request.urlopen('https://bilimusic.cn/api/v1/releases', timeout=20) as response:
             previous = json.load(response)
     updater = json.loads(Path(args.previous_updater).read_text()) if args.previous_updater else None
-    output = prepare(args.build_dir, json.loads(Path(args.manifest).read_text()), args.notes, args.output, args.revision, previous, updater)
+    output = prepare(args.build_dir, json.loads(Path(args.manifest).read_text()), args.notes, args.output, args.revision, previous, updater, args.patch_change)
     print(json.dumps({'bundle': str(output), 'status': 'prepared'}, ensure_ascii=False))

@@ -35,7 +35,8 @@ function renderDownloadStats(stats) {
   const target = $('#download-stats');
   const format = value => new Intl.NumberFormat('zh-CN').format(value);
   for (const count of document.querySelectorAll('[data-download-count]')) {
-    count.textContent = `累计下载 ${format(stats.platforms[count.dataset.downloadCount] || 0)} 次`;
+    const downloads = (stats.platforms[count.dataset.downloadCount] || 0) + (stats.platforms[count.dataset.downloadCountAlias] || 0);
+    count.textContent = `累计下载 ${format(downloads)} 次`;
   }
   target.replaceChildren(element('span', `累计下载 ${format(stats.total)} 次`));
   const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
@@ -109,6 +110,7 @@ function renderDownloadPanel(group, item, panel) {
     if (item.note) body.append(element('p', item.note, 'download-package-note'));
     const version = element('div', null, 'download-build');
     const count = element('span', '累计下载 —', 'platform-download-count'); count.dataset.downloadCount = item.id;
+    if (item.id === 'android-large' && item.architecture === 'ARM64 / ARMv7') count.dataset.downloadCountAlias = 'android-large-armv7';
     version.append(element('strong', `v${item.version || releaseManifest.version}`), element('span', `${(item.size / 1048576).toFixed(1)} MB`), count);
     body.append(version); article.append(body);
     const channels = element('div', null, 'channel-buttons');

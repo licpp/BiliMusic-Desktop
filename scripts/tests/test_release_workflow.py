@@ -38,12 +38,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 dict(version=version, sourceCommit=source),
             ))
             channels = [{'id': 'github'}, {'id': 'gitee'}]
-            previous = dict(version=version, history=[{'version': version}], platforms=[
+            previous = dict(version=version, history=[{'version': version, 'changes': ['Earlier update']}], platforms=[
                 dict(id=key, file=f'{key}.apk', build=3, status='available', channels=channels, sha256='1' * 64)
                 for key in ('android', 'android-large-armv7', 'android-large')
             ])
             ota = dict(version=version, platforms={})
-            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'car-build-4', previous, ota)
+            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'car-build-4', previous, ota, ['Universal APK'])
             verifier = Mock()
             plan = validate_bundle(output, verifier)
             phone, legacy, main = plan['manifest']['platforms']
@@ -51,6 +51,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(legacy | {'id': 'android-large'}, main)
             self.assertEqual(main['build'], 4)
             self.assertEqual(main['architecture'], 'ARM64 / ARMv7')
+            self.assertEqual(plan['manifest']['history'][0]['changes'], ['Universal APK', 'Earlier update'])
             self.assertEqual([a['name'] for a in plan['assets'] if a['binary']], [main['file']])
             self.assertEqual((output / 'SHA256SUMS.txt').read_text().count(main['file']), 1)
             verifier.assert_called_once_with(output / main['file'], package['platform'], version, None, 'universal', 4)
@@ -417,11 +418,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_pending_icp_filing_skips_only_public_site_check_and_records_the_limit(self):
         for pending in (False, True):
             with tempfile.TemporaryDirectory() as directory:
-                manifest = {'platforms': [{'channels': [{}, {}]} for _ in range(4)]}
+                manifest = {'platforms': [{'channels': [{'url': f'https://{mirror}.example/{index}'} for mirror in ('github', 'gitee')]} for index in range(4)]}
                 plan = {'version': '0.3.1', 'source': 'a' * 40, 'revision': 'stable', 'siteHost': 'bilimusic.cn', 'siteRoot': '/opt/test', 'manifest': manifest, 'previous': {}, 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}}
                 publisher = Publisher(plan, {}, directory)
                 publisher.site_filing_pending = pending
-                publisher.report['downloads'] = [{} for _ in range(8)]
+                publisher.report['downloads'] = [channel for item in manifest['platforms'] for channel in item['channels']]
                 publisher.mirror = Mock()
                 response = MagicMock()
                 response.__enter__.return_value.read.return_value = json.dumps(manifest).encode()
@@ -457,10 +458,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_activation_can_defer_public_checks_until_workstation_proof(self):
         with tempfile.TemporaryDirectory() as directory:
-            manifest = {'version': '0.3.4', 'platforms': [{'channels': [{}, {}]} for _ in range(4)]}
+            manifest = {'version': '0.3.4', 'platforms': [{'channels': [{'url': f'https://{mirror}.example/{index}'} for mirror in ('github', 'gitee')]} for index in range(4)]}
             plan = {'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable', 'siteHost': 'bilimusic.cn', 'siteRoot': '/opt/test', 'manifest': manifest, 'previous': {}, 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}}
             publisher = Publisher(plan, {}, directory)
-            publisher.report['downloads'] = [{} for _ in range(8)]
+            publisher.report['downloads'] = [channel for item in manifest['platforms'] for channel in item['channels']]
+            # The second car architecture references both previously verified URLs.
+            manifest['platforms'].append(manifest['platforms'][0])
             publisher.mirror = Mock()
             with patch('publish_release.deploy_site', return_value={'version': '0.3.4'}), patch('publish_release.urllib.request.urlopen') as request:
                 publisher.activate(verify_public=False)

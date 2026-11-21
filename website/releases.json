@@ -139,56 +139,55 @@
     },
     {
       "id": "android-large",
-      "name": "大屏版",
+      "name": "车机 / TV",
       "status": "available",
-      "architecture": "ARM64 · 64 位",
+      "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.2",
-      "file": "BiliMusic_0.4.2_build3_Android_LargeScreen_arm64.apk",
-      "size": 17510668,
-      "sha256": "4a4fc50614649a3ff4e756fb55d601b7e7d560f47aa2764187c92e1194a03f52",
+      "file": "BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk",
+      "size": 27197789,
+      "sha256": "e33affc5186ad9eb2c71e64b1f751ad2089270c74e97701499762559ba77825c",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Android_LargeScreen_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Android_LargeScreen_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk"
         }
       ],
-      "build": 3,
-      "sourceCommit": "33996ad02a6fdc26a00b7cc4b1143dc5fdc4fd32"
+      "build": 4,
+      "sourceCommit": "f51ca646168b3649a8d7e65d87ee41acf8bc3be1"
     },
     {
       "id": "android-large-armv7",
-      "name": "车机 / TV · 32 位",
+      "name": "车机 / TV",
       "status": "available",
-      "architecture": "ARMv7 · 32 位",
+      "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.2",
-      "file": "BiliMusic_0.4.2_build3_Android_LargeScreen_armv7.apk",
-      "size": 12853518,
-      "sha256": "a77a725a28eb045bbb59e9a471589c306d647a6e64b7ea105f07e4ed58ee8f78",
+      "file": "BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk",
+      "size": 27197789,
+      "sha256": "e33affc5186ad9eb2c71e64b1f751ad2089270c74e97701499762559ba77825c",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Android_LargeScreen_armv7.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Android_LargeScreen_armv7.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Android_LargeScreen_universal.apk"
         }
       ],
-      "note": "适用于仅支持 32 位应用的车机 / TV。",
-      "build": 3,
-      "sourceCommit": "33996ad02a6fdc26a00b7cc4b1143dc5fdc4fd32"
+      "build": 4,
+      "sourceCommit": "f51ca646168b3649a8d7e65d87ee41acf8bc3be1"
     },
     {
       "id": "ios",
@@ -280,26 +279,26 @@
       "status": "available",
       "architecture": "X64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.2_build3_Linux_x64-test.deb",
-      "size": 7737278,
-      "sha256": "26f1cc52988888f234ec6af1249fb7671e306fffb53ba588be80b2a1fcb87d15",
+      "file": "BiliMusic_0.4.2_build4_Linux_x64-test.deb",
+      "size": 7456600,
+      "sha256": "8235e9de3b0cbe7096979ed69f7d4864d70624ed8b9d928a0a0561ddadaf1277",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Linux_x64-test.deb"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Linux_x64-test.deb"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Linux_x64-test.deb"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Linux_x64-test.deb"
         }
       ],
       "version": "0.4.2",
       "releaseStatus": "experimental",
-      "build": 3,
-      "sourceCommit": "33996ad02a6fdc26a00b7cc4b1143dc5fdc4fd32"
+      "build": 4,
+      "sourceCommit": "f51ca646168b3649a8d7e65d87ee41acf8bc3be1"
     },
     {
       "id": "linux-arm64-appimage",
@@ -334,26 +333,26 @@
       "status": "available",
       "architecture": "ARM64",
       "requirements": "Linux 测试版 · 尚未完成实机测试",
-      "file": "BiliMusic_0.4.2_build3_Linux_arm64-test.deb",
-      "size": 7350790,
-      "sha256": "331ac07ccfedf40b029fedc461e7cb639e5aab12bcb85cdfdccb7a93237f1f42",
+      "file": "BiliMusic_0.4.2_build4_Linux_arm64-test.deb",
+      "size": 7024430,
+      "sha256": "a3783f52ddcd44e94d7606418c1fea8577e19d1598b685080a3eb702c5249119",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Linux_arm64-test.deb"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Linux_arm64-test.deb"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build3_Linux_arm64-test.deb"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.2/BiliMusic_0.4.2_build4_Linux_arm64-test.deb"
         }
       ],
       "version": "0.4.2",
       "releaseStatus": "experimental",
-      "build": 3,
-      "sourceCommit": "33996ad02a6fdc26a00b7cc4b1143dc5fdc4fd32"
+      "build": 4,
+      "sourceCommit": "f51ca646168b3649a8d7e65d87ee41acf8bc3be1"
     }
   ],
   "history": [
@@ -362,6 +361,8 @@
       "publishedAt": "2026-11-21T06:32:43.952922+00:00",
       "kind": "release",
       "changes": [
+        "车机版合并为 32 / 64 位通用包，修复旧版 WebView 下页面、封面和队列显示异常。",
+        "Debian 安装包补齐启动所需依赖。",
         "导入歌单可逐首移除未匹配歌曲。",
         "支持用 B 站链接或 BV 号精确搜索，清空搜索后光标留在搜索框。",
         "修复部分音频无法播放及切换无损音质时进度回退。",

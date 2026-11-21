@@ -501,7 +501,8 @@ class Publisher:
 
     def activate(self, verify_public=True):
         require(len(self.report.get('downloads', [])) >= 8, 'Cannot activate before eight downloads are verified')
-        require(len(self.report['downloads']) == sum(len(p['channels']) for p in self.plan['manifest']['platforms']), 'Cannot activate before every manifest download is verified')
+        expected_urls = {c['url'] for p in self.plan['manifest']['platforms'] for c in p['channels']}
+        require({d['url'] for d in self.report['downloads']} == expected_urls, 'Cannot activate before every manifest download is verified')
         run = lambda args: subprocess.check_output(args, stderr=subprocess.PIPE, timeout=60)
         result = deploy_site(self.plan['siteRoot'], self.work, self.plan['manifest'], self.plan['previous'], run, self.get_site)
         self.record('website', result)
@@ -545,7 +546,7 @@ class Publisher:
         require(all(r.get('manifest') == self.plan['manifest'] for r in results), 'Public manifest contents differ from the release')
         self.record('publicManifests', {'urls': urls, 'sha256': fingerprint(self.plan['manifest']), 'verifiedBy': 'publishing-workstation'})
 
-    def prune(self):
+    def prune(self, keep_superseded=False):
         require('publicManifests' in self.report, 'Cannot remove old assets before all update sources are verified')
         new = {a['name'] for a in self.plan['assets']} | {p['file'] for p in self.plan['manifest']['platforms']}
         def updater_files(feed):
@@ -554,18 +555,19 @@ class Publisher:
         new |= updater_files(self.plan.get('updater', {}))
         old = ({p['file'] for p in self.plan['previous']['platforms']} | updater_files(self.plan.get('previousUpdater', {}))) - new
         removed = []
-        for channel in ('github', 'gitee'):
-            release = self.release(channel)
-            for asset in self.list_assets(channel, release):
-                if asset['name'] in old:
-                    self.delete_asset(channel, release, asset)
-                    removed.append({'channel': channel, 'file': asset['name']})
+        if not keep_superseded:
+            for channel in ('github', 'gitee'):
+                release = self.release(channel)
+                for asset in self.list_assets(channel, release):
+                    if asset['name'] in old:
+                        self.delete_asset(channel, release, asset)
+                        removed.append({'channel': channel, 'file': asset['name']})
         self.record('removedSupersededBinaries', removed)
         self.report.pop('lastFailure', None)
         self.record('complete', {'version': self.plan['version'], 'source': self.plan['source'], 'verifiedDownloadCount': len(self.report['downloads']), 'downloadCountPreserved': True})
 
 
-def remote_main(work, phase, site_filing_pending=False):
+def remote_main(work, phase, site_filing_pending=False, keep_superseded=False):
     secrets = json.loads(sys.stdin.readline())  # Encrypted SSH stdin; never persisted.
     plan = json.loads((Path(work) / 'plan.json').read_text())
     publisher = Publisher(plan, secrets, work)
@@ -583,7 +585,7 @@ def remote_main(work, phase, site_filing_pending=False):
                 publisher.activate(verify_public=False)
             else:
                 publisher.verify_manifest_proof()
-                publisher.prune()
+                publisher.prune(keep_superseded)
                 save_json(owner, {'planDigest': fingerprint(plan), 'work': work, 'complete': True})
     except Exception as error:
         publisher.report['lastFailure'] = {'type': type(error).__name__, 'message': str(error)}
@@ -631,7 +633,7 @@ def local_main(args):
         print(json.dumps({'stagedInputs': len(plan['assets']), 'uploaded': uploaded, 'reused': len(plan['assets']) - uploaded}), flush=True)
         def run_phase(phase):
             secrets = {name: subprocess.check_output([cli, 'auth', 'token'], text=True, stderr=subprocess.DEVNULL).strip() for name, cli in [('github', 'gh'), ('gitee', 'gitee')]}
-            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase + (' --site-filing-pending' if args.site_filing_pending else '')
+            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase + (' --site-filing-pending' if args.site_filing_pending else '') + (' --keep-superseded' if args.keep_superseded else '')
             stdin, stdout, stderr = ssh.exec_command(cmd, timeout=2400)
             stdin.write(json.dumps(secrets) + '\n')
             stdin.flush()
@@ -697,6 +699,7 @@ if __name__ == '__main__':
     parser.add_argument('--stage-only', action='store_true', help='Upload and verify binaries without activating release or website')
     parser.add_argument('--site-filing-pending', action='store_true', help='Publish verified site configuration while explicitly recording public access pending ICP filing')
     parser.add_argument('--full-download-audit', action='store_true', help='Audit every public installer by downloading and hashing it again')
+    parser.add_argument('--keep-superseded', action='store_true', help='Keep superseded installer assets available for rollback')
     parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')
     parser.add_argument('--remote-work', help=argparse.SUPPRESS)
     parser.add_argument('--remote-phase', choices=['stage', 'activate', 'finalize'], help=argparse.SUPPRESS)
@@ -704,7 +707,7 @@ if __name__ == '__main__':
     try:
         if args.remote_work:
             require(args.remote_phase, 'Remote phase is required')
-            remote_main(args.remote_work, args.remote_phase, args.site_filing_pending)
+            remote_main(args.remote_work, args.remote_phase, args.site_filing_pending, args.keep_superseded)
         else:
             require(args.bundle and (args.plan_only or args.ssh_host), 'Provide --bundle and --ssh-host (or --plan-only)')
             local_main(args)
