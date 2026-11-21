@@ -53,7 +53,7 @@ export function useVerticalDismiss<T extends HTMLElement = HTMLButtonElement>(pa
       const direction = axis === 'vertical' ? dragDismissDirection(distance, event.timeStamp - pointer.time) : 0
       suppressClick.current ||= Boolean(axis)
       if (direction > 0 && panel.current?.matches('.lyrics-view')) {
-        panel.current.style.setProperty('--lyrics-exit-y', `${Math.max(38, distance + 50)}px`)
+        panel.current.style.setProperty('--lyrics-exit-y', `${Math.max(0, distance)}px`)
       }
       release(direction > 0)
       if (direction > 0) dismiss()

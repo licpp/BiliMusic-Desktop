@@ -20,6 +20,8 @@ mod sync;
 #[cfg(desktop)]
 mod tray_player;
 mod window_lifecycle;
+#[cfg(target_os = "windows")]
+mod windows_taskbar;
 
 use infrastructure::database::Database;
 use infrastructure::media_proxy::MediaProxy;

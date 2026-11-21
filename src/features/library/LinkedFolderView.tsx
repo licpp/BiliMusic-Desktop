@@ -12,7 +12,7 @@ import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
 import { favoriteVideoTrack } from '../../services/mediaSources'
 import { seasonPlaybackQueue } from '../player/playerStore'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, ListChecks, Play, Plus, RefreshCw } from 'lucide-react'
 import { changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts } from '../../services/desktopApi'
@@ -32,10 +32,25 @@ import { usePlayerStore } from '../player/playerStore'
 import { PlaylistMenu } from './PlaylistEntry'
 import { useTrackSelection } from './useTrackSelection'
 import { LinkedSelectionActions } from './LinkedSelectionActions'
+import { useCompactLayout } from '../../shared/useCompactLayout'
+
+const wideSelectionToolbarWidth = 820
 
 export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & { biliFolderId: number }; onUnlink: () => void }) {
   const { biliFolderId: folderId, name } = playlist
   const client = useQueryClient()
+  const compact = useCompactLayout()
+  const toolbar = useRef<HTMLDivElement>(null)
+  const [narrowToolbar, setNarrowToolbar] = useState(false)
+  useLayoutEffect(() => {
+    if (compact || !toolbar.current) return
+    const element = toolbar.current
+    const update = (width: number) => setNarrowToolbar(width < wideSelectionToolbarWidth)
+    update(element.clientWidth)
+    const observer = new ResizeObserver(([entry]) => update(entry.contentRect.width))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [compact])
   const offline = useOfflinePlayback()
   const folder = useQuery({ queryKey: linkedFolderKey(folderId), queryFn: () => getLinkedFolder(folderId) })
   const visibleFolder = useListDataDuringNavigation(folder.data, folderId)
@@ -102,6 +117,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
 
   const queue = visibleVideos.map(favoriteVideoTrack)
   const selection = useTrackSelection(queue)
+  const selectionLayout = compact || narrowToolbar ? 'compact' : 'wide'
   const folderChanged = (updated: import('../../domain/bilibili').LinkedFolder) => {
     client.setQueryData(linkedFolderKey(folderId), updated)
     void client.invalidateQueries({ queryKey: accountQueryKey('playlists') })
@@ -117,14 +133,21 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
         <p>{folder.data?.videos.length ?? playlist.trackCount} 个视频 · 关联 B 站收藏夹</p>
       </div>
     </header>
-    {selection.selecting && <LinkedSelectionActions folderId={folderId} total={queue.length} selection={selection} onFolderChanged={folderChanged}
-      confirmDialog={(body, close) => <CollectionDialog title="从 B 站收藏夹移除" onClose={close}>{body}</CollectionDialog>}/>}
-    <div className="library-list-toolbar">{!selection.selecting && <div className="collection-actions">
-      <button type="button" className="collection-primary" disabled={busy} onClick={() => setAdding(value => !value)}><Plus size={16}/>添加视频</button>
-      <button type="button" className="collection-flat-button" disabled={!queue.length || busy} onClick={() => { setAdding(false); selection.enter() }}><ListChecks size={16}/>多选</button>
-      <PlaylistMenu playlist={playlist} onRefresh={refresh} onRemoved={onUnlink}/>
-    </div>}
-    <ListSort entity={sortEntity}/><ListSearch query={filter} onChange={setFilter} count={visibleVideos.length} label="搜索歌单中的视频"/></div>
+    <div ref={toolbar} className="linked-folder-tools" data-selection={selection.selecting ? selectionLayout : undefined}>
+      {selection.selecting && <LinkedSelectionActions compact={selectionLayout === 'compact'} folderId={folderId} total={queue.length} selection={selection} onFolderChanged={folderChanged}
+        confirmDialog={(body, close) => <CollectionDialog title="从 B 站收藏夹移除" onClose={close}>{body}</CollectionDialog>}/>}
+      <div className="library-list-toolbar">
+        {!selection.selecting && <div className="collection-actions">
+          <button type="button" className="collection-primary" disabled={busy} onClick={() => setAdding(value => !value)}><Plus size={16}/>添加视频</button>
+          <button type="button" className="collection-flat-button" disabled={!queue.length || busy} onClick={() => { setAdding(false); selection.enter() }}><ListChecks size={16}/>多选</button>
+          <PlaylistMenu playlist={playlist} onRefresh={refresh} onRemoved={onUnlink}/>
+        </div>}
+        <div className="library-toolbar-icons">
+          <ListSort entity={sortEntity}/>
+          <ListSearch query={filter} onChange={setFilter} count={visibleVideos.length} label="搜索歌单中的视频"/>
+        </div>
+      </div>
+    </div>
     {filter.trim() && !visibleVideos.length && <p className="collection-empty">没有匹配的视频</p>}
     {refreshError && <div className="linked-refresh-error" role="alert">
       <span>{folder.data ? '已保留上次同步的内容。' : ''}{refreshError}</span>

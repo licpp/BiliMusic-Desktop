@@ -11,6 +11,7 @@ import { useListDataDuringNavigation, useListReveal } from '../shared/useListMot
 import { useListRows } from '../shared/useListRows'
 import { captureStagePreview, mountStagePreview } from './stageBackPreview'
 import { focusSearch } from '../shared/focusSearch'
+import { suppressBrowserContextMenu } from '../shared/nativeTextEditing'
 import { offlineUnavailable, useOfflinePlayback } from '../features/player/offlinePlayback'
 import { useUpdateStore } from '../services/updates'
 import { trackSubtitle } from '../domain/sourceTitle'
@@ -25,7 +26,7 @@ import { createLinkedPlaylist } from '../services/desktopApi'
 import { PlaylistEntry } from '../features/library/PlaylistEntry'
 import { LinkedFolderView } from '../features/library/LinkedFolderView'
 import type { Collection } from '../services/collections'
-import { useCompactLayout } from '../shared/useCompactLayout'
+import { useCompactLayout, useTabletWidth } from '../shared/useCompactLayout'
 import { CollectionsView, CollectionDetail } from '../features/collections/CollectionsView'
 import { QueueList } from '../features/player/QueueList'
 import { SleepTimer } from '../features/player/SleepTimer'
@@ -200,24 +201,25 @@ export function App() {
   // The native rotation can cross the layout breakpoint. Keep the same
   // LyricsView and video element until full screen has been dismissed.
   const compactPlayer = isMobile && (fullscreenLayout ? fullscreenLayout === 'compact' : compact)
+  const tabletPlayer = useTabletWidth() && isMobile
   const setVideoFullscreen = useCallback((enabled: boolean) => {
     setFullscreenLayout(enabled ? (compactPlayer ? 'compact' : 'wide') : null)
   }, [compactPlayer])
   useEffect(() => {
     if (!lyricsOpen || miniMode) setFullscreenLayout(null)
   }, [lyricsOpen, miniMode])
-  const mobilePlayer = useMobilePlayerSurface(compactPlayer, lyricsOpen && !miniMode)
-  const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, 160)
+  const mobilePlayer = useMobilePlayerSurface(compactPlayer, lyricsOpen && !miniMode, tabletPlayer)
+  const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, tabletPlayer ? 224 : 160)
   const lyricsPresent = compactPlayer ? mobilePlayer.present : immersivePresent
   const navigationRail = useRef<HTMLElement>(null)
   const lyricsWasPresent = useRef(false)
   useLayoutEffect(() => {
     const returned = lyricsWasPresent.current && !immersivePresent
     lyricsWasPresent.current = immersivePresent
-    if (!returned || compactPlayer || miniMode || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (!returned || isMobile || miniMode || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const rail = navigationRail.current?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 185, easing: 'ease-out' })
     return () => rail?.cancel()
-  }, [immersivePresent, miniMode, compactPlayer])
+  }, [immersivePresent, miniMode])
   const lyricsTrigger = useRef<HTMLElement>(null)
   const showLyrics = (trigger: HTMLElement, restoreFocus = true) => {
     lyricsTrigger.current = restoreFocus ? trigger : null
@@ -421,12 +423,12 @@ export function App() {
     finally{miniChanging.current=false;setMiniBusy(false)}
   }
 
-  const openSearch = (value?: string) => {
+  const openSearch = (value?: string, keepInputFocus = false) => {
     resetCollection(); setActiveNav('搜索'); setLyricsOpen(false)
     if (value !== undefined) {
       if (!value.trim()) searchReturn.current = undefined
       else if (searchActive && !submittedQuery) searchReturn.current = stagePreview()
-      setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(false)
+      setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(keepInputFocus)
     }
   }
   const openSearchInput = () => {
@@ -476,8 +478,8 @@ export function App() {
   useEffect(connectMediaSession, [])
   useEffect(() => {
     if(!windowReady||miniMode)return
-    void setImmersiveWindow(lyricsOpen).catch((error) => setActionError(commandErrorMessage(error)))
-  }, [lyricsOpen,miniMode,windowReady])
+    void setImmersiveWindow(lyricsOpen, tabletPlayer).catch((error) => setActionError(commandErrorMessage(error)))
+  }, [lyricsOpen,miniMode,windowReady,tabletPlayer])
   useEffect(() => {
     const refreshRecent = () => {
       void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') })
@@ -573,7 +575,7 @@ export function App() {
     const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings,state.globalEnabled))
     if (!isMobile) { const state=useShortcutStore.getState();syncGlobalShortcuts(state.bindings,state.globalEnabled) }
     window.addEventListener('keydown', handler)
-    const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
+    const disableBrowserMenu = (event: MouseEvent) => suppressBrowserContextMenu(event, isMobile)
     document.addEventListener('contextmenu', disableBrowserMenu)
     return () => { stopMouse();stopGlobal();stopSync();if(!isMobile)syncGlobalShortcuts(useShortcutStore.getState().bindings,false);window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
@@ -687,7 +689,7 @@ export function App() {
           <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={searchHistory.data || []}
             onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => setSearchFocused(false)}
             onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
-            onSearch={runSearch} onClear={() => openSearch('')} onClearHistory={() => clearHistory.mutate()} /></>}
+            onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
 
           {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
           <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>

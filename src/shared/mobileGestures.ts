@@ -6,8 +6,9 @@ import { edgeBackDirection, edgeBackTiming, edgeSwipeOffset, navigationSwipeDire
 import { stopPageMotion } from './pageMotion'
 import { slideNavigation, transformX } from './slideNavigation'
 import { holdListUpdates } from './navigationListMotion'
+import { isTextEditor } from './nativeTextEditing'
 
-const directControls = '[data-touch-picker],[data-order-editor],[data-swipe-cover],input,textarea,select,[contenteditable="true"],[role="slider"],.track-select,[data-mini-dock],.dock-track-group,.queue-sheet-handle,.lyrics-close,.comments-sheet-handle,.collection-sheet-handle,.touch-sheet-handle,video'
+const directControls = '[data-touch-picker],[data-order-editor],[data-swipe-cover],input,select,[role="slider"],.track-select,[data-mini-dock],.dock-track-group,.queue-sheet-handle,.lyrics-close,.comments-sheet-handle,.collection-sheet-handle,.touch-sheet-handle,video'
 
 function horizontallyScrollable(target: Element, surface: HTMLElement) {
   for (let item: Element | null = target; item && item !== surface; item = item.parentElement) {
@@ -122,7 +123,7 @@ export function installMobileGestures() {
     if (event.touches.length !== 1) return
     suppressUntil = 0
     const target = event.target
-    if (!(target instanceof Element) || target.closest(`${directControls},[inert]`)) return
+    if (!(target instanceof Element) || isTextEditor(target) || target.closest(`${directControls},[inert]`)) return
     const touch = event.touches[0]
     const fromEdge = isIOS && touch.clientX < 24
     const edgeSurface = fromEdge ? target.closest<HTMLElement>('[data-edge-back]') : null

@@ -1,6 +1,7 @@
 use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
+pub(super) use crate::infrastructure::providers::bilibili::valid_bvid;
 use crate::infrastructure::providers::bilibili::{
     AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
     FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, SubscribedSeasonPage,
@@ -1674,13 +1675,6 @@ fn safe_filename(title: &str) -> String {
     } else {
         value.into()
     }
-}
-
-pub(super) fn valid_bvid(value: &str) -> bool {
-    value.len() >= 10
-        && value.len() <= 16
-        && value.starts_with("BV")
-        && value.chars().all(|char| char.is_ascii_alphanumeric())
 }
 
 fn validate_track(track: &TrackInput) -> Result<(), CommandError> {

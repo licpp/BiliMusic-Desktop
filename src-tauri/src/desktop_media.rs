@@ -35,6 +35,8 @@ pub fn emit_action(
 
 pub fn initialize(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
+    crate::windows_taskbar::initialize(app);
+    #[cfg(target_os = "windows")]
     let hwnd = app
         .get_webview_window("main")
         .and_then(|window| window.hwnd().ok())
@@ -89,6 +91,8 @@ pub fn desktop_media_update(app: tauri::AppHandle, snapshot: MediaSnapshot) -> R
     let handle = app.clone();
     app.run_on_main_thread(move || {
         crate::tray_player::update(&handle, &snapshot.track);
+        #[cfg(target_os = "windows")]
+        crate::windows_taskbar::update(&snapshot.track);
         let state = handle.state::<DesktopMedia>();
         let Ok(mut guard) = state.0.lock() else {
             return;

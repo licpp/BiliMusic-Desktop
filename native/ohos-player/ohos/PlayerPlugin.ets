@@ -729,12 +729,12 @@ export class PlayerPlugin {
     const original=this.player,revision=this.mediaRevision,seek=this.seekRevision;
     if(!original || args.id!==this.id) throw new Error('当前歌曲已变更');
     const candidate=await media.createAVPlayer();let cancelled=false;let handoffRevision=-1;let originalDucked=false;
-    let ready: (()=>void) | null=null;let failed: ((error:Error)=>void) | null=null;let seekDone: (()=>void) | null=null;
+    let ready: (()=>void) | null=null;let failed: ((error:Error)=>void) | null=null;let seekDone: ((position:number)=>void) | null=null;
     const cancel=()=>{cancelled=true;failed?.(new Error('音质切换已取消'));};this.cancelSourceSwitch=cancel;
     const valid=():boolean=>!cancelled && this.player===original && this.mediaRevision===revision && this.seekRevision===seek;
     candidate.on('error',error=>{if(this.player===candidate){this.setPlaybackError('音频加载失败，请重新播放',mediaErrorCode(error.code) ?? 'audio_prepare_failed');this.emit();}else failed?.(new Error('新音源无法播放，已保留原音质'));});
     candidate.on('audioInterrupt',event=>this.audioInterrupted(candidate,event));
-    candidate.on('seekDone',()=>{seekDone?.();seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
+    candidate.on('seekDone',position=>{seekDone?.(position);seekDone=null;if(this.player===candidate){this.pendingSeek=-1;this.emit();}});
     candidate.on('stateChange',async state=>{
       if(this.player===candidate){if(state==='playing')this.status='playing';else if(state==='paused')this.status='paused';else if(state==='completed'){this.accountListening(true);this.status='paused';this.emit();void this.advance(1,true);return;}this.emit();return;}
       if(cancelled)return;
@@ -744,9 +744,22 @@ export class PlayerPlugin {
       await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('新音源准备超时，已保留原音质')),12000);ready=()=>{clearTimeout(timeout);resolve();};failed=(error:Error)=>{clearTimeout(timeout);reject(error);};candidate.url=args.url ?? '';});
       if(!valid())throw new Error('音质切换已取消');
       candidate.setVolume(0);
-      const position=Math.max(0,original.currentTime);
-      if(position>0)await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('新音源定位超时，已保留原音质')),5000);seekDone=()=>{clearTimeout(timeout);resolve();};failed=(error:Error)=>{clearTimeout(timeout);reject(error);};candidate.seek(position);});
-      if(!valid())throw new Error('音质切换已取消');
+      const deadline = Date.now() + 5000;
+      let aligned = candidate.currentTime;
+      while (Math.abs(original.currentTime - aligned) > 250) {
+        if (!valid()) throw new Error('音质切换已取消');
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error('新音源定位超时，已保留原音质');
+        const position = Math.max(0, original.currentTime);
+        aligned = await new Promise<number>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('新音源定位超时，已保留原音质')), remaining);
+          seekDone = offset => { clearTimeout(timeout); resolve(offset); };
+          failed = (error:Error) => { clearTimeout(timeout); reject(error); };
+          try { candidate.seek(position, media.SeekMode.SEEK_CLOSEST); }
+          catch (error) { failed?.(new Error(String(error))); }
+        });
+      }
+      if (!valid()) throw new Error('音质切换已取消');
       if(this.resumeAfterInterruption)throw new Error('音频被系统中断，已保留原音质');
       const rates=[0.75,1,1.25,1.75,2,0.5,1.5,3,0.25,0.125];candidate.setSpeed(rates.indexOf(this.rate) as media.PlaybackSpeed);
       this.accountListening(true);if(original.state==='playing')await original.pause();

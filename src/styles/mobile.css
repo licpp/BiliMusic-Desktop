@@ -233,8 +233,9 @@
   :root[data-layout="mobile"] input:not([type="range"]),
   :root[data-layout="mobile"] textarea,
   :root[data-layout="mobile"] select { font-size:16px!important; }
-  :root[data-layout="mobile"] body { -webkit-user-select:none;user-select:none;overscroll-behavior:none; }
-  :root[data-layout="mobile"] :is(input,textarea,.comment-row p) { -webkit-user-select:text;user-select:text; }
+  :root[data-layout="mobile"] body { overscroll-behavior:none; }
+  :root[data-layout="mobile"] :is(button,.result-main,.library-entry,.library-track,.video-part-row,.result-card,.queue-entry,.track-row) { -webkit-user-select:none;user-select:none; }
+  :root[data-layout="mobile"] .comment-row p { -webkit-user-select:text;user-select:text; }
 
   :root[data-layout="mobile"] .result-card { border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;box-shadow:none; }
   :root[data-layout="mobile"] .result-main { grid-template-columns:76px minmax(0,1fr);gap:11px;padding:11px 4px; }

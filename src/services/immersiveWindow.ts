@@ -59,11 +59,11 @@ export function setMiniPlayerPanel(expanded: boolean): Promise<void> {
   appearance = transition.then(() => undefined)
   return transition
 }
-export function setImmersiveWindow(active: boolean) {
+export function setImmersiveWindow(active: boolean, keepSystemInsets = false) {
   if (isOHOS) return Promise.resolve()
   // Serialize native frame changes so a quick open/close always restores the frame.
   appearance = appearance.catch(() => undefined).then(async () => {
-    if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0 })
+    if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
     else if (isIOS) await invoke('plugin:ios-player|control', { action: 'immersive', value: active ? 1 : 0 })
     else if (desktopFrame === 'macos') await getCurrentWindow().setTitleBarStyle(active ? 'overlay' : 'visible')
     else if (desktopFrame === 'windows') await getCurrentWindow().setDecorations(!active)

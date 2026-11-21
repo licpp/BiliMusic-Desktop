@@ -13,6 +13,7 @@ const { listPlaceholderDelay, listRevealDelay } = await load('src/shared/listLoa
 const { animatePage } = await load('src/shared/pageMotion.ts')
 const { slideNavigation } = await load('src/shared/slideNavigation.ts')
 const { captureStagePreview } = await load('src/app/stageBackPreview.ts')
+const { suppressBrowserContextMenu } = await load('src/shared/nativeTextEditing.ts')
 const { dispatchBack, installOverlayBack, isTopOverlay, registerOverlay, lockDialogBackground } = await load('src/shared/overlayStack.ts')
 const { installMobileGestures } = await load('src/shared/mobileGestures.ts', [{
   name: 'mobile-platform',
@@ -31,6 +32,54 @@ test('a gesture commits only after release distance or release velocity passes i
   assert.equal(dragDismissDirection(64, 500), 1)
   assert.equal(dragDismissDirection(-30, 50), -1)
   assert.equal(dragDismissDirection(-10, 1), 0)
+})
+
+test('mobile text editors keep the native context menu and touch selection', () => {
+  const original = { Element: globalThis.Element, document: globalThis.document, window: globalThis.window }
+  const document = new EventTarget()
+  let navigationChecks = 0
+  class Field {
+    constructor(kind) { this.kind = kind }
+    closest(selector) {
+      if (selector === 'input' && this.kind.startsWith('input:')) return { type: this.kind.split(':')[1] }
+      if (selector.startsWith('textarea,') && ['textarea', 'editable-child'].includes(this.kind)) return this
+      if (selector === '[data-swipe-tabs]') navigationChecks++
+      return null
+    }
+  }
+  Object.assign(globalThis, { Element: Field, document, window: { matchMedia: () => ({ matches: false }) } })
+  try {
+    installMobileGestures()
+    const eventFor = (type, target) => {
+      const event = new Event(type, { cancelable: true })
+      Object.defineProperty(event, 'target', { value: target })
+      return event
+    }
+    for (const kind of ['input:text', 'input:search', 'input:url', 'textarea', 'editable-child']) {
+      const target = new Field(kind)
+      const menu = eventFor('contextmenu', target)
+      suppressBrowserContextMenu(menu, true)
+      assert.equal(menu.defaultPrevented, false, kind)
+
+      const press = eventFor('touchstart', target)
+      Object.defineProperty(press, 'touches', { value: [{ clientX: 12, clientY: 20 }] })
+      document.dispatchEvent(press)
+      const move = eventFor('touchmove', target)
+      Object.defineProperty(move, 'touches', { value: [{ clientX: 100, clientY: 20 }] })
+      assert.equal(document.dispatchEvent(move), true, kind)
+    }
+    assert.equal(navigationChecks, 0)
+    for (const [kind, mobile] of [['input:checkbox', true], ['background', true], ['input:text', false]]) {
+      const event = eventFor('contextmenu', new Field(kind))
+      suppressBrowserContextMenu(event, mobile)
+      assert.equal(event.defaultPrevented, true, kind)
+    }
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete globalThis[key]
+      else globalThis[key] = value
+    }
+  }
 })
 
 test('only a rightward release can pop a page and a dock drag has a single axis', () => {
@@ -223,6 +272,35 @@ test('a swipe keeps the selected indicator and the panel in step through release
     indicator.resolve()
     await Promise.all([panel.promise, indicator.promise])
     assert.deepEqual(calls.slice(2), ['commit', 'indicator', 'panel'])
+  } finally { globalThis.window = original }
+})
+
+test('a player fade can settle without translating and retain a dragged exit position', async () => {
+  const original = globalThis.window
+  globalThis.window = { matchMedia: () => Object.assign(new EventTarget(), { matches: false }) }
+  try {
+    for (const [position, from, to] of [[0, 0, 1], [96, 1, 0], [0, .4, 1]]) {
+      const { promise, resolve } = Promise.withResolvers()
+      let settled = false
+      const panel = {
+        isConnected: true,
+        animate(frames) {
+          assert.deepEqual(frames, [
+            { transform: `translate3d(0,${position}px,0)`, opacity: from },
+            { transform: `translate3d(0,${position}px,0)`, opacity: to },
+          ])
+          return { finished: promise, cancel() {} }
+        },
+      }
+      const animation = slideNavigation(panel, position, position, {
+        duration: 200, axis: 'y', opacity: { from, to },
+      }, () => { settled = true })
+      assert.ok(animation)
+      assert.equal(settled, false)
+      resolve()
+      await promise
+      assert.equal(settled, true)
+    }
   } finally { globalThis.window = original }
 })
 

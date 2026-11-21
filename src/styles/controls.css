@@ -6,8 +6,6 @@
 :where(:root:not([data-layout="large"])) input[type="checkbox"]:not([data-native]) {
   -webkit-appearance: none;
   appearance: none;
-  display: inline-grid;
-  place-content: center;
   flex: none;
   width: 18px;
   height: 18px;
@@ -16,7 +14,7 @@
   padding: 0;
   border: 1.5px solid color-mix(in srgb, var(--muted) 52%, var(--line));
   border-radius: 5.5px;
-  background: var(--base);
+  background-color: var(--base);
   color: #07131b;
   cursor: pointer;
   transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 110ms ease;
@@ -26,33 +24,26 @@
   min-width: 1px;
   height: 1px;
 }
-:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native])::before {
-  content: '';
-  width: 11px;
-  height: 11px;
-  transform: scale(0);
-  transition: transform 140ms cubic-bezier(.22, 1, .36, 1);
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.3 4.8 8.9 9.8 3.3'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.3 4.8 8.9 9.8 3.3'/%3E%3C/svg%3E") center / contain no-repeat;
-}
-:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):hover:not(:disabled) {
-  border-color: var(--cyan);
-}
-:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked {
-  border-color: var(--cyan);
-  background: var(--cyan);
-}
-:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked::before {
-  transform: scale(1);
-}
-:root:not([data-layout="large"]) input[type="checkbox"].track-select:checked {
-  border-color: var(--coral);
-  background: var(--coral);
+:root:not([data-layout="large"]) input[type="checkbox"].track-select {
+  --checkbox-accent: var(--coral);
 }
 :root[data-theme="light"]:not([data-layout="large"]) input[type="checkbox"]:not([data-native]) {
-  background: #ffffff;
+  background-color: #ffffff;
   color: #ffffff;
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):hover:not(:disabled) {
+  border-color: var(--checkbox-accent, var(--cyan));
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked {
+  border-color: var(--checkbox-accent, var(--cyan));
+  background-color: var(--checkbox-accent, var(--cyan));
+  /* Paint both strokes on the input so the mark also renders in WebKit. */
+  background-image:
+    linear-gradient(45deg, transparent 34%, currentColor 37% 63%, transparent 66%),
+    linear-gradient(135deg, transparent 40%, currentColor 42% 58%, transparent 60%);
+  background-size: 5px 5px, 8px 8px;
+  background-position: calc(50% - 3px) calc(50% + 1.5px), calc(50% + 1.5px) center;
+  background-repeat: no-repeat;
 }
 :root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):focus-visible {
   outline: 2px solid var(--cyan);
@@ -61,6 +52,16 @@
 :root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):disabled {
   opacity: .45;
   cursor: default;
+}
+
+@media (forced-colors: active) {
+  :root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+    outline-color: Highlight;
+  }
 }
 
 :root:not([data-layout="large"]) input[type="radio"]:not([data-native]) {
@@ -963,7 +964,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  input[type="checkbox"], input[type="checkbox"]::before,
+  input[type="checkbox"],
   input[type="radio"], input[type="radio"]::before,
   .playback-rate-pills > button, .download-format-options > button,
   .qr-action-button, .account-logout-button, .settings-card .theme-options > button {

@@ -1,5 +1,12 @@
 export type BiliSearchItem = { publishedAt?: number; bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
+
+export function isVideoSearchInput(input: string): boolean {
+  const value = input.trim()
+  return /^BV[0-9a-z]{8,14}$/i.test(value)
+    || /^(?:https?:\/\/)?(?:(?:(?:www|m)\.)?bilibili\.com\/video\/BV[0-9a-z]{8,14}\/?(?:[?#]\S*)?|b23\.tv\/\S+)$/i.test(value)
+}
+
 export type BiliVideoPart = { cid: number; page: number; title: string; durationSeconds: number; coverUrl: string; firstFrameUrl?: string }
 export type BiliVideoAccess = 'paid' | 'chargeExclusive' | 'chargeEarlyAccess'
 export type BiliVideoParts = { access?: BiliVideoAccess; playCount?: number; chapterContext?: boolean; publishedAt?: number; season?: SeasonSummary; bvid: string; aid: number; title: string; coverUrl: string; uploaderName: string; uploaderId: number; parts: BiliVideoPart[] }

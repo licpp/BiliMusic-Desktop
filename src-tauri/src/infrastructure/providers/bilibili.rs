@@ -31,6 +31,50 @@ const API_ORIGIN: &str = "https://api.bilibili.com";
 const WEB_ORIGIN: &str = "https://www.bilibili.com/";
 static FAVORITE_READ: Mutex<Option<Instant>> = Mutex::const_new(None);
 
+pub(crate) fn valid_bvid(value: &str) -> bool {
+    (10..=16).contains(&value.len())
+        && value.starts_with("BV")
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn normalize_bvid(value: &str) -> Option<String> {
+    let prefix = value.get(..2)?;
+    if !prefix.eq_ignore_ascii_case("BV") {
+        return None;
+    }
+    let bvid = format!("BV{}", &value[2..]);
+    valid_bvid(&bvid).then_some(bvid)
+}
+
+fn video_link(input: &str) -> Option<Url> {
+    let url = Url::parse(input)
+        .or_else(|_| Url::parse(&format!("https://{input}")))
+        .ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return None;
+    }
+    match url.host_str()? {
+        "b23.tv" if url.path().len() > 1 => Some(url),
+        "www.bilibili.com" | "m.bilibili.com" | "bilibili.com" if bvid_from_url(&url).is_some() => {
+            Some(url)
+        }
+        _ => None,
+    }
+}
+
+fn bvid_from_url(url: &Url) -> Option<String> {
+    let mut path = url.path_segments()?;
+    if path.next()? != "video" {
+        return None;
+    }
+    let bvid = normalize_bvid(path.next()?)?;
+    path.all(str::is_empty).then_some(bvid)
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("网络请求失败: {0}")]
@@ -49,6 +93,8 @@ pub enum ProviderError {
     DanmakuDecode(String),
     #[error("请先登录 Bilibili 账号")]
     NotAuthenticated,
+    #[error("未找到视频，请复制完整的 B 站视频链接或 BV 号")]
+    InvalidVideoLink,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -505,6 +551,10 @@ struct DetailData {
     aid: i64,
     title: String,
     pic: String,
+    #[serde(default)]
+    desc: String,
+    #[serde(default)]
+    duration: u64,
     owner: Owner,
     #[serde(default)]
     pages: Vec<PageData>,
@@ -867,7 +917,10 @@ impl BilibiliProvider {
         Ok(data.list.unwrap_or_default())
     }
 
-    pub async fn subscribed_seasons(&self, page: u32) -> Result<SubscribedSeasonPage, ProviderError> {
+    pub async fn subscribed_seasons(
+        &self,
+        page: u32,
+    ) -> Result<SubscribedSeasonPage, ProviderError> {
         let uid = self
             .account_profile()
             .await?
@@ -1053,7 +1106,11 @@ impl BilibiliProvider {
 
     pub async fn search_suggestions(&self, keyword: &str) -> Result<Vec<String>, ProviderError> {
         let keyword = keyword.trim();
-        if keyword.is_empty() || keyword.chars().count() > 100 {
+        if keyword.is_empty()
+            || keyword.chars().count() > 100
+            || normalize_bvid(keyword).is_some()
+            || video_link(keyword).is_some()
+        {
             return Ok(vec![]);
         }
         let value: serde_json::Value = self
@@ -1084,6 +1141,37 @@ impl BilibiliProvider {
         page: u32,
         page_size: u32,
     ) -> Result<SearchPage, ProviderError> {
+        let link = video_link(keyword);
+        let bvid = match (normalize_bvid(keyword), link) {
+            (Some(bvid), _) => Some(bvid),
+            (None, Some(link)) => Some(self.resolve_video_link(link).await?),
+            (None, None) => None,
+        };
+        if let Some(bvid) = bvid {
+            let page = page.max(1);
+            let items = if page == 1 {
+                let detail = self.video_detail(&bvid).await?;
+                vec![SearchItem {
+                    published_at: detail.pubdate.filter(|date| *date > 0),
+                    bvid: detail.bvid,
+                    title: detail.title,
+                    uploader_name: detail.owner.name,
+                    uploader_id: detail.owner.mid,
+                    cover_url: normalize_url(&detail.pic),
+                    duration_seconds: detail.duration,
+                    play_count: detail.stat.and_then(|stat| stat.view).unwrap_or(0),
+                    description: detail.desc,
+                }]
+            } else {
+                vec![]
+            };
+            return Ok(SearchPage {
+                items,
+                page,
+                page_size: page_size.clamp(1, 50),
+                total: 1,
+            });
+        }
         let mut url = self.api_url("/x/web-interface/search/type");
         url.query_pairs_mut()
             .append_pair("search_type", "video")
@@ -1113,6 +1201,33 @@ impl BilibiliProvider {
                 })
                 .collect(),
         })
+    }
+
+    async fn resolve_video_link(&self, mut url: Url) -> Result<String, ProviderError> {
+        if url.host_str() != Some("b23.tv") {
+            return bvid_from_url(&url).ok_or(ProviderError::InvalidVideoLink);
+        }
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(5))
+            .user_agent("Mozilla/5.0")
+            .build()?;
+        for _ in 0..3 {
+            let response = client.get(url.clone()).send().await?.error_for_status()?;
+            let next = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .filter(|_| response.status().is_redirection())
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| url.join(value).ok())
+                .and_then(|next| video_link(next.as_str()))
+                .ok_or(ProviderError::InvalidVideoLink)?;
+            if next.host_str() != Some("b23.tv") {
+                return bvid_from_url(&next).ok_or(ProviderError::InvalidVideoLink);
+            }
+            url = next;
+        }
+        Err(ProviderError::InvalidVideoLink)
     }
 
     async fn ensure_search_session(
@@ -1304,7 +1419,12 @@ impl BilibiliProvider {
             }
         }
         let dash = self.play_dash(bvid, cid, expanded).await?;
-        Self::select_video_for_platform(&dash.video, video_height, cfg!(target_os = "ios"), compatible)
+        Self::select_video_for_platform(
+            &dash.video,
+            video_height,
+            cfg!(target_os = "ios"),
+            compatible,
+        )
     }
 
     pub async fn invalidate_playback(&self, bvid: &str, cid: i64) {
@@ -1469,7 +1589,11 @@ impl BilibiliProvider {
         let preferred_stream = within_limit(preferred);
         let avc_stream = within_limit("avc");
         let stream = if height == 0 || compatible {
-            let budget = if ios || compatible { 650_000 } else { 1_200_000 };
+            let budget = if ios || compatible {
+                650_000
+            } else {
+                1_200_000
+            };
             let compatible = || {
                 streams.iter().filter(|s| {
                     s.codecs.starts_with(preferred) && s.height > 0 && s.height <= maximum
@@ -1892,14 +2016,14 @@ fn account_profile_from_nav(data: NavData) -> AccountProfile {
     }
 }
 
-    #[cfg(test)]
-    mod nav_profile_tests {
-        use super::{account_profile_from_nav, NavData};
+#[cfg(test)]
+mod nav_profile_tests {
+    use super::{NavData, account_profile_from_nav};
 
-        #[test]
-        fn parses_vip_tiers_and_senior_member_from_nav() {
-            let ten_year: NavData = serde_json::from_str(
-                r#"{
+    #[test]
+    fn parses_vip_tiers_and_senior_member_from_nav() {
+        let ten_year: NavData = serde_json::from_str(
+            r#"{
                     "isLogin": true,
                     "mid": 42,
                     "uname": "音乐旅人",
@@ -1910,18 +2034,18 @@ fn account_profile_from_nav(data: NavData) -> AccountProfile {
                     "vipType": 2,
                     "vip_label": { "text": "十年大会员", "label_theme": "ten_annual_vip" }
                 }"#,
-            )
-            .expect("ten year nav");
-            let profile = account_profile_from_nav(ten_year);
-            assert_eq!(profile.level, Some(6));
-            assert_eq!(profile.senior_member, Some(true));
-            assert_eq!(profile.vip_active, Some(true));
-            assert_eq!(profile.vip_type, Some(2));
-            assert_eq!(profile.vip_theme.as_deref(), Some("ten_annual_vip"));
-            assert_eq!(profile.vip_label.as_deref(), Some("十年大会员"));
+        )
+        .expect("ten year nav");
+        let profile = account_profile_from_nav(ten_year);
+        assert_eq!(profile.level, Some(6));
+        assert_eq!(profile.senior_member, Some(true));
+        assert_eq!(profile.vip_active, Some(true));
+        assert_eq!(profile.vip_type, Some(2));
+        assert_eq!(profile.vip_theme.as_deref(), Some("ten_annual_vip"));
+        assert_eq!(profile.vip_label.as_deref(), Some("十年大会员"));
 
-            let expired: NavData = serde_json::from_str(
-                r#"{
+        let expired: NavData = serde_json::from_str(
+            r#"{
                     "isLogin": true,
                     "mid": 43,
                     "uname": "旧会员",
@@ -1931,15 +2055,15 @@ fn account_profile_from_nav(data: NavData) -> AccountProfile {
                     "vipType": 2,
                     "vip_label": { "text": "年度大会员", "label_theme": "annual_vip" }
                 }"#,
-            )
-            .expect("expired nav");
-            let expired_profile = account_profile_from_nav(expired);
-            assert_eq!(expired_profile.vip_active, Some(false));
-            assert_eq!(expired_profile.vip_type, None);
-            assert_eq!(expired_profile.vip_theme, None);
-            assert_eq!(expired_profile.vip_label, None);
-        }
+        )
+        .expect("expired nav");
+        let expired_profile = account_profile_from_nav(expired);
+        assert_eq!(expired_profile.vip_active, Some(false));
+        assert_eq!(expired_profile.vip_type, None);
+        assert_eq!(expired_profile.vip_theme, None);
+        assert_eq!(expired_profile.vip_label, None);
     }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1958,7 +2082,8 @@ mod tests {
                 {"type": 21, "id": 0, "mid": 12},
                 {"type": 21, "id": 123}
             ]
-        })).unwrap();
+        }))
+        .unwrap();
         let page = page.into_season_page(1);
         assert_eq!(page.next_page, Some(2));
         assert_eq!(page.items.len(), 1);
@@ -1972,7 +2097,8 @@ mod tests {
         let page: CollectedFoldersData = from_value(json!({
             "has_more": true,
             "list": [{"type": 11, "id": 556}]
-        })).unwrap();
+        }))
+        .unwrap();
         let page = page.into_season_page(2);
         assert!(page.items.is_empty());
         assert_eq!(page.next_page, Some(3));
@@ -1980,7 +2106,8 @@ mod tests {
         let page: CollectedFoldersData = from_value(json!({
             "has_more": false,
             "list": null
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(page.into_season_page(3).next_page, None);
     }
 
@@ -2091,14 +2218,18 @@ mod tests {
             {"height":480,"bandwidth":500000,"codecs":"hvc1.1.6.L93.90","baseUrl":"https://cdn.test/hevc480","mimeType":"video/mp4"},
             {"height":360,"bandwidth":300000,"codecs":"avc1.64001e","baseUrl":"https://cdn.test/avc360","mimeType":"video/mp4"}
         ])).unwrap();
-        let mac = super::BilibiliProvider::select_video_for_platform(&streams, 0, false, false).unwrap();
-        let ios = super::BilibiliProvider::select_video_for_platform(&streams, 0, true, false).unwrap();
+        let mac =
+            super::BilibiliProvider::select_video_for_platform(&streams, 0, false, false).unwrap();
+        let ios =
+            super::BilibiliProvider::select_video_for_platform(&streams, 0, true, false).unwrap();
         assert_eq!(mac.video_url, "https://cdn.test/avc720");
         assert_eq!(ios.video_url, "https://cdn.test/hevc480");
-        let car = super::BilibiliProvider::select_video_for_platform(&streams, 0, false, true).unwrap();
+        let car =
+            super::BilibiliProvider::select_video_for_platform(&streams, 0, false, true).unwrap();
         assert_eq!(car.video_url, "https://cdn.test/avc360");
         let compatible_retry =
-            super::BilibiliProvider::select_video_for_platform(&streams, 1080, false, true).unwrap();
+            super::BilibiliProvider::select_video_for_platform(&streams, 1080, false, true)
+                .unwrap();
         assert_eq!(compatible_retry.video_url, car.video_url);
         assert!(crate::infrastructure::fragmented_mp4::prefer_segmented(
             1800,
@@ -2349,6 +2480,65 @@ mod tests {
             clean_html("城市<em class=\"keyword\">音乐</em>&amp;夜"),
             "城市音乐&夜"
         );
+    }
+
+    #[test]
+    fn exact_video_search_recognizes_ids_and_only_bilibili_video_links() {
+        use super::{bvid_from_url, normalize_bvid, video_link};
+
+        assert_eq!(
+            normalize_bvid("bv1EAHyeKEkG").as_deref(),
+            Some("BV1EAHyeKEkG")
+        );
+        assert!(normalize_bvid("陶喆 BV1EAHyeKEkG").is_none());
+        for input in [
+            "https://www.bilibili.com/video/BV1EAHyeKEkG/?p=2#t=12",
+            "m.bilibili.com/video/BV1EAHyeKEkG",
+        ] {
+            assert_eq!(
+                bvid_from_url(&video_link(input).unwrap()).as_deref(),
+                Some("BV1EAHyeKEkG")
+            );
+        }
+        assert_eq!(
+            video_link("https://b23.tv/ba99").unwrap().host_str(),
+            Some("b23.tv")
+        );
+        for input in [
+            "https://www.bilibili.com.example/video/BV1EAHyeKEkG",
+            "https://www.bilibili.com/video/BV1EAHyeKEkG/comments",
+            "https://www.bilibili.com/?bvid=BV1EAHyeKEkG",
+            "https://www.bilibili.com@other.example/video/BV1EAHyeKEkG",
+            "https://b23.tv:1234/ba99",
+        ] {
+            assert!(video_link(input).is_none(), "{input}");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Bilibili network access"]
+    async fn live_exact_video_search() {
+        let provider = super::BilibiliProvider::new().unwrap();
+        let expected = "BV1EAHyeKEkG";
+        for query in [
+            expected,
+            "https://www.bilibili.com/video/BV1EAHyeKEkG/?p=1",
+            "https://b23.tv/BV1EAHyeKEkG",
+        ] {
+            let result = provider.search(query, 1, 20).await.unwrap();
+            assert_eq!(result.total, 1);
+            assert_eq!(result.items.len(), 1);
+            let item = &result.items[0];
+            assert_eq!(item.bvid, expected);
+            assert!(
+                !item.title.is_empty()
+                    && !item.uploader_name.is_empty()
+                    && !item.cover_url.is_empty()
+            );
+            assert!(item.duration_seconds > 0);
+        }
+        let second = provider.search(expected, 2, 20).await.unwrap();
+        assert!(second.items.is_empty());
     }
 
     #[test]

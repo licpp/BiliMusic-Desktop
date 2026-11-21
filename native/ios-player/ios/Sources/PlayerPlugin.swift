@@ -298,8 +298,8 @@ class PlayerPlugin: Plugin {
                                     self.cancelSourceSwitch("新音源不可用，已保留原音质")
                                     return
                                 }
-                                let handoff: (Bool) -> Void = { [weak self, weak candidate] aligned in
-                                    guard let self, let candidate, self.sourceSwitchRevision == sourceRevision,
+                                func alignAndHandoff(_ aligned: Bool) {
+                                    guard self.sourceSwitchRevision == sourceRevision,
                                           self.sourceCandidate === candidate else { return }
                                     guard aligned, self.generation == request, self.seekRevision == seek,
                                           self.player === original, candidate.status == .readyToPlay,
@@ -307,15 +307,17 @@ class PlayerPlugin: Plugin {
                                         self.cancelSourceSwitch("新音源定位失败，已保留原音质")
                                         return
                                     }
+                                    let position = original.currentTime()
+                                    if position.seconds.isFinite,
+                                       abs(position.seconds - candidate.currentTime().seconds) > 0.25 {
+                                        candidate.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero) { ready in
+                                            self.onMain { alignAndHandoff(ready) }
+                                        }
+                                        return
+                                    }
                                     self.handoffSource(item, from: candidate, gainDb: gainDb)
                                 }
-                                let position=original.currentTime()
-                                if position.seconds.isFinite, abs(position.seconds-candidate.currentTime().seconds) > 0.15 {
-                                    candidate.seek(to: position, toleranceBefore: CMTime(seconds:0.05,preferredTimescale:600),
-                                                   toleranceAfter: CMTime(seconds:0.05,preferredTimescale:600)) { [weak self] aligned in
-                                        self?.onMain { handoff(aligned) }
-                                    }
-                                } else { handoff(true) }
+                                alignAndHandoff(true)
                             }
                         }
                     }

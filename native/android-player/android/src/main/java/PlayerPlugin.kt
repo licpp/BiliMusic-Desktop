@@ -45,6 +45,7 @@ class ControlArgs {
     var settingsRevision: Long = 0
     lateinit var action: String
     var value: Double = 0.0
+    var keepSystemInsets: Boolean = false
     var id: String = ""
     var collectionRef: String? = null
     var title: String = "BiliMusic"
@@ -226,6 +227,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     private var previousOrientation: Int? = null
     private var immersive = false
+    private var keepSystemInsets = false
+    private val drawsUnderSystemBars get() = immersive && !keepSystemInsets
     private var largeScreen = false
 
     private fun setVideoFullscreen(enabled: Boolean) {
@@ -264,10 +267,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
             val params = view.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-            val left = if (immersive) 0 else bars.left
-            val top = if (immersive) 0 else bars.top
-            val right = if (immersive) 0 else bars.right
-            val bottom = if (immersive) 0 else bars.bottom
+            // Tablet lyrics use the same viewport as browsing so the WebView
+            // does not resize during a crossfade.
+            val drawUnderBars = drawsUnderSystemBars
+            val left = if (drawUnderBars) 0 else bars.left
+            val top = if (drawUnderBars) 0 else bars.top
+            val right = if (drawUnderBars) 0 else bars.right
+            val bottom = if (drawUnderBars) 0 else bars.bottom
             params?.let {
                 if (it.leftMargin != left || it.topMargin != top || it.rightMargin != right || it.bottomMargin != bottom) {
                     it.setMargins(left, top, right, bottom)
@@ -275,10 +281,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 }
             }
             val density = activity.resources.displayMetrics.density
-            val safeTop = if (immersive) bars.top / density else 0f
-            val safeBottom = if (immersive && keyboard.bottom == 0) bars.bottom / density else 0f
-            val safeLeft = if (immersive) bars.left / density else 0f
-            val safeRight = if (immersive) bars.right / density else 0f
+            val safeTop = if (drawUnderBars) bars.top / density else 0f
+            val safeBottom = if (drawUnderBars && keyboard.bottom == 0) bars.bottom / density else 0f
+            val safeLeft = if (drawUnderBars) bars.left / density else 0f
+            val safeRight = if (drawUnderBars) bars.right / density else 0f
             val keyboardOverlap = (keyboard.bottom - bottom).coerceAtLeast(0) / density
             val layoutHeight = (view.rootView.height - top - bottom).coerceAtLeast(0) / density
             webView.evaluateJavascript("document.documentElement.style.setProperty('--native-layout-height','${layoutHeight}px');" +
@@ -376,9 +382,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             } else if (args.action == "videoFullscreen") {
                 setVideoFullscreen(args.value > 0)
             } else if (args.action == "immersive") {
+                val drewUnderSystemBars = drawsUnderSystemBars
                 immersive = args.value > 0
+                keepSystemInsets = args.keepSystemInsets
                 updateSystemBars()
-                managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
+                if (drewUnderSystemBars != drawsUnderSystemBars) {
+                    managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
+                }
             } else if (args.action == "theme") {
                 val light = args.value > 0
                 val controller = androidx.core.view.WindowCompat.getInsetsController(activity.window, activity.window.decorView)

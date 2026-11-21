@@ -13,14 +13,13 @@
   transition-duration: 260ms;
 }
 @media (min-width: 961px) {
-  .lyrics-view .lyrics-cover,
-  .lyrics-view .lyrics-track-meta {
+  :root:not([data-layout="mobile"]) .lyrics-view :is(.lyrics-cover,.lyrics-track-meta) {
     opacity: 0;
     transform: translateY(10px);
     transition: transform 300ms cubic-bezier(.22,1,.36,1), opacity 220ms ease;
   }
-  .lyrics-view[data-panel-open] .lyrics-cover { opacity: 1; transform: none; transition-delay: 40ms; }
-  .lyrics-view[data-panel-open] .lyrics-track-meta { opacity: 1; transform: none; transition-delay: 85ms; }
+  :root:not([data-layout="mobile"]) .lyrics-view[data-panel-open] .lyrics-cover { opacity: 1; transform: none; transition-delay: 40ms; }
+  :root:not([data-layout="mobile"]) .lyrics-view[data-panel-open] .lyrics-track-meta { opacity: 1; transform: none; transition-delay: 85ms; }
 }
 .collection-dialog-layer[data-closing] {
   opacity: 0;
@@ -126,6 +125,7 @@
   display:grid;
   grid-template-columns:minmax(0,1fr);
   background:var(--base);
+  opacity:var(--player-opacity,1);
   transform:translate3d(0,calc(var(--player-offset,100%) + var(--panel-drag-y,0px)),0);
 }
 .mobile-player-surface.lyrics-immersive > .immersive-backdrop,
@@ -284,11 +284,19 @@
   .content-stage[data-navigation-drag] > .stage-route-frame { transform:translate3d(var(--navigation-drag-x,0px),0,0); }
 }
 
-/* The moving lyrics stay above the playback controls, even mid-gesture. */
-:root[data-layout="mobile"] .lyrics-view[data-panel-dragging] {
-  clip-path:inset(0 0 max(0px,var(--panel-drag-y,0px)) 0);
-}
-:root[data-layout="mobile"] .lyrics-view:not([data-panel-open]) {
-  clip-path:inset(0 0 var(--lyrics-exit-y,38px) 0);
-  transition-property:transform,opacity,clip-path;
+@media (min-width:961px) {
+  :root[data-layout="mobile"] .app-shell.lyrics-immersive > .rail { visibility:visible; }
+  :root[data-layout="mobile"]:not([data-video-fullscreen]) .app-shell.lyrics-immersive > .lyrics-view {
+    transform:translate3d(0,var(--lyrics-exit-y,0px),0);
+  }
+  :root[data-layout="mobile"]:not([data-video-fullscreen]) .app-shell.lyrics-immersive > .lyrics-view[data-panel-open] {
+    transform:translate3d(0,var(--panel-drag-y,0px),0);
+  }
+  @media (prefers-reduced-motion:no-preference) {
+    :root[data-layout="mobile"] .app-shell.lyrics-immersive > .immersive-backdrop,
+    :root[data-layout="mobile"] .app-shell.lyrics-immersive > .immersive-backdrop[data-panel-open],
+    :root[data-layout="mobile"] .app-shell.lyrics-immersive > .lyrics-view:not([data-panel-dragging]) {
+      transition:opacity 200ms ease-out,transform 200ms ease-out;
+    }
+  }
 }

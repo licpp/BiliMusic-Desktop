@@ -8,7 +8,7 @@ import { withTrackTitle } from '../../domain/sourceTitle'
 import { sourceTrack } from '../../domain/importedPresentation'
 import { syncOHOSQueue } from './ohosAudio'
 import { createOperationScope } from './operationScope'
-import { prepareAudioSource } from './sourceSwitch'
+import { alignAudioSource, prepareAudioSource } from './sourceSwitch'
 import { accountEpoch, advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS, isAndroid, isOHOS } from '../../services/platform'
 import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
@@ -863,12 +863,17 @@ async function switchDesktopSource(url:string, valid:()=>boolean, gainDb = track
   const candidate=await prepareAudioSource(url,playbackClock,valid,usePlayerStore.getState().rate)
   try{
     if(!valid())return
-    const state=usePlayerStore.getState(),playing=state.status==='playing'||state.status==='buffering'
-    candidate.playbackRate=state.rate
-    if(playing)await candidate.play()
-    if(!valid())return
-    // A user's pause during preparation always wins over the captured state.
-    const latest=usePlayerStore.getState();if(latest.status!=='playing'&&latest.status!=='buffering')candidate.pause()
+    const shouldPlay=()=>['playing','buffering'].includes(usePlayerStore.getState().status)
+    const deadline=performance.now()+5000
+    do {
+      candidate.playbackRate=usePlayerStore.getState().rate
+      if(shouldPlay() && candidate.paused)await candidate.play()
+      if(!valid())return
+      await alignAudioSource(candidate,playbackClock,valid,deadline)
+      if(!valid())return
+      if(!shouldPlay())candidate.pause()
+    } while(shouldPlay() && candidate.paused && performance.now()<deadline)
+    if(shouldPlay() && candidate.paused)throw new Error('新音源暂时无法播放，已保留原音质')
     const previous=audio;bindAudioEvents(candidate);audio=candidate
     previous?.pause();previous?.removeAttribute('src');previous?.load()
     trackGainDb=safeGainDb(gainDb);applyDesktopOutput();candidate.muted=false

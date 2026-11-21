@@ -234,6 +234,25 @@ class BackgroundPlaybackTest {
         assertEquals("playing", service.snapshot().getString("status"))
         service.control("seek", 45.0); idle(); assertEquals(45.0, service.snapshot().getDouble("position"), 0.1)
     }
+    @Test fun mediaServerDeathRecreatesThePlayerOnceAtTheCurrentPosition() {
+        load()
+        service.control("seek", 32.0)
+        idle()
+        val failed = player()
+        shadowOf(failed).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        val recovery = requests.single()
+        assertTrue(recovery.second.getBoolean("refresh"))
+        assertEquals(32.0, recovery.second.getDouble("position"), 0.1)
+        assertFalse(recovery.second.optBoolean("compatibleAudio"))
+        reply(recovery)
+        assertNotSame(failed, player())
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(32.0, service.snapshot().getDouble("position"), 0.1)
+
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        assertEquals(1, requests.size)
+        assertEquals("android_media:100:1", service.snapshot().getString("errorCode"))
+    }
     @Test fun unrecognizedStreamRetriesWithCompatibleAudioWithoutLosingResumePosition() {
         val broken = "$url-broken"
         ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(broken), ShadowMediaPlayer.MediaInfo(120_000, 1000))
@@ -275,6 +294,25 @@ class BackgroundPlaybackTest {
         shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_UNKNOWN, MediaPlayer.MEDIA_ERROR_MALFORMED)
         assertTrue(requests.isEmpty())
         assertEquals("本地音频无法播放，请联网后重新下载", service.snapshot().getString("error"))
+    }
+    @Test fun aSlowQualitySeekRealignsBeforeSwitchingPlayers() {
+        val alternate = "$url-slow-quality"
+        ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(alternate), ShadowMediaPlayer.MediaInfo(120_000, 100))
+        load()
+        val original = player()
+        shadowOf(original).setCurrentPosition(20_000)
+        val replies = mutableListOf<String?>()
+        service.switchSource(alternate, "1", reply = { replies.add(it) })
+        val candidate = field("sourceCandidate") as MediaPlayer
+        shadowOf(candidate).setSeekDelay(400)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
+        assertSame(original, player())
+        shadowOf(original).setCurrentPosition(23_000)
+        shadowOf(candidate).setSeekDelay(0)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        assertSame(candidate, player())
+        assertEquals(listOf<String?>(null), replies)
+        assertEquals(23.4, service.snapshot().getDouble("position"), 0.25)
     }
     @Test fun qualityChangePreservesPausedPositionAndPlaybackSession() {
         val alternate = "$url-quality"

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Clock3, Search, X } from 'lucide-react'
+import { isVideoSearchInput } from '../../domain/bilibili'
 import { getSearchSuggestions } from '../../services/desktopApi'
+import { focusSearch } from '../../shared/focusSearch'
 
 type Props = {
   value: string; focused: boolean; history: string[]
@@ -26,7 +28,7 @@ export function SearchField(props: Props) {
   useEffect(() => () => clearTimeout(blurTimer.current), [])
   const suggestions = useQuery({
     queryKey: ['search-suggestions', debounced], queryFn: () => getSearchSuggestions(debounced),
-    enabled: props.focused && !composing && !dismissed && !!debounced && debounced === keyword,
+    enabled: props.focused && !composing && !dismissed && !!debounced && debounced === keyword && !isVideoSearchInput(keyword),
     staleTime: 60_000, gcTime: 120_000, retry: false,
   })
   const isHistory = !keyword
@@ -38,9 +40,17 @@ export function SearchField(props: Props) {
   const choose = (value: string) => {
     setDismissed(true); setActive(-1); props.onSearch(value); input.current?.blur()
   }
+  const clear = () => {
+    clearTimeout(blurTimer.current)
+    focusSearch(() => {
+      setDismissed(false)
+      setActive(-1)
+      props.onClear()
+    }, input)
+  }
   return <div className="search-field">
     <Search size={17} />
-    <input ref={input} value={props.value} role="combobox" aria-label="搜索歌曲、歌手或专辑" aria-autocomplete="list" aria-expanded={visible} aria-controls="search-suggestions" aria-activedescendant={visible && active >= 0 ? `search-suggestion-${active}` : undefined} autoComplete="off"
+    <input ref={input} value={props.value} role="combobox" aria-label="搜索歌曲、歌手、BV 号或链接" aria-autocomplete="list" aria-expanded={visible} aria-controls="search-suggestions" aria-activedescendant={visible && active >= 0 ? `search-suggestion-${active}` : undefined} autoComplete="off"
       onFocus={() => { clearTimeout(blurTimer.current); setDismissed(false); props.onFocus() }}
       onBlur={() => { blurTimer.current = setTimeout(props.onBlur, 120) }}
       onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
@@ -55,8 +65,10 @@ export function SearchField(props: Props) {
         } else if (event.key === 'Enter' && active >= 0 && options[active]) {
           event.preventDefault(); choose(options[active])
         }
-      }} placeholder="搜索歌曲、歌手或专辑" />
-    {props.value && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页" onClick={props.onClear}><X size={16}/></button>}
+      }} placeholder="搜索歌曲、歌手、BV 号或链接" />
+    {props.value && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页"
+      onMouseDown={event => { if (document.activeElement === input.current) event.preventDefault() }}
+      onClick={clear}><X size={16}/></button>}
     {visible && <div className="search-history-popover search-suggestions" id="search-suggestions" role="listbox" aria-label={isHistory ? '搜索历史' : 'B站搜索建议'}>
       <header><span>{isHistory ? '最近搜索' : '搜索建议'}</span>{isHistory && <button type="button" onMouseDown={event => event.preventDefault()} onClick={props.onClearHistory}>清除</button>}</header>
       {options.map((word, index) => <button type="button" key={word} id={`search-suggestion-${index}`} role="option" aria-selected={index === active} onMouseDown={event => event.preventDefault()} onClick={() => choose(word)}>{isHistory ? <Clock3 size={14}/> : <Search size={14}/>}<span>{word}</span></button>)}

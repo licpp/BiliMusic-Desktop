@@ -9,6 +9,31 @@
 .library-list-toolbar:has(.list-search.open)>.library-toolbar-icons { flex:1; }
 .library-toolbar-icons>.list-search.open { flex:1;min-width:0;max-width:340px; }
 .library-toolbar-icons>.list-search.open .list-search-field { width:100%; }
+.linked-folder-tools .library-toolbar-icons { margin-inline-start:auto; }
+.linked-folder-tools:has(.list-search.open) .library-toolbar-icons>.list-sort-control { display:none; }
+.linked-folder-tools[data-selection] {
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 10px;margin:12px 0 16px;
+}
+.linked-folder-tools[data-selection]>.batch-actions {
+  grid-area:1/1;min-width:0;margin:0;
+}
+.linked-folder-tools[data-selection]>.library-list-toolbar { grid-area:1/2;margin:0; }
+.linked-folder-tools[data-selection]>.batch-message { grid-column:1/-1;margin:0; }
+.linked-folder-tools[data-selection="wide"]:has(.list-search.open) { grid-template-columns:max-content minmax(0,1fr); }
+.linked-folder-tools[data-selection="compact"] { column-gap:4px; }
+.linked-folder-tools[data-selection="compact"]>.linked-selection-controls { flex-wrap:nowrap;gap:2px; }
+.linked-selection-controls>span[role="status"] {
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;
+}
+.linked-folder-tools .linked-selection-controls>button:not(.action-menu-trigger) {
+  min-height:40px;padding-inline:6px;
+}
+.linked-folder-tools .linked-selection-controls>.action-menu-trigger {
+  flex:0 0 40px;width:40px;height:40px;padding:0;
+}
+.linked-folder-tools[data-selection="compact"]:has(.list-search.open)>.library-list-toolbar { grid-area:2/1/3/-1; }
+.linked-folder-tools[data-selection="compact"] .library-toolbar-icons>.list-search.open { max-width:none;flex-wrap:nowrap; }
+.linked-folder-tools[data-selection] .list-search.open .list-search-field { flex:1; }
 @media(max-width:960px) {
   .library-list-toolbar-compact .library-toolbar-icons>.action-menu-trigger,
   .library-list-toolbar-compact .library-toolbar-icons .list-search>.collection-icon { width:40px;height:40px;flex-basis:40px; }

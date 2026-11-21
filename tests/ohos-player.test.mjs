@@ -43,7 +43,7 @@ function setup() {
     async play() { this.emit('playing') }
     async pause() { this.emit('paused') }
     async release() { this.emit('released') }
-    seek(ms) { this.currentTime = ms; for(const cb of this.callbacks.seekDone ?? []) cb() }
+    seek(ms) { this.currentTime = ms; for(const cb of this.callbacks.seekDone ?? []) cb(ms) }
     setSpeed(value) { this.speed = value }
     setVolume(value) { this.volume = value }
   }
@@ -56,7 +56,7 @@ function setup() {
     scope: '123',
     networkOnline: () => true,
     native: { bilimusicOhosCancelResolve() {}, bilimusicOhosResolve(request,payload) { h.resolveRequests.push({request,payload:JSON.parse(payload)}) }, tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
-    media: { createAVPlayer: async () => (player = new FakePlayer()) },
+    media: { SeekMode: { SEEK_CLOSEST: 2 }, createAVPlayer: async () => (player = new FakePlayer()) },
     audio: {
       InterruptForceType: { INTERRUPT_FORCE: 0, INTERRUPT_SHARE: 1 },
       InterruptType: { INTERRUPT_TYPE_BEGIN: 1, INTERRUPT_TYPE_END: 2 },
@@ -361,6 +361,30 @@ test('quality preparation keeps the original transport playing and a pause durin
   assert.equal(h.events.at(-1).status,'paused')
   assert.ok(h.replies.some(reply=>reply.id===970&&reply.ok))
  }finally{release?.();await h.plugin.destroy()}
+})
+test('quality handoff rechecks the original clock after a slow seek', async () => {
+  const h = setup()
+  try {
+    await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/original' })
+    const original = h.player
+    original.currentTime = 20_000
+    const create = h.mock.media.createAVPlayer
+    const positions = []
+    h.mock.media.createAVPlayer = async () => {
+      const candidate = await create()
+      const seek = candidate.seek.bind(candidate)
+      candidate.seek = (position, mode) => {
+        assert.equal(mode, 2)
+        positions.push(position)
+        if (positions.length === 1) original.currentTime = 23_000
+        seek(position)
+      }
+      return candidate
+    }
+    assert.equal((await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/new', seamless: true })).ok, true)
+    assert.deepEqual(positions, [20_000, 23_000])
+    assert.equal(h.player.currentTime, 23_000)
+  } finally { await h.plugin.destroy() }
 })
 test('a failed quality candidate leaves the original transport and clock intact',async()=>{
  const h=setup()

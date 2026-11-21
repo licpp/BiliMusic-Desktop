@@ -588,12 +588,14 @@ class PlaybackService : MediaSessionService() {
                 if (player === candidate) {
                     android.util.Log.w("BiliMusicPlayback", "media error what=$what extra=$extra status=$status")
                     val code = "android_media:$what:$extra"
+                    val serviceDied = what == MediaPlayer.MEDIA_ERROR_SERVER_DIED
                     val connectionFailed = what == MediaPlayer.MEDIA_ERROR_IO || extra == MediaPlayer.MEDIA_ERROR_IO ||
                         what == MediaPlayer.MEDIA_ERROR_TIMED_OUT || extra == MediaPlayer.MEDIA_ERROR_TIMED_OUT
                     val incompatible = what == MediaPlayer.MEDIA_ERROR_MALFORMED || extra == MediaPlayer.MEDIA_ERROR_MALFORMED ||
                         what == MediaPlayer.MEDIA_ERROR_UNSUPPORTED || extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED ||
                         (what == MediaPlayer.MEDIA_ERROR_UNKNOWN && !prepared)
                     when {
+                        serviceDied -> if (status == "paused" || !recover()) fail("Android 媒体服务已中断，请重新播放", code)
                         connectionFailed -> if (status == "paused" || !recover()) fail("无法连接音频服务，请重试", code)
                         incompatible -> if (status == "paused" || !recover(compatibleAudio = true)) {
                             fail(if (queue.offlineOnly) "本地音频无法播放，请联网后重新下载" else "当前音源无法解码，请尝试更换音质", code)
@@ -621,31 +623,48 @@ class PlaybackService : MediaSessionService() {
         val original=player
         if(original==null || !prepared || id!=expectedId){reply("当前歌曲已变更，请重新选择音质");return}
         val revision=playbackRevision
+        val seek=seekRevision
         val candidate=MediaPlayer();sourceCandidate=candidate;sourceReply=reply
         sourceTimeout=Runnable{if(sourceCandidate===candidate)cancelSourceSwitch("新音源准备超时，已保留原音质")}.also{handler.postDelayed(it,12000)}
-        fun valid()=sourceCandidate===candidate && player===original && id==expectedId && playbackRevision==revision
-        fun commit(seek:Long) {
-            if(!valid() || seek!=seekRevision){cancelSourceSwitch();return}
+        fun valid()=sourceCandidate===candidate && player===original && id==expectedId && playbackRevision==revision && seekRevision==seek
+        fun commit() {
             accountListening(true)
-            val shouldPlay=status!="paused"
-            original.pause();player=candidate;sourceCandidate=null
+            val shouldPlay=status!="paused" && hasAudioFocus
+            try {
+                if (shouldPlay) startAtRate(candidate)
+            } catch (_: IllegalStateException) {
+                cancelSourceSwitch("新音源无法播放，已保留原音质")
+                return
+            }
+            if (original.isPlaying) original.pause()
+            player=candidate;sourceCandidate=null
             sourceTimeout?.let{handler.removeCallbacks(it)};sourceTimeout=null
             prepared=true;seeking=false;playbackRevision+=1;listeningPosition=null
             lastPosition=candidate.currentPosition/1000.0;lastDuration=candidate.duration/1000.0
             bindMedia(candidate,0.0);gainDb?.let { outputGain.plan(it) };applyOutput();resetPlaybackWatchdog()
             original.release()
-            if(shouldPlay){startAtRate(candidate);status="playing"}else{status="paused"}
+            status = if (shouldPlay) "playing" else "paused"
             publish();val completion=sourceReply;sourceReply=null;completion?.invoke(null)
+        }
+        fun alignOrCommit() {
+            if (!valid()) {
+                if (sourceCandidate === candidate) cancelSourceSwitch()
+                return
+            }
+            val position = if (seeking) (lastPosition * 1000).toLong() else original.currentPosition.toLong()
+            if (kotlin.math.abs(candidate.currentPosition - position) > 250) {
+                candidate.seekTo(position, MediaPlayer.SEEK_CLOSEST)
+            } else {
+                commit()
+            }
         }
         try {
             candidate.setAudioAttributes(playbackAttributes)
             candidate.setWakeMode(this,PowerManager.PARTIAL_WAKE_LOCK);candidate.setVolume(0f,0f)
             candidate.setOnErrorListener{_,_,_->if(sourceCandidate===candidate)cancelSourceSwitch("新音源无法播放，已保留原音质");true}
             candidate.setOnPreparedListener{
-                if(!valid()){if(sourceCandidate===candidate)cancelSourceSwitch();return@setOnPreparedListener}
-                val seek=seekRevision;val position=if(seeking)lastPosition else original.currentPosition/1000.0
-                candidate.setOnSeekCompleteListener{if(valid())commit(seek)}
-                if(position>0)candidate.seekTo((position*1000).toLong(),MediaPlayer.SEEK_CLOSEST)else commit(seek)
+                candidate.setOnSeekCompleteListener{alignOrCommit()}
+                alignOrCommit()
             }
             candidate.setDataSource(url);candidate.prepareAsync()
         }catch(_:Exception){cancelSourceSwitch("新音源无法加载，已保留原音质")}
