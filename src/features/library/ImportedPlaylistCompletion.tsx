@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, LoaderCircle, Music2, Pause, RefreshCw, Search, X } from 'lucide-react'
+import { Check, ChevronDown, LoaderCircle, Music2, Pause, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Playlist } from '../../domain/library'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
 import { accountEpoch } from '../../services/accountScope'
 import { accountQueryKey } from '../../services/queryKeys'
 import { commandErrorMessage } from '../../services/desktopApi'
+import { removeUnmatchedImportedEntry } from '../../services/importedEntries'
 import { pausePlaylistImport, retryMissingImportedPlaylist, usePlaylistImport } from '../../services/playlistImport'
 import { Artwork } from '../../shared/Artwork'
 import { formatDuration } from '../../shared/time'
@@ -22,6 +23,7 @@ export function ImportedPlaylistCompletionContent({ playlist, onClose, renderRep
   const running = Boolean(job && ['matching', 'waiting', 'saving'].includes(job.state))
   const [filter, setFilter] = useState(''), [limit, setLimit] = useState(40), [error, setError] = useState('')
   const [replacement, setReplacement] = useState<ImportedEntry>()
+  const [removing, setRemoving] = useState<string>()
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -36,6 +38,27 @@ export function ImportedPlaylistCompletionContent({ playlist, onClose, renderRep
     catch (cause) { if (mounted.current && epoch === accountEpoch()) setError(commandErrorMessage(cause)) }
     finally { if (mounted.current && epoch === accountEpoch()) { void query.refetch(); void client.invalidateQueries({ queryKey: accountQueryKey('library') }); void client.invalidateQueries({ queryKey: accountQueryKey('playlists') }) } }
   }
+  const remove = async (entry: ImportedEntry) => {
+    if (running || removing || !query.data) return
+    const epoch = accountEpoch()
+    const key = accountQueryKey('imported-entries', playlist.id)
+    const active = () => mounted.current && epoch === accountEpoch()
+    setError('')
+    setRemoving(entry.entryId)
+    try {
+      const snapshot = await removeUnmatchedImportedEntry(entry, query.data.session)
+      if (!active()) return
+      await client.cancelQueries({ queryKey: key, exact: true })
+      if (active()) client.setQueryData(key, snapshot)
+    } catch (cause) {
+      if (active()) {
+        setError(commandErrorMessage(cause))
+        void query.refetch()
+      }
+    } finally {
+      if (active()) setRemoving(undefined)
+    }
+  }
   const saved = (snapshot: ImportedEntriesSnapshot) => {
     client.setQueryData(accountQueryKey('imported-entries', playlist.id), snapshot)
     void client.invalidateQueries({ queryKey: accountQueryKey('library') })
@@ -46,7 +69,7 @@ export function ImportedPlaylistCompletionContent({ playlist, onClose, renderRep
   const rows = query.missing.filter(entry => `${entry.song.title} ${entry.song.artists.join(' ')}`.toLocaleLowerCase().includes(needle))
   const replacementProps: ReplacementProps | undefined = replacement && query.data ? { entry: replacement, session: query.data.session, onSaved: saved, onClose: () => setReplacement(undefined) } : undefined
   return <div className="import-completion-content">
-    <div className="import-completion-summary"><div><strong>{playlist.name}</strong><span>{query.isPending ? '正在读取歌曲…' : query.missing.length ? `${query.missing.length} 首待补全` : '歌曲已全部匹配'}</span></div>{running ? <button data-focus="completion-pause" className="import-match-use" onClick={pausePlaylistImport}><Pause size={17}/><span>暂停</span></button> : <button data-focus="completion-retry-all" className="import-match-use" disabled={!query.missing.length || query.isPending} onClick={() => void retry()}><RefreshCw size={17}/><span>全部重试</span></button>}</div>
+    <div className="import-completion-summary"><div><strong>{playlist.name}</strong><span>{query.isPending ? '正在读取歌曲…' : query.missing.length ? `${query.missing.length} 首待补全` : '没有待补全的歌曲'}</span></div>{running ? <button data-focus="completion-pause" className="import-match-use" onClick={pausePlaylistImport}><Pause size={17}/><span>暂停</span></button> : <button data-focus="completion-retry-all" className="import-match-use" disabled={!query.missing.length || query.isPending || Boolean(removing)} onClick={() => void retry()}><RefreshCw size={17}/><span>全部重试</span></button>}</div>
     {running && <p className="import-match-loading" role="status"><LoaderCircle className="spin" size={16}/>{job?.message || '正在匹配…'}</p>}
     {query.missing.length > 0 && <label className="import-match-search import-completion-search"><Search size={18}/><input aria-label="查找未匹配歌曲" placeholder="查找未匹配歌曲" value={filter} onChange={event => { setFilter(event.target.value); setLimit(40) }}/>{filter && <button className="import-match-clear" aria-label="清空查找" onClick={() => { setFilter(''); setLimit(40) }}><X size={15}/></button>}</label>}
     {(error || query.error) && <div className="import-match-error" role="alert"><span>{error || commandErrorMessage(query.error)}</span>{query.error && <button onClick={() => void query.refetch()}>重试</button>}</div>}
@@ -54,7 +77,11 @@ export function ImportedPlaylistCompletionContent({ playlist, onClose, renderRep
       {rows.slice(0, limit).map(entry => <article className="import-completion-row" key={entry.entryId}>
         <span className="import-completion-position">{entry.order + 1}</span><Artwork src={entry.song.coverUrl} fallback={<Music2/>}/>
         <div className="import-completion-copy"><strong>{entry.song.title}</strong><span>{entry.song.artists.join(' / ') || '歌手未知'}{entry.song.durationSeconds ? ` · ${formatDuration(entry.song.durationSeconds)}` : ''}</span>{entry.message&&<small className="import-completion-message">{entry.message}</small>}</div>
-        <div className="import-completion-actions"><button data-focus={`completion-retry-${entry.entryId}`} disabled={running} aria-label={`重新匹配 ${entry.song.title}`} title="重新匹配" onClick={() => void retry(entry.entryId)}><RefreshCw size={17}/></button><button data-focus={`completion-find-${entry.entryId}`} className="import-match-use" onClick={() => setReplacement(entry)}><Search size={16}/><span>查找</span></button></div>
+        <div className="import-completion-actions">
+          <button type="button" data-focus={`completion-remove-${entry.entryId}`} className="import-match-use import-completion-remove" disabled={running || Boolean(removing)} aria-label={`移除 ${entry.song.title}`} title="从歌单移除" onClick={() => void remove(entry)}>{removing === entry.entryId ? <LoaderCircle size={16} className="spin"/> : <Trash2 size={16}/>}<span>移除</span></button>
+          <button type="button" data-focus={`completion-retry-${entry.entryId}`} disabled={running || Boolean(removing)} aria-label={`重新匹配 ${entry.song.title}`} title="重新匹配" onClick={() => void retry(entry.entryId)}><RefreshCw size={17}/></button>
+          <button type="button" data-focus={`completion-find-${entry.entryId}`} className="import-match-use" disabled={Boolean(removing)} onClick={() => setReplacement(entry)}><Search size={16}/><span>查找</span></button>
+        </div>
       </article>)}
       {rows.length > limit && <button className="import-match-more" onClick={() => setLimit(value => value + 40)}><ChevronDown size={17}/>更多歌曲</button>}
       {!query.isPending && !query.error && !rows.length && <div className="import-completion-empty">{query.missing.length ? <Search size={25}/> : <Check size={28}/>}<p>{query.missing.length ? '没有符合关键词的歌曲' : '没有待补全的歌曲'}</p></div>}

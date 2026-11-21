@@ -163,6 +163,7 @@ pub fn run() {
             interface::imported_entries::playlist_import_contexts,
             interface::imported_entries::playlist_import_seed,
             interface::imported_entries::playlist_import_bind,
+            interface::imported_entries::playlist_import_remove_missing,
             interface::batch_matching::batch_match_snapshot,
             interface::batch_matching::batch_match_commit,
             interface::batch_matching::lyric_match_version,

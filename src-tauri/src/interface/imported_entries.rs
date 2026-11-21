@@ -71,6 +71,21 @@ pub fn playlist_import_bind(
     snapshot(&c, &playlist_id)
 }
 
+#[tauri::command]
+pub fn playlist_import_remove_missing(
+    database: State<'_, Database>,
+    expected_session: String,
+    playlist_id: String,
+    entry_id: String,
+    expected_revision: String,
+) -> Result<Snapshot, CommandError> {
+    let c = database.0.lock().map_err(CommandError::database)?;
+    checked(&c, &expected_session)?;
+    imported_entries::remove_missing(&c, &playlist_id, &entry_id, &expected_revision)
+        .map_err(CommandError::validation)?;
+    snapshot(&c, &playlist_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

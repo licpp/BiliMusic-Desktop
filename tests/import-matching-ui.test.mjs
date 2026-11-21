@@ -10,7 +10,7 @@ const result=await build({stdin:{contents:`export {LibraryView} from './src/feat
 const mocks={
  playerStore:`export const playbackIntent=()=>0;export const usePlayerStore=fn=>fn({current:null});usePlayerStore.getState=()=>({});`,
  playlistImport:`export const usePlaylistImport=fn=>fn({job:globalThis.importUiJob||null});export const pausePlaylistImport=()=>{};export const retryMissingImportedPlaylist=async()=>{};export const searchReplacementVideos=async()=>({items:[],page:1,pageSize:20,total:0});export const resolveReplacementVideo=async()=>[];`,
- importedEntries:`export const loadImportedEntries=async()=>({session:'test',entries:[]});export const replaceImportedEntry=async()=>({session:'test',entries:[]});`,
+ importedEntries:`export const loadImportedEntries=async()=>({session:'test',entries:[]});export const replaceImportedEntry=async()=>({session:'test',entries:[]});export const removeUnmatchedImportedEntry=async()=>({session:'test',entries:[]});`,
  useCompactLayout:`export const useCompactLayout=()=>false`,
  useLocateCurrentRow:`export const useLocateCurrentRow=()=>{}`,
  sourceTitles:`export const hydrateSourceTitles=async()=>{}`,
@@ -65,6 +65,8 @@ test('completion displays only empty bindings with original order and explicit r
  assert.ok(html.includes('MISSING_SONG'));assert.equal(html.includes('SOURCE_SONG'),false)
  assert.ok(html.includes('import-completion-position">9<'))
  assert.ok(html.includes('全部重试'));assert.ok(html.includes('aria-label="重新匹配 MISSING_SONG"'));assert.ok(html.includes('查找'))
+ assert.match(html,/aria-label="移除 MISSING_SONG"/)
+ assert.doesNotMatch(html,/aria-label="移除 SOURCE_SONG"/)
  assert.ok(html.includes(missing.message))
 })
 test('active completion can be paused and does not start another per-row automatic match',()=>{
@@ -72,6 +74,7 @@ test('active completion can be paused and does not start another per-row automat
  const html=render(ImportedPlaylistCompletionContent,{playlist,onClose(){}})
  assert.ok(html.includes('暂停'));assert.equal(html.includes('全部重试'),false)
  assert.match(html,/disabled="" aria-label="重新匹配 MISSING_SONG"/)
+ assert.match(html,/disabled="" aria-label="移除 MISSING_SONG"/)
  globalThis.importUiJob=null
 })
 test('replacement keeps source context separate from the actual current video and offers unrestricted text/BV search',()=>{
