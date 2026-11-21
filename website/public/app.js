@@ -1,4 +1,4 @@
-import { detectedDownloadFamily, downloadFamily, downloadVariant, groupDownloads, preferredDownloadFamily } from './download-options.js';
+import { detectedDownloadFamily, downloadFamily, downloadVariant, groupDownloads, largeScreenBitness, preferredDownloadFamily } from './download-options.js?v=0.4.2-car-debian';
 const $ = selector => document.querySelector(selector);
 if (location.protocol !== 'https:' && !['localhost','127.0.0.1'].includes(location.hostname)) {
   const note = document.createElement('p'); note.className='transport-note';
@@ -92,7 +92,7 @@ function renderDownloadPanel(group, item, panel) {
   for (const variant of group.items) {
     const button = element('button', downloadVariant(variant), 'download-variant'); button.type = 'button';
     if (group.id === 'android' && variant.id.startsWith('android-large')) {
-      button.replaceChildren(element('span', '车机 / TV'), element('span', variant.id.endsWith('-armv7') ? '32 位' : '64 位', 'download-variant-arch'));
+      button.replaceChildren(element('span', '车机 / TV'), element('span', largeScreenBitness(variant), 'download-variant-arch'));
       button.setAttribute('aria-label', downloadVariant(variant));
     }
     button.setAttribute('aria-pressed', String(variant.id === item.id));

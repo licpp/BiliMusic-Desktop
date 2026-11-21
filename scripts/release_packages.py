@@ -111,6 +111,13 @@ def package_id(package):
     return {'iOS': 'ios', 'Android': 'android', 'HarmonyOS NEXT': 'ohos', 'Android Large Screen': 'android-large'}[platform]
 
 
+def package_ids(package):
+    primary = package_id(package)
+    if primary == 'android-large' and package.get('architecture') == 'universal':
+        return (primary, 'android-large-armv7')
+    return (primary,)
+
+
 def license_name(package, packages):
     if sum(p['platform'] == package['platform'] for p in packages) > 1:
         return 'THIRD_PARTY_LICENSES-' + package_id(package) + '.json'
@@ -119,7 +126,7 @@ def license_name(package, packages):
 
 def checksum_list(build, manifest):
     if build.get('partialRelease'):
-        return ''.join(f"{p['sha256']}  {p['file']}\n" for p in manifest['platforms'] if p['status'] == 'available')
+        return ''.join(dict.fromkeys(f"{p['sha256']}  {p['file']}\n" for p in manifest['platforms'] if p['status'] == 'available'))
     return ''.join(f"{p['sha256']}  {p['file']}\n" for p in build['platforms'])
 
 
@@ -144,6 +151,22 @@ def verify_android_bridge(dex):
     require(b'getPluginManager\0' in dex, 'Android Tauri plugin manager getter removed')
     for name in ['PlayerPlugin', 'PlayArgs', 'ControlArgs', 'SecretArgs']:
         require(('Lapp/bilimusic/player/' + name + ';').encode() in dex, 'Android bridge removed: ' + name)
+
+
+def verify_android_libraries(archive, architecture):
+    arm64 = ('arm64-v8a', 2, 183)
+    armv7 = ('armeabi-v7a', 1, 40)
+    architectures = {'arm64': (arm64,), 'armv7': (armv7,), 'universal': (arm64, armv7)}
+    expected = {abi: (elf_class, machine) for abi, elf_class, machine in architectures[architecture]}
+    libraries = [x for x in archive.infolist() if x.filename.endswith('.so')]
+    require(all(f'lib/{abi}/libbilimusic_lib.so' in archive.namelist() for abi in expected), 'Android application library missing')
+    for library in libraries:
+        match = re.fullmatch(r'lib/([^/]+)/[^/]+\.so', library.filename)
+        require(match and match[1] in expected and library.file_size < 30 * 1024 * 1024, 'Unexpected Android native library')
+        elf_class, machine = expected[match[1]]
+        with archive.open(library) as binary:
+            header = binary.read(20)
+        require(len(header) == 20 and header[:6] == b'\x7fELF' + bytes([elf_class, 1]) and struct.unpack_from('<H', header, 18)[0] == machine, 'Android ELF architecture mismatch')
 
 
 def verify_native(path, platform, version, certificate, architecture='arm64', build=0):
@@ -192,12 +215,8 @@ def verify_native(path, platform, version, certificate, architecture='arm64', bu
             major, minor, patch = map(int, version.split('.'))
             expected_id = 'app.bilimusic.large' if platform == 'Android Large Screen' else 'app.bilimusic.mobile'
             require(manifest['package'] == expected_id and manifest['versionName'] == version and manifest['versionCode'] == major * 1000000 + minor * 10000 + patch * 100 + max(build - 1, 0), 'Android identity/versionCode mismatch')
-            libraries = [x for x in archive.infolist() if x.filename.endswith('.so')]
-            abi = {'arm64': 'arm64-v8a', 'armv7': 'armeabi-v7a'}.get(architecture)
-            require(abi and libraries and all(x.filename.startswith(f'lib/{abi}/') and x.file_size < 30 * 1024 * 1024 for x in libraries), 'Unexpected Android native libraries')
-            for library in libraries:
-                raw = archive.read(library.filename)
-                require(raw[:6] == (b'\x7fELF\x01\x01' if architecture == 'armv7' else b'\x7fELF\x02\x01') and struct.unpack_from('<H', raw, 18)[0] == (40 if architecture == 'armv7' else 183), 'Android ELF architecture mismatch')
+            require(architecture != 'universal' or platform == 'Android Large Screen', 'Universal APK is only expected for the large-screen edition')
+            verify_android_libraries(archive, architecture)
             dex = b''.join(archive.read(x.filename) for x in archive.infolist() if x.filename.endswith('.dex'))
             verify_android_bridge(dex)
     elif platform == 'HarmonyOS NEXT':
@@ -220,7 +239,11 @@ def verify_native(path, platform, version, certificate, architecture='arm64', bu
             with tarfile.open(fileobj=io.BytesIO(raw), mode='r:*') as archive:
                 member = next(m for m in archive.getmembers() if m.name.removeprefix('./') == 'control')
                 fields = archive.extractfile(member).read().decode()
-            require('Package: bili-music\n' in fields and 'Version: ' + version + '\n' in fields and 'Architecture: ' + expected_arch + '\n' in fields, 'Debian identity/version/architecture mismatch')
+            native_version = f'{version}-{build}' if build > 1 else version
+            require('Package: bili-music\n' in fields and 'Version: ' + native_version + '\n' in fields and 'Architecture: ' + expected_arch + '\n' in fields, 'Debian identity/version/architecture mismatch')
+            dependencies = next((line[8:].split(',') for line in fields.splitlines() if line.startswith('Depends:')), [])
+            names = {item.strip().split(' ', 1)[0] for item in dependencies if '|' not in item}
+            require({'libgtk-3-0', 'libwebkit2gtk-4.1-0', 'libayatana-appindicator3-1'} <= names, 'Debian runtime dependency missing')
         else:
             raw = path.read_bytes()[:64]
             require(raw[:4] == b'\x7fELF' and raw[8:11] == b'AI\x02', 'Expected AppImage type 2')
@@ -265,7 +288,7 @@ def validate_release_scope(build, manifest, previous):
     packages = build['platforms']
     version = build['version']
     require(manifest['version'] == version, 'Build and manifest versions differ')
-    ids = [package_id(p) for p in packages]
+    ids = [key for p in packages for key in package_ids(p)]
     require(ids and len(ids) == len(set(ids)), 'Expected distinct built platforms, including every declared edition')
     manifest_ids = [p['id'] for p in manifest['platforms']]
     require(len(manifest_ids) == len(set(manifest_ids)), 'Duplicate manifest platform')
@@ -277,8 +300,7 @@ def validate_release_scope(build, manifest, previous):
         require(preserves_release_history(manifest.get('history', []), previous.get('history', []), version), 'Platform patches may only add notes to the current release history')
         current = {p['id']: p for p in manifest['platforms']}
         require(all(current[i] == prior[i] for i in prior.keys() - set(ids)), 'Unbuilt platform entry changed')
-        for package in packages:
-            key = package_id(package)
+        for package, key in ((p, key) for p in packages for key in package_ids(p)):
             old, new = prior[key], current[key]
             build_number = package.get('build')
             require(old.get('version', version) == version and new.get('version', version) == version, 'Platform patch version mismatch')
@@ -315,11 +337,15 @@ def validate_bundle(bundle, native_verifier=verify_native):
         if package['source'] != source:
             require(re.fullmatch(r'[a-f0-9]{40}', package['source']) and compatible_package_source(package['platform'], package['source'], source), 'Mixed build sources or versions')
         require(path.stat().st_size == package['bytes'] and digest(path) == package['sha256'], 'Package digest mismatch: ' + name)
-        entry = next(p for p in manifest['platforms'] if p['id'] == package_id(package))
-        require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
-        require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
         number = package.get('build', 0)
-        require(entry.get('build', 0) == number, 'Manifest build does not match package')
+        entries = [next(p for p in manifest['platforms'] if p['id'] == key) for key in package_ids(package)]
+        for entry in entries:
+            require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
+            require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
+            require(entry.get('build', 0) == number, 'Manifest build does not match package')
+        if len(entries) == 2:
+            require(all(p.get('architecture') == 'ARM64 / ARMv7' for p in entries) and
+                    {c['id']: c['url'] for c in entries[0]['channels']} == {c['id']: c['url'] for c in entries[1]['channels']}, 'Universal APK entries must share both download channels')
         args = (path, package['platform'], version, certificate, package.get('architecture', 'arm64'))
         native_verifier(*args, number) if number else native_verifier(*args)
         assets.append({'name': name, 'size': path.stat().st_size, 'sha256': digest(path), 'binary': True})

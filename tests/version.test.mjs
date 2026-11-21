@@ -11,7 +11,7 @@ test('release labels include each platform build and keep legacy versions readab
   assert.equal(formatReleaseVersion('0.3.7', 0), '0.3.7')
 })
 test('updates compare preview numbers numerically and do not suggest downgrades', () => {
-  for (const [a,b] of [['0.1.6-preview.10','0.1.6-preview.9'],['0.1.6','0.1.6-preview.10'],['0.1.7-preview.1','0.1.6'],['1.0.0-beta','1.0.0-2']]) {
+  for (const [a,b] of [['0.1.6-preview.10','0.1.6-preview.9'],['0.1.6','0.1.6-preview.10'],['0.1.7-preview.1','0.1.6'],['1.0.0-beta','1.0.0-2'],['0.4.99999999999999999999','0.4.99999999999999999998'],['0.4.2-preview.100000000000000000000','0.4.2-preview.99999999999999999999']]) {
     assert.equal(compareVersions(a,b),1)
     assert.equal(compareVersions(b,a),-1)
   }

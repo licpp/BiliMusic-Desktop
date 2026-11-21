@@ -542,7 +542,7 @@ class PlaybackService : MediaSessionService() {
             } else null
             initialResumePolicy = resumePolicy
             bindMedia(media,intent.getDoubleExtra("position",0.0),resumePolicy)
-            media.setDataSource(intent.getStringExtra("url")); media.prepareAsync(); publish(); handler.removeCallbacks(ticker); handler.post(ticker)
+            media.setDataSource(mediaPlayerSource(intent.getStringExtra("url"))); media.prepareAsync(); publish(); handler.removeCallbacks(ticker); handler.post(ticker)
             refreshPlaybackLyrics()
         } catch (_: Exception) { fail("音频加载失败，请重新播放", "audio_prepare_failed") }
     }
@@ -666,9 +666,16 @@ class PlaybackService : MediaSessionService() {
                 candidate.setOnSeekCompleteListener{alignOrCommit()}
                 alignOrCommit()
             }
-            candidate.setDataSource(url);candidate.prepareAsync()
+            candidate.setDataSource(mediaPlayerSource(url));candidate.prepareAsync()
         }catch(_:Exception){cancelSourceSwitch("新音源无法加载，已保留原音质")}
     }
+    private fun mediaPlayerSource(url: String?): String? {
+        if (url == null || Build.VERSION.SDK_INT >= 29 || packageName != "app.bilimusic.large") return url
+        val uri = android.net.Uri.parse(url)
+        if (uri.scheme != "http" || uri.host != "127.0.0.1" || uri.query != null) return url
+        return uri.buildUpon().appendQueryParameter("legacy_mp4", "1").build().toString()
+    }
+
     private fun fail(message: String, code: String) {
         android.util.Log.w("BiliMusicPlayback", "failed: $code")
         cancelResolution()

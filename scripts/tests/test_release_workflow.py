@@ -14,11 +14,61 @@ from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
-from release_packages import validate_bundle, verify_android_bridge
+from release_packages import validate_bundle, verify_android_bridge, verify_android_libraries
 from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_universal_car_patch_keeps_both_existing_update_ids_on_one_asset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            version, source = '0.4.2', 'a' * 40
+            name = f'BiliMusic_{version}_Android_LargeScreen_universal.apk'
+            data = b'universal car build'
+            (root / name).write_bytes(data)
+            package = dict(platform='Android Large Screen', architecture='universal', file=name,
+                           source=source, version=version, build=4, bytes=len(data),
+                           sha256=hashlib.sha256(data).hexdigest())
+            (root / 'build-info.json').write_text(json.dumps(dict(
+                version=version, source=source, validation={}, platforms=[package],
+            )))
+            for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
+                (root / name).write_text('# BiliMusic 0.4.2')
+            (root / 'THIRD_PARTY_LICENSES-Android-Large-Screen.json').write_text(json.dumps(
+                dict(version=version, sourceCommit=source),
+            ))
+            channels = [{'id': 'github'}, {'id': 'gitee'}]
+            previous = dict(version=version, history=[{'version': version}], platforms=[
+                dict(id=key, file=f'{key}.apk', build=3, status='available', channels=channels, sha256='1' * 64)
+                for key in ('android', 'android-large-armv7', 'android-large')
+            ])
+            ota = dict(version=version, platforms={})
+            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'car-build-4', previous, ota)
+            verifier = Mock()
+            plan = validate_bundle(output, verifier)
+            phone, legacy, main = plan['manifest']['platforms']
+            self.assertEqual(phone, previous['platforms'][0])
+            self.assertEqual(legacy | {'id': 'android-large'}, main)
+            self.assertEqual(main['build'], 4)
+            self.assertEqual(main['architecture'], 'ARM64 / ARMv7')
+            self.assertEqual([a['name'] for a in plan['assets'] if a['binary']], [main['file']])
+            self.assertEqual((output / 'SHA256SUMS.txt').read_text().count(main['file']), 1)
+            verifier.assert_called_once_with(output / main['file'], package['platform'], version, None, 'universal', 4)
+
+    def test_universal_apk_rejects_a_missing_or_mislabeled_architecture(self):
+        arm64 = b'\x7fELF\x02\x01' + bytes(12) + (183).to_bytes(2, 'little')
+        armv7 = b'\x7fELF\x01\x01' + bytes(12) + (40).to_bytes(2, 'little')
+        for library, error in ((None, 'library missing'), (arm64, 'ELF architecture'), (armv7, None)):
+            with zipfile.ZipFile(io.BytesIO(), 'w') as archive:
+                archive.writestr('lib/arm64-v8a/libbilimusic_lib.so', arm64)
+                if library:
+                    archive.writestr('lib/armeabi-v7a/libbilimusic_lib.so', library)
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        verify_android_libraries(archive, 'universal')
+                else:
+                    verify_android_libraries(archive, 'universal')
+
     def test_android_release_keeps_tauri_plugin_manager_for_jni(self):
         player_bridge = b'\0'.join(
             b'Lapp/bilimusic/player/' + name + b';'

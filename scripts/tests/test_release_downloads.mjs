@@ -44,6 +44,24 @@ test('six packages verify twelve downloads including the separate large-screen e
   assert.equal(data.results.filter(r => r.platform === 'android-large').length, 2)
 })
 
+test('the two car update IDs verify each universal APK URL only once', async t => {
+  const { plan, report, preload } = await fixture(t, false, false, true)
+  const data = JSON.parse(await readFile(plan, 'utf8'))
+  const car = data.manifest.platforms.find(platform => platform.id === 'android-large')
+  car.architecture = 'ARM64 / ARMv7'
+  const legacy = { ...car, id: 'android-large-armv7' }
+  data.manifest.platforms.unshift(legacy)
+  await writeFile(plan, JSON.stringify(data))
+  const verify = () => run(process.execPath, ['--import', preload, resolve('scripts/verify_release_downloads.mjs'), plan, report, 'a'.repeat(64)])
+  await verify()
+  const { results } = JSON.parse(await readFile(report, 'utf8'))
+  assert.equal(results.length, 10)
+  assert.equal(results.filter(item => item.platform === 'android-large').length, 2)
+  legacy.size += 1
+  await writeFile(plan, JSON.stringify(data))
+  await assert.rejects(verify(), /Unexpected duplicate public download URL/)
+})
+
 test('a same-size corrupted download prevents the activation proof', async t => {
   const { plan, report, preload } = await fixture(t, true)
   await assert.rejects(run(process.execPath, ['--import', preload, resolve('scripts/verify_release_downloads.mjs'), plan, report, 'a'.repeat(64)]), /SHA-256 mismatch/)

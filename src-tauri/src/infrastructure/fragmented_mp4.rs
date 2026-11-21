@@ -33,6 +33,55 @@ fn u32_at(b: &[u8], i: usize) -> Option<u32> {
 fn u64_at(b: &[u8], i: usize) -> Option<u64> {
     Some(u64::from_be_bytes(b.get(i..i + 8)?.try_into().ok()?))
 }
+
+fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8], &[u8], usize)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let kind = bytes.get(at + 4..at + 8)?;
+        let (size, header) = match u32_at(bytes, at)? {
+            1 => (usize::try_from(u64_at(bytes, at + 8)?).ok()?, 16),
+            size => (size as usize, 8),
+        };
+        let end = at.checked_add(size)?;
+        if size < header {
+            return None;
+        }
+        let start = at + header;
+        let body = bytes.get(start..end)?;
+        at = end;
+        Some((kind, body, start))
+    })
+}
+
+/// The Android 8/9 extractor can treat a zero-length DASH edit as padding for
+/// the entire AAC track. Return the type offset for a same-sized `free` box.
+pub fn empty_audio_edit_offset(bytes: &[u8]) -> Option<usize> {
+    let (_, movie, movie_at) = boxes(bytes).find(|(kind, _, _)| *kind == b"moov")?;
+    if !boxes(movie).any(|(kind, _, _)| kind == b"mvex") {
+        return None;
+    }
+    let mut tracks = boxes(movie).filter(|(kind, _, _)| *kind == b"trak");
+    let (_, track, track_at) = tracks.next()?;
+    if tracks.next().is_some() {
+        return None;
+    }
+    let (_, media, _) = boxes(track).find(|(kind, _, _)| *kind == b"mdia")?;
+    let (_, handler, _) = boxes(media).find(|(kind, _, _)| *kind == b"hdlr")?;
+    if handler.get(8..12)? != b"soun" {
+        return None;
+    }
+    let (_, edits, edits_at) = boxes(track).find(|(kind, _, _)| *kind == b"edts")?;
+    let (_, edit, edit_at) = boxes(edits).find(|(kind, _, _)| *kind == b"elst")?;
+    // Only a single zero duration, zero media-time edit at normal playback rate.
+    // Restrict this to the observed 32-bit box layout, leaving other edits intact.
+    let empty = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0];
+    (track.get(edits_at - 4..edits_at)? == b"edts"
+        && edit_at == 8
+        && edits.len() == 28
+        && edit == empty)
+        .then_some(movie_at + track_at + edits_at - 4)
+}
+
 pub fn probe(bytes: &[u8], total: u64) -> Probe {
     let mut at = 0usize;
     let mut init = 0u64;

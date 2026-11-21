@@ -15,20 +15,26 @@ function parseVersion(value: string) {
   if (!match) throw new Error('版本信息格式异常，请稍后重试')
   const pre = match[4]?.split('.') || []
   if (pre.some(part => /^\d+$/.test(part) && part.length > 1 && part.startsWith('0'))) throw new Error('版本信息格式异常，请稍后重试')
-  return { core: match.slice(1, 4).map(BigInt), pre }
+  return { core: match.slice(1, 4), pre }
+}
+
+// SemVer numeric identifiers are decimal strings without leading zeros.
+function compareNumeric(left: string, right: string): -1 | 0 | 1 {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1
+  return left === right ? 0 : left < right ? -1 : 1
 }
 
 /** SemVer ordering, including numeric preview numbers; build metadata is ignored. */
 export function compareVersions(left: string, right: string): -1 | 0 | 1 {
   const a = parseVersion(left), b = parseVersion(right)
-  for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return a.core[i] > b.core[i] ? 1 : -1
+  for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return compareNumeric(a.core[i], b.core[i])
   if (!a.pre.length || !b.pre.length) return a.pre.length === b.pre.length ? 0 : a.pre.length ? -1 : 1
   for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
     if (a.pre[i] === undefined) return -1
     if (b.pre[i] === undefined) return 1
     if (a.pre[i] === b.pre[i]) continue
     const an = /^\d+$/.test(a.pre[i]), bn = /^\d+$/.test(b.pre[i])
-    if (an && bn) return BigInt(a.pre[i]) > BigInt(b.pre[i]) ? 1 : -1
+    if (an && bn) return compareNumeric(a.pre[i], b.pre[i])
     if (an !== bn) return an ? -1 : 1
     return a.pre[i] > b.pre[i] ? 1 : -1
   }

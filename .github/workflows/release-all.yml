@@ -185,7 +185,11 @@ jobs:
           if [ '${{ matrix.arch }}' = arm64 ]; then readelf -h "$binary" | grep -q AArch64; expected=arm64; else readelf -h "$binary" | grep -q 'X86-64'; expected=amd64; fi
           deb=$(find src-tauri/target/${{ matrix.target }}/release/bundle/deb -name '*.deb' -print -quit)
           test "$(dpkg-deb -f "$deb" Architecture)" = "$expected"
-          test "$(dpkg-deb -f "$deb" Version)" = "$(node -p "require('./package.json').version")"
+          bash scripts/stamp-debian-version.sh "$deb" "$(node -p "require('./package.json').version")"
+          depends=$(dpkg-deb -f "$deb" Depends)
+          for dependency in libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1; do
+            printf '%s\n' "$depends" | tr ',' '\n' | awk '{print $1}' | grep -Fxq "$dependency"
+          done
           ! ldd "$binary" | grep 'not found'
           set +e
           timeout 18s xvfb-run -a dbus-run-session -- "$binary" > linux-launch.log 2>&1

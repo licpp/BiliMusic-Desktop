@@ -7,7 +7,7 @@ import re
 import shutil
 import urllib.request
 from pathlib import Path
-from release_packages import checksum_list, digest, require, package_id, license_name, validate_release_scope
+from release_packages import checksum_list, digest, require, package_id, package_ids, license_name, validate_release_scope
 
 
 def prepare(build_dir, template, notes_path, output, revision, previous, previous_updater=None):
@@ -21,6 +21,8 @@ def prepare(build_dir, template, notes_path, output, revision, previous, previou
         require(previous_updater is not None and previous_updater['version'] == version, 'A platform patch requires the current updater feed')
         build['partialRelease'] = True
     candidate = copy.deepcopy(previous if partial else template)
+    if partial and template['version'] == version:
+        candidate['history'] = copy.deepcopy(template['history'])
     require(candidate['version'] == version, 'Update the release manifest/history template to the build version first')
     require(re.fullmatch(r'\d+\.\d+\.\d+', version), 'Only stable release versions are supported')
     require(tuple(map(int, version.split('.'))) >= tuple(map(int, previous['version'].split('.'))), 'Refusing a version downgrade')
@@ -35,15 +37,22 @@ def prepare(build_dir, template, notes_path, output, revision, previous, previou
         name = prefix + revision + '_' + path.name[len(prefix):]
         shutil.copy2(path, output / name)
         package['file'] = name
-        platform = next(p for p in candidate['platforms'] if p['id'] == package_id(package))
-        platform.update(version=version, file=name, size=package['bytes'], sha256=package['sha256'], status='available')
-        if 'build' in package:
-            platform['build'] = package['build']
-        channels = []
-        for channel in platform['channels']:
-            root = {'github': 'https://github.com/licpp/BiliMusic-Desktop', 'gitee': 'https://gitee.com/yoaker/BiliMusic-Desktop'}[channel['id']]
-            channels.append(dict(channel, url=root + '/releases/download/v' + version + '/' + name))
-        platform['channels'] = channels
+        ids = package_ids(package)
+        for key in ids:
+            platform = next(p for p in candidate['platforms'] if p['id'] == key)
+            platform.update(version=version, file=name, size=package['bytes'], sha256=package['sha256'], status='available')
+            if partial:
+                platform['sourceCommit'] = package['source']
+            if 'build' in package:
+                platform['build'] = package['build']
+            if len(ids) == 2:
+                platform.update(name='车机 / TV', architecture='ARM64 / ARMv7', sourceCommit=package['source'])
+                platform.pop('note', None)
+            channels = []
+            for channel in platform['channels']:
+                root = {'github': 'https://github.com/licpp/BiliMusic-Desktop', 'gitee': 'https://gitee.com/yoaker/BiliMusic-Desktop'}[channel['id']]
+                channels.append(dict(channel, url=root + '/releases/download/v' + version + '/' + name))
+            platform['channels'] = channels
     from updater_artifacts import prepare_updater
     validate_release_scope(build, candidate, previous)
     prepare_updater(build_dir, output, build, original_names, previous_updater if partial else None)

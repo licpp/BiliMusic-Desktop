@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 const bundle = async path => (await build({entryPoints:[path],bundle:true,write:false,platform:'browser',format:'cjs',banner:{js:'"use strict";'}})).outputFiles[0].text
 const compatibility = await bundle('src/shared/runtimeCompatibility.ts')
 const queue = await bundle('src/features/player/queueGroups.ts')
+const pageMotion = await bundle('src/shared/pageMotion.ts')
 const legacy = () => {
   const context = createContext({module:{exports:{}}})
   runInContext('delete Array.prototype.at; delete Object.hasOwn',context)
@@ -40,4 +41,57 @@ test('modern engines retain their native APIs and both entries initialize compat
   const context=createContext({module:{exports:{}}});runInContext('globalThis.originalAt=Array.prototype.at;globalThis.originalOwn=Object.hasOwn',context)
   runInContext(compatibility,context);assert.equal(runInContext('originalAt===Array.prototype.at && originalOwn===Object.hasOwn',context),true)
   for(const path of ['src/main.tsx','src/large-screen/main.tsx'])assert.match(await readFile(path,'utf8'),/^import ['"].*runtimeCompatibility['"]/)
+})
+
+test('the car entry installs APIs missing from WebView 66 before route and library code runs', async () => {
+  const entry = await readFile('src/large-screen/main.tsx', 'utf8')
+  const imports = entry.match(/^import ['"]core-js\/[^'"]+['"]$/gm) || []
+  const { outputFiles } = await build({
+    stdin: { contents: imports.join('\n'), resolveDir: process.cwd() },
+    bundle: true,
+    write: false,
+    target: 'chrome66',
+  })
+  const context = createContext({ setTimeout })
+  runInContext(`
+    delete this.globalThis
+    delete this.queueMicrotask
+    delete Array.prototype.flat
+    delete Array.prototype.flatMap
+    delete Object.fromEntries
+    delete Promise.allSettled
+    delete Promise.prototype.finally
+    delete String.prototype.matchAll
+  `, context)
+  runInContext(outputFiles[0].text, context)
+  assert.equal(runInContext('globalThis === this && typeof queueMicrotask === "function"', context), true)
+  assert.equal(runInContext('[1,2].flatMap(n => [n,n]).join() === "1,1,2,2" && [[3]].flat()[0] === 3', context), true)
+  assert.equal(runInContext('Object.fromEntries([["a",1]]).a === 1 && [..."aa".matchAll(/a/g)].length === 2', context), true)
+  assert.equal(await runInContext('Promise.allSettled([Promise.resolve(1)]).then(([result]) => result.value).finally(() => {})', context), 1)
+})
+
+test('older car WebViews switch routes without the Animation.finished promise', () => {
+  const listeners = new Set()
+  const preference = {
+    matches: false,
+    addEventListener: (_, listener) => listeners.add(listener),
+    removeEventListener: (_, listener) => listeners.delete(listener),
+  }
+  const context = createContext({ module: { exports: {} }, window: { matchMedia: () => preference } })
+  runInContext(pageMotion, context)
+  const { animatePage, stopPageMotion } = context.module.exports
+  const element = { animate: () => ({
+    finish() { this.onfinish() },
+    cancel() { this.oncancel() },
+  }) }
+  const first = animatePage(element, 'forward', false)
+  assert.equal(listeners.size, 1)
+  const second = animatePage(element, 'back', false)
+  assert.notEqual(first, second)
+  assert.equal(listeners.size, 1)
+  stopPageMotion(element)
+  assert.equal(listeners.size, 0)
+  const third = animatePage(element, 'forward', false)
+  third.finish()
+  assert.equal(listeners.size, 0)
 })

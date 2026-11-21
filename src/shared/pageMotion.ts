@@ -22,12 +22,18 @@ export function animatePage(element: HTMLElement, motion: PageMotion, touch: boo
   const animation = element.animate(frames, { duration, easing: 'cubic-bezier(.2,.75,.25,1)' })
   running.set(element, animation)
   const update = () => { if (preference.matches) animation.finish() }
-  preference.addEventListener('change', update)
+  if (preference.addEventListener) preference.addEventListener('change', update)
+  else preference.addListener(update)
   const clean = () => {
-    preference.removeEventListener('change', update)
+    if (preference.removeEventListener) preference.removeEventListener('change', update)
+    else preference.removeListener(update)
     if (running.get(element) === animation) running.delete(element)
   }
-  void animation.finished.then(clean, clean)
+  if (animation.finished) void animation.finished.then(clean, clean)
+  else {
+    animation.onfinish = clean
+    animation.oncancel = clean
+  }
   return animation
 }
 

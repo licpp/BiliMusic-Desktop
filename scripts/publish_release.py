@@ -424,7 +424,7 @@ class Publisher:
         verification = json.loads((self.work / 'download-verification.json').read_text())
         require(verification['planDigest'] == fingerprint(self.plan), 'Download verification belongs to another plan')
         downloads = verification['results']
-        expected_count = sum(len(p['channels']) for p in self.plan['manifest']['platforms'])
+        expected_count = len({c['url'] for p in self.plan['manifest']['platforms'] for c in p['channels']})
         require(len(downloads) == expected_count and len({d['url'] for d in downloads}) == expected_count, 'Expected every manifest download to be verified')
         for package in self.plan['manifest']['platforms']:
             for channel in package['channels']:
