@@ -67,7 +67,7 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
   const listActions = <div className="video-parts-actions">{scope && <VisibilityControls scope={scope} rules={rules} shown={manage} exitLabel={toolbar ? '完成' : undefined} onShow={shown=>setShownScope(shown ? scope : undefined)} tracks={managementTracks} hiddenCount={tracks.filter(rowHidden).length}/>}<button type="button" className="collection-flat-button" aria-label="多选" title="多选" disabled={!visibleTracks.length} onClick={selection.enter}><ListChecks size={16}/><span>多选</span></button></div>
   return <div className="parts-list video-parts-list" ref={root}>
     {visibilityError && <p role="alert" className="inline-error">{visibilityError}</p>}
-    {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} onHide={scope ? async selected=>{await change(selected,true);selection.exit()} : undefined}/> :
+    {selection.selecting ? <BatchTrackActions selection={selection} total={visibleTracks.length} downloadScope={scope} onHide={scope ? async selected=>{await change(selected,true);selection.exit()} : undefined}/> :
       toolbar ? <div className="collection-detail-toolbar collection-unified-toolbar" data-managing={manage || undefined} role="toolbar" aria-label="合集播放与列表操作">
         <div className="collection-play-actions">{toolbar.primary}</div>
         <div className="collection-list-actions">{listActions}{toolbar.actions}</div>

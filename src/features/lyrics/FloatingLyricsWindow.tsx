@@ -14,22 +14,22 @@ import { FloatingLyricMarquee } from './FloatingLyricMarquee'
 export function FloatingLyricsWindow() {
  const [frame,setFrame]=useState<FloatingFrame|null>(null),[,setLineTick]=useState(0)
  const current=useRef<FloatingFrame|null>(null),clock=useRef(createLyricClock())
- const {fontSize,locked,activeColor,inactiveColor,update}=useFloatingPreferences()
+ const {fontSize,locked,activeColor,inactiveColor,alignment,update}=useFloatingPreferences()
  const lyricClock=useCallback(()=>clock.current.position(performance.now())*1000-(current.current?.biasMs||0),[])
  useEffect(()=>{
   document.documentElement.dataset.window='lyrics';document.getElementById('app-bootstrap')?.remove()
   let alive=true,seen=false,tick=0,index=-2
   const receive=(value:FloatingFrame)=>{if(!alive||value?.id===undefined)return;clock.current.update(value,performance.now());current.current=value;setFrame(value);document.documentElement.dataset.theme=value.theme
-   if(value.fontSize!==undefined&&value.locked!==undefined)useFloatingPreferences.setState(readFloatingPreferences(JSON.stringify({...useFloatingPreferences.getState(),fontSize:value.fontSize,locked:value.locked,activeColor:value.activeColor??useFloatingPreferences.getState().activeColor,inactiveColor:value.inactiveColor??useFloatingPreferences.getState().inactiveColor})))
+   if(value.fontSize!==undefined&&value.locked!==undefined)useFloatingPreferences.setState(readFloatingPreferences(JSON.stringify({...useFloatingPreferences.getState(),fontSize:value.fontSize,locked:value.locked,activeColor:value.activeColor??useFloatingPreferences.getState().activeColor,inactiveColor:value.inactiveColor??useFloatingPreferences.getState().inactiveColor,alignment:value.alignment??useFloatingPreferences.getState().alignment})))
   }
   const listener=listen<FloatingFrame>('floating-lyrics-frame',event=>{seen=true;receive(event.payload)})
   void listener.then(()=>invoke<FloatingFrame>('floating_lyrics_snapshot')).then(value=>{if(!seen)receive(value)}).catch(()=>undefined)
   const animate=()=>{const next=lyricAt(current.current?.lines||[],lyricClock(),!current.current?.subtitles);if(next!==index){index=next;setLineTick(value=>value+1)}tick=requestAnimationFrame(animate)};tick=requestAnimationFrame(animate)
   return()=>{alive=false;cancelAnimationFrame(tick);void listener.then(stop=>stop())}
  },[lyricClock])
- return <FloatingLyricsSurface externalUnlock frame={frame} timeMs={lyricClock()} clock={lyricClock} fontSize={fontSize} locked={locked} activeColor={activeColor} inactiveColor={inactiveColor} update={value=>{update(value);const {fontSize,locked,activeColor,inactiveColor}=useFloatingPreferences.getState();void emitTo('main','floating-lyrics-preferences',{fontSize,locked,activeColor,inactiveColor})}} control={action=>void invoke('floating_lyrics_control',{action})} onDrag={()=>void getCurrentWindow().startDragging()} onClose={()=>void invoke('floating_lyrics_enable',{enabled:false})}/>
+ return <FloatingLyricsSurface externalUnlock frame={frame} timeMs={lyricClock()} clock={lyricClock} fontSize={fontSize} locked={locked} activeColor={activeColor} inactiveColor={inactiveColor} alignment={alignment} update={value=>{update(value);const {fontSize,locked,activeColor,inactiveColor,alignment}=useFloatingPreferences.getState();void emitTo('main','floating-lyrics-preferences',{fontSize,locked,activeColor,inactiveColor,alignment})}} control={action=>void invoke('floating_lyrics_control',{action})} onDrag={()=>void getCurrentWindow().startDragging()} onClose={()=>void invoke('floating_lyrics_enable',{enabled:false})}/>
 }
-export function FloatingLyricsSurface({frame,timeMs,clock,fontSize,locked,activeColor='#b4f3e9',inactiveColor='#91a6b5',externalUnlock=false,update,control,onDrag,onClose}:{frame:FloatingFrame|null;timeMs:number;clock?:()=>number;fontSize:number;locked:boolean;activeColor?:string;inactiveColor?:string;externalUnlock?:boolean;update:(value:Partial<FloatingPreferences>)=>void;control:(action:string)=>void;onDrag:()=>void;onClose:()=>void}) {
+export function FloatingLyricsSurface({frame,timeMs,clock,fontSize,locked,activeColor='#b4f3e9',inactiveColor='#91a6b5',alignment='edges',externalUnlock=false,update,control,onDrag,onClose}:{frame:FloatingFrame|null;timeMs:number;clock?:()=>number;fontSize:number;locked:boolean;activeColor?:string;inactiveColor?:string;alignment?:FloatingPreferences['alignment'];externalUnlock?:boolean;update:(value:Partial<FloatingPreferences>)=>void;control:(action:string)=>void;onDrag:()=>void;onClose:()=>void}) {
  const [colorsOpen,setColorsOpen]=useState(false)
  const lines=frame?.lines||[],slots=floatingLineSlots(lines,timeMs,frame?.subtitles)
  return <section className="floating-lyrics-window" data-locked={locked} data-colors-open={colorsOpen&&!locked} aria-label="双行悬浮歌词" style={{'--floating-font-size':`${fontSize}px`,'--floating-active':activeColor,'--floating-inactive':inactiveColor} as CSSProperties}>
@@ -37,7 +37,7 @@ export function FloatingLyricsSurface({frame,timeMs,clock,fontSize,locked,active
   {locked&&!externalUnlock&&<button className="floating-unlock" aria-label="解锁悬浮歌词" onClick={()=>update({locked:false})}><LockKeyholeOpen size={15}/><span>解锁</span></button>}
   <div className="floating-lyric-lines" onPointerDown={event=>{if(!locked&&event.button===0)onDrag()}}>
    {slots.map(({line,index,active},slot)=><div key={slot} data-slot={slot} className={`floating-lyric-line ${active?'current':'upcoming'}`}>
-    <FloatingLyricMarquee identity={`${frame?.id}:${index}:${line?.timeMs}:${line?.text}`} line={line} active={active} timeMs={timeMs} clock={clock} nextTimeMs={lines[index+1]?.timeMs}>
+    <FloatingLyricMarquee identity={`${frame?.id}:${index}:${line?.timeMs}:${line?.text}`} line={line} active={active} timeMs={timeMs} clock={clock} centerSlot={alignment==='center'?slot:undefined} nextTimeMs={lines[index+1]?.timeMs}>
       {line?<WordLyric line={line} timeMs={timeMs} active={active} clock={active?clock:undefined}/>:<span>{lines.length?'\u00a0':slot===0?frame?.title||'开始播放，让歌词陪着你':frame?.artist||'\u00a0'}</span>}
     </FloatingLyricMarquee>
    </div>)}

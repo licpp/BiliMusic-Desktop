@@ -2,7 +2,7 @@ import { isTopOverlay, lockAppForPortal } from './overlayStack'
 import { useOverlayDismiss } from './useOverlayDismiss'
 import { useVerticalDismiss } from './useVerticalDismiss'
 import { createPortal } from 'react-dom'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCompactLayout } from './useCompactLayout'
 import { X } from 'lucide-react'
 
@@ -11,8 +11,28 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
   const sheet = mobileSheet && compact
   const layer = useRef<HTMLDivElement>(null)
   const panel = useRef<HTMLElement>(null)
-  const drag = useVerticalDismiss(panel, sheet, onClose)
-  useOverlayDismiss(layer, true, onClose, true)
+  const [closing, setClosing] = useState(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const requestClose = useCallback(() => {
+    if (closeTimer.current !== undefined) return
+    const reduced = typeof window === 'undefined' || typeof window.matchMedia !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced) {
+      onCloseRef.current()
+      return
+    }
+    setClosing(true)
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = undefined
+      onCloseRef.current()
+    }, 155)
+  }, [])
+  useEffect(() => () => {
+    if (closeTimer.current !== undefined) clearTimeout(closeTimer.current)
+  }, [])
+  const drag = useVerticalDismiss(panel, sheet && !closing, onClose)
+  useOverlayDismiss(layer, !closing, requestClose, true)
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
     const unlock = lockAppForPortal()
@@ -35,7 +55,7 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
       if (previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true })
     }
   }, [])
-  return createPortal(<div ref={layer} className={`dialog-backdrop collection-dialog-layer${sheet?' collection-dialog-sheet-layer':''}`} onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section ref={panel} className={'collection-dialog ' + className+(sheet?' collection-dialog-mobile-sheet':'')} role="dialog" aria-modal="true" aria-label={title}>
+  return createPortal(<div ref={layer} data-closing={closing || undefined} className={`dialog-backdrop collection-dialog-layer${sheet?' collection-dialog-sheet-layer':''}`} onMouseDown={e=>{if(e.target===e.currentTarget)requestClose()}}><section ref={panel} data-closing={closing || undefined} className={'collection-dialog ' + className+(sheet?' collection-dialog-mobile-sheet':'')} role="dialog" aria-modal="true" aria-label={title}>
     {sheet && <button type="button" className="collection-sheet-handle" aria-label={`收起${title}`} {...drag}><span/></button>}
-    <header><h3>{title}</h3>{!sheet&&<button className="collection-icon" aria-label="关闭" onClick={onClose}><X size={19}/></button>}</header>{children}</section></div>,document.body)
+    <header><h3>{title}</h3>{!sheet&&<button className="collection-icon" aria-label="关闭" onClick={requestClose}><X size={19}/></button>}</header>{children}</section></div>,document.body)
 }

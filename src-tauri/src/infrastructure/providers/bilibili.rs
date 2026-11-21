@@ -196,7 +196,15 @@ pub struct AccountProfile {
     pub name: Option<String>,
     pub avatar_url: Option<String>,
     pub level: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub senior_member: Option<bool>,
     pub vip_active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vip_type: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vip_theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vip_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +244,61 @@ pub struct FavoritePage {
 struct FavoriteFoldersData {
     #[serde(default)]
     list: Option<Vec<FavoriteFolder>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribedSeason {
+    pub reference: String,
+    pub title: String,
+    pub cover_url: String,
+    pub uploader_name: String,
+    pub video_count: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribedSeasonPage {
+    pub items: Vec<SubscribedSeason>,
+    pub next_page: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct CollectedFoldersData {
+    list: Option<Vec<serde_json::Value>>,
+    has_more: bool,
+}
+
+impl CollectedFoldersData {
+    fn into_season_page(self, page: u32) -> SubscribedSeasonPage {
+        let rows = self.list.unwrap_or_default();
+        let next_page = if self.has_more && !rows.is_empty() {
+            page.checked_add(1)
+        } else {
+            None
+        };
+        let items = rows
+            .into_iter()
+            .filter_map(|row| {
+                if row["type"].as_i64() != Some(21) {
+                    return None;
+                }
+                let season_id = row["id"].as_i64().filter(|id| *id > 0)?;
+                let uploader_id = row["upper"]["mid"]
+                    .as_i64()
+                    .filter(|id| *id > 0)
+                    .or_else(|| row["mid"].as_i64().filter(|id| *id > 0))?;
+                Some(SubscribedSeason {
+                    reference: format!("season:{uploader_id}:{season_id}"),
+                    title: row["title"].as_str().unwrap_or_default().to_owned(),
+                    cover_url: normalize_url(row["cover"].as_str().unwrap_or_default()),
+                    uploader_name: row["upper"]["name"].as_str().unwrap_or_default().to_owned(),
+                    video_count: row["media_count"].as_u64(),
+                })
+            })
+            .collect();
+        SubscribedSeasonPage { items, next_page }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -298,13 +361,39 @@ struct NavData {
     face: String,
     #[serde(default, rename = "level_info")]
     level: Option<NavLevel>,
+    #[serde(default)]
+    is_senior_member: Option<i64>,
     #[serde(default, rename = "vipStatus")]
     vip_status: Option<i64>,
+    #[serde(default, rename = "vipType")]
+    vip_type: Option<i64>,
+    #[serde(default)]
+    vip_label: Option<NavVipLabel>,
+    #[serde(default)]
+    vip: Option<NavVip>,
 }
 
 #[derive(Deserialize)]
 struct NavLevel {
     current_level: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct NavVip {
+    #[serde(default)]
+    status: Option<i64>,
+    #[serde(default, rename = "type")]
+    kind: Option<i64>,
+    #[serde(default)]
+    label: Option<NavVipLabel>,
+}
+
+#[derive(Deserialize, Default)]
+struct NavVipLabel {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    label_theme: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -726,24 +815,15 @@ impl BilibiliProvider {
                 name: None,
                 avatar_url: None,
                 level: None,
+                senior_member: None,
                 vip_active: None,
+                vip_type: None,
+                vip_theme: None,
+                vip_label: None,
             });
         }
         let data: NavData = self.get_data(self.api_url("/x/web-interface/nav")).await?;
-        Ok(AccountProfile {
-            logged_in: data.is_login,
-            user_id: data.is_login.then_some(data.mid),
-            name: data.is_login.then_some(data.uname),
-            avatar_url: data.is_login.then_some(normalize_url(&data.face)),
-            level: data
-                .level
-                .filter(|_| data.is_login)
-                .and_then(|level| level.current_level),
-            vip_active: data
-                .vip_status
-                .filter(|_| data.is_login)
-                .map(|status| status == 1),
-        })
+        Ok(account_profile_from_nav(data))
     }
 
     pub async fn comments(&self, aid: i64, next: i64) -> Result<CommentPage, ProviderError> {
@@ -785,6 +865,23 @@ impl BilibiliProvider {
             .append_pair("up_mid", &uid.to_string());
         let data: FavoriteFoldersData = self.favorite_data(url).await?;
         Ok(data.list.unwrap_or_default())
+    }
+
+    pub async fn subscribed_seasons(&self, page: u32) -> Result<SubscribedSeasonPage, ProviderError> {
+        let uid = self
+            .account_profile()
+            .await?
+            .user_id
+            .filter(|uid| *uid > 0)
+            .ok_or(ProviderError::NotAuthenticated)?;
+        let mut url = self.api_url("/x/v3/fav/folder/collected/list");
+        url.query_pairs_mut()
+            .append_pair("up_mid", &uid.to_string())
+            .append_pair("pn", &page.to_string())
+            .append_pair("ps", "20")
+            .append_pair("platform", "web");
+        let data: CollectedFoldersData = self.favorite_data(url).await?;
+        Ok(data.into_season_page(page))
     }
 
     pub async fn favorite_videos(
@@ -1741,8 +1838,152 @@ fn suggestion_words(value: &serde_json::Value) -> Vec<String> {
     words
 }
 
+fn account_profile_from_nav(data: NavData) -> AccountProfile {
+    let vip_status = data
+        .vip_status
+        .or_else(|| data.vip.as_ref().and_then(|vip| vip.status));
+    let vip_active = vip_status
+        .filter(|_| data.is_login)
+        .map(|status| status == 1);
+    let active = vip_active == Some(true);
+    let vip_type = data
+        .vip_type
+        .or_else(|| data.vip.as_ref().and_then(|vip| vip.kind))
+        .filter(|_| data.is_login && active);
+    let label_source = data
+        .vip_label
+        .as_ref()
+        .or_else(|| data.vip.as_ref().and_then(|vip| vip.label.as_ref()));
+    let vip_theme = if data.is_login && active {
+        label_source
+            .and_then(|label| label.label_theme.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    } else {
+        None
+    };
+    let vip_label = if data.is_login && active {
+        label_source
+            .and_then(|label| label.text.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    } else {
+        None
+    };
+    AccountProfile {
+        logged_in: data.is_login,
+        user_id: data.is_login.then_some(data.mid),
+        name: data.is_login.then_some(data.uname),
+        avatar_url: data.is_login.then_some(normalize_url(&data.face)),
+        level: data
+            .level
+            .filter(|_| data.is_login)
+            .and_then(|level| level.current_level),
+        senior_member: data
+            .is_senior_member
+            .filter(|_| data.is_login)
+            .map(|value| value == 1),
+        vip_active,
+        vip_type,
+        vip_theme,
+        vip_label,
+    }
+}
+
+    #[cfg(test)]
+    mod nav_profile_tests {
+        use super::{account_profile_from_nav, NavData};
+
+        #[test]
+        fn parses_vip_tiers_and_senior_member_from_nav() {
+            let ten_year: NavData = serde_json::from_str(
+                r#"{
+                    "isLogin": true,
+                    "mid": 42,
+                    "uname": "音乐旅人",
+                    "face": "http://i0.hdslb.com/a.jpg",
+                    "level_info": { "current_level": 6 },
+                    "is_senior_member": 1,
+                    "vipStatus": 1,
+                    "vipType": 2,
+                    "vip_label": { "text": "十年大会员", "label_theme": "ten_annual_vip" }
+                }"#,
+            )
+            .expect("ten year nav");
+            let profile = account_profile_from_nav(ten_year);
+            assert_eq!(profile.level, Some(6));
+            assert_eq!(profile.senior_member, Some(true));
+            assert_eq!(profile.vip_active, Some(true));
+            assert_eq!(profile.vip_type, Some(2));
+            assert_eq!(profile.vip_theme.as_deref(), Some("ten_annual_vip"));
+            assert_eq!(profile.vip_label.as_deref(), Some("十年大会员"));
+
+            let expired: NavData = serde_json::from_str(
+                r#"{
+                    "isLogin": true,
+                    "mid": 43,
+                    "uname": "旧会员",
+                    "face": "https://i0.hdslb.com/b.jpg",
+                    "level_info": { "current_level": 5 },
+                    "vipStatus": 0,
+                    "vipType": 2,
+                    "vip_label": { "text": "年度大会员", "label_theme": "annual_vip" }
+                }"#,
+            )
+            .expect("expired nav");
+            let expired_profile = account_profile_from_nav(expired);
+            assert_eq!(expired_profile.vip_active, Some(false));
+            assert_eq!(expired_profile.vip_type, None);
+            assert_eq!(expired_profile.vip_theme, None);
+            assert_eq!(expired_profile.vip_label, None);
+        }
+    }
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn subscribed_seasons_filter_mixed_pages_without_stopping_pagination() {
+        use super::CollectedFoldersData;
+        use serde_json::{from_value, json};
+
+        let page: CollectedFoldersData = from_value(json!({
+            "has_more": true,
+            "list": [
+                {"type": 11, "id": 555},
+                {"type": 21, "id": 9465322, "fid": 0, "mid": 3747575452667567_i64,
+                 "title": "合集", "cover": "//example.test/cover.jpg", "media_count": 0,
+                 "upper": {"mid": 3747575452667567_i64, "name": "UP 主"}},
+                {"type": 21, "id": 0, "mid": 12},
+                {"type": 21, "id": 123}
+            ]
+        })).unwrap();
+        let page = page.into_season_page(1);
+        assert_eq!(page.next_page, Some(2));
+        assert_eq!(page.items.len(), 1);
+        let item = &page.items[0];
+        assert_eq!(item.reference, "season:3747575452667567:9465322");
+        assert_eq!(item.title, "合集");
+        assert_eq!(item.cover_url, "https://example.test/cover.jpg");
+        assert_eq!(item.uploader_name, "UP 主");
+        assert_eq!(item.video_count, Some(0));
+
+        let page: CollectedFoldersData = from_value(json!({
+            "has_more": true,
+            "list": [{"type": 11, "id": 556}]
+        })).unwrap();
+        let page = page.into_season_page(2);
+        assert!(page.items.is_empty());
+        assert_eq!(page.next_page, Some(3));
+
+        let page: CollectedFoldersData = from_value(json!({
+            "has_more": false,
+            "list": null
+        })).unwrap();
+        assert_eq!(page.into_season_page(3).next_page, None);
+    }
+
     #[test]
     fn access_flags_distinguish_early_access_exclusive_and_paid() {
         use super::{AccessFlags, ChargeInfo, VideoAccess};

@@ -46,6 +46,7 @@ class BackgroundPlaybackTest {
     private lateinit var service: PlaybackService
     private lateinit var profile: File
     private val requests = mutableListOf<Pair<Long, JSONObject>>()
+    private val lyricRequests = mutableListOf<Pair<Long, JSONObject>>()
     private val url = "http://127.0.0.1:1234/token/test"
     private fun track(id: String) = JSONObject().put("id", id).put("title", "song $id").put("album", "album $id").put("durationSeconds", 120)
         .put("source", JSONObject().put("provider", "bilibili").put("bvid", "BV123").put("cid", id.toInt()).put("page", id.toInt()))
@@ -54,9 +55,9 @@ class BackgroundPlaybackTest {
     private fun session() = field("session") as Media3Session
     private fun mediaSession() = checkNotNull(RecordingMediaSessionShadow.active)
     private fun idle() { shadowOf(android.os.Looper.getMainLooper()).idle() }
-    private fun load() {
+    private fun load(artist: String = "") {
         service.onStartCommand(Intent(service, PlaybackService::class.java).setAction("load").putExtra("id", "1")
-            .putExtra("url", url).putExtra("title", "song 1"), 0, 1)
+            .putExtra("url", url).putExtra("title", "song 1").putExtra("artist", artist), 0, 1)
         idle()
         assertEquals("playing", service.snapshot().getString("status"))
     }
@@ -70,7 +71,10 @@ class BackgroundPlaybackTest {
         PlaybackService.profilePath = profile.path; PlaybackService.listener = null
         PlaybackService.queueData = JSONObject().put("tracks", JSONArray(listOf(track("1"), track("2"), track("3"))))
             .put("repeatMode", "off").toString()
-        PlaybackService.resolveListener = { request, payload -> requests.add(request to payload) }
+        PlaybackService.resolveListener = { request, payload ->
+            val destination = if (payload.optString("kind") == "lyrics") lyricRequests else requests
+            destination.add(request to payload)
+        }
         ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(url), ShadowMediaPlayer.MediaInfo(120_000, 0))
         service = Robolectric.buildService(PlaybackService::class.java).create().get()
     }
@@ -339,32 +343,96 @@ class BackgroundPlaybackTest {
     }
     @Test fun anotherPlayerTakingFocusDoesNotDestroyThePlayableTimeline() {
         load(); service.control("seek", 25.0); idle()
-        val focus = shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
-        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        val audio = shadowOf(service.getSystemService(AudioManager::class.java))
+        val original = audio.lastAudioFocusRequest
+        original.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
         assertEquals("paused", service.snapshot().getString("status"))
+        original.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals("paused", service.snapshot().getString("status"))
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        service.control("resume")
+        assertEquals("paused", service.snapshot().getString("status"))
+        assertEquals("audio_focus_denied", service.snapshot().getString("errorCode"))
+        assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
         service.control("resume"); service.control("seek", 40.0); idle()
         assertEquals("playing", service.snapshot().getString("status")); assertEquals(40.0, service.snapshot().getDouble("position"), 0.1)
     }
     @Test fun transientFocusReturnsToTheSameTimelineUnlessTheUserPausesOrStops() {
         load(); service.control("seek", 25.0); idle()
-        val focus = shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
+        val audio = shadowOf(service.getSystemService(AudioManager::class.java))
+        val focus = audio.lastAudioFocusRequest
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        idle()
+        val interruptedAt = player().currentPosition.toLong()
+        assertTrue(interruptedAt > 25_000)
+        assertEquals(interruptedAt, mediaSession().publishedPlaybackState!!.position)
         assertEquals("paused", service.snapshot().getString("status"))
+        assertFalse(shadowOf(service).isForegroundStopped)
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        service.control("resume")
+        assertEquals("paused", service.snapshot().getString("status"))
+        assertFalse(shadowOf(service).isForegroundStopped)
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
         assertEquals("playing", service.snapshot().getString("status"))
-        assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+        assertEquals(interruptedAt / 1000.0, service.snapshot().getDouble("position"), .1)
         assertTrue(requests.isEmpty())
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         service.control("pause")
+        assertTrue(shadowOf(service).isForegroundStopped)
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
         assertEquals("paused", service.snapshot().getString("status"))
         service.control("resume")
-        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        val currentFocus = shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
+        currentFocus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         service.control("stop")
-        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        currentFocus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
         assertEquals("paused", service.snapshot().getString("status"))
         assertNull(field("player")); assertTrue(requests.isEmpty())
+    }
+    @Test fun manualResumeWaitsForDelayedFocusWithoutReplayingOrRequestingItAgainOnGain() {
+        load()
+        service.control("seek", 25.0); idle()
+        val media = player()
+        val audio = shadowOf(service.getSystemService(AudioManager::class.java))
+        val oldFocus = audio.lastAudioFocusRequest
+        oldFocus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_DELAYED)
+        service.control("resume")
+        val delayed = audio.lastAudioFocusRequest
+        assertEquals("paused", service.snapshot().getString("status"))
+        assertFalse(media.isPlaying)
+        assertFalse(shadowOf(service).isForegroundStopped)
+        oldFocus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertEquals("paused", service.snapshot().getString("status"))
+        audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        delayed.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        assertSame(media, player())
+        assertTrue(media.isPlaying)
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+        assertTrue(requests.isEmpty())
+    }
+    @Test fun interruptionDuringNativeQueueResolutionKeepsTheResolvedTrackAndPosition() {
+        load()
+        service.control("next")
+        val request = requests.single()
+        val focus = shadowOf(service.getSystemService(AudioManager::class.java)).lastAudioFocusRequest
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        service.resolved(request.first, JSONObject().put("url", url).put("track", track("2")).put("position", 29.0))
+        idle()
+        assertEquals("2", service.snapshot().getString("id"))
+        assertEquals("paused", service.snapshot().getString("status"))
+        assertEquals(29.0, service.snapshot().getDouble("position"), .1)
+        assertFalse(player().isPlaying)
+        assertFalse(shadowOf(service).isForegroundStopped)
+        focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(29.0, service.snapshot().getDouble("position"), .1)
+        assertEquals(1, requests.size)
     }
     @Test fun headsetReceiverTargetsThisServiceAndConsumesKeyUpOnce() {
         load()
@@ -422,46 +490,67 @@ class BackgroundPlaybackTest {
         assertEquals("2", service.snapshot().getString("id"))
         assertEquals("playing", service.snapshot().getString("status"))
     }
-    @Test fun systemTitleLyricsUseTheSameTitleForMediaSessionAndNotification() {
-        load()
+    @Test fun mediaCardMovesOnlyTheLyricLineInBothTitleModes() {
+        load("测试歌手")
         val session = mediaSession()
         val originalQueue = session.publishedQueue
         val notifications = service.getSystemService(NotificationManager::class.java)
-        fun assertPublishedTitle(expected: String) {
+        fun notification() = notifications.activeNotifications.single().notification
+        fun assertCard(top: String, bottom: String) {
             idle()
             val metadata = session.publishedMetadata!!
-            assertEquals(expected, metadata.getString(MediaMetadata.METADATA_KEY_TITLE))
-            assertEquals(expected, metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
-            val notification = notifications.activeNotifications.single().notification
-            assertEquals(expected, notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+            assertEquals(top, metadata.getString(MediaMetadata.METADATA_KEY_TITLE))
+            assertEquals(top, metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE))
+            assertEquals(top, metadata.description.title.toString())
+            assertEquals(bottom, metadata.getString(MediaMetadata.METADATA_KEY_ARTIST))
+            assertEquals(bottom, metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE))
+            assertEquals(bottom, metadata.description.subtitle.toString())
+            val extras = notification().extras
+            assertEquals(top, extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+            assertEquals(bottom, extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+            assertSame(originalQueue, session.publishedQueue)
         }
+
         val playback = service.snapshot()
         val lyricSession = playback.getString("engineInstanceId") + ":" + playback.getString("sessionId")
-        FloatingLyricsOverlay.command(service, """{"action":"update","id":"1","session":"$lyricSession","lines":[
-            {"timeMs":0,"text":"第一行歌词"},{"timeMs":1000,"text":"第二行歌词"}]}""")
-        assertPublishedTitle("song 1")
+        assertCard("song 1", "测试歌手")
         try {
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true}""")
+            FloatingLyricsOverlay.command(service, """{"action":"update","id":"1","session":"$lyricSession","subtitles":true,"lines":[
+                {"timeMs":0,"endTimeMs":2000,"text":"第一行歌词"},{"timeMs":2000,"endTimeMs":4000,"text":"第二行歌词"}]}""")
+            assertCard("song 1", "第一行歌词")
+            val before = notification()
+            service.notifyLyricsChanged()
+            assertCard("song 1", "第一行歌词")
+            assertSame(before, notification())
+
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(2300))
+            assertCard("song 1", "第二行歌词")
             FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
-            assertPublishedTitle("第一行歌词")
-            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1500))
-            assertPublishedTitle("第二行歌词")
+            assertCard("第二行歌词", "测试歌手")
             service.control("pause")
-            assertPublishedTitle("第二行歌词")
+            assertCard("第二行歌词", "测试歌手")
+            service.control("seek", 1.0)
+            assertCard("第一行歌词", "测试歌手")
             service.control("resume")
-            assertPublishedTitle("第二行歌词")
+            assertCard("第一行歌词", "测试歌手")
+            service.control("seek", 5.0)
+            assertCard("song 1", "测试歌手")
+            service.control("seek", 1.0)
+            FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""")
+            assertCard("song 1", "第一行歌词")
             assertEquals("song 1", session.publishedQueue!!.first().description.title)
-            assertSame(originalQueue, session.publishedQueue)
             assertEquals("song 1", service.snapshot().getJSONObject("track").getString("title"))
         } finally {
             FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""")
+            FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false}""")
         }
-        assertPublishedTitle("song 1")
     }
 
     @Test fun nativeQueueRefreshesMatchedLyricsAndSubtitlesWithTheWebViewSuspended() {
-        fun displayed(): String {
+        fun displayed(field: String = MediaMetadata.METADATA_KEY_TITLE): String {
             idle()
-            return mediaSession().publishedMetadata!!.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            return mediaSession().publishedMetadata!!.getString(field)
         }
         fun overlayLine(): String {
             val manager = service.getSystemService(Context.WINDOW_SERVICE)
@@ -474,23 +563,26 @@ class BackgroundPlaybackTest {
                 .put("timeline", JSONObject().put("lines", JSONArray(listOf(line))).put("subtitles", subtitles)))
         }
         ShadowSettings.setCanDrawOverlays(true)
-        FloatingLyricsOverlay.command(service, """{"action":"enable","enabled":true}""")
         FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true,"language":"ai-en"}""")
-        FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
         try {
             load()
-            val old = requests.single()
+            val old = lyricRequests.single()
             assertEquals("lyrics", old.second.getString("kind"))
             assertEquals("1", old.second.getString("id"))
 
             mediaSession().transportCallback!!.onSkipToNext()
-            reply(requests[1])
-            val matched = requests[2]
+            reply(requests[0])
+            val matched = lyricRequests[1]
             assertEquals("2", matched.second.getString("id"))
             assertEquals("playing", service.snapshot().getString("status"))
             lyricsReply(old, "上一首迟到的歌词")
             assertEquals("song 2", displayed())
             lyricsReply(matched, "已匹配歌词")
+            assertEquals("song 2", displayed())
+            assertEquals("已匹配歌词", displayed(MediaMetadata.METADATA_KEY_ARTIST))
+            FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
+            FloatingLyricsOverlay.command(service, """{"action":"enable","enabled":true}""")
+            assertEquals(2, lyricRequests.size)
             assertEquals("已匹配歌词", displayed())
             assertEquals("已匹配歌词", overlayLine())
             val playback = service.snapshot()
@@ -499,13 +591,13 @@ class BackgroundPlaybackTest {
             assertEquals("已匹配歌词", displayed())
 
             mediaSession().transportCallback!!.onSkipToNext()
-            reply(requests[3])
-            val captions = requests[4]
+            reply(requests[1])
+            val captions = lyricRequests[2]
             assertTrue(captions.second.getBoolean("subtitles"))
             assertEquals("ai-en", captions.second.getString("subtitleLanguage"))
             assertEquals("3", captions.second.getString("id"))
             FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":true,"language":"ai-ja"}""")
-            val changed = requests.last()
+            val changed = lyricRequests.last()
             assertEquals("ai-ja", changed.second.getString("subtitleLanguage"))
             lyricsReply(captions, "Previous preference", subtitles = true)
             assertEquals("song 3", displayed())
@@ -514,7 +606,7 @@ class BackgroundPlaybackTest {
             assertEquals("日本語の字幕", overlayLine())
             FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false,"language":""}""")
             assertEquals("song 3", displayed())
-            assertFalse(requests.last().second.getBoolean("subtitles"))
+            assertFalse(lyricRequests.last().second.getBoolean("subtitles"))
         } finally {
             FloatingLyricsOverlay.command(service, """{"action":"subtitle-preference","enabled":false}""")
             FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""")
@@ -524,12 +616,9 @@ class BackgroundPlaybackTest {
     @Test fun freshGuestPlaybackUsesTheNativeTimelineBeforeTheAccountMarkerExists() {
         assertTrue(profile.delete())
         load()
-        FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":true}""")
-        try {
-            val request = requests.single().second
-            assertEquals("lyrics", request.getString("kind"))
-            assertEquals("", request.getString("profile"))
-        } finally { FloatingLyricsOverlay.command(service, """{"action":"system-title","enabled":false}""") }
+        val request = lyricRequests.single().second
+        assertEquals("lyrics", request.getString("kind"))
+        assertEquals("", request.getString("profile"))
     }
     @Test fun sessionPublishesMetadataAndControllerWithoutOpeningAnActivity() {
         var controller: android.media.session.MediaController? = null

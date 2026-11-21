@@ -152,6 +152,8 @@ pub fn run() {
             #[cfg(desktop)]
             mini_player::desktop_mini_panel,
             interface::playlist_import::external_playlist_read,
+            #[cfg(all(desktop, not(target_env = "ohos")))]
+            interface::local_playlist::local_playlist_pick,
             interface::playlist_import::playlist_import_scope,
             interface::playlist_import::playlist_import_archive,
             interface::playlist_import::playlist_import_commit,
@@ -167,6 +169,7 @@ pub fn run() {
             interface::media::bili_creator_catalog,
             interface::commands::collections_list,
             interface::commands::collections_change,
+            interface::commands::collections_import_seasons,
             sync::sync_status,
             sync::repair::sync_archive_invalid_track_references,
             sync::devices::sync_devices,
@@ -237,6 +240,7 @@ pub fn run() {
             interface::commands::bili_qr_login_poll,
             interface::commands::bili_account_profile,
             interface::commands::bili_favorite_folders,
+            interface::commands::bili_subscribed_seasons,
             interface::commands::bili_favorite_videos,
             interface::linked_folders::bili_linked_folder,
             interface::linked_folders::bili_linked_create,

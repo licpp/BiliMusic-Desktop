@@ -153,4 +153,11 @@ class FloatingLyricsRendererTest {
             assertEquals(FloatingLyricsToolbar.Action.LOCK,actions.last())
         }
     }
+    @Test fun centeredRowsBorrowWidthBeforeScrolling() {
+        assertEquals(112f, centeredLyricOffset(0, 400f, 80f), 0f)
+        assertEquals(208f, centeredLyricOffset(1, 400f, 80f), 0f)
+        assertEquals(0f, centeredLyricOffset(0, 400f, 260f), 0f)
+        assertEquals(140f, centeredLyricOffset(1, 400f, 260f), 0f)
+        assertEquals(0f, centeredLyricOffset(1, 400f, 450f), 0f)
+    }
 }

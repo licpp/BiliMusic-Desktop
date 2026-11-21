@@ -4,13 +4,38 @@
 }
 .lyrics-view {
   opacity: 0;
-  transform: translateY(16px);
-  transition: transform 160ms cubic-bezier(.25,.8,.25,1), opacity 160ms ease;
+  transform: translateY(20px) scale(.99);
+  transition: transform 240ms cubic-bezier(.22,1,.36,1), opacity 190ms ease;
 }
 .lyrics-view[data-panel-open] {
   opacity: 1;
-  transform: translateY(var(--panel-drag-y,0px));
-  transition-duration: 200ms;
+  transform: translateY(var(--panel-drag-y,0px)) scale(1);
+  transition-duration: 260ms;
+}
+@media (min-width: 961px) {
+  .lyrics-view .lyrics-cover,
+  .lyrics-view .lyrics-track-meta {
+    opacity: 0;
+    transform: translateY(10px);
+    transition: transform 300ms cubic-bezier(.22,1,.36,1), opacity 220ms ease;
+  }
+  .lyrics-view[data-panel-open] .lyrics-cover { opacity: 1; transform: none; transition-delay: 40ms; }
+  .lyrics-view[data-panel-open] .lyrics-track-meta { opacity: 1; transform: none; transition-delay: 85ms; }
+}
+.collection-dialog-layer[data-closing] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.collection-dialog[data-closing] {
+  opacity: 0;
+  transform: translateY(8px) scale(.975);
+  transition: transform 155ms cubic-bezier(.22,1,.36,1), opacity 145ms ease;
+}
+.collection-dialog.collection-dialog-mobile-sheet[data-closing] {
+  opacity: .94;
+  transform: translate3d(0, 100%, 0);
+  transition: transform 160ms cubic-bezier(.32,.72,0,1), opacity 145ms ease;
 }
 :root[data-layout="mobile"] .lyrics-view:not([data-panel-open]) { transform:translateY(var(--lyrics-exit-y,38px)); }
 :root[data-layout="mobile"] .lyrics-view[data-panel-open] { transition-duration:245ms; }
@@ -81,8 +106,10 @@
   :root[data-layout="mobile"] :is(.app-shell,.mobile-player-surface).lyrics-immersive .lyrics-meta-actions button { width:36px; }
 }
 @media (prefers-reduced-motion:reduce) {
-  .lyrics-view,.lyrics-view[data-panel-open],.app-shell.lyrics-immersive > .immersive-backdrop,
-  .collection-dialog-mobile-sheet,:root[data-layout="mobile"] .queue-sheet-backdrop {
+  .lyrics-view,.lyrics-view[data-panel-open],.lyrics-view .lyrics-cover,.lyrics-view .lyrics-track-meta,
+  .app-shell.lyrics-immersive > .immersive-backdrop,
+  .collection-dialog-layer[data-closing],.collection-dialog[data-closing],.collection-dialog-mobile-sheet,
+  :root[data-layout="mobile"] .queue-sheet-backdrop {
     transition:none;
   }
 }

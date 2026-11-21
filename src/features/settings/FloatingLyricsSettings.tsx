@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { FloatingLyricsColors } from '../lyrics/FloatingLyricsColors'
+import { FloatingLyricMarquee } from '../lyrics/FloatingLyricMarquee'
 import { SettingsDisclosure } from './SettingsDisclosure'
 import { useFloatingPreferences } from '../../services/floatingLyricsPreferences'
 import { floatingCapability, setFloatingLyrics, useFloatingLyrics, type FloatingCapability } from '../../services/floatingLyrics'
@@ -9,7 +10,7 @@ import { commandErrorMessage } from '../../services/desktopApi'
 
 export function FloatingLyricsSettings() {
   const {enabled,busy,error}=useFloatingLyrics()
-  const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,update}=useFloatingPreferences()
+  const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment,update}=useFloatingPreferences()
   const [capability,setCapability]=useState<FloatingCapability | null>(null)
   useEffect(()=>{
     let alive=true
@@ -19,6 +20,7 @@ export function FloatingLyricsSettings() {
   const description=capability && !capability.supported ? capability.reason || '此系统暂不支持' : isOHOS ? '通过系统桌面歌词显示' : '在其他窗口上方显示歌词'
   const fontSupported=capability?.supported&&capability.fontSizeSupported!==false
   const colorSupported=capability?.supported&&capability.colorSupported!==false&&!isOHOS
+  const alignmentSupported=capability?.supported&&(!isMobile||isAndroid)
   return <SettingsDisclosure icon={<span className="floating-lyrics-icon" aria-hidden="true">词</span>} title="悬浮歌词" description={`${enabled?'已开启 · ':''}${description}`}>
     <div className="floating-settings-content">
       <div className="floating-enable-setting">
@@ -27,9 +29,19 @@ export function FloatingLyricsSettings() {
       </div>
       {capability?.supported&&(fontSupported||colorSupported)&&<div className="floating-settings-layout">
         <div className="floating-settings-preview" aria-label="悬浮歌词样式预览" style={{'--preview-active':activeColor,'--preview-inactive':inactiveColor,'--preview-font-size':`${fontSize}px`} as CSSProperties}>
-          <small>样式预览</small><div><p><span>旋律</span>缓缓响起</p><p>此刻，慢慢听</p></div>
+          <small>样式预览</small><div className="floating-preview-lines">
+            <FloatingLyricMarquee identity="preview-first" active={false} timeMs={0} centerSlot={alignment==='center'?0:undefined}><p><span>起风</span>了</p></FloatingLyricMarquee>
+            <FloatingLyricMarquee identity="preview-next" active={false} timeMs={0} centerSlot={alignment==='center'?1:undefined}><p>慢慢听</p></FloatingLyricMarquee>
+          </div>
         </div>
         <div className="floating-settings-controls">
+          {alignmentSupported&&<div className="floating-palette-setting">
+            <span>歌词对齐</span>
+            <div className="cache-capacity-options floating-alignment-options" role="group" aria-label="歌词对齐">
+              <button type="button" aria-pressed={alignment==='edges'} onClick={()=>update({alignment:'edges'})}>两端</button>
+              <button type="button" aria-pressed={alignment==='center'} onClick={()=>update({alignment:'center'})}>居中</button>
+            </div>
+          </div>}
           {fontSupported&&<label className="floating-font-setting"><span>歌词字号<output>{fontSize}<small>px</small></output></span><input aria-label="悬浮歌词字号" type="range" min="18" max="48" step="2" value={fontSize} style={{'--range-fill':`${(fontSize-18)/30*100}%`} as CSSProperties} onChange={event=>update({fontSize:Number(event.target.value)})}/></label>}
           {colorSupported&&<div className="floating-palette-setting"><span>歌词配色</span><FloatingLyricsColors showPresetNames activeColor={activeColor} inactiveColor={inactiveColor} update={update}/></div>}
         </div>

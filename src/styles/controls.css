@@ -1,0 +1,972 @@
+/* Cohesive custom form controls, playback speed pickers, account dialog & download options. */
+
+/* ==========================================================================
+   1. Custom Checkboxes, Radios & Progress Bars (zero browser-native chrome)
+   ========================================================================== */
+:where(:root:not([data-layout="large"])) input[type="checkbox"]:not([data-native]) {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 52%, var(--line));
+  border-radius: 5.5px;
+  background: var(--base);
+  color: #07131b;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 110ms ease;
+}
+.creator-import-list .creator-select-row > input[type="checkbox"] {
+  width: 1px;
+  min-width: 1px;
+  height: 1px;
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native])::before {
+  content: '';
+  width: 11px;
+  height: 11px;
+  transform: scale(0);
+  transition: transform 140ms cubic-bezier(.22, 1, .36, 1);
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.3 4.8 8.9 9.8 3.3'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.2 6.3 4.8 8.9 9.8 3.3'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):hover:not(:disabled) {
+  border-color: var(--cyan);
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked {
+  border-color: var(--cyan);
+  background: var(--cyan);
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):checked::before {
+  transform: scale(1);
+}
+:root:not([data-layout="large"]) input[type="checkbox"].track-select:checked {
+  border-color: var(--coral);
+  background: var(--coral);
+}
+:root[data-theme="light"]:not([data-layout="large"]) input[type="checkbox"]:not([data-native]) {
+  background: #ffffff;
+  color: #ffffff;
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+:root:not([data-layout="large"]) input[type="checkbox"]:not([data-native]):disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native]) {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 52%, var(--line));
+  border-radius: 50%;
+  background: var(--base);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native])::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  transform: scale(0);
+  transition: transform 150ms cubic-bezier(.22, 1, .36, 1);
+}
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native]):hover:not(:disabled) {
+  border-color: var(--cyan);
+}
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native]):checked {
+  border-color: var(--cyan);
+}
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native]):checked::before {
+  transform: scale(1);
+}
+.import-mode input[type="radio"]:checked {
+  border-color: var(--coral);
+}
+.import-mode input[type="radio"]::before {
+  background: var(--coral);
+}
+:root[data-theme="light"]:not([data-layout="large"]) input[type="radio"]:not([data-native]) {
+  background: #ffffff;
+}
+:root:not([data-layout="large"]) input[type="radio"]:not([data-native]):focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* Custom sleek progress bar for downloads */
+.download-row progress {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--line);
+}
+.download-row progress::-webkit-progress-bar { background: var(--line); border-radius: 999px; }
+.download-row progress::-webkit-progress-value { background: linear-gradient(90deg, color-mix(in srgb, var(--cyan) 72%, var(--blue)), var(--cyan)); border-radius: 999px; }
+.download-row progress::-moz-progress-bar { background: linear-gradient(90deg, color-mix(in srgb, var(--cyan) 72%, var(--blue)), var(--cyan)); border-radius: 999px; }
+
+/* ==========================================================================
+   2. Playback Speed Picker (Unified Accordion Row & Enhanced Mobile Ruler)
+   ========================================================================== */
+.playback-rate-control {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 2px 2px;
+  border-top: 1px solid var(--line);
+}
+.playback-rate-control + .playback-quality-settings[data-kind="audio"] {
+  border-top: 0;
+  padding-top: 0;
+}
+.playback-rate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.playback-rate-header small {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+}
+.playback-rate-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--cyan) 28%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
+  color: var(--cyan);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.playback-rate-reset:hover {
+  background: color-mix(in srgb, var(--cyan) 18%, transparent);
+  border-color: color-mix(in srgb, var(--cyan) 48%, transparent);
+}
+.playback-rate-pills {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--base);
+}
+.playback-rate-pills > button {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.playback-rate-pills > button:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.playback-rate-pills > button[aria-pressed="true"] {
+  color: var(--cyan);
+  font-weight: 700;
+  border-color: color-mix(in srgb, var(--cyan) 36%, var(--line));
+  background: color-mix(in srgb, var(--cyan) 12%, var(--panel));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--cyan) 14%, transparent);
+}
+:root[data-theme="light"] .playback-rate-pills > button[aria-pressed="true"] {
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(26, 48, 74, .08);
+}
+
+/* Mobile Playback Rate Dialog: readout header + filled ruler track + quick tap pills */
+.playback-rate-readout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin: 4px 0 12px;
+}
+.playback-rate-readout output {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 750;
+  letter-spacing: -.03em;
+}
+.playback-rate-readout .playback-rate-reset {
+  position: absolute;
+  right: 0;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.playback-rate-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 13px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--range-track);
+  overflow: hidden;
+}
+.playback-rate-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cyan) 70%, var(--blue)), var(--cyan));
+}
+.playback-rate-rail b {
+  top: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--cyan) 22%, transparent), 0 2px 8px rgba(0, 0, 0, .28);
+}
+.playback-rate-rail > span {
+  top: 10px;
+  gap: 12px;
+}
+.playback-rate-rail > span i {
+  width: 2px;
+  height: 10px;
+  opacity: .55;
+}
+.playback-rate-rail > span[data-selected] i {
+  opacity: 0;
+}
+.playback-rate-quick {
+  margin-top: 12px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-radius: 13px;
+}
+.playback-rate-quick > button {
+  min-height: 38px;
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   3. Desktop Unified Inline Option Picker (播放倍速 / 音质 / 清晰度 / 字幕版本)
+   ========================================================================== */
+.action-menu-portal > .action-menu-panel:has(.touch-options):not(.action-menu-sheet):not(.action-menu-floating-panel) {
+  max-height: min(700px, calc(100dvh - 24px));
+}
+.action-menu-panel:not(.action-menu-sheet) .playback-quality-settings {
+  padding: 2px 2px 4px;
+  gap: 4px;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-trigger {
+  min-height: 38px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  gap: 9px;
+  transition: background 140ms ease;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-trigger:hover:not(:disabled) {
+  background: var(--line);
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-trigger > small {
+  font-size: 11.5px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-chevron {
+  transition: transform 160ms ease;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list {
+  display: grid;
+  gap: 4px;
+  margin: 4px 6px 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--base);
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list[data-option-layout="grid"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list[data-option-layout="grid"] button {
+  min-height: 32px;
+  padding: 0 4px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list button:hover:not([aria-pressed="true"]) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.action-menu-panel:not(.action-menu-sheet) .touch-option-list button[aria-pressed="true"] {
+  color: var(--cyan);
+  font-weight: 700;
+  border-color: color-mix(in srgb, var(--cyan) 36%, var(--line));
+  background: color-mix(in srgb, var(--cyan) 12%, var(--panel));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--cyan) 14%, transparent);
+}
+:root[data-theme="light"] .action-menu-panel:not(.action-menu-sheet) .touch-option-list button[aria-pressed="true"] {
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(26, 48, 74, .08);
+}
+
+/* ==========================================================================
+   4. Login & Account Dialog Polish (QR Frame, Copy/Refresh/Logout Buttons)
+   ========================================================================== */
+.account-dialog {
+  width: min(392px, 100%);
+  padding: 22px 24px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .5);
+}
+:root[data-theme="light"] .account-dialog {
+  background: #ffffff;
+  box-shadow: 0 20px 60px rgba(26, 48, 74, .18);
+}
+.account-dialog > header {
+  align-items: center;
+  margin-bottom: 4px;
+}
+.account-dialog h3 {
+  margin: 4px 0 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+.account-dialog-close {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.account-dialog-close:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+.qr-login,
+.account-profile {
+  display: grid;
+  justify-items: center;
+  padding: 20px 4px 4px;
+  text-align: center;
+}
+.qr-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .2);
+  overflow: hidden;
+}
+:root[data-theme="light"] .qr-frame {
+  box-shadow: 0 10px 28px rgba(26, 48, 74, .1);
+}
+.qr-frame > svg {
+  display: block;
+  padding: 0;
+  border-radius: 8px;
+}
+.qr-frame.expired > svg {
+  filter: blur(4px);
+  opacity: .35;
+}
+.qr-placeholder {
+  display: grid;
+  place-items: center;
+  width: 188px;
+  height: 188px;
+  border-radius: 12px;
+  background: var(--panel-raised);
+  color: var(--cyan);
+}
+.qr-expired-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(7, 16, 25, .48);
+  backdrop-filter: blur(4px);
+}
+.qr-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 16px 0 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.qr-status-pill[data-state="confirmed"] {
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 12%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--cyan) 34%, transparent);
+}
+.qr-status-pill[data-state="expired"],
+.qr-status-pill[data-state="error"] {
+  color: var(--coral);
+  background: color-mix(in srgb, var(--coral) 12%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--coral) 34%, transparent);
+}
+.qr-login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  width: 100%;
+}
+.qr-login-actions:empty { display: none; }
+.qr-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 120ms ease, filter 140ms ease;
+}
+.qr-action-button:hover {
+  background: color-mix(in srgb, var(--ink) 8%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--cyan) 32%, var(--line));
+}
+.qr-action-button.primary {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: #07131b;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--cyan) 24%, transparent);
+}
+:root[data-theme="light"] .qr-action-button.primary {
+  color: #ffffff;
+}
+.qr-action-button.primary:hover {
+  filter: brightness(1.06);
+  background: var(--cyan);
+}
+.qr-mobile-tip,
+.qr-login-note {
+  display: block;
+  margin-top: 12px;
+  max-width: 310px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.qr-mobile-tip + .qr-login-note {
+  margin-top: 6px;
+  color: var(--faint);
+}
+
+.account-profile-avatar {
+  width: 80px;
+  height: 80px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .24), 0 0 0 3px color-mix(in srgb, var(--cyan) 22%, var(--line));
+}
+.account-profile > strong {
+  margin-top: 14px;
+  font-size: 19px;
+  font-weight: 700;
+}
+.account-profile > small {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.account-profile > .account-logout-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 240px;
+  min-height: 42px;
+  margin-top: 22px;
+  padding: 9px 18px;
+  border: 1px solid color-mix(in srgb, var(--coral) 34%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--coral) 10%, transparent);
+  color: var(--coral);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 120ms ease;
+}
+.account-profile > .account-logout-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--coral) 18%, transparent);
+  border-color: color-mix(in srgb, var(--coral) 56%, transparent);
+}
+.account-profile > .account-logout-button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+/* ==========================================================================
+   5. Download Dialog Format Cards
+   ========================================================================== */
+.download-format-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.download-format-options > button {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  justify-items: start;
+  min-height: 58px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--base);
+  color: var(--muted);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.download-format-options > button strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.download-format-options > button small {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.download-format-options > button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--cyan) 32%, var(--line));
+  background: color-mix(in srgb, var(--ink) 3%, var(--base));
+}
+.download-format-options > button[aria-checked="true"] {
+  border-color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 9%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 20%, transparent);
+}
+.download-format-options > button[aria-checked="true"] strong {
+  color: var(--cyan);
+}
+@media (max-width: 440px) {
+  .download-format-options {
+    grid-template-columns: 1fr;
+  }
+  .download-format-options > button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 46px;
+  }
+}
+
+/* ==========================================================================
+   6. Sleep Timer Stepper & Presets Polish
+   ========================================================================== */
+.sleep-timer-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cyan) 11%, var(--panel-raised));
+  color: var(--cyan);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sleep-timer-presets > button {
+  border: 1px solid var(--line);
+  background: var(--base);
+  color: var(--muted);
+  font-weight: 550;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.sleep-timer-presets > button:hover {
+  color: var(--ink);
+  background: var(--panel-raised);
+}
+.sleep-timer-presets > button[aria-pressed="true"] {
+  color: var(--cyan);
+  font-weight: 700;
+  border-color: color-mix(in srgb, var(--cyan) 42%, var(--line));
+  background: color-mix(in srgb, var(--cyan) 12%, var(--panel));
+}
+.sleep-timer-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sleep-stepper-box {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--base);
+  gap: 2px;
+}
+.sleep-stepper-box:focus-within {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cyan) 10%, transparent);
+}
+.sleep-stepper-box > button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sleep-stepper-box > button:hover:not(:disabled) {
+  background: var(--panel-raised);
+  color: var(--ink);
+}
+.sleep-timer-settings .sleep-stepper-box > input[type="number"] {
+  width: 48px;
+  min-height: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: center;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.sleep-stepper-box > input[type="number"]::-webkit-inner-spin-button,
+.sleep-stepper-box > input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.sleep-timer-settings .sleep-timer-cancel {
+  border: 1px solid color-mix(in srgb, var(--coral) 32%, transparent);
+  background: color-mix(in srgb, var(--coral) 10%, transparent);
+  color: var(--coral);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+}
+.sleep-timer-settings .sleep-timer-cancel:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--coral) 18%, transparent);
+}
+
+/* ==========================================================================
+   7. Settings Theme Segmented Capsule & Button Typography Polish
+   ========================================================================== */
+.settings-card .theme-options {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--base);
+}
+.settings-card .theme-options > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+.settings-card .theme-options > button:hover:not(.selected) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.settings-card .theme-options > button.selected {
+  color: var(--cyan);
+  font-weight: 650;
+  border-color: color-mix(in srgb, var(--cyan) 34%, var(--line));
+  background: color-mix(in srgb, var(--cyan) 10%, var(--panel));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .14);
+}
+:root[data-theme="light"] .settings-card .theme-options {
+  background: #eef3f8;
+}
+:root[data-theme="light"] .settings-card .theme-options > button.selected {
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(26, 48, 74, .09);
+}
+:root[data-theme="light"] .collection-primary {
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   8. Bilibili LV0-LV6 (incl. Senior LV6) & 4-Tier VIP Badges
+   ========================================================================== */
+.account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 1px solid;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .01em;
+}
+.account-level {
+  --lv-color: #93a3b1;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--lv-color);
+  border-color: color-mix(in srgb, var(--lv-color) 36%, transparent);
+  background: color-mix(in srgb, var(--lv-color) 12%, var(--panel));
+}
+.account-lv-prefix {
+  font-size: 9.5px;
+  font-weight: 850;
+  font-style: italic;
+  letter-spacing: -.03em;
+  opacity: .92;
+  transform: translateY(.5px);
+}
+.account-level b {
+  margin-left: 1px;
+  font-size: 12.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.account-senior-bolt {
+  margin-left: 2px;
+  color: #ffd166;
+  filter: drop-shadow(0 0 4px rgba(255, 209, 102, .45));
+}
+:root[data-theme="light"] .account-senior-bolt {
+  color: #d97706;
+  filter: none;
+}
+
+/* Authentic Bilibili LV0-LV6 color scale (Dark) */
+.account-level[data-level="0"],
+.account-level[data-level="1"] { --lv-color: #9ba8b5; }
+.account-level[data-level="2"] { --lv-color: #5fd6a0; }
+.account-level[data-level="3"] { --lv-color: #5bb8ff; }
+.account-level[data-level="4"] { --lv-color: #ffad5c; }
+.account-level[data-level="5"] { --lv-color: #ff7854; }
+.account-level[data-level="6"] {
+  --lv-color: #ff6259;
+  border-color: rgba(255, 104, 88, .44);
+  background: linear-gradient(125deg, rgba(255, 88, 82, .22), rgba(255, 162, 76, .14));
+  box-shadow: 0 2px 10px rgba(255, 92, 82, .14);
+}
+.account-level[data-level="6"][data-senior] {
+  --lv-color: #ff9c54;
+  border-color: rgba(255, 190, 88, .48);
+  background: linear-gradient(125deg, rgba(255, 92, 82, .22), rgba(255, 198, 92, .18));
+}
+
+/* Authentic Bilibili LV0-LV6 color scale (Light) */
+:root[data-theme="light"] .account-level[data-level="0"],
+:root[data-theme="light"] .account-level[data-level="1"] { --lv-color: #64748b; }
+:root[data-theme="light"] .account-level[data-level="2"] { --lv-color: #158056; }
+:root[data-theme="light"] .account-level[data-level="3"] { --lv-color: #146ec2; }
+:root[data-theme="light"] .account-level[data-level="4"] { --lv-color: #c25e0a; }
+:root[data-theme="light"] .account-level[data-level="5"] { --lv-color: #c93d22; }
+:root[data-theme="light"] .account-level[data-level="6"] {
+  --lv-color: #d43528;
+  border-color: rgba(212, 53, 40, .28);
+  background: linear-gradient(125deg, #ffe7e4, #fff1df);
+  box-shadow: none;
+}
+:root[data-theme="light"] .account-level[data-level="6"][data-senior] {
+  --lv-color: #b4430c;
+  border-color: rgba(217, 119, 6, .34);
+  background: linear-gradient(125deg, #ffe9df, #fef3c7);
+}
+
+/* 4-Tier VIP Badges */
+.account-vip {
+  gap: 5px;
+  border-radius: 999px;
+  padding: 2px 10px 2px 8px;
+}
+.account-vip-icon {
+  flex: none;
+}
+
+/* 1. 月度大会员 (Classic Sakura Pink) */
+.account-vip[data-vip-tier="vip"] {
+  color: #ff8fb1;
+  border-color: rgba(251, 114, 153, .38);
+  background: linear-gradient(120deg, rgba(251, 114, 153, .18), rgba(251, 114, 153, .08));
+}
+:root[data-theme="light"] .account-vip[data-vip-tier="vip"] {
+  color: #b83260;
+  border-color: rgba(219, 77, 126, .32);
+  background: linear-gradient(120deg, #ffe3ed, #fff2f6);
+}
+
+/* 2. 年度大会员 (Vibrant Rose-Pink Gradient) */
+.account-vip[data-vip-tier="annual"] {
+  color: #ffdce7;
+  border-color: rgba(255, 122, 166, .55);
+  background: linear-gradient(120deg, rgba(251, 102, 148, .44), rgba(255, 142, 178, .24));
+  box-shadow: 0 2px 10px rgba(251, 114, 153, .18);
+}
+:root[data-theme="light"] .account-vip[data-vip-tier="annual"] {
+  color: #ffffff;
+  border-color: transparent;
+  background: linear-gradient(120deg, #fb6c97, #f44f82);
+  box-shadow: 0 3px 10px rgba(244, 79, 130, .24);
+}
+
+/* 3. 十年大会员 (Obsidian & Champagne Gold) */
+.account-vip[data-vip-tier="ten_annual"] {
+  color: #ffd980;
+  border-color: rgba(245, 198, 96, .52);
+  background: linear-gradient(120deg, rgba(168, 118, 28, .36), rgba(48, 36, 18, .72) 58%, rgba(214, 160, 56, .28));
+  box-shadow: 0 2px 12px rgba(245, 198, 96, .18);
+}
+:root[data-theme="light"] .account-vip[data-vip-tier="ten_annual"] {
+  color: #784500;
+  border-color: rgba(198, 138, 28, .44);
+  background: linear-gradient(120deg, #fef0c7, #fde199 55%, #f9d478);
+  box-shadow: 0 2px 10px rgba(198, 138, 28, .18);
+}
+
+/* 4. 百年大会员 (Prismatic Violet-Rose-Gold) */
+.account-vip[data-vip-tier="hundred_annual"] {
+  color: #f3e4ff;
+  border-color: rgba(216, 160, 255, .54);
+  background: linear-gradient(120deg, rgba(147, 84, 240, .42), rgba(236, 98, 158, .34) 55%, rgba(245, 188, 76, .34));
+  box-shadow: 0 2px 14px rgba(186, 112, 248, .24);
+}
+:root[data-theme="light"] .account-vip[data-vip-tier="hundred_annual"] {
+  color: #6b21a8;
+  border-color: rgba(168, 85, 247, .36);
+  background: linear-gradient(120deg, #f3e8ff, #fce7f3 55%, #fef3c7);
+  box-shadow: 0 2px 10px rgba(168, 85, 247, .16);
+}
+
+/* Matching avatar outer ring per VIP tier */
+.vip-avatar[data-vip-tier="annual"] { outline-color: #fb7299; }
+.vip-avatar[data-vip-tier="ten_annual"] { outline-color: #e9b953; }
+.vip-avatar[data-vip-tier="hundred_annual"] { outline-color: #c084fc; }
+.settings-card > button:not(.auto-resume-switch) {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 550;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.settings-card > button:not(.auto-resume-switch):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--cyan) 32%, var(--line));
+  background: color-mix(in srgb, var(--ink) 5%, var(--panel-raised));
+}
+.settings-card strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.settings-card small {
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"], input[type="checkbox"]::before,
+  input[type="radio"], input[type="radio"]::before,
+  .playback-rate-pills > button, .download-format-options > button,
+  .qr-action-button, .account-logout-button, .settings-card .theme-options > button {
+    transition: none;
+  }
+}

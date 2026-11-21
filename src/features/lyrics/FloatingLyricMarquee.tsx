@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { LyricLine } from '../../domain/lyrics'
-import { lyricScrollPosition } from '../../domain/lyricTimeline'
+import { centeredLyricOffset, lyricScrollPosition } from '../../domain/lyricTimeline'
 
-export function FloatingLyricMarquee({identity,line,active,timeMs,clock,nextTimeMs,children}:{identity:string;line?:LyricLine;active:boolean;timeMs:number;clock?:()=>number;nextTimeMs?:number;children:ReactNode}) {
+export function FloatingLyricMarquee({identity,line,active,timeMs,clock,nextTimeMs,centerSlot,children}:{identity:string;line?:LyricLine;active:boolean;timeMs:number;clock?:()=>number;nextTimeMs?:number;centerSlot?:number;children:ReactNode}) {
   const viewport=useRef<HTMLDivElement>(null),text=useRef<HTMLDivElement>(null)
   const [size,setSize]=useState({viewport:0,text:0})
   const travel=Math.max(0,size.text-size.viewport)
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const measure=()=>{
       const next={viewport:viewport.current?.clientWidth||0,text:text.current?.scrollWidth||0}
       setSize(previous=>previous.viewport===next.viewport&&previous.text===next.text?previous:next)
@@ -30,7 +30,7 @@ export function FloatingLyricMarquee({identity,line,active,timeMs,clock,nextTime
     }
     return()=>cancelAnimationFrame(tick)
   },[identity,line,active,timeMs,clock,nextTimeMs,travel,size.viewport,size.text])
-  return <div ref={viewport} className="floating-lyric-viewport" data-overflow={travel>1||undefined}>
-    <div ref={text} className="floating-lyric-marquee">{children}</div>
+  return <div ref={viewport} className="floating-lyric-viewport" data-overflow={travel>1||undefined} data-center-slot={centerSlot}>
+    <div ref={text} className="floating-lyric-marquee" style={centerSlot===undefined?undefined:{marginLeft:centeredLyricOffset(centerSlot,size.viewport,size.text)}}>{children}</div>
   </div>
 }

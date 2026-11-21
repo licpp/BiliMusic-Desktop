@@ -6,7 +6,7 @@ import { afterListMotion } from './navigationListMotion'
 import { usePageMotion } from './pageMotion'
 import { SegmentedTabs, type TabOption } from './SegmentedTabs'
 
-export function SwipeTabPages<T extends string>({ tabs, value, onChange, idPrefix, panelId, label, className, fill, renderPanel }: {
+export function SwipeTabPages<T extends string>({ tabs, value, onChange, idPrefix, panelId, label, className, fill, tabActions, renderPanel }: {
   tabs: readonly TabOption<T>[]
   value: T
   onChange: (value: T) => void
@@ -15,6 +15,7 @@ export function SwipeTabPages<T extends string>({ tabs, value, onChange, idPrefi
   label: string
   className: string
   fill?: boolean
+  tabActions?: ReactNode
   renderPanel: (value: T, active: boolean) => ReactNode
 }) {
   const viewport = useRef<HTMLDivElement>(null)
@@ -56,6 +57,7 @@ export function SwipeTabPages<T extends string>({ tabs, value, onChange, idPrefi
     style={{ '--swipe-index': activeIndex } as CSSProperties}
     data-swipe-previous={activeIndex > 0 || undefined} data-swipe-next={activeIndex < tabs.length - 1 || undefined}>
     {controls}
+    {tabActions}
     <div className="swipe-track" data-swipe-track>
       {tabs.map(({ id, label }, index) => {
         const position = index - activeIndex

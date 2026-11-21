@@ -89,3 +89,5 @@ import './styles/editor-polish.css'
 import './styles/list-toolbar.css'
 
 import './styles/interaction-motion.css'
+import './styles/tablet.css'
+import './styles/controls.css'

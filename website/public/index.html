@@ -34,10 +34,21 @@
       <div class="section-heading"><div><p class="eyebrow">MAKE ROOM FOR MUSIC</p><h2>喜欢的声音，<br>手机电脑都能听。</h2></div><p>电脑、手机、车机与 TV，选适合你的版本。<br>国内下载优先推荐 Gitee。</p></div>
       <aside class="sync-upgrade-note" id="sync-upgrade-note" aria-label="云同步升级提醒"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 19.5 9M4.5 15A8 8 0 0 0 17.9 17.9"/></svg><p><strong>云同步已升级</strong><span>建议所有设备更新至最新版本。0.3.1 及更早版本与新版暂不同步，各设备更新后会自动合并原有数据。</span></p></aside>
       <div class="download-grid" id="download-platforms" aria-live="polite"><p>正在加载安装包信息…</p></div>
-      <aside class="community-card" aria-labelledby="community-title">
-        <a class="community-qr" href="/assets/qq-community.jpg" target="_blank" rel="noopener" aria-label="打开 QQ 群二维码原图"><img src="/assets/qq-community.jpg" alt="BiliMusic QQ 交流群二维码，群号 1132131566" width="1152" height="2048" loading="lazy"></a>
-        <div class="community-copy"><span class="community-label">一起把 BiliMusic 做得更好</span><h3 id="community-title">加入 QQ 交流群</h3><p>聊聊使用体验，反馈问题，也分享你喜欢的声音。</p><div class="community-actions"><span>群号 <strong>1132131566</strong></span><a href="/assets/qq-community.jpg" target="_blank" rel="noopener">查看 / 保存二维码 ↗</a></div><small>使用 QQ 扫码加入；手机上可保存图片后识别。</small></div>
-      </aside>
+      <div class="community-links">
+        <a class="community-links-card" href="/assets/qq-community.jpg" target="_blank" rel="noopener noreferrer">
+          <div class="community-links-preview community-qr-preview">
+            <span class="community-qr"><img src="/assets/qq-community.jpg" alt="" width="1152" height="2048" loading="lazy"></span>
+          </div>
+          <div class="community-links-copy"><h3>加入 QQ 群</h3><span>群号 1132131566</span><span class="community-links-action">查看二维码 ↗</span></div>
+        </a>
+        <a class="community-links-card" href="https://www.bilibili.com/video/BV1rfsf6PEXr/" target="_blank" rel="noopener noreferrer">
+          <div class="community-links-preview">
+            <img class="community-video-cover" src="/assets/bilibili-feedback.jpg" alt="" width="640" height="360" loading="lazy">
+            <span class="community-video-play" aria-hidden="true">▶</span>
+          </div>
+          <div class="community-links-copy"><h3>来 B 站聊聊</h3><span>观看项目介绍，在评论区交流</span><span class="community-links-action">前往 B 站 ↗</span></div>
+        </a>
+      </div>
       <div id="download-stats" class="download-stats" aria-live="polite"><span>正在加载下载统计…</span></div>
       <p class="download-note">欢迎体验并反馈。请按设备选择平台与架构。大屏版适用于 Android 车机和 TV。Linux 为测试版。iOS 提供需自行签名的 IPA；鸿蒙 NEXT 提供未签名 HAP 测试包，真机需自行签名。<a href="/harmony.html">查看鸿蒙安装说明 ↗</a></p>
       <details class="download-note"><summary>首次安装与更新说明</summary><p>macOS 使用临时签名，尚未经过 Apple 公证；Windows 尚未取得发布者签名。Android 使用固定签名，可覆盖此前相同签名的安装包（versionCode 10602 及之后）；更早的临时签名包请先备份数据后反馈协助迁移。</p><p>将最新版本拖入“应用程序”并替换旧版。若系统提示开发者未验证，在确认下载来源与 SHA-256 后，可按 Apple 的指引前往“系统设置 → 隐私与安全性”，为 BiliMusic 单独选择“仍要打开”。临时签名不等于 Apple 认证或公证。如果仍提示“已损坏”，请核对版本和校验值后反馈。</p><a href="https://support.apple.com/zh-cn/102445" target="_blank" rel="noopener noreferrer">Apple 官方打开说明 ↗</a></details>
@@ -51,7 +62,8 @@
         <div id="past-release-changes"></div>
       </details>
     </section>
-    <section class="feedback-section wrap" id="feedback"><div class="feedback-copy"><p class="eyebrow">LET’S MAKE IT BETTER</p><h2>用得不顺手？<br>直接告诉我们。</h2><p>不用注册，也不用研究 GitHub。<br>遇到的问题、想要的功能，都可以在这里说。</p><div class="feedback-tip"><span aria-hidden="true">↗</span><div><b>描述越清楚，越容易解决</b><p>建议写上操作步骤、预期结果与实际表现。<br>请勿包含密码、Cookie 或其他敏感信息。</p></div></div><a class="feedback-video" href="https://www.bilibili.com/video/BV1rfsf6PEXr/" target="_blank" rel="noopener noreferrer" aria-label="前往 B 站观看 BiliMusic 介绍，在评论区反馈和讨论"><div class="feedback-video-preview"><img src="/assets/bilibili-feedback.jpg" alt="BiliMusic 的 B 站视频封面" width="640" height="360" loading="lazy"><span class="feedback-video-play" aria-hidden="true">▶</span><span class="feedback-video-platform">哔哩哔哩 ↗</span></div><div class="feedback-video-copy"><b>来 B 站一起聊聊 BiliMusic</b><p>使用感受、功能建议，也欢迎到视频评论区交流。</p><span>观看视频 · 参与讨论 ↗</span></div></a><button id="rights-feedback" class="quiet-link">版权与权利人反馈 <span aria-hidden="true">→</span></button></div>
+    <section class="feedback-section wrap" id="feedback">
+      <div class="feedback-copy"><p class="eyebrow">LET’S MAKE IT BETTER</p><h2>用得不顺手？<br>直接告诉我们。</h2><p>不用注册，也不用研究 GitHub。<br>遇到的问题、想要的功能，都可以在这里说。</p><div class="feedback-tip"><span aria-hidden="true">↗</span><div><b>描述越清楚，越容易解决</b><p>建议写上操作步骤、预期结果与实际表现。<br>请勿包含密码、Cookie 或其他敏感信息。</p></div></div><button id="rights-feedback" class="quiet-link">版权与权利人反馈 <span aria-hidden="true">→</span></button></div>
       <form id="feedback-form"><div class="form-row"><label>反馈类型<select name="category" required><option value="bug">遇到问题</option><option value="suggestion">功能建议</option><option value="copyright">版权与权利反馈</option><option value="other">其他</option></select></label><label>使用平台<select name="platform" required><option value="macOS">macOS</option><option value="Windows">Windows</option><option value="Android">Android</option><option value="Android Large Screen">大屏版（车机 / TV）</option><option value="iOS">iOS（自签版）</option><option value="HarmonyOS">HarmonyOS NEXT（测试版）</option><option value="website">网站</option><option value="other">其他</option></select></label></div><label>简单说说你的问题<input name="title" required minlength="3" maxlength="120" placeholder="例如：切换视频后一直在加载"></label><label>详细描述<textarea name="message" required minlength="10" maxlength="5000" rows="5" placeholder="发生了什么？可以怎样重现？如果是版权反馈，请提供涉及的链接、权属依据和具体诉求。"></textarea></label><div class="form-row"><label>软件版本 <span>（选填）</span><input name="version" maxlength="40" placeholder="例如 0.3.6"></label><label>联系方式 <span>（选填，版权反馈必填）</span><input name="contact" maxlength="200" placeholder="邮箱或其他可联系的方式"></label></div><div class="honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div><label class="checkbox-label"><input name="consent" type="checkbox" required><span>我已阅读 <button type="button" class="text-button" data-policy>使用与隐私说明</button>，同意为处理本次反馈保存所填信息。</span></label><div class="form-bottom"><span>仅维护者可见 · 不会自动公开到 GitHub</span><button class="button primary" id="submit-feedback" type="submit">提交反馈 <span aria-hidden="true">↗</span></button></div><div id="feedback-status" role="status" aria-live="polite"></div></form>
     </section>
     <section class="open-source wrap"><span class="open-symbol" aria-hidden="true">{ }</span><div><p class="eyebrow">BUILT IN THE OPEN</p><h2>开源，让每一个想法都有回响。</h2><p>独立开发，持续改进。代码、版本更新与开发讨论，都在 GitHub。</p></div><a class="button" href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">前往 GitHub <span aria-hidden="true">↗</span></a></section>

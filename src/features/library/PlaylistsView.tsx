@@ -1,7 +1,7 @@
 import { useListDataDuringNavigation, useListReveal } from '../../shared/useListMotion'
 import { ListSkeleton } from '../../shared/ListSkeleton'
 import { useListRows } from '../../shared/useListRows'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import {useListPreferences,playlistEntity} from '../../services/listPreferences'
 import {rankList} from '../../services/listOrdering'
 import {useOrganizer} from '../../shared/useOrganizer'
@@ -13,6 +13,9 @@ import type { Collection } from '../../services/collections'
 import { SwipeTabPages } from '../../shared/SwipeTabPages'
 import { PlaylistEntry } from './PlaylistEntry'
 import { ImportPlaylistButton } from './ImportFavorites'
+import { HubToolbar } from './HubToolbar'
+import { useCompactLayout } from '../../shared/useCompactLayout'
+import { isMobile } from '../../services/platform'
 
 const tabs = [{ id: 'playlists', label: '歌单' }, { id: 'collections', label: '收藏' }, { id: 'creators', label: '关注' }] as const
 
@@ -29,22 +32,34 @@ export function PlaylistsView({ playlists, loading, onOpen, onRemoved, onCreate,
   section: 'playlists' | 'collections' | 'creators'
   onSectionChange: (section: 'playlists' | 'collections' | 'creators') => void
 }) {
+  const compact = useCompactLayout()
+  const tabletWide = isMobile && !compact
+  const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const preferences=useListPreferences()
   const visible = useListDataDuringNavigation(loading ? undefined : playlists, 'playlists')
   const ordered=rankList(visible || [],preferences.data?.preferences||[],playlistEntity)
   const organizer=useOrganizer(ordered.map(item=>({id:playlistEntity(item),name:item.name,coverUrl:item.coverUrl,kind:item.biliFolderId?'linked' as const:'playlist' as const})), '整理歌单')
   return <section className="playlists-view listening-library">
     <SwipeTabPages tabs={tabs} value={section} onChange={onSectionChange} idPrefix="hub" panelId="listening-panel"
-      label="个人音乐收藏" className="listening-tabs" renderPanel={(pane, active) =>
-      pane === 'playlists' ? <>
-        <div className="listening-tools hub-list-toolbar">
-          <span className="hub-summary">{visible && `${visible.length} 个歌单`}</span>
-          <div className="hub-toolbar-actions library-action-rail">{organizer.controls}
-          {!organizer.editing && <><button type="button" className="collection-icon library-create-action" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
-          <ImportPlaylistButton onClick={onImport}/></>}</div>
-        </div>
-        {organizer.editing ? organizer.editor : <PlaylistGrid playlists={ordered} active={active} loading={!visible} onOpen={onOpen} onRemoved={onRemoved}/>}
-      </> : pane === 'creators' ? <CreatorsView followed onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/> : <CollectionsView hideHeading onOpenFolder={onOpenFolder} onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>} />
+      label="个人音乐收藏" className="listening-tabs"
+      tabActions={tabletWide && <div className="hub-tab-actions" ref={setHeaderActions}/>}
+      renderPanel={(pane, active) => {
+        const actionsHost = tabletWide && active ? headerActions : null
+        if (pane === 'creators') return <CreatorsView followed actionsHost={actionsHost} onOpen={onCollectionOpen} onOpenFolder={onOpenCreatorFolder}/>
+        if (pane === 'collections') return <CollectionsView hideHeading actionsHost={actionsHost} onOpenFolder={onOpenFolder}
+          onOpenLinked={onOpen} onLinkedRemoved={onRemoved} onSelect={onCollectionOpen}/>
+        return <>
+          <HubToolbar className="listening-tools" summary={visible && `${visible.length} 个歌单`} actionsHost={actionsHost}
+            actions={<div className="hub-toolbar-actions library-action-rail">
+              {organizer.controls}
+              {!organizer.editing && <>
+                <button type="button" className="collection-icon library-create-action" aria-label="新建歌单" onClick={onCreate}><Plus size={18}/></button>
+                <ImportPlaylistButton onClick={onImport}/>
+              </>}
+            </div>}/>
+          {organizer.editing ? organizer.editor : <PlaylistGrid playlists={ordered} active={active} loading={!visible} onOpen={onOpen} onRemoved={onRemoved}/>}
+        </>
+      }}/>
   </section>
 }
 

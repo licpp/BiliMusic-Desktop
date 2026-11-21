@@ -19,14 +19,38 @@
 .import-body{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain;padding:4px 26px 26px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
 .import-hint{color:var(--muted);font-size:13px;line-height:1.7;margin:0}
 .import-hint{text-align:center;padding:18px 0 2px}
-.import-sources{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.import-sources>button{position:relative;display:flex;align-items:center;gap:14px;width:100%;min-width:0;min-height:84px;padding:18px;border:0;border-radius:0;text-align:left;color:var(--ink);background:transparent;transition:background 120ms}
-.import-sources>button+button::before{content:"";position:absolute;top:0;left:71px;right:18px;height:1px;background:var(--line)}
+.import-sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--line);
+  overflow: hidden;
+}
+.import-sources > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "mark copy arrow";
+  align-items: center;
+  gap: 10px;
+  min-height: 74px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  color: var(--ink);
+  background: var(--panel);
+  transition: background 120ms;
+}
+.import-sources > button:is([data-source="bili"], :last-child:nth-child(even)) { grid-column: 1 / -1; }
 .import-sources>button:focus-visible{outline-offset:-3px}
-.import-sources>button:hover{background:color-mix(in srgb,var(--cyan) 5%,transparent)}
-.import-sources>button>span:nth-child(2){display:grid;gap:5px;flex:1;min-width:0}
+.import-sources>button:hover{background:color-mix(in srgb,var(--cyan) 5%,var(--panel))}
+.import-source-copy { grid-area: copy; display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .import-sources strong{font-size:14px;font-weight:600}.import-sources small{font-size:11px;line-height:1.5;color:var(--muted)}
-.import-sources>button>svg{width:15px;flex-shrink:0;color:var(--faint)}
+.import-sources > button > svg { grid-area: arrow; width: 15px; color: var(--faint); }
+.import-sources .import-source-mark { grid-area: mark; }
 .import-source-mark{display:inline-grid;place-items:center;flex:0 0 39px;width:39px;height:39px;border-radius:12px;font-size:17px;font-weight:700;background:color-mix(in srgb,var(--cyan) 10%,transparent);color:var(--cyan)}
 .source-netease{background:color-mix(in srgb,#ee4d56 10%,transparent);color:#e45b63}.source-qq{background:color-mix(in srgb,#1eae79 12%,transparent);color:#2fb888}.source-bili{background:color-mix(in srgb,#54a7ff 12%,transparent);color:var(--blue)}.source-text{color:var(--muted);background:color-mix(in srgb,var(--muted) 10%,transparent)}
 .import-form-heading{display:flex;align-items:center;gap:12px;margin:14px 0 22px}.import-form-heading strong{font-size:15px;font-weight:600}.import-form-heading p{font-size:12px;color:var(--muted);line-height:1.6;margin:5px 0 0}
@@ -52,6 +76,33 @@
 .import-folders>button>span:nth-child(2){display:grid;gap:5px;flex:1;min-width:0}.import-folders strong{font-size:14px;font-weight:550;overflow-wrap:anywhere}.import-folders small{font-size:11px;color:var(--muted)}
 .import-folder-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:10px;background:color-mix(in srgb,var(--cyan) 8%,transparent);color:var(--cyan);flex-shrink:0}
 .import-selection{display:grid;place-items:center;width:20px;height:20px;border:1px solid var(--line);border-radius:50%;color:var(--cyan);flex-shrink:0}.import-folders [aria-pressed=true] .import-selection{border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,transparent)}
+.import-season-list > button[data-imported] { opacity: 1; }
+.import-season-artwork {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 40px;
+  border-radius: 8px;
+}
+.import-season-list strong, .import-season-meta > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-season-meta { display: flex; gap: 4px; min-width: 0; }
+.import-season-meta > span + span { flex-shrink: 0; white-space: nowrap; }
+.import-season-saved { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.import-season-list [aria-pressed=false] .import-selection {
+  border-color: color-mix(in srgb,var(--muted) 48%,var(--line));
+}
+.import-local-folder {
+  display:flex;align-items:center;flex-wrap:wrap;gap:12px;
+  padding:14px;border:1px solid var(--line);border-radius:14px;
+  background:color-mix(in srgb,var(--cyan) 4%,var(--panel));
+}
+.import-local-folder > div { display:grid;gap:5px;flex:1;min-width:90px; }
+.import-local-folder strong { font-size:14px;overflow-wrap:anywhere; }
+.import-local-folder small { font-size:12px;color:var(--muted); }
+.import-local-folder > button { flex-shrink:0;margin-left:auto; }
 .import-empty{padding:32px 10px;text-align:center;color:var(--muted)}.import-empty p{font-size:13px;line-height:1.8}
 .import-inline-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;line-height:1.8;overflow-wrap:anywhere}
 .import-progress-card{margin:8px 0 20px;padding:18px;border-radius:14px;background:color-mix(in srgb,var(--cyan) 5%,transparent)}
@@ -77,12 +128,17 @@
  .source-picker .playlist-import-dialog{height:auto;max-height:85dvh;border-radius:24px 24px 0 0;border-top:1px solid var(--line)}
  .source-picker .import-header{padding:14px 16px 8px;min-height:58px}
  .source-picker .import-body{padding:4px 16px calc(16px + env(safe-area-inset-bottom))}
- .import-sources>button{gap:12px;min-height:76px;padding:14px}.import-sources>button+button::before{left:61px;right:14px}.import-sources>button>span:nth-child(2){gap:3px}.import-source-mark{width:35px;height:35px;flex-basis:35px;border-radius:10px}.import-sources strong{font-size:14px}.import-sources small{font-size:11px}
+ .import-sources>button{gap:8px;min-height:66px;padding:10px}.import-source-mark{width:35px;height:35px;flex-basis:35px;border-radius:10px}
  .import-footer{padding:12px 16px calc(12px + env(safe-area-inset-bottom));gap:8px}.import-footer>small{font-size:10px;line-height:1.6;flex:1}.import-footer button{min-height:44px;font-size:12px;padding:10px 12px}.import-footer:has(>button:nth-child(3))>button{flex:1;padding-inline:7px;gap:4px;font-size:11px}
  .import-source-form :is(input,textarea),.import-candidate-panel input{font-size:16px}.import-source-form textarea{min-height:140px;max-height:35dvh}.import-form-heading{align-items:flex-start;margin:12px 0 20px}.import-form-heading p{font-size:12px}.import-name-field input{min-height:46px}
  .import-review-search input{font-size:16px}
  .import-destination{gap:4px}.import-destination button{gap:6px;min-height:50px;padding:10px 5px}.import-destination strong{font-size:12px}.import-destination button>svg:last-child:not(:first-child){width:14px}
  .import-progress-card{padding:16px 14px;margin:4px 0 16px}.import-result-tools>small{display:none}.import-result-line{gap:8px;min-height:69px}.import-result-index{flex-basis:14px;font-size:10px}.import-result-art{width:34px;height:34px;flex-basis:34px}.import-result-copy strong{font-size:13px;line-height:1.45;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}.import-result-copy small{font-size:10px}.import-result-status{font-size:9px}.import-edit-choice{min-height:42px;font-size:11px;padding-inline:3px}.import-candidate-panel{margin-left:20px;padding:10px}.import-candidate strong{font-size:12px}.import-preview,.import-use{min-height:44px}
+}
+@media (max-width: 480px) {
+  .import-sources { grid-template-columns: minmax(0, 1fr); }
+  .import-sources > button { gap: 10px; min-height: 60px; padding: 9px 12px; }
+  .import-sources small { font-size: 12px; }
 }
 @media(prefers-reduced-motion:reduce){.playlist-import-backdrop,.playlist-import-dialog{animation:none}.import-progress-card progress::-webkit-progress-value{transition:none}}
 

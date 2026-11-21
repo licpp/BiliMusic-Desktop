@@ -3,12 +3,13 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 use crate::infrastructure::providers::bilibili::{
     AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
-    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, VideoPart, VideoParts,
-    VideoSource,
+    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, SubscribedSeasonPage,
+    VideoPart, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
 use crate::infrastructure::repositories::auth::AuthRepository;
+use crate::infrastructure::repositories::collections::{self, Collection};
 use crate::infrastructure::repositories::downloads::{DownloadRecord, DownloadRepository};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
@@ -645,6 +646,30 @@ pub async fn bili_favorite_folders(
         .favorite_folders()
         .await
         .map_err(CommandError::provider)
+}
+
+#[tauri::command]
+pub async fn bili_subscribed_seasons(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    page: u32,
+) -> Result<SubscribedSeasonPage, CommandError> {
+    if page == 0 {
+        return Err(CommandError::validation("无效的订阅合集页码"));
+    }
+    let cookie = {
+        let c = database.0.lock().map_err(CommandError::database)?;
+        check_account_session(&c, &expected_account_session)?;
+        AuthRepository::get_cookie(&c, "bilibili")
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("请先登录 B 站账号"))?
+    };
+    let provider = BilibiliProvider::new().map_err(CommandError::provider)?;
+    provider.set_session_cookie(Some(cookie)).await;
+    let result = provider.subscribed_seasons(page).await;
+    let c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    result.map_err(CommandError::provider)
 }
 
 #[tauri::command]
@@ -1736,6 +1761,16 @@ pub fn collections_list(
 ) -> Result<crate::infrastructure::repositories::collections::Collections, String> {
     let c = database.0.lock().map_err(|_| "数据库正忙")?;
     crate::infrastructure::repositories::collections::list(&c).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn collections_import_seasons(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    items: Vec<Collection>,
+) -> Result<usize, CommandError> {
+    let mut c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    collections::import_seasons(&mut c, &items).map_err(CommandError::database)
 }
 #[tauri::command]
 pub fn collections_change(

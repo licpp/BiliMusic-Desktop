@@ -343,3 +343,67 @@ test('overlapping modal lifetimes release background only after the last dialog'
   assert.equal(root.inert, false)
   assert.equal(root.hasAttribute('inert'), false)
 })
+
+test('iOS left-edge swipe returns to previous tab before popping the page', async () => {
+  const { installMobileGestures: installIOSGestures } = await load('src/shared/mobileGestures.ts', [{
+    name: 'ios-platform',
+    setup(builder) {
+      builder.onResolve({ filter: /^\.\.\/services\/platform$/ }, () => ({ path: 'ios', namespace: 'test' }))
+      builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isMobile=true, isIOS=true' }))
+    },
+  }])
+  class Surface extends EventTarget {
+    attributes = new Set()
+    style = { transform: '', props: {}, getPropertyValue: k => this.style.props[k] || '1', setProperty: (k, v) => { this.style.props[k] = v }, removeProperty: k => { delete this.style.props[k]; this.style[k] = '' } }
+    isConnected = true
+    width = 393
+    dataset = { stageRoute: 'creator' }
+    getBoundingClientRect() { return { width: this.width } }
+    hasAttribute(name) { return this.attributes.has(name) }
+    setAttribute(name) { this.attributes.add(name) }
+    removeAttribute(name) { this.attributes.delete(name) }
+    matches() { return false }
+  }
+  const page = new Surface()
+  const pageTrack = new Surface()
+  page.querySelector = () => pageTrack
+  const pager = new Surface()
+  const tabTrack = new Surface()
+  pager.querySelector = selector => selector.includes('track') ? tabTrack : null
+  pager.setAttribute('data-swipe-previous')
+  const row = Object.assign(new Surface(), {
+    closest: selector => selector === '[data-edge-back]' ? page : selector === '[data-swipe-tabs]' ? pager : null,
+  })
+  const doc = new EventTarget()
+  const win = Object.assign(new EventTarget(), {
+    innerWidth: 393,
+    matchMedia: () => Object.assign(new EventTarget(), { matches: true }),
+  })
+  const events = []
+  pager.addEventListener('bilimusic-tab-swipe', event => events.push(`tab:${event.detail}`))
+  win.addEventListener('bilimusic-back', () => events.push('back'))
+  const original = {}
+  for (const [key, value] of Object.entries({ document: doc, Element: Surface, window: win,
+    requestAnimationFrame: cb => { cb(0); return 0 }, cancelAnimationFrame: () => {} })) {
+    original[key] = globalThis[key]
+    globalThis[key] = value
+  }
+  const swipeFromLeftEdge = () => {
+    for (const [type, x, timeStamp] of [['touchstart', 10, 0], ['touchmove', 160, 40], ['touchend', 160, 80]]) {
+      const point = { clientX: x, clientY: 260 }
+      const event = new Event(type, { cancelable: true })
+      Object.defineProperties(event, {
+        target: { value: row }, touches: { value: [point] }, changedTouches: { value: [point] }, timeStamp: { value: timeStamp },
+      })
+      doc.dispatchEvent(event)
+    }
+  }
+  try {
+    installIOSGestures()
+    swipeFromLeftEdge()
+    assert.deepEqual(events, ['tab:-1'])
+    pager.removeAttribute('data-swipe-previous')
+    swipeFromLeftEdge()
+    assert.deepEqual(events, ['tab:-1', 'back'])
+  } finally { Object.assign(globalThis, original) }
+})

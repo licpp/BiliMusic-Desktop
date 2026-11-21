@@ -70,14 +70,14 @@ cd src-tauri/gen/android
 
 | 展示或控制 | 接入方式 | 验收 |
 | --- | --- | --- |
-| 通知栏、锁屏媒体卡片、蓝牙 | 原生服务发布一个本地 `MediaSession` 和一张 `MediaStyle` 通知。当前标题统一写入会话的 `TITLE`、`DISPLAY_TITLE` 和通知标题。 | 锁屏或退到后台后验证播放、暂停、耳机按键和快速切歌。车机在开启系统标题歌词时显示当前歌词，关闭后显示曲名。 |
+| 通知栏、锁屏媒体卡片、蓝牙 | 原生服务发布一个本地 `MediaSession` 和一张 `MediaStyle` 通知。系统标题歌词关闭时显示曲名和当前歌词，开启时显示当前歌词和歌手。 | 锁屏或退到后台后验证播放、暂停、耳机按键和快速切歌。车机在开启系统标题歌词时显示当前歌词，关闭后显示曲名。 |
 | 小米状态栏和超级岛 | 支持自动上岛的版本可沿用小米标准媒体通知。小米焦点通知／超级岛的自定义文案有独立准入和模板。 | 分别核对 HyperOS 2 焦点通知、HyperOS 3 超级岛和标准媒体卡片三种展示。自定义逐行歌词按正式包名、签名和提交的场景验收。 |
 | OPPO／一加 ColorOS 流体云、vivo／iQOO OriginOS 原子通知 | 申请厂商对应场景和资源授权。复用同一条播放状态和当前歌词，厂商适配只负责该系统表面的显示与关闭。 | 在授权 ROM 上实测更新、暂时隐藏、暂停、停止和多应用媒体切换。 |
 | 系统单应用音量 | 系统决定是否列出当前音源。初始播放和换源、焦点请求以及媒体会话使用同一套本地媒体音频属性。 | 开启 ROM 的独立音量选项，用 BiliMusic 和另一个可同时出声的应用测试，同时核对扬声器、蓝牙和前后台。 |
 
-Android 13 起系统媒体控件主要读会话。AOSP 标准媒体卡片优先读取 `DISPLAY_TITLE`，部分蓝牙设备读取 `TITLE`。两个字段一律跟随「系统标题歌词」开关。关闭开关或当前没有有效歌词时发布曲名。队列条目使用原始曲名，同一个会话继续响应耳机和车机指令。 [Android 后台媒体服务](https://developer.android.com/media/media3/session/background-playback) · [AOSP 媒体卡片取值](https://android.googlesource.com/platform/frameworks/base/+/c03ab432b762d16b20fd5f9366ebb9207be76820/packages/SystemUI/src/com/android/systemui/media/controls/domain/pipeline/MediaDataLoader.kt) · [小米媒体通知](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2161)
+Android 13 起系统媒体控件主要读会话。媒体会话的 `TITLE`、`DISPLAY_TITLE` 与通知标题同步，`ARTIST`、`DISPLAY_SUBTITLE` 与通知正文同步。「系统标题歌词」决定歌词占用的行，没有有效歌词时显示曲名和歌手。通知只在内容或控件状态变化时更新。队列条目使用原始曲名，同一个会话继续响应耳机和车机指令。 [Android 后台媒体服务](https://developer.android.com/media/media3/session/background-playback) · [AOSP 媒体卡片取值](https://android.googlesource.com/platform/frameworks/base/+/c03ab432b762d16b20fd5f9366ebb9207be76820/packages/SystemUI/src/com/android/systemui/media/controls/domain/pipeline/MediaDataLoader.kt) · [小米媒体通知](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2161)
 
-开启桌面歌词或系统标题歌词后，Android 服务在换曲时通过原生通道加载已匹配歌词。根据用户的字幕偏好，缺少匹配歌词时可加载该分 P 的 B 站字幕。桌面歌词与系统媒体卡片共享时间轴和原生播放时钟。前端可以提交当前播放会话的有效歌词，后台查询结果按账号会话、播放会话与最新歌词请求校验。歌词查询有独立超时，播放会继续。
+Android 服务在换曲时通过原生通道加载已匹配歌词，系统标题歌词开关随时可以切换歌词所在行。根据用户的字幕偏好，缺少匹配歌词时可加载该分 P 的 B 站字幕。桌面歌词与系统媒体卡片共享时间轴和原生播放时钟。前端可以提交当前播放会话的有效歌词，后台查询结果按账号会话、播放会话与最新歌词请求校验。歌词查询有独立超时，播放会继续。
 
 通知动作、蓝牙传输指令和原始媒体键使用同一套播放命令。原始耳机键使用 Android 的双击时间窗口，并合并对同一按键事件的重复投递。旧控制器可以读队列并使用上下曲。Media3 提供给旧控制器的队列 ID 是列表位置，修改队列后旧 ID 可能指向另一首，因此只向 Media3 控制器接受指定条目跳转。进程被杀后的耳机续播仍依赖后续接入 Media3 的恢复回调，使用持久化队列与进度重新解析音源。
 
@@ -120,7 +120,7 @@ node scripts/android-media-lab.mjs verify emulator-5580
 | --- | --- |
 | 耳机按键无反应 | 先看 BiliMusic 的音频是否为 `started`，再看 `mediaKeyTarget` 是否指向 BiliMusic。若合成键有效而耳机按键无效，在同一台手机上用同一副耳机对照系统播放器，再看物理按键是否到达应用。 |
 | 蓝牙车机缺少曲目信息或媒体键无效 | 播放时看 `bluetooth.activePlayerIsBiliMusic` 和 `bluetooth.controller`。AOSP 的 AVRCP 从当前选中的播放器获取曲目，按键通过 Android 系统分发。锁屏后在同一车机用至少含两首的队列验证歌名更新、播放／暂停和上下曲。 [AOSP AVRCP 播放器选择](https://android.googlesource.com/platform/packages/modules/Bluetooth/+/619fafa41b7fe03ce7905422d966a59c68769f3d/android/app/src/com/android/bluetooth/audio_util/MediaPlayerList.java#1308) · [AOSP AVRCP 按键分发](https://android.googlesource.com/platform/packages/modules/Bluetooth/+/619fafa41b7fe03ce7905422d966a59c68769f3d/android/app/src/com/android/bluetooth/avrcp/AvrcpTargetService.java#509) |
-| 澎湃超级岛没有歌词 | 开启「系统标题歌词」，播放有时间轴的歌词，等待两行切换。两次采集 `snapshot`，对比媒体会话和通知标题，再分别看通知栏、岛摘要态和展开态。若通知标题已经逐行变化，记录具体 ROM 版本和显示不一致的位置，用同设备确认系统媒体岛读取的字段。 |
+| 澎湃超级岛没有歌词 | 开启「系统标题歌词」，播放有时间轴的歌词，等待两行切换。两次采集 `snapshot`，比对媒体会话的 `TITLE` 和通知标题，再分别看通知栏、岛摘要态和展开态。若通知标题已经逐行变化，记录具体 ROM 版本和显示不一致的位置，用同设备确认系统媒体岛读取的字段。 |
 
 正式 APK `0.4.0.2` 在 AOSP 实测会出现播放进度正常前进、音频登记仍是 `idle` 的情况。显式调用 Android `MediaPlayer.start()` 后，系统登记为 `started` 并将全局播放、暂停和耳机键交给 BiliMusic。同一台 Android 14 模拟器上的复现和修正结果分别见 `artifacts/android-media-lab/verify-baseline.log` 和 `artifacts/android-media-lab/verify-fixed.log`。 [AOSP MediaPlayer 实现](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/media/java/android/media/MediaPlayer.java) · [AOSP 媒体键选路](https://android.googlesource.com/platform/frameworks/base/+/31b731c2de27/services/core/java/com/android/server/media/MediaSessionStack.java)
 

@@ -3,10 +3,11 @@ import { accountQueryKey } from '../../services/queryKeys'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, ArrowRight, Check, ChevronRight, FileText, FolderHeart, Link2, ListPlus, LoaderCircle, Minus, Music2, Pause, Play, RefreshCw, Search, Square, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, ChevronRight, FileText, FolderHeart, FolderOpen, Layers, Link2, ListPlus, LoaderCircle, Minus, Music2, Pause, Play, RefreshCw, Search, Square, X, type LucideIcon } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { importFavoriteFolders, type FolderImportResult } from '../../services/biliFavoriteImport'
-import { commandErrorMessage, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts } from '../../services/desktopApi'
+import { commandErrorMessage, getAccountProfile, getFavoriteFolders, getFavoriteVideos, getVideoParts, inDesktopShell } from '../../services/desktopApi'
+import { isMobile } from '../../services/platform'
 import type { Playlist } from '../../domain/library'
 import { reloadLinkedFolder } from '../../services/linkedFolders'
 import { parseSongList, playlistLinkPlatform, type ImportPlaylist } from '../../services/playlistImportModel'
@@ -15,13 +16,16 @@ import { Artwork } from '../../shared/Artwork'
 import { formatDuration } from '../../shared/time'
 import { ImportedPlaylistCompletion } from './ImportedPlaylistCompletion'
 import { ReplacementDialog } from './ReplacementDialog'
+import { SubscribedSeasonImport } from './SubscribedSeasonImport'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
 
-type Source = 'bili'|'online'|'text'
-const sources: {id:Source;title:string;description:string}[] = [
-  {id:'online',title:'在线歌单',description:'网易云、QQ、酷狗、酷我、咪咕'},
-  {id:'bili',title:'B 站收藏夹',description:'关联收藏夹，也可复制为歌单'},
-  {id:'text',title:'歌曲列表',description:'每行一首，批量匹配'},
+type Source = 'bili'|'seasons'|'online'|'text'|'local'
+const sources: {id:Source;title:string;description:string;Icon:LucideIcon}[] = [
+  {id:'bili',title:'B 站收藏夹',description:'关联收藏夹，也可复制为歌单',Icon:FolderHeart},
+  {id:'online',title:'在线歌单',description:'网易云、QQ、酷狗、酷我、咪咕',Icon:Link2},
+  {id:'seasons',title:'B 站已订阅合集',description:'导入到收藏',Icon:Layers},
+  {id:'text',title:'歌曲列表',description:'每行一首，批量匹配',Icon:FileText},
+  ...(inDesktopShell&&!isMobile ? [{id:'local' as const,title:'本地音乐文件夹',description:'读取歌曲信息，匹配 B 站音源',Icon:FolderOpen}] : []),
 ]
 
 export function ImportPlaylistButton({onClick,sidebar=false}:{onClick:()=>void;sidebar?:boolean}) {
@@ -32,12 +36,12 @@ export function ImportPlaylistButton({onClick,sidebar=false}:{onClick:()=>void;s
   </button>
 }
 
-type ImportFavoritesProps = {onClose:()=>void;onImported:(id:string,mode:'copy'|'link')=>void;reviewPlaylist?:Playlist}
+type ImportFavoritesProps = {onClose:()=>void;onImported:(id:string,mode:'copy'|'link')=>void;onViewCollections:()=>void;reviewPlaylist?:Playlist}
 export function ImportFavorites(props:ImportFavoritesProps) {
   return props.reviewPlaylist ? <ImportedPlaylistCompletion playlist={props.reviewPlaylist} onClose={props.onClose}/> : <ImportFavoritesFlow {...props}/>
 }
 
-function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'reviewPlaylist'>) {
+function ImportFavoritesFlow({onClose,onImported,onViewCollections}:Omit<ImportFavoritesProps,'reviewPlaylist'>) {
   const client=useQueryClient(), backgroundJob=usePlaylistImport(value=>value.job), scope=usePlaylistImport(value=>value.scope)
   const job=backgroundJob
   const [page,setPage]=useState<Source|'sources'|'progress'>('sources')
@@ -46,6 +50,7 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
   const [filter,setFilter]=useState<'all'|'missing'>('all'),[visible,setVisible]=useState(40),[replacement,setReplacement]=useState<ImportedEntry>()
   const [resultQuery,setResultQuery]=useState('')
   const [biliResults,setBiliResults]=useState<FolderImportResult[]>([])
+  const [localPlaylist,setLocalPlaylist]=useState<ImportPlaylist>()
   const copyIds=useRef(new Map<number,string>())
   const cancelled=useRef(false),dialog=useRef<HTMLDivElement>(null)
   const account=useQuery({queryKey:accountQueryKey('account'),queryFn:getAccountProfile,enabled:page==='bili'})
@@ -59,20 +64,39 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
   },[scope])
   useEffect(()=>{if(job)setPage('progress')},[job?.id])
   useEffect(()=>{const previous=document.activeElement as HTMLElement|null;dialog.current?.focus();return ()=>previous?.focus()},[])
+  useEffect(()=>{if(page==='seasons'||page==='sources'||page==='local')dialog.current?.focus()},[page])
   useEffect(()=>{window.addEventListener('bilimusic-account-changing',onClose);return ()=>window.removeEventListener('bilimusic-account-changing',onClose)},[onClose])
-  const dismiss=()=>{cancelled.current=true;onClose()}
+  const dismiss=()=>{if((page==='seasons'||page==='local')&&busy)return;cancelled.current=true;onClose()}
   const back = () => {
     if (page === 'sources' || page === 'progress') dismiss()
     else if (!busy) { setPage('sources'); setError(''); setBiliStatus('') }
   }
   useOverlayDismiss(dialog, true, back)
   const endImport=()=>{clearPlaylistImport();void refresh();dismiss()}
+  const openLocal = async () => {
+    if (busy) return
+    const epoch = accountEpoch()
+    const current = () => !cancelled.current && epoch === accountEpoch()
+    setError('')
+    setBusy(true)
+    try {
+      const playlist = await invoke<ImportPlaylist | null>('local_playlist_pick')
+      if (!current() || !playlist) return
+      setLocalPlaylist(playlist)
+      setName('')
+    } catch (cause) {
+      if (current()) setError(commandErrorMessage(cause))
+    } finally {
+      if (current()) setBusy(false)
+    }
+  }
   const startExternal=async()=>{
     setError('');setBusy(true)
     const epoch=accountEpoch()
     try {
-      const playlist=page==='text'?parseSongList(input):await invoke<ImportPlaylist>('external_playlist_read',{input})
+      const playlist=page==='local'?localPlaylist:page==='text'?parseSongList(input):await invoke<ImportPlaylist>('external_playlist_read',{input})
       if(cancelled.current||epoch!==accountEpoch())return
+      if(!playlist)return
       if(!playlist.songs.length)throw new Error('这份歌单没有可导入的歌曲')
       await bootPlaylistImport()
       if(cancelled.current||epoch!==accountEpoch())return
@@ -122,18 +146,37 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
   const saved=new Set(job?.rows.filter(row=>row.status==='saved').map(row=>row.entry?.trackId||row.chosen?.track.id).filter(Boolean)).size,missing=job?.rows.filter(row=>row.status==='missing').length||0,processed=job?.rows.filter(row=>row.status!=='pending').length||0
   const results=job?.rows.map((row,index)=>({row,index})).filter(({row})=>`${row.song.title} ${row.song.artists.join(' ')}`.toLocaleLowerCase().includes(resultQuery.toLocaleLowerCase())&&(filter==='all'||row.status==='missing'))||[]
   return <div className={`playlist-import-backdrop${page==='sources'?' source-picker':''}`} onClick={event=>{if(event.target===event.currentTarget)dismiss()}}>
-    <div ref={dialog} className="playlist-import-dialog" role="dialog" aria-modal="true" aria-label="导入歌单" tabIndex={-1} onKeyDown={event=>{
+    <div ref={dialog} className="playlist-import-dialog" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} onKeyDown={event=>{
       if(event.key==='Escape'){event.stopPropagation();back()}
       if(event.key==='Tab') {const items=[...dialog.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input,textarea,[tabindex="0"]')].filter(el=>el.getClientRects().length);const first=items[0],last=items.at(-1);if(document.activeElement===dialog.current){event.preventDefault();(event.shiftKey?last:first)?.focus()}else if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}
     }}>
-      <header className="import-header"><div>{page!=='sources'&&page!=='progress'&&<button className="import-icon" disabled={busy} aria-label="返回导入来源" onClick={()=>{setPage('sources');setError('');setBiliStatus('')}}><ArrowLeft size={20}/></button>}<h2>{title}</h2></div><button className="import-icon" aria-label={running?'收起导入进度':'关闭导入'} title={running?'收起后继续导入':undefined} onClick={dismiss}>{running?<Minus size={20}/>:<X size={20}/>}</button></header>
+      <header className="import-header"><div>{page!=='sources'&&page!=='progress'&&<button className="import-icon" disabled={busy} aria-label="返回导入来源" onClick={back}><ArrowLeft size={20}/></button>}<h2>{title}</h2></div><button className="import-icon" disabled={(page==='seasons'||page==='local')&&busy} aria-label={running?'收起导入进度':'关闭导入'} title={running?'收起后继续导入':undefined} onClick={dismiss}>{running?<Minus size={20}/>:<X size={20}/>}</button></header>
+      {page==='seasons'?<SubscribedSeasonImport busy={busy} onBusyChange={setBusy} onViewCollections={onViewCollections}/>:<>
       <div className="import-body">
-        {page==='sources'&&<><div className="import-sources">{sources.map(source=><button key={source.id} type="button" onClick={()=>{setPage(source.id);setInput('');setName('');setError('')}}><span className={`import-source-mark source-${source.id}`}>{source.id==='text'?<FileText size={21}/>:source.id==='online'?<Link2 size={21}/>:<FolderHeart size={21}/>}</span><span><strong>{source.title}</strong><small>{source.description}</small></span><ChevronRight size={18}/></button>)}</div></>}
+        {page==='sources' && <div className="import-sources">{sources.map(source => (
+          <button key={source.id} type="button" data-source={source.id} onClick={() => { setPage(source.id); setInput(''); setName(''); setError('') }}>
+            <span className={`import-source-mark source-${source.id}`} aria-hidden="true">
+              <source.Icon size={21}/>
+            </span>
+            <span className="import-source-copy"><strong>{source.title}</strong><small>{source.description}</small></span>
+            <ChevronRight size={18} aria-hidden="true"/>
+          </button>
+        ))}</div>}
         {(page==='online'||page==='text')&&<form id="external-playlist-form" onSubmit={event=>{event.preventDefault();void startExternal()}} className="import-source-form">
           <div className="import-form-heading"><span className={`import-source-mark source-${page}`}>{page==='text'?<FileText size={20}/>:<Link2 size={20}/>}</span><div><strong>{page==='text'?'粘贴歌曲列表':'粘贴歌单分享链接'}</strong><p>{page==='text'?'每行一首，例如：传奇 - 王菲':'支持完整分享文字和短链接，无需登录音乐平台。'}</p></div></div>
           <label htmlFor="playlist-import-input" className="sr-only">{page==='text'?'歌曲列表':'歌单链接'}</label><textarea id="playlist-import-input" autoFocus required disabled={busy} value={input} onChange={event=>setInput(event.target.value)} placeholder={page==='text'?'传奇 - 王菲\n因为爱情 - 陈奕迅 / 王菲':'支持网易云、QQ 音乐、酷狗、酷我、咪咕，粘贴歌单链接或分享文字…'} rows={page==='text'?7:4} maxLength={page==='text'?1_000_000:16_000}/>
           {page==='online'&&playlistLinkPlatform(input)&&<p className="import-detected-source"><Check size={14}/>已识别：{playlistLinkPlatform(input)}</p>}
           <label className="import-name-field">歌单名称 <span>选填</span><input maxLength={80} value={name} disabled={busy} onChange={event=>setName(event.target.value)} placeholder={page==='text'?'为这份歌单命名':'默认沿用原歌单名称'}/></label>
+        </form>}
+        {page==='local'&&<form id="external-playlist-form" className="import-source-form" onSubmit={event=>{event.preventDefault();if(!busy&&localPlaylist)void startExternal()}}>
+          <div className="import-local-folder">
+            <span className="import-source-mark"><FolderOpen size={21}/></span>
+            <div><strong>{localPlaylist?.name || '选择音乐文件夹'}</strong>
+              <small role="status">{busy?'正在读取歌曲信息…':localPlaylist?`识别到 ${localPlaylist.songs.length} 首`:'含子文件夹'}</small>
+            </div>
+            <button type="button" className="import-secondary" disabled={busy} onClick={()=>void openLocal()}>{localPlaylist?'更换':'选择文件夹'}</button>
+          </div>
+          {localPlaylist&&<label className="import-name-field">歌单名称 <span>选填</span><input maxLength={80} value={name} disabled={busy} onChange={event=>setName(event.target.value)} placeholder={localPlaylist.name}/></label>}
         </form>}
         {page==='bili'&&<>
           <div className="bili-copy-setting"><div><strong id="bili-copy-label">复制为本地歌单</strong><small>{mode==='copy'?'复制到“歌单”，之后独立管理。':'保存到“歌单”，与 B 站保持同步。'}</small></div><button className="bili-copy-switch" type="button" role="switch" aria-labelledby="bili-copy-label" aria-checked={mode==='copy'} disabled={busy} onClick={()=>{setMode(mode==='copy'?'link':'copy');setBiliResults([]);setBiliStatus('');setPartialId('')}}><span/></button></div>
@@ -157,8 +200,9 @@ function ImportFavoritesFlow({onClose,onImported}:Omit<ImportFavoritesProps,'rev
           {job.state==='done'&&missing>0&&<button className="import-secondary" onClick={()=>void runPlaylistImport(true).then(()=>refresh())}><RefreshCw size={15}/>重试未匹配</button>}
           {job.state!=='done'&&<button className="import-secondary" onClick={endImport} title="保留已保存的歌曲，停止后续导入"><Square size={14}/>结束导入</button>}
           {saved>0&&<button className={job.state==='done'?'import-primary':'import-secondary'} onClick={()=>{void refresh();onImported(job.playlistId,'copy')}}>打开歌单<ArrowRight size={16}/></button>}
-        </>:page==='bili'?<><small>{folderIds.size?`已选 ${folderIds.size} 个收藏夹`:'导入到我的歌单'}</small>{busy&&<button className="import-secondary" onClick={dismiss}><Square size={14}/>结束导入</button>}{partialId&&!busy&&<button className="import-secondary" onClick={()=>onImported(partialId,'copy')}>打开歌单<ArrowRight size={16}/></button>}<button className="import-primary" disabled={busy||!folderIds.size} onClick={()=>void importBili()}>{busy?<LoaderCircle size={17} className="spin"/>:mode==='copy'?<ListPlus size={17}/>:<Link2 size={17}/>} {busy?'正在处理…':biliResults.some(result=>result.error)?'重试所选':mode==='copy'?'导入歌单':'关联收藏夹'}</button></>:<><span/><button className="import-primary" type="submit" form="external-playlist-form" disabled={busy||!input.trim()||!scope}>{busy?<LoaderCircle size={17} className="spin"/>:<ListPlus size={18}/>} {busy?'读取歌单中…':'开始导入'}</button></>}
+        </>:page==='bili'?<><small>{folderIds.size?`已选 ${folderIds.size} 个收藏夹`:'导入到我的歌单'}</small>{busy&&<button className="import-secondary" onClick={dismiss}><Square size={14}/>结束导入</button>}{partialId&&!busy&&<button className="import-secondary" onClick={()=>onImported(partialId,'copy')}>打开歌单<ArrowRight size={16}/></button>}<button className="import-primary" disabled={busy||!folderIds.size} onClick={()=>void importBili()}>{busy?<LoaderCircle size={17} className="spin"/>:mode==='copy'?<ListPlus size={17}/>:<Link2 size={17}/>} {busy?'正在处理…':biliResults.some(result=>result.error)?'重试所选':mode==='copy'?'导入歌单':'关联收藏夹'}</button></>:<><span/><button className="import-primary" type="submit" form="external-playlist-form" disabled={busy||!scope||(page==='local'?!localPlaylist:!input.trim())}>{busy?<LoaderCircle size={17} className="spin"/>:<ListPlus size={18}/>} {page==='local'?'开始匹配':busy?'读取歌单中…':'开始导入'}</button></>}
       </footer>}
+      </>}
     </div>
     {replacement&&job?.session&&<ReplacementDialog entry={replacement} session={job.session} onSaved={replacementSaved} onClose={()=>setReplacement(undefined)}/>}
   </div>

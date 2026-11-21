@@ -44,6 +44,7 @@ object FloatingLyricsOverlay {
     var locked = false
         private set
     private var showUnlockButton = true
+    private var centerAlignment = false
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
@@ -56,9 +57,13 @@ object FloatingLyricsOverlay {
     private val tick = object : Runnable {
         override fun run() { if (enabled) { render(); syncControls();syncUnlock();handler.postDelayed(this,33) } }
     }
-    fun attach(service: PlaybackService) { owner=service;SystemTitleLyrics.attach(service); if(enabled) show() }
+    fun attach(service: PlaybackService) {
+        owner = service
+        centerAlignment = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("centerAlignment", false)
+        SystemTitleLyrics.attach(service)
+        if (enabled) show()
+    }
     fun detach() { hide(); owner=null; enabled=false; setTimeline(JSONObject()) }
-    internal fun needsPlaybackTimeline() = enabled || SystemTitleLyrics.enabled
     internal fun wantsSubtitles(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(SUBTITLES, false)
     internal fun subtitleLanguage(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SUBTITLE_LANGUAGE, "").orEmpty()
@@ -77,7 +82,17 @@ object FloatingLyricsOverlay {
                 fontSize=args.optDouble("fontSize",fontSize.toDouble()).toFloat().coerceIn(18f,48f);locked=args.optBoolean("locked",locked);showUnlockButton=args.optBoolean("showUnlockButton",showUnlockButton)
                 fun color(key:String,fallback:Int)=args.optString(key).takeIf{it.matches(Regex("#[0-9a-fA-F]{6}"))}?.let{Color.parseColor(it)} ?: fallback
                 activeColor=color("activeColor",activeColor);inactiveColor=color("inactiveColor",inactiveColor)
+                if (args.has("alignment")) {
+                    val centered = args.optString("alignment") == "center"
+                    if (centered != centerAlignment) {
+                        centerAlignment = centered
+                        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                            .putBoolean("centerAlignment", centered).apply()
+                    }
+                }
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
+                text?.centerSlot = 0.takeIf { centerAlignment }
+                nextText?.centerSlot = 1.takeIf { centerAlignment }
                 applyLock(context);owner?.notifyLyricsChanged()
             }
             "update" -> owner?.acceptForegroundLyrics(args)
@@ -95,9 +110,7 @@ object FloatingLyricsOverlay {
                 }
             }
             "system-title" -> {
-                val changed = SystemTitleLyrics.enabled != args.optBoolean("enabled")
                 SystemTitleLyrics.configure(context,args.optBoolean("enabled"))
-                if (changed) owner?.refreshPlaybackLyrics()
                 owner?.notifyLyricsChanged()
             }
             "enable" -> {
@@ -105,10 +118,8 @@ object FloatingLyricsOverlay {
                     if(args.optBoolean("requestPermission")) context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     return status(context).put("reason","请允许悬浮窗权限，然后重新开启")
                 }
-                val changed = enabled != args.optBoolean("enabled")
                 enabled=args.optBoolean("enabled")
                 if(enabled) show() else hide()
-                if (changed) owner?.refreshPlaybackLyrics()
                 owner?.notifyLyricsChanged()
             }
         }
@@ -136,6 +147,8 @@ object FloatingLyricsOverlay {
         fun lyricLabel(size:Float)=ScrollingLyricView(context).apply { textSize=size;gravity=Gravity.START;setTextColor(activeColor);typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);setShadowLayer(2*density,0f,1f,0x66000000) }
         val label=lyricLabel(fontSize);text=label;row.addView(label,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
         val next=lyricLabel(fontSize).apply {gravity=Gravity.END;setTextColor(inactiveColor)};nextText=next;row.addView(next,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
+        label.centerSlot = 0.takeIf { centerAlignment }
+        next.centerSlot = 1.takeIf { centerAlignment }
         val tools=FloatingLyricsToolbar(context){action->
             controlVisibility.reveal(android.os.SystemClock.uptimeMillis())
             when(action) {
@@ -302,7 +315,7 @@ object FloatingLyricsOverlay {
     private fun lyricScrollPosition(line: org.json.JSONObject,time: Double,next: Double?,target: ScrollingLyricView): Float {
         val value=lyricDisplayText(line.optString("text"))
         val width=target.paint.measureText(value).toDouble()
-        val available=(target.width-target.paddingLeft-target.paddingRight).toDouble()
+        val available=target.lyricWidth().toDouble()
         if(width<=available || available<=0)return 0f
         val words=line.optJSONArray("words")
         val first=words?.optJSONObject(0);val last=words?.let{it.optJSONObject(it.length()-1)}

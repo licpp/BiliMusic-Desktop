@@ -22,6 +22,6 @@ export function SeasonSections({sections,selected,onChange}:{sections:SeasonSect
     event.preventDefault(); event.stopPropagation(); buttons[next].focus()
   }}>
     {[{id:undefined,title:'全部'},...sections].map(section => <button key={section.id ?? 'all'} type="button" aria-pressed={section.id === active}
-      title={section.title} onClick={() => onChange(section.id)} onFocus={event => event.currentTarget.scrollIntoView({block:'nearest',inline:'nearest'})}>{section.title}</button>)}
+      title={section.title} onClick={event => { onChange(section.id); event.currentTarget.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }} onFocus={event => event.currentTarget.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })}>{section.title}</button>)}
   </div>
 }

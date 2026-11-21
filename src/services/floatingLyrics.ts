@@ -14,7 +14,7 @@ import { storedLyricLines, systemLrc, floatingTimeline } from '../domain/lyricTi
 import { subtitleScope, useSubtitleState } from '../features/lyrics/useBiliSubtitles'
 import { readSubtitlePreference } from './subtitlePreference'
 
-export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; capturedAt?:number; revision?:number }
+export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; alignment?:FloatingPreferences['alignment']; capturedAt?:number; revision?:number }
 export type FloatingCapability = { supported: boolean; enabled: boolean; permissionRequired?: boolean; fontSizeSupported?: boolean; lockSupported?: boolean; colorSupported?:boolean; reason?: string }
 const plugin = isOHOS ? 'ohos-player' : isIOS ? 'ios-player' : 'android-player'
 const nativeLyrics = <T>(data: object) => invoke<T>(`plugin:${plugin}|lyrics`, {data:JSON.stringify(data)})
@@ -64,7 +64,7 @@ export function startFloatingLyrics() {
       displayLines=displaySource.map(line=>({...line,text:lyricDisplayText(line.text),words:line.words?.map(word=>({...word,text:lyricDisplayText(word.text)}))}))
     }
     const timeline={...sourceTimeline,lines:displayLines}
-    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,capturedAt:Date.now()}
+    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,alignment:style.alignment,capturedAt:Date.now()}
     if (isMobile) {
       // Native renderers read their own player's clock, even with JS suspended.
       const session = isAndroid ? nativeLyricPlaybackSession(frame.id) : undefined
@@ -117,7 +117,7 @@ export function startFloatingLyrics() {
       isIOS && state.status === 'playing' && previous.status !== 'playing' ||
       !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   })
-  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
+  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
   useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()})
   window.addEventListener('bilimusic-floating-lyrics-change',configure)
   configure()

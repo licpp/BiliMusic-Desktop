@@ -29,28 +29,69 @@ const labels = { week: '本周', month: '本月', year: '本年', total: '累计
 const dayKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 const accountToday = () => new Date(`${new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}T00:00:00Z`)
 
-const preferenceKinds = { artists: '歌手', uploaders: 'UP 主', themes: '内容关键词' } as const
+const preferenceKinds = { artists: '歌手', uploaders: 'UP 主', themes: '关键词' } as const
+type PreferenceKind = keyof typeof preferenceKinds
 function PreferenceSummary({ preferences }: { preferences?: ListeningPreferences }) {
+  const [kindFilter, setKindFilter] = useState<'all' | PreferenceKind>('all')
   const [picked, setPicked] = useState<string>()
-  const groups = Object.keys(preferenceKinds) as (keyof typeof preferenceKinds)[]
-  const items = groups.flatMap(kind => (preferences?.[kind] || []).slice(0, 6).map(item => ({
+  const groups = Object.keys(preferenceKinds) as PreferenceKind[]
+  const availableKinds = groups.filter(kind => (preferences?.[kind]?.length || 0) > 0)
+  const activeFilter: 'all' | PreferenceKind = kindFilter !== 'all' && !availableKinds.includes(kindFilter) ? 'all' : kindFilter
+  const allItems = groups.flatMap(kind => (preferences?.[kind] || []).slice(0, 8).map(item => ({
     ...item, kind, key: `${kind}:${item.id}`,
   }))).sort((a, b) => b.seconds - a.seconds)
+  const items = (activeFilter === 'all' ? allItems.slice(0, 15) : allItems.filter(item => item.kind === activeFilter).slice(0, 10))
   const [lead, ...rest] = items
+  const totalSeconds = Math.max(1, items.reduce((sum, item) => sum + item.seconds, 0))
   const selected = items.find(item => item.key === picked)
-  const word = (item: (typeof items)[number]) => <button key={item.key} type="button" data-kind={item.kind}
-    aria-label={`${item.label}，${preferenceKinds[item.kind]}，${duration(item.seconds)}`} aria-pressed={item.key === picked}
-    onClick={() => setPicked(picked === item.key ? undefined : item.key)}
-    style={{fontSize:`${.88 + .9 * Math.sqrt(item.seconds / Math.max(1, lead.seconds))}rem`}}>{item.label}</button>
+  const shareOf = (seconds: number) => Math.max(1, Math.round(seconds / totalSeconds * 100))
+
   return <section className="listening-section listening-preferences">
-    <header><h3>聆听偏好</h3></header>
-    {lead ? <div className="listening-preference-cloud">
-      <div>{rest.filter((_, index) => index % 2 === 0).reverse().map(word)}</div>
-      <div>{word(lead)}</div>
-      <div>{rest.filter((_, index) => index % 2 === 1).map(word)}</div>
-    </div> :
-      <p className="listening-preference-note">暂无偏好记录</p>}
-    <div className="listening-preference-detail" aria-live="polite">{selected && <><strong>{selected.label}</strong><span>{duration(selected.seconds)}</span></>}</div>
+    <header>
+      <div>
+        <h3>聆听偏好</h3>
+        <p>{lead ? '按累计聆听时长加权整理' : '听得越多，画像越清晰'}</p>
+      </div>
+      {availableKinds.length > 1 && <div className="listening-preference-filters" role="group" aria-label="偏好分类筛选">
+        <button type="button" aria-pressed={activeFilter === 'all'} onClick={() => setKindFilter('all')}>全部</button>
+        {availableKinds.map(kind => <button key={kind} type="button" data-kind={kind} aria-pressed={activeFilter === kind} onClick={() => setKindFilter(kind)}>
+          <i aria-hidden="true" />{preferenceKinds[kind]}
+        </button>)}
+      </div>}
+    </header>
+    {lead ? <>
+      <button type="button" className="listening-preference-spotlight" data-kind={lead.kind} aria-pressed={picked === lead.key}
+        aria-label={`最常听的${preferenceKinds[lead.kind]}：${lead.label}，${duration(lead.seconds)}`}
+        onClick={() => setPicked(picked === lead.key ? undefined : lead.key)}>
+        <div className="spotlight-top">
+          <span className="spotlight-eyebrow"><i aria-hidden="true" />最常听的{preferenceKinds[lead.kind]}</span>
+          <span className="spotlight-share">TOP 1 · {shareOf(lead.seconds)}%</span>
+        </div>
+        <div className="spotlight-main">
+          <strong>{lead.label}</strong>
+          <span>{duration(lead.seconds)}</span>
+        </div>
+      </button>
+      {rest.length > 0 && <div className="listening-preference-constellation">
+        {rest.map(item => {
+          const ratio = item.seconds / Math.max(1, lead.seconds)
+          const tier = ratio >= 0.55 ? 1 : ratio >= 0.25 ? 2 : 3
+          return <button key={item.key} type="button" className="preference-capsule" data-kind={item.kind} data-tier={tier}
+            aria-label={`${item.label}，${preferenceKinds[item.kind]}，${duration(item.seconds)}`} aria-pressed={item.key === picked}
+            onClick={() => setPicked(picked === item.key ? undefined : item.key)}>
+            <i aria-hidden="true" />
+            <span>{item.label}</span>
+          </button>
+        })}
+      </div>}
+      <div className="listening-preference-detail" aria-live="polite">
+        {selected ? <>
+          <span className="detail-kind-chip" data-kind={selected.kind}>{preferenceKinds[selected.kind]}</span>
+          <strong>{selected.label}</strong>
+          <span className="detail-metric">{duration(selected.seconds)} · {shareOf(selected.seconds)}%</span>
+        </> : <span className="detail-hint">点击任意偏好标签，查看精确聆听时长与占比</span>}
+      </div>
+    </> : <p className="listening-preference-note">暂无偏好记录</p>}
   </section>
 }
 
@@ -152,9 +193,9 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
         <div className="listening-overview-heading"><span className="listening-icon"><Headphones size={18} /></span><span>{labels[period]}聆听时长</span></div>
         <div className="listening-duration"><strong>{summaryTime.value.toLocaleString()}</strong><span>{summaryTime.unit}</span>{summaryTime.minutes !== null && <><strong className="listening-duration-minutes">{summaryTime.minutes}</strong><span>分钟</span></>}</div>
         <div className="listening-metrics">
-          <div><Music2 size={15} /><strong>{summary.tracks.toLocaleString()}</strong><span>首歌曲</span></div>
-          <div><CalendarDays size={15} /><strong>{summary.days.toLocaleString()}</strong><span>天聆听</span></div>
-          <div title="有效播放次数从新版开始记录"><Headphones size={15} /><strong>{summary.plays.toLocaleString()}</strong><span>次播放</span></div>
+          <div><strong>{summary.tracks.toLocaleString()}</strong><span><Music2 size={13} />首歌曲</span></div>
+          <div><strong>{summary.days.toLocaleString()}</strong><span><CalendarDays size={13} />天聆听</span></div>
+          <div title="有效播放次数从新版开始记录"><strong>{summary.plays.toLocaleString()}</strong><span><Headphones size={13} />次播放</span></div>
         </div>
       </section>
       {period === 'total' ? <PreferenceSummary preferences={data?.preferences}/> : <section className="listening-trend listening-section">
@@ -165,11 +206,11 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
       </section>}
       <section className="listening-section listening-favorites"><header><div><h3>常听的声音</h3><p>按聆听时长排序</p></div><span className="listening-count">{top?.length || 0} 首</span></header>
         {top?.length ? <ol className="listening-ranking">{top.map((track, i) => <li key={track.id}>
-          <span className="listening-rank" data-leading={i < 3 || undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />
+          <span className="listening-rank" data-leading={i < 3 ? i + 1 : undefined}>{i + 1}</span><ListeningArtwork id={track.id} coverUrl={track.coverUrl} />
           <div className="listening-song"><strong>{track.title}</strong><small>{trackSubtitle({...track, source: {uploaderName: track.uploaderName}})}</small><div className="listening-song-duration"><div className="listening-song-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, track.seconds / Math.max(1, top[0].seconds) * 100)}%` }} /></div><span className="listening-song-time">{duration(track.seconds)}</span></div></div>
         </li>)}</ol> : <div className="listening-empty"><Headphones size={30} /><strong>让喜欢的歌留下足迹</strong><p>开始播放后，这里会记录你常听的声音。</p></div>}
       </section>
-      <div className="listening-sync"><Cloud size={17} /><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>
+      <div className="listening-sync"><span className="listening-sync-icon"><Cloud size={17} /></span><div><strong>{syncLabel}</strong><small>{enabled && data?.sync.lastSuccess ? `上次同步 ${new Date(data.sync.lastSuccess).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : enabled ? `${data?.sync.provider === 'webdav' ? '坚果云' : 'BiliMusic 云'} · 汇总所有设备，约每 15 分钟自动同步` : data?.sync.paused ? '恢复后自动补传本机记录并合并其他设备统计' : '在云同步设置中连接服务，同账号各端使用同一服务和目录'}</small></div>{enabled && <button type="button" disabled={busy} onClick={() => void synchronize()} aria-label="同步听歌统计"><RefreshCw size={15} className={busy ? 'spin' : ''} />{busy ? '同步中' : '同步'}</button>}</div>
       {enabled && data?.sync.error && <p className="inline-error" role="status">{data.sync.error}</p>}
       <details className="listening-explanation"><summary><Info size={13} />统计说明</summary><p>按实际播放时长统计，日期统一采用 UTC+8。同一 B 站账号的各端连接同一同步服务后，共享一份统计；坚果云还需使用同一坚果云账号和目录。汇总所有设备的聆听时长，多端同时播放分别累计。离线记录在联网后补传，未登录时的本机记录不会自动归入账号。有效播放次数从新版开始记录，暂停恢复不重复计次。旧数据计入累计；历史月榜仅包含可还原的明细。</p>{enabled && <p>近 30 天同步估计上传 {bytes(data?.sync.uploadedBytes || 0)}，下载 {bytes(data?.sync.downloadedBytes || 0)}，包含失败尝试，不含网络协议开销。</p>}{uid && (data?.sync.provider || data?.sync.paused) && <button type="button" className="listening-sync-preference" disabled={busy} onClick={() => void configure()}>{enabled ? '暂停账号统计同步' : '恢复账号统计同步'}</button>}</details>
     </>

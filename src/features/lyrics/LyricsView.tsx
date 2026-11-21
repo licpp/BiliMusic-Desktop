@@ -31,8 +31,8 @@ import { firstSongQuery } from '../../domain/songIdentity'
 import { useArtworkFit } from './useArtworkFit'
 import { AiSubtitleIcon } from './AiSubtitleIcon'
 import { createPortal, flushSync } from 'react-dom'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { ChevronDown, Download, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { ChevronDown, Download, Gauge, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/MetadataDialog'
@@ -513,15 +513,17 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
       {danmaku.error && danmakuVisible && <p className="inline-error">弹幕加载失败 <button type="button" onClick={() => void danmaku.refetch()}>重试</button></p>}
       <strong className="danmaku-settings-heading">弹幕</strong>
       <label>密度 <output>{danmakuDensityLabels[danmakuDensity]}</output>
-        <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity} onChange={event => {
+        <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity}
+          style={{ '--range-fill': `${danmakuDensity / 3 * 100}%` } as CSSProperties}
+          onChange={event => {
           const value = Number(event.target.value)
           setDanmakuDensity(value)
           localStorage.setItem('danmakuDensity', String(value))
         }}/>
         <span className="danmaku-density-ticks" aria-hidden="true">{danmakuDensityLabels.map(label => <span key={label}>{label}</span>)}</span>
       </label>
-      <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
-      <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
+      <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} style={{ '--range-fill': `${(danmakuSize - 0.6) / 1.0 * 100}%` } as CSSProperties} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
+      <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} style={{ '--range-fill': `${(danmakuOpacity - 0.2) / 0.8 * 100}%` } as CSSProperties} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
     </div>
   </>
   const videoTools = <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`} data-controls-hidden={mediaMode === 'video' && controlsHidden || undefined} onPointerDown={revealControls}>
@@ -560,14 +562,9 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
             {compact && isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
-            {subtitles.active && subtitles.choices.length > 1 && (compact ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
-              options={subtitles.choices.map(choice => ({ value: choice.language, label: choice.label || choice.language }))}
-              onChange={subtitles.select}/> : <label className="lyrics-subtitle-language">
-              字幕版本
-              <select aria-label="字幕版本" value={subtitles.choice?.language} onChange={event => { subtitles.select(event.target.value); close() }}>
-                {subtitles.choices.map(choice => <option key={choice.language} value={choice.language}>{choice.label || choice.language} · {choice.ai ? 'AI' : 'B 站'}</option>)}
-              </select>
-            </label>)}
+            {subtitles.active && subtitles.choices.length > 1 && <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
+              options={subtitles.choices.map(choice => ({ value: choice.language, label: `${choice.label || choice.language}${compact ? '' : ` · ${choice.ai ? 'AI' : 'B 站'}`}` }))}
+              onChange={value => { subtitles.select(value); if (!compact) close() }}/>}
             {compact && <div className="touch-sheet-section">歌曲与歌词</div>}
             <div className={compact ? 'lyrics-song-actions lyrics-song-actions-grid' : 'lyrics-song-actions'}>
             {current.source.provider === 'bilibili' && <button role={isMobile ? undefined : 'menuitem'} type="button" onClick={() => { close(); chooseDownload([current]) }}><Download size={16}/>下载歌曲</button>}
@@ -662,10 +659,9 @@ function centerLyric(scroll: HTMLDivElement, line: HTMLParagraphElement, behavio
 function PlaybackRateControl() {
   const rate = usePlayerStore(state => state.rate)
   const setRate = usePlayerStore(state => state.setRate)
-  return <label className="lyrics-subtitle-language">
-    播放倍速
-    <select aria-label="播放倍速" value={rate} onChange={event => void setRate(Number(event.target.value))}>
-      {playbackRates.map(value => <option key={value} value={value}>{value}×</option>)}
-    </select>
-  </label>
+  return <div className="playback-rate-control">
+    <TouchOptions icon={<Gauge size={17}/>} label="播放倍速" selected={String(rate)}
+      options={playbackRates.map(value => ({ value: String(value), label: `${value}×` }))}
+      onChange={value => void setRate(Number(value))} layout="grid" />
+  </div>
 }

@@ -5,6 +5,7 @@ import { commandErrorMessage, removeLinkedVideos } from '../../services/desktopA
 import type { LinkedFolder } from '../../domain/bilibili'
 import type { Track } from '../../domain/track'
 import { chooseDownload } from '../downloads/downloadRequest'
+import { downloadSelectionMessage, prepareDownloadSelection } from '../downloads/downloadSelection'
 import { usePlayerStore } from '../player/playerStore'
 import { chooseTrackPlaylist } from './trackActionStore'
 import { useTrackSelection } from './useTrackSelection'
@@ -32,13 +33,19 @@ export function LinkedSelectionActions({ folderId, selection, total, onFolderCha
     finally { if (alive.current && epoch === accountEpoch()) setBusy(false) }
   }
   const apply = (target: 'queue' | 'playlist' | 'download') => run(async () => {
+    if (target === 'download') {
+      const result = await prepareDownloadSelection(selection.selected, undefined, () => alive.current)
+      if (!result) return
+      chooseDownload(result.tracks)
+      setMessage(downloadSelectionMessage(result.failed, result.tracks.length))
+      return
+    }
     const result = await resolveLinkedSelection(selection.selected, () => alive.current)
     if (!result) return
     const { tracks, failed } = result
     if (tracks.length) {
       if (target === 'queue') usePlayerStore.getState().enqueue(tracks)
-      else if (target === 'playlist') onChoosePlaylist(tracks)
-      else chooseDownload(tracks)
+      else onChoosePlaylist(tracks)
     }
     if (failed) setMessage(`${failed} 个视频未能读取可用分 P。`)
     else if (target === 'queue') setMessage(`已加入队列 ${tracks.length} 首`)

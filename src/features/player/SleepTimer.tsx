@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, ChevronRight } from 'lucide-react'
+import { Clock3, ChevronRight, Minus, Plus } from 'lucide-react'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { formatDuration } from '../../shared/time'
 import { isMobile } from '../../services/platform'
@@ -38,14 +38,14 @@ export function SleepTimer({ open, onClose }: { open: boolean; onClose: () => vo
       {error && <small role="alert">{error}</small>}
     </section>, document.body)
   return <CollectionDialog title="定时暂停" className="sleep-timer-settings" onClose={onClose}>
-    {sleep.deadline > 0 && <p>剩余 {formatDuration(Math.max(0, Math.ceil((sleep.deadline - now) / 1000)))}</p>}
-    <div className="sleep-timer-presets">{durations.map(value => <button key={value} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>{value} 分钟</button>)}</div>
+    {sleep.deadline > 0 && <p className="sleep-timer-countdown"><Clock3 size={15}/>剩余 <strong>{formatDuration(Math.max(0, Math.ceil((sleep.deadline - now) / 1000)))}</strong></p>}
+    <div className="sleep-timer-presets">{durations.map(value => <button type="button" key={value} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>{value} 分钟</button>)}</div>
     <form className="sleep-timer-custom" onSubmit={event => { event.preventDefault(); if (!busy && minutes >= 1 && minutes <= 180 && Number.isInteger(minutes)) void action('sleepStart', minutes * 60) }}>
-      <label>自定时长 <input type="number" inputMode="numeric" min={1} max={180} value={minutes || ''} onChange={event => setMinutes(Number(event.target.value))}/> 分钟</label>
+      <label className="sleep-timer-stepper"><span>自定时长</span><span className="sleep-stepper-box"><button type="button" aria-label="减少 5 分钟" disabled={busy || minutes <= 5} onClick={() => setMinutes(v => Math.max(1, (v || 0) - 5))}><Minus size={14}/></button><input type="number" inputMode="numeric" min={1} max={180} value={minutes || ''} onChange={event => setMinutes(Number(event.target.value))}/><button type="button" aria-label="增加 5 分钟" disabled={busy || minutes >= 180} onClick={() => setMinutes(v => Math.min(180, (v || 0) + 5))}><Plus size={14}/></button></span><span>分钟</span></label>
       <button className="mobile-page-primary" disabled={busy || !Number.isInteger(minutes) || minutes < 1 || minutes > 180}>{sleep.deadline > 0 ? '重新计时' : '开始计时'}</button>
     </form>
     {error && <small role="alert">{error}</small>}
-    {sleep.deadline > 0 && <footer><button disabled={busy} onClick={() => void action('sleepCancel')}>取消定时</button></footer>}
+    {sleep.deadline > 0 && <footer><button type="button" className="sleep-timer-cancel" disabled={busy} onClick={() => void action('sleepCancel')}>取消定时</button></footer>}
   </CollectionDialog>
 }
 

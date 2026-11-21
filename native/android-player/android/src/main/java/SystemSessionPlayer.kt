@@ -26,13 +26,13 @@ internal class SystemSessionPlayer(
     private var rows: List<SystemPlaybackQueue.Row> = emptyList()
     private var playlist: List<MediaItemData> = emptyList()
     private var currentIndex = -1
-    private var displayTitle = ""
+    private var mediaText: SystemMediaText? = null
     private var artwork: ByteArray? = null
     private var projection = State.Builder().build()
 
     fun update(
         queue: SystemPlaybackQueue,
-        displayTitle: String,
+        mediaText: SystemMediaText,
         artwork: ByteArray?,
         status: String,
         positionMs: Long,
@@ -64,16 +64,19 @@ internal class SystemSessionPlayer(
                     .build()
             }
         }
-        if (queueChanged || indexChanged || this.displayTitle != displayTitle || this.artwork !== artwork) {
-            this.displayTitle = displayTitle
+        if (queueChanged || indexChanged || this.mediaText != mediaText || this.artwork !== artwork) {
+            this.mediaText = mediaText
             this.artwork = artwork
             state.setPlaylist(playlist.mapIndexed { index, item ->
-                if (index != queue.currentIndex) item else item.buildUpon().setMediaMetadata(
-                    item.mediaItem.mediaMetadata.buildUpon()
-                        .setTitle(displayTitle)
-                        .setDisplayTitle(displayTitle)
-                        .setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER).build(),
-                ).build()
+                if (index != queue.currentIndex) return@mapIndexed item
+                val original = item.mediaItem.mediaMetadata
+                val current = original.buildUpon()
+                    .setTitle(mediaText.title)
+                    .setDisplayTitle(mediaText.title)
+                    .setArtist(mediaText.subtitle)
+                    .setSubtitle(mediaText.subtitle)
+                    .setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                item.buildUpon().setMediaMetadata(current.build()).build()
             })
         }
         if (indexChanged && rows.getOrNull(queue.currentIndex) != null && currentIndex >= 0) {

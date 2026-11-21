@@ -12,7 +12,7 @@ import { ResumeSettings } from './ResumeSettings'
 import { SyncSettings } from '../sync/SyncSettings'
 import { isMobile, isIOS, isOHOS, isAndroid } from '../../services/platform'
 import { AndroidDownloadDestinationField } from '../downloads/AndroidDownloadDestination'
-import { Cloud, Download, FolderOpen, HardDrive, LoaderCircle, Sun } from 'lucide-react'
+import { Cloud, Download, FolderOpen, HardDrive, LoaderCircle, Moon, Sun } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
 import { useThemeStore } from '../../services/theme'
 import { useEffect, useState } from 'react'
@@ -41,7 +41,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
   return <section className="settings-view settings-organized">
     {!embedded && <header><h2>设置</h2><p>让音乐按你的习惯播放。</p></header>}
     <section className="settings-group" aria-labelledby="settings-appearance"><h3 id="settings-appearance">外观</h3><div className="settings-group-body">
-      <div className="settings-card"><div className="settings-icon"><Sun/></div><div><strong>主题</strong><small>选择你喜欢的明暗</small></div><div className="theme-options"><button className={theme === 'dark' ? 'selected' : ''} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>深色</button><button className={theme === 'light' ? 'selected' : ''} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}>浅色</button></div></div>
+      <div className="settings-card"><div className="settings-icon"><Sun/></div><div><strong>主题</strong><small>选择你喜欢的明暗</small></div><div className="theme-options" role="group" aria-label="主题外观"><button type="button" className={theme === 'dark' ? 'selected' : ''} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}><Moon size={14}/><span>深色</span></button><button type="button" className={theme === 'light' ? 'selected' : ''} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}><Sun size={14}/><span>浅色</span></button></div></div>
     </div></section>
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>

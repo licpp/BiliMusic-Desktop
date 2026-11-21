@@ -34,7 +34,8 @@ export function MobilePage({ title, onBack, actions, children, scrollContent = t
     page.setAttribute('data-page-closing', '')
     updatePageStack()
     const releaseLists = holdListUpdates()
-    const animation = slideNavigation(page, position, page.clientWidth, timing ?? edgeBackTiming(page.clientWidth, page.clientWidth), () => flushSync(() => back.current()))
+    const exitDistance = Math.max(page.clientWidth, window.innerWidth - page.getBoundingClientRect().left)
+    const animation = slideNavigation(page, position, exitDistance, timing ?? edgeBackTiming(exitDistance, exitDistance), () => flushSync(() => back.current()))
     if (animation) void animation.finished.then(releaseLists, releaseLists)
     else releaseLists()
   }
@@ -57,8 +58,8 @@ export function MobilePage({ title, onBack, actions, children, scrollContent = t
     }
   }, [])
   const header = <header className="mobile-page-header"><button type="button" aria-label="返回" onClick={() => close()}><ChevronLeft size={24}/></button><h2>{title}</h2><div>{actions}</div></header>
-  return createPortal(<section ref={layer} className={`mobile-page ${className}`} data-mobile-page data-edge-back role="dialog" aria-modal="true" aria-label={title}>
+  return createPortal(<><div className="mobile-page-scrim" aria-hidden="true" onClick={() => close()} /><section ref={layer} className={`mobile-page ${className}`} data-mobile-page data-edge-back role="dialog" aria-modal="true" aria-label={title}>
     {header}
     <div className={scrollContent ? "mobile-page-content" : "mobile-page-content mobile-page-content-expanded"}>{children}</div>
-  </section>, document.body)
+  </section></>, document.body)
 }

@@ -83,8 +83,17 @@
 .collection-dialog.collection-dialog-mobile-sheet > header { margin:0 0 16px;padding:4px 0 14px;border-bottom:1px solid var(--line); }
 .collection-dialog-mobile-sheet > header h3 { margin:0;font-size:20px; }
 .rail-button { position:relative; }
+@media(min-width:961px) {
+  .rail-button { width:52px;height:auto;min-height:50px;padding:6px 2px;gap:4px;align-content:center;justify-items:center; }
+  .rail-button > .mobile-nav-label { display:block;font-size:11px;font-weight:500;line-height:1.15;white-space:nowrap; }
+  .rail-button.active > .mobile-nav-label { font-weight:600; }
+  .rail-button .update-nav-dot { top:5px;right:7px; }
+}
 
 .dock-track>span,.dock-track-group,.dock-track { min-width:0; }
 .dock-track small { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 input[type="range"] { touch-action:none; }
 .progress input[type="range"] { height:24px;min-height:24px; }
+@media(min-width:961px) {
+  .app-shell:not(.lyrics-immersive) > .player-dock .progress input[type="range"] { height:16px;min-height:16px; }
+}

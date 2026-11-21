@@ -130,31 +130,49 @@
   background:var(--panel); box-shadow:0 1px 6px #0002, inset 0 0 0 1px color-mix(in srgb,var(--cyan) 13%,var(--line));
 }
 
-@media (max-width: 960px) {
-  :root[data-layout="mobile"] .segmented-tabs {
-    position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--tab-count), minmax(0, 1fr));
-    gap: 0; width: min(100%, 420px); margin: 0 auto 16px; padding: 4px; border: 1px solid var(--line);
-    border-radius: 16px; overflow: visible; background: color-mix(in srgb, var(--panel-raised) 74%, var(--base));
-  }
-  :root[data-layout="mobile"] .segmented-tabs > .segmented-tab-indicator { display:block; }
-  :root[data-layout="mobile"] .segmented-tabs button {
-    display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 0; min-height: 39px; padding: 0 4px;
-    border: 0; border-radius: 11px; background: transparent; color: var(--muted); font-size: 14px; font-weight: 550;
-    transition: color 160ms ease;
-  }
-  :root[data-layout="mobile"] .segmented-tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; }
+/* Desktop underline tabs glide smoothly between variable-width tab labels. */
+:root[data-layout="desktop"] :is(.listening-tabs,.library-tabs).segmented-tabs {
+  position: relative;
 }
-@media (min-width: 961px) {
-  :root[data-layout="mobile"] .music-library .library-tabs {
-    position:relative; isolation:isolate; display:grid; grid-template-columns:repeat(var(--tab-count),minmax(0,1fr));
-    gap:0; width:min(100%,420px); padding:4px; border:1px solid var(--line); border-radius:16px;
-    background:color-mix(in srgb,var(--panel-raised) 74%,var(--base));
-  }
-  :root[data-layout="mobile"] .music-library .library-tabs > .segmented-tab-indicator { display:block; }
-  :root[data-layout="mobile"] .music-library .library-tabs button { min-height:39px; padding:0 4px; border:0; font-size:14px; }
+:root[data-layout="desktop"] :is(.listening-tabs,.library-tabs).segmented-tabs[data-bar-ready] > button[aria-selected="true"] {
+  border-bottom-color: transparent;
+}
+:root[data-layout="desktop"] :is(.listening-tabs,.library-tabs).segmented-tabs > .segmented-tab-indicator {
+  display: block;
+  z-index: 1;
+  inset: auto auto -1px 0;
+  height: 2.5px;
+  width: var(--tab-bar-w, 0px);
+  border-radius: 2px;
+  background: var(--cyan);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--cyan) 32%, transparent);
+  transform: translate3d(var(--tab-bar-x, 0px), 0, 0);
+  transition: none;
+}
+:root[data-layout="desktop"] :is(.listening-tabs,.library-tabs).segmented-tabs[data-bar-ready] > .segmented-tab-indicator {
+  transition: transform 220ms cubic-bezier(.22, 1, .36, 1), width 220ms cubic-bezier(.22, 1, .36, 1);
+}
+
+/* Mobile (phones, foldables, and tablets across all widths) shares the tactile segmented capsule. */
+:root[data-layout="mobile"] .segmented-tabs {
+  position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--tab-count), minmax(0, 1fr));
+  gap: 0; width: min(100%, 420px); margin: 0 auto 16px; padding: 4px; border: 1px solid var(--line);
+  border-radius: 16px; overflow: visible; background: color-mix(in srgb, var(--panel-raised) 74%, var(--base));
+}
+:root[data-layout="mobile"] .segmented-tabs > .segmented-tab-indicator { display:block; }
+:root[data-layout="mobile"] .segmented-tabs button {
+  display: flex; justify-content: center; align-items: center; gap: 6px; min-width: 0; min-height: 39px; padding: 0 4px;
+  border: 0; border-radius: 11px; background: transparent; color: var(--muted); font-size: 14px; font-weight: 550;
+  transition: color 160ms ease;
+}
+:root[data-layout="mobile"] .segmented-tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; }
+:root[data-layout="mobile"] .search-view-tabs > .swipe-pages > .listening-tabs,
+:root[data-layout="mobile"] .creator-page > .swipe-pages > .listening-tabs {
+  margin: 10px auto 14px;
 }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-layout="mobile"] .segmented-tabs > .segmented-tab-indicator { transition: none; }
+  .segmented-tabs > .segmented-tab-indicator,
+  :root[data-layout="desktop"] :is(.listening-tabs,.library-tabs).segmented-tabs[data-bar-ready] > .segmented-tab-indicator { transition: none; }
 }
 
 .sleep-timer-notice { position: fixed; z-index: 400; top: max(14px, var(--native-safe-top, env(safe-area-inset-top, 14px))); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; width: min(calc(100% - 28px), 420px); padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--panel); color: var(--ink); box-shadow: 0 12px 38px #0003; }

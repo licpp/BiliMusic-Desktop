@@ -1,20 +1,29 @@
 import { consumeTouchClick } from './consumeTouchClick'
 import { Check, ChevronDown } from 'lucide-react'
-import { useId, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 
-export function TouchOptions({ label, selected, options, onChange, disabled = false, icon }: {
+export function TouchOptions({ label, selected, options, onChange, disabled = false, icon, layout = 'list' }: {
   icon?: ReactNode
   label: string
   selected: string
   options: { value: string; label: string }[]
   onChange: (value: string) => void
   disabled?: boolean
+  layout?: 'list' | 'grid'
 }) {
   const [open, setOpen] = useState(false)
   const id = useId()
+  const listRef = useRef<HTMLDivElement>(null)
   const pointer = useRef<number | null>(null)
   const skipClick = useRef(false)
   const [preview, setPreview] = useState<string | null>()
+  useEffect(() => {
+    if (!open || disabled) return
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, disabled])
   const choose = (value: string) => { setOpen(false); onChange(value) }
   const choiceAt = (event: PointerEvent<HTMLDivElement>) => {
     const button = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('[data-touch-option]')
@@ -30,7 +39,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
       onClick={() => setOpen(value => !value)}>
       {icon}<span>{label}</span><small>{options.find(option => option.value === selected)?.label}</small><ChevronDown className="touch-option-chevron" size={16} aria-hidden="true"/>
     </button>
-    {open && !disabled && <div id={id} className="touch-option-list" role="group" aria-label={label} data-touch-picker data-tracking={preview !== undefined || undefined}
+    {open && !disabled && <div ref={listRef} id={id} className="touch-option-list" data-option-layout={layout} role="group" aria-label={label} data-touch-picker data-tracking={preview !== undefined || undefined}
       onPointerDown={event => {
         if (event.pointerType !== 'touch' || !event.isPrimary) return
         const value = choiceAt(event)
@@ -54,7 +63,7 @@ export function TouchOptions({ label, selected, options, onChange, disabled = fa
       {options.map(option => <button type="button" key={option.value} aria-pressed={option.value === selected}
         data-touch-option={option.value} data-preview={option.value === preview || undefined}
         onClick={event => {event.stopPropagation();choose(option.value)}}>
-        {option.label}{option.value === selected && <Check size={17} aria-hidden="true"/>}
+        {option.label}{layout === 'list' && option.value === selected && <Check size={16} aria-hidden="true"/>}
       </button>)}
     </div>}
   </div>

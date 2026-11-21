@@ -4,7 +4,7 @@ import { ListSkeleton } from '../../shared/ListSkeleton'
 import { focusSearch } from '../../shared/focusSearch'
 import { accountQueryKey } from '../../services/queryKeys'
 import { useMutation,useQuery,useQueryClient } from '@tanstack/react-query'
-import { ChevronDown,ChevronRight,Folder,Search,X } from 'lucide-react'
+import { ChevronDown,ChevronRight,Folder,ListFilter,Search,X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { accountEpoch } from '../../services/accountScope'
 import { changeCollection,listCollections,type Collection } from '../../services/collections'
@@ -19,15 +19,17 @@ import { useCompactLayout } from '../../shared/useCompactLayout'
 import { useOrganizer } from '../../shared/useOrganizer'
 import { LibraryArtworkEntry } from '../library/LibraryArtworkEntry'
 import { PlaylistEntry } from '../library/PlaylistEntry'
+import { HubToolbar } from '../library/HubToolbar'
 import { FolderEditor,FolderMenu } from './CollectionFolderControls'
 import { CollectionMenu } from './CollectionMenu'
 
 const useCollections = () => useQuery({ queryKey: accountQueryKey('collections'), queryFn: listCollections })
 type CollectionInfo = Omit<Collection, 'folderId'>
 
-export function CollectionsView({ hideHeading = false, sidebar = false, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
+export function CollectionsView({ hideHeading = false, sidebar = false, actionsHost, folderId, linkedFolders = [], onOpenFolder, onOpenLinked, onLinkedRemoved, onSelect, onFolderRemoved }: {
   sidebar?: boolean
   hideHeading?: boolean
+  actionsHost?: HTMLElement | null
   folderId?: string
   linkedFolders?: Playlist[]
   onOpenFolder: (id: string) => void
@@ -109,27 +111,34 @@ export function CollectionsView({ hideHeading = false, sidebar = false, folderId
     })}
     {rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}
   </div>
-  if (sidebar) return <section className="collections-sidebar">
+  if (sidebar) return <section className="collections-sidebar sidebar-section">
     <div className="collections-heading">
       <button type="button" className="collections-collapse" aria-expanded={expanded} onClick={toggle}>
-        <span>收藏</span>{expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+        {expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+        <span>收藏</span>
+        {entriesInOrder.length > 0 && <small className="sidebar-count">{entriesInOrder.length}</small>}
       </button>
-      {expanded && <div className="collections-heading-actions sidebar-heading-actions library-action-rail">{organizer.controls}{!organizer.editing && <FolderEditor iconOnly action="create" onDone={refresh}/>}</div>}
+      {expanded && <div className="collections-heading-actions sidebar-heading-actions library-action-rail">
+        {organizer.editing ? organizer.controls : <>
+          {organizer.canEdit && <button type="button" className="sidebar-icon-btn" title="整理收藏" aria-label="整理收藏" onClick={organizer.start}><ListFilter size={15}/></button>}
+          <FolderEditor iconOnly plusIcon action="create" onDone={refresh}/>
+        </>}
+      </div>}
     </div>
-    {expanded && (organizer.editing ? organizer.editor : entries)}
+    {expanded && (organizer.editing ? organizer.editor : entriesInOrder.length > 0 ? entries : !loadingCollections && <p className="sidebar-empty">暂无收藏</p>)}
     {moveError}
   </section>
+  const actions = <div className={`collections-heading-actions hub-toolbar-actions${root ? ' library-action-rail' : ''}`}>
+    {root && <>{organizer.controls}{!organizer.editing && <FolderEditor iconOnly action="create" onDone={refresh}/>}</>}
+    <button type="button" className="collection-icon library-search-action" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { if (searchOpen) { setSearchOpen(false); setFilter('') } else focusSearch(() => setSearchOpen(true), filterInput) }}><Search size={18}/></button>
+    {!root&&folder&&<ListSort entity={`collectionFolder:${folder.id}`}/>}
+    {!root && folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
+  </div>
   return <section className="collections-view collections-embedded">
-    <div className={`collections-heading${root ? ' hub-list-toolbar' : ''}${hideHeading && root ? ' collections-tools-only' : ''}`}>
-      {(!hideHeading || !root) && <h3>{folder?.name || '收藏'}</h3>}
-      {hideHeading && root && <span className="hub-summary">{items.length + linkedFolders.length} 项收藏{folders.length > 0 && <small> · {folders.length} 个文件夹</small>}</span>}
-      <div className={`collections-heading-actions hub-toolbar-actions${root ? ' library-action-rail' : ''}`}>
-        {root && <>{organizer.controls}{!organizer.editing && <FolderEditor iconOnly action="create" onDone={refresh}/>}</>}
-        <button type="button" className="collection-icon library-search-action" aria-label="搜索收藏合集" aria-expanded={searchOpen} onClick={() => { if (searchOpen) { setSearchOpen(false); setFilter('') } else focusSearch(() => setSearchOpen(true), filterInput) }}><Search size={18}/></button>
-        {!root&&folder&&<ListSort entity={`collectionFolder:${folder.id}`}/>}
-        {!root && folder && <FolderMenu folder={folder} onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)} />}
-      </div>
-    </div>
+    {hideHeading && root
+      ? <HubToolbar className="collections-heading collections-tools-only" actions={actions} actionsHost={actionsHost}
+        summary={visibleCollections && <>{items.length + linkedFolders.length} 项收藏{folders.length > 0 && <small> · {folders.length} 个文件夹</small>}</>}/>
+      : <div className="collections-heading"><h3>{folder?.name || '收藏'}</h3>{actions}</div>}
     {searchOpen && <label className="collections-search detail-search"><Search size={16}/>
       <input ref={filterInput} aria-label="搜索收藏合集" placeholder="搜索合集或收藏夹" value={filter} onChange={event => setFilter(event.target.value)}/>
       <button type="button" aria-label="关闭合集搜索" onClick={() => { setFilter(''); setSearchOpen(false) }}><X size={16}/></button>

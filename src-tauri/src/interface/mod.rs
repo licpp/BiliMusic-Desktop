@@ -5,6 +5,8 @@ pub mod linked_folders;
 pub mod media;
 pub mod playback_cache;
 pub mod playlist_import;
+#[cfg(all(desktop, not(target_env = "ohos")))]
+pub mod local_playlist;
 
 pub mod list_preferences;
 

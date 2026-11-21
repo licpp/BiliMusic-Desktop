@@ -36,7 +36,7 @@
 .action-menu-no-scrim{position:fixed;inset:0;z-index:139;background:transparent}.action-sheet-scrim{position:fixed;inset:0;z-index:219;background:#030c1466;backdrop-filter:blur(4px)}
 .action-menu-panel.action-menu-sheet{position:fixed;inset:auto 0 0;z-index:220;width:100%;max-width:none;max-height:75dvh;overflow:auto;border-radius:20px 20px 0 0;padding:8px 16px calc(16px + env(safe-area-inset-bottom));background:var(--panel);color:var(--ink);box-shadow:0 -10px 50px #0002}
 .action-sheet-heading{padding:12px 10px;font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.action-menu-sheet button{min-height:46px;font-size:14px!important}
-.listening-library{padding:24px 0}.listening-tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-bottom:12px}.listening-tabs button{display:flex;align-items:center;gap:6px;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:10px 2px;font:inherit;font-size:17px;font-weight:600;cursor:pointer}.listening-tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--coral)}
+.listening-library{padding:24px 0}.listening-tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-bottom:12px}.listening-tabs button{display:flex;align-items:center;gap:6px;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:10px 2px;font:inherit;font-size:17px;font-weight:600;cursor:pointer}.listening-tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--cyan)}
 .listening-tools{display:flex;align-items:center;gap:4px;margin-bottom:8px}.listening-tools>span{flex:1;color:var(--muted);font-size:12px}.listening-tools button{background:none}
 .library-panel{overflow-y:auto;overscroll-behavior:contain}.library-footer{flex-shrink:0}.search-result-heading>.collection-bookmark{flex:0 0 32px}
 @media(max-width:960px){
@@ -260,8 +260,8 @@
   .video-part-copy > strong { white-space:normal;line-height:1.45; }
 }
 
-.creator-page #creator-content > .video-parts-list { min-width:0;padding:0; }
-.creator-page #creator-content > .video-parts-list > .video-parts-toolbar { padding-inline:0; }
+.creator-page :is(#creator-content, #creator-content-videos, .swipe-pane-body) > .video-parts-list { min-width:0;padding:0; }
+.creator-page :is(#creator-content, #creator-content-videos, .swipe-pane-body) > .video-parts-list > .video-parts-toolbar { padding-inline:0; }
 .creator-page .video-with-cover .video-part-play { padding-inline:0; }
 .creator-header { flex-wrap:wrap;gap:16px; }
 .creator-header-actions { display:flex;align-items:center;flex-wrap:wrap;gap:10px; }
@@ -327,10 +327,12 @@
 /* Toolbars share the tab row; transformed panels would make them reserve
    space or anchor to the list instead of this header. */
 .listening-library>.listening-tabs { padding-right:84px; }
+.playlists-view > .listening-tabs { margin-bottom:8px; }
 .listening-library :is(.listening-tools,.collections-heading.collections-tools-only,.creators-tools) {
  position:absolute;top:26px;right:0;height:30px;min-height:30px;margin:0;
 }
 .listening-library .collections-view { margin:0;padding:0;border:0; }
+.playlists-view .collection-empty { margin-block-start:4px;padding-block-start:14px; }
 .listening-library .creators-view:not(.creators-sidebar) { padding-top:0; }
 .music-library .library-tab-content { padding-top:0; }
 .music-library .collection-actions { margin-top:0; }
@@ -342,8 +344,6 @@
 
 .hub-summary,.creators-tools { display:none; }
 @media(max-width:960px) {
- :root[data-layout="mobile"] .listening-library .hub-summary { display:block;flex:1;margin:0;padding-inline-start:9px;min-width:0;color:var(--muted);font-size:12px;font-weight:400;line-height:18px;letter-spacing:.01em;font-variant-numeric:tabular-nums; }
- :root[data-layout="mobile"] .listening-library .hub-summary small { font-size:inherit;color:inherit; }
  :root[data-layout="mobile"] .listening-library :is(.listening-tools,.collections-tools-only) .collection-icon { width:36px;height:36px;color:var(--ink);border:0;background:transparent; }
  :root[data-layout="mobile"] .listening-library .creators-view { padding:0; }
 }

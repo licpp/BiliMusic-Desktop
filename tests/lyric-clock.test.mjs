@@ -26,8 +26,17 @@ test('word fill uses fractional frame positions and remains filled after a word 
 globalThis.window={addEventListener(){}}
 const{readFloatingPreferences}=await moduleAt('src/services/floatingLyricsPreferences.ts')
 test('existing lyric settings migrate with colors and invalid color input falls back safely',()=>{
- assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5'})
+ assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5',alignment:'edges'})
  const value=readFloatingPreferences('{"fontSize":100,"activeColor":"#AABBCC","inactiveColor":"url(x)"}');assert.equal(value.fontSize,48);assert.equal(value.activeColor,'#aabbcc');assert.equal(value.inactiveColor,'#91a6b5')
+})
+const {centeredLyricOffset}=await moduleAt('src/domain/lyricTimeline.ts')
+test('centered floating lyrics use the other half as needed before marquee scrolling',()=>{
+ assert.equal(readFloatingPreferences('{"alignment":"center"}').alignment,'center')
+ assert.equal(centeredLyricOffset(0,400,80),112)
+ assert.equal(centeredLyricOffset(1,400,80),208)
+ assert.equal(centeredLyricOffset(0,400,260),0)
+ assert.equal(centeredLyricOffset(1,400,260),140)
+ assert.equal(centeredLyricOffset(1,400,450),0)
 })
 
 test('Android unlock target is visible by default and hiding it preserves the locked setting',()=>{

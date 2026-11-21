@@ -55,7 +55,22 @@ html[data-window="lyrics"][data-theme],html[data-window="lyrics"] body,html[data
 .floating-settings-preview > small { color:#b0c1cd;white-space:normal; }
 .floating-settings-preview > div { min-width:0;margin:auto 0; }
 .floating-settings-preview p { margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--preview-inactive);font-size:var(--preview-font-size);font-weight:600;line-height:1.4; }
-.floating-settings-preview p:first-child > span { color:var(--preview-active); }
+.floating-settings-preview p > span { color:var(--preview-active); }
+.floating-preview-lines > .floating-lyric-viewport + .floating-lyric-viewport { text-align:right; }
+.floating-preview-lines .floating-lyric-viewport[data-overflow="true"],
+.floating-preview-lines .floating-lyric-viewport[data-center-slot] { text-align:left; }
+.floating-settings-controls .floating-alignment-options {
+  width:min(100%,280px);
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+.floating-settings-content .floating-alignment-options > button {
+  justify-content:center;min-height:40px;padding:8px;
+  border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);
+}
+.floating-settings-content .floating-alignment-options > button[aria-pressed=true] {
+  border-color:color-mix(in srgb,var(--cyan) 35%,var(--line));
+  background:color-mix(in srgb,var(--cyan) 10%,var(--panel));color:var(--cyan);font-weight:600;
+}
 .floating-settings-controls { display:grid;align-content:center;gap:22px;min-width:0; }
 .floating-font-setting { display:grid;gap:12px; }
 .floating-font-setting > span { display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:var(--ink); }
@@ -89,4 +104,13 @@ html[data-window="lyrics-unlock"],html[data-window="lyrics-unlock"] body,html[da
 .floating-lyric-line[data-slot="1"] { text-align:right; }
 .floating-lyric-viewport { width:100%;overflow:clip; }
 .floating-lyric-marquee { display:inline-block;width:max-content;max-width:none;vertical-align:top; }
-.floating-lyric-viewport[data-overflow="true"] { text-align:left; }
+.floating-lyric-viewport:is([data-overflow="true"],[data-center-slot]) { text-align:left; }
+.floating-lyric-viewport[data-center-slot] {
+  --lyric-edge-inset: clamp(8px,3.5%,24px);
+  --lyric-row-stagger: clamp(4px,1.4%,12px);
+  width:auto;
+  margin-inline:var(--lyric-edge-inset) calc(var(--lyric-edge-inset) + var(--lyric-row-stagger));
+}
+.floating-lyric-viewport[data-center-slot="1"] {
+  margin-inline:calc(var(--lyric-edge-inset) + var(--lyric-row-stagger)) var(--lyric-edge-inset);
+}

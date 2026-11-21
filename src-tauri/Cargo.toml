@@ -1,6 +1,6 @@
 [package]
 name = "bilimusic-desktop"
-version = "0.4.1"
+version = "0.4.2"
 description = "A clean-room desktop music client"
 authors = ["BiliMusic Contributors"]
 edition = "2024"
@@ -42,6 +42,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 souvlaki = "0.9.3"
+lofty = "0.25.5"
+walkdir = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-android-player = { path = "../native/android-player" }

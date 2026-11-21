@@ -129,12 +129,16 @@ export function installMobileGestures() {
     const canPop = edgeSurface && (!edgeSurface.matches('[data-mobile-page]') || isTopOverlay(edgeSurface))
     const tabs = target.closest<HTMLElement>('[data-swipe-tabs]') ??
       target.closest<HTMLElement>('[data-main-swipe]')?.querySelector<HTMLElement>('[data-swipe-tabs]')
+    const usableTabs = tabs && !horizontallyScrollable(target, tabs) ? tabs : null
+    // When on a non-first tab, a right-swipe from the left edge returns to the
+    // previous tab instead of popping the whole route.
+    const tabOwnsBackSwipe = Boolean(usableTabs?.hasAttribute('data-swipe-previous'))
     const row = target.closest('[data-overflow-panel],.track-context-menu,.icon-action,.action-menu-trigger') ? null :
       target.closest<HTMLElement>('.result-main,.library-entry,.library-track,.video-part-row,.result-card,.queue-entry,.track-row')
     press = { x: touch.clientX, y: touch.clientY, time: event.timeStamp, direction: 'pending', row,
-      edge: canPop && !horizontallyScrollable(target, edgeSurface) ? edgeSurface : null,
-      fallbackBack: fromEdge && !edgeSurface && !tabs,
-      tabs: tabs && !horizontallyScrollable(target, tabs) ? tabs : null }
+      edge: !tabOwnsBackSwipe && canPop && !horizontallyScrollable(target, edgeSurface) ? edgeSurface : null,
+      fallbackBack: fromEdge && !edgeSurface && !usableTabs,
+      tabs: usableTabs }
     if (!row) return
     feedbackTimer = setTimeout(() => row.setAttribute('data-touch-holding', ''), 110)
     menuTimer = setTimeout(() => {

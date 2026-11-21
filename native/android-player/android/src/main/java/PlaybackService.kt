@@ -54,7 +54,8 @@ class PlaybackService : MediaSessionService() {
         }
     }
     private lateinit var audioManager: AudioManager
-    private lateinit var focus: AudioFocusRequest
+    private var focus: AudioFocusRequest? = null
+    private var hasAudioFocus = false
     private val playbackAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private val handler = Handler(Looper.getMainLooper())
@@ -105,6 +106,7 @@ class PlaybackService : MediaSessionService() {
         if (owner == queue.owner && version == queue.version) return
         if (resolvingNative && (owner != queue.owner || account != queue.accountSession || queue.find(id) == null)) control("pause")
         if (account != queue.accountSession) {
+            if (account.isNotEmpty() && focusResume.pending) control("pause")
             mediaButtons.cancel()
             systemQueue.resetAccount()
             if (account.isEmpty()) {
@@ -138,7 +140,7 @@ class PlaybackService : MediaSessionService() {
     internal fun refreshPlaybackLyrics() {
         lyricRequests.supersede()
         if (id.isEmpty() || player == null || playbackLyricsAccount != queue.accountSession ||
-            !FloatingLyricsOverlay.needsPlaybackTimeline() || FloatingLyricsOverlay.hasTimeline(id, lyricSession())) return
+            FloatingLyricsOverlay.hasTimeline(id, lyricSession())) return
         val profile = currentProfile() ?: return
         if (profile != listeningProfile) return
         val resolve = resolveListener ?: return
@@ -214,7 +216,7 @@ class PlaybackService : MediaSessionService() {
         lastPosition = 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
         playbackRevision += 1; resolveProfile = scope; resolvingNative = true; status = "buffering"; error = null
         prepareArtwork(track.mediaText("coverUrl")); updateMetadata(); updateSessionPlaybackState()
-        startForeground(NOTIFICATION, notification())
+        startPlaybackForeground()
         // MediaPlayer's wake lock does not cover the gap between two tracks.
         transitionWakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BiliMusic:queue").also { it?.acquire(30_000) }
         val request = nativeRequest
@@ -271,7 +273,7 @@ class PlaybackService : MediaSessionService() {
                 .putExtra("resumeThreshold", it.thresholdSeconds).putExtra("resumeCollection", it.collection)
                 .putExtra("resumeDuration", it.durationSeconds)
         }
-        load(intent)
+        load(intent, waitingForFocus = focusResume.pending)
     }
     private fun recover(compatibleAudio: Boolean = false): Boolean {
         val track = nativeTrack ?: return false
@@ -379,7 +381,7 @@ class PlaybackService : MediaSessionService() {
                 pendingUpgradeUrl = null
                 if (url != null) switchSource(url, id) { /* Keep the initial stream if preparation fails. */ }
             }
-            if (mediaTitle() != displayedTitle) { updateMetadata();publish() } else publish(false)
+            if (mediaLyric() != displayedLyric) { updateMetadata();publish() } else publish(false)
             if (status == "playing" || status == "buffering") handler.postDelayed(this, 500)
         }
     }
@@ -401,19 +403,6 @@ class PlaybackService : MediaSessionService() {
         FloatingLyricsOverlay.attach(this)
         super.onCreate(); instance = this
         audioManager = checkNotNull(getSystemService(AudioManager::class.java))
-        focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(playbackAttributes)
-            .setOnAudioFocusChangeListener { change ->
-                android.util.Log.i("BiliMusicPlayback", "focus change=$change status=$status")
-                when (change) {
-                    AudioManager.AUDIOFOCUS_LOSS -> control("pause")
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> { focusResume.interrupted(status == "playing" || status == "buffering"); pause() }
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> { focusDucked=true; applyOutput() }
-                    AudioManager.AUDIOFOCUS_GAIN -> {
-                        focusDucked=false;applyOutput()
-                        if (focusResume.regained()) control("resume")
-                    }
-                }
-            }.build()
         getSystemService(NotificationManager::class.java)?.createNotificationChannel(
             NotificationChannel(CHANNEL, "音乐播放", NotificationManager.IMPORTANCE_LOW).apply {
                 setSound(null, null); enableVibration(false); lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -471,7 +460,9 @@ class PlaybackService : MediaSessionService() {
                 listeningSession = java.util.UUID.randomUUID().toString(); playbackRevision += 1
                 cancelResolution(); recoveryAttempted = false
                 initialResumePolicy = null; resumeDuringResolution = null
-                pendingUpgradeUrl = null; focusResume.cancel(); cancelSourceSwitch()
+                pendingUpgradeUrl = null
+                if (focusResume.pending) abandonFocus()
+                cancelSourceSwitch()
                 savePosition(force = true)
                 accountListening(true)
                 seeking = false
@@ -488,7 +479,7 @@ class PlaybackService : MediaSessionService() {
                 prepareArtwork(intent.getStringExtra("coverUrl"))
                 status = "buffering"; error = null
                 updateMetadata(); updateSessionPlaybackState()
-                startForeground(NOTIFICATION, notification())
+                startPlaybackForeground()
             }
             "load" -> { mediaButtons.cancel(); load(intent) }
             "next", "previous", "toggle", "resume", "pause", "stop" -> controlFromMediaSession(intent.action!!)
@@ -496,11 +487,11 @@ class PlaybackService : MediaSessionService() {
         // Never restart silently after Android kills the process: saved URLs are temporary.
         return START_NOT_STICKY
     }
-    private fun load(intent: Intent) {
+    private fun load(intent: Intent, waitingForFocus: Boolean = false) {
         // Keep the transition wake lock until MediaPlayer has prepared and sought.
         nativeRequest += 1; resolvingNative = false
         recoveryAttempted = intent.getBooleanExtra("nativeRecovery", false)
-        focusResume.cancel()
+        if (!waitingForFocus) focusResume.cancel()
         cancelSourceSwitch()
         savePosition(force = true)
         accountListening(true)
@@ -530,13 +521,13 @@ class PlaybackService : MediaSessionService() {
         lastPosition = 0.0; lastDuration = 0.0
         pendingUpgradeUrl = intent.getStringExtra("upgradeUrl")
         upgradeAfterPosition = intent.getDoubleExtra("position", 0.0) + 0.75
-        status = if (intent.getBooleanExtra("playing", true)) "buffering" else "paused"
+        val playWhenReady = intent.getBooleanExtra("playing", true)
+        status = if (playWhenReady && !waitingForFocus) "buffering" else "paused"
         error = null
         updateMetadata(); updateSessionPlaybackState()
-        startForeground(NOTIFICATION, notification())
-        if (status != "paused" && !requestFocus()) {
-            fail("无法获得音频焦点，请稍后重试", "audio_focus_denied"); return
-        }
+        startPlaybackForeground()
+        if (!playWhenReady) abandonFocus()
+        if (status == "buffering" && !requestFocus()) status = "paused"
         try {
             resetPlaybackWatchdog()
             val media = MediaPlayer(); player = media
@@ -572,27 +563,26 @@ class PlaybackService : MediaSessionService() {
                 if (offset > 0) {
                     seeking = true
                     it.seekTo(offset, MediaPlayer.SEEK_CLOSEST)
-                } else if (status != "paused") {
-                    startAtRate(it)
-                    status = "playing"
+                } else if (status == "buffering" && hasAudioFocus) {
+                    if (!startReadyMedia(it)) return@setOnPreparedListener
                 }
-                if (status == "paused") stopForeground(STOP_FOREGROUND_DETACH)
+                if (status == "paused" && !focusResume.pending) stopForeground(STOP_FOREGROUND_DETACH)
                 publish(); handler.removeCallbacks(ticker); handler.post(ticker)
             }
             media.setOnSeekCompleteListener {
                 if (player !== it) return@setOnSeekCompleteListener
                 seeking = false
                 listeningPosition = null
-                if (status == "buffering" && !it.isPlaying) { startAtRate(it); status = "playing" }
+                if (status == "buffering" && hasAudioFocus && !it.isPlaying && !startReadyMedia(it)) return@setOnSeekCompleteListener
                 savePosition(force = true)
-                if (mediaTitle() != displayedTitle) { updateMetadata();publish() } else publish(false)
+                if (mediaLyric() != displayedLyric) { updateMetadata();publish() } else publish(false)
             }
             media.setOnCompletionListener {
                 if (player !== it) return@setOnCompletionListener
                 didFinishTrack = true; savePosition(force = true)
                 accountListening(true)
                 if (!expireSleepIfNeeded()) advance(1, ended = true)
-                handler.postDelayed({ if (player === it && status == "paused") stopForeground(STOP_FOREGROUND_DETACH) }, 5000)
+                handler.postDelayed({ if (player === it && status == "paused" && !focusResume.pending) stopForeground(STOP_FOREGROUND_DETACH) }, 5000)
             }
             media.setOnErrorListener { candidate, what, extra ->
                 if (player === candidate) {
@@ -664,18 +654,20 @@ class PlaybackService : MediaSessionService() {
         android.util.Log.w("BiliMusicPlayback", "failed: $code")
         cancelResolution()
         pendingUpgradeUrl = null; cancelSourceSwitch()
-        focusResume.cancel()
         accountListening(true)
         status = "error"; error = message; errorCode = code; prepared = false
         player?.release(); player = null; handler.removeCallbacks(ticker)
-        audioManager.abandonAudioFocusRequest(focus); focusDucked = false; publish(); stopForeground(STOP_FOREGROUND_DETACH)
+        abandonFocus(); publish(); stopForeground(STOP_FOREGROUND_DETACH)
     }
     private fun pause() {
-        cancelResolution()
+        if (!focusResume.pending) cancelResolution()
         savePosition(force = true)
         accountListening(true)
         if (prepared && player?.isPlaying == true) player?.pause()
-        status = "paused"; handler.removeCallbacks(ticker); publish(); stopForeground(STOP_FOREGROUND_DETACH)
+        samplePlaybackPosition()
+        status = "paused"; handler.removeCallbacks(ticker); publish()
+        // Keep the foreground service while waiting for Android to return focus.
+        if (!focusResume.pending) stopForeground(STOP_FOREGROUND_DETACH)
     }
     private fun clearSleep() {
         handler.removeCallbacks(sleepWork)
@@ -708,13 +700,104 @@ class PlaybackService : MediaSessionService() {
         // Explicitly start so Android can route global media keys to this session.
         media.start()
     }
-    private fun requestFocus(): Boolean {
-        if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return false
-        if (focusDucked) {
-            focusDucked = false
-            applyOutput()
+    private fun startReadyMedia(media: MediaPlayer): Boolean {
+        try {
+            startAtRate(media)
+        } catch (_: IllegalStateException) {
+            if (!recover()) fail("音频无法恢复播放，请重试", "audio_resume_failed")
+            return false
         }
+        status = "playing"
         return true
+    }
+
+    private fun createFocusRequest(): AudioFocusRequest {
+        lateinit var request: AudioFocusRequest
+        request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(playbackAttributes)
+            .setAcceptsDelayedFocusGain(true)
+            .setOnAudioFocusChangeListener({ change ->
+                if (focus === request) onFocusChange(change)
+            }, handler).build()
+        return request
+    }
+
+    private fun onFocusChange(change: Int) {
+        android.util.Log.i("BiliMusicPlayback", "focus change=$change status=$status")
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> control("pause")
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                hasAudioFocus = false
+                focusResume.interrupted(status == "playing" || status == "buffering")
+                pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                focusDucked = true
+                applyOutput()
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                hasAudioFocus = true
+                focusDucked = false
+                applyOutput()
+                if (focusResume.regained()) resumeWithFocus()
+            }
+        }
+    }
+
+    private fun abandonFocus() {
+        val request = focus
+        focus = null
+        hasAudioFocus = false
+        focusDucked = false
+        focusResume.cancel()
+        request?.let(audioManager::abandonAudioFocusRequest)
+    }
+
+    private fun requestFocus(): Boolean {
+        if (hasAudioFocus) return true
+        val request = focus ?: createFocusRequest().also { focus = it }
+        val result = audioManager.requestAudioFocus(request)
+        android.util.Log.i("BiliMusicPlayback", "focus request=$result status=$status")
+        when (result) {
+            AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> {
+                hasAudioFocus = true
+                focusResume.cancel()
+                focusDucked = false
+                applyOutput()
+                return true
+            }
+            AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> focusResume.interrupted(true)
+            else -> if (!focusResume.pending) {
+                abandonFocus()
+                error = "无法获得音频焦点，请稍后重试"
+                errorCode = "audio_focus_denied"
+            }
+        }
+        return false
+    }
+
+    private fun resumeWithFocus() {
+        if (expireSleepIfNeeded()) return
+        resetPlaybackWatchdog()
+        error = null; errorCode = null
+        val media = player
+        if (!resolvingNative && media == null) {
+            val track = nativeTrack
+            if (track == null) {
+                abandonFocus()
+                emitAction("resume")
+            } else {
+                recoveryAttempted = false
+                resolveTrack(track, refresh = true, position = lastPosition)
+            }
+            return
+        }
+        if (media != null && prepared && !seeking) {
+            if (!startReadyMedia(media)) return
+        } else status = "buffering"
+        handler.removeCallbacks(ticker)
+        if (media != null) handler.post(ticker)
+        publish()
     }
     private fun emitAction(action: String) { listener?.invoke(snapshot().put("action",action)) }
     fun control(action: String, value: Double = 0.0) {
@@ -722,7 +805,6 @@ class PlaybackService : MediaSessionService() {
             "next", "previous", "toggle", "resume", "pause", "stop" -> mediaButtons.cancel()
         }
         if(action == "toggle") { control(if(status == "playing" || status == "buffering") "pause" else "resume");return }
-        if (action == "resume") { focusResume.cancel(); resetPlaybackWatchdog() }
         when (action) {
             "next" -> advance(1)
             "previous" -> advance(-1)
@@ -730,16 +812,16 @@ class PlaybackService : MediaSessionService() {
             "sleepCancel" -> { clearSleep(); publish() }
             "sleepDismiss" -> { sleepExpired = false; publish() }
             "sleepRepeat" -> if (sleepExpired && sleepDuration > 0) { scheduleSleep(sleepDuration); control("resume") }
-            "pause" -> { focusResume.cancel(); pause(); audioManager.abandonAudioFocusRequest(focus) }
-            "resume" -> if (expireSleepIfNeeded()) Unit else if (player == null) {
-                nativeTrack?.let { recoveryAttempted = false; resolveTrack(it, refresh = true, position = lastPosition) } ?: emitAction("resume")
-            } else {
-                startForeground(NOTIFICATION, notification())
-                if (requestFocus()) {
-                    if (prepared && !seeking) player?.let(::startAtRate)
-                    status = if (!prepared || seeking) "buffering" else "playing"
-                    handler.removeCallbacks(ticker); handler.post(ticker); publish()
-                } else { pause() }
+            "pause" -> { abandonFocus(); pause() }
+            "resume" -> {
+                if (expireSleepIfNeeded() || status == "playing" || status == "buffering") return
+                if (player == null && nativeTrack == null && !resolvingNative) {
+                    emitAction("resume")
+                    return
+                }
+                startPlaybackForeground()
+                error = null; errorCode = null
+                if (requestFocus()) resumeWithFocus() else pause()
             }
             "seek" -> if (prepared) {
                 didFinishTrack = false
@@ -762,14 +844,20 @@ class PlaybackService : MediaSessionService() {
                 publish()
             }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); applyOutput() }
-            "stop" -> { cancelResolution(); pendingUpgradeUrl = null;focusResume.cancel();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { cancelResolution(); pendingUpgradeUrl = null;abandonFocus();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
+    private fun samplePlaybackPosition() {
+        if (prepared && !seeking) {
+            lastPosition = runCatching { player?.currentPosition?.div(1000.0) }.getOrNull() ?: lastPosition
+        }
+    }
+
     fun snapshot(): JSObject {
         stateSequence += 1
         expireSleepIfNeeded()
+        samplePlaybackPosition()
         if (prepared) {
-            if (!seeking) lastPosition = runCatching { (player?.currentPosition ?: 0) / 1000.0 }.getOrDefault(lastPosition)
             lastDuration = runCatching { (player?.duration ?: 0) / 1000.0 }.getOrDefault(lastDuration)
         }
         val snapshot = JSObject().put("capabilities",org.json.JSONObject().put("autonomousQueue",queue.tracks.isNotEmpty()).put("seamlessSourceSwitch",true).put("nativeSleepTimer",true).put("snapshotRebind",true)).put("engineInstanceId",engineInstanceId).put("sessionId",listeningSession).put("sourceRevision",playbackRevision).put("autonomousQueue",queue.tracks.isNotEmpty()).put("queueVersion",queue.version).put("revision",playbackRevision).put("sequence",stateSequence).put("seekRevision",seekRevision).put("id", id).put("status", status).put("position", lastPosition)
@@ -787,7 +875,10 @@ class PlaybackService : MediaSessionService() {
     fun lyricTitle(): String = title
     fun notifyLyricsChanged() { updateMetadata();publish() }
     internal fun refreshPlaybackNotification() {
-        if (id.isNotEmpty() && (player != null || status == "buffering")) updateSystemPlayback()
+        if (id.isNotEmpty() && (player != null || status == "buffering")) {
+            lastNotification = null
+            updateSystemPlayback()
+        }
     }
     private fun publish(notify: Boolean = true) {
         accountListening()
@@ -805,15 +896,19 @@ class PlaybackService : MediaSessionService() {
     private fun updateSystemPlayback() {
         lastSystemStatus = status; lastSystemPosition = lastPosition
         updateSessionPlaybackState()
-        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification())
+        val current = notificationState()
+        if (current == lastNotification) return
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION, notification(current))
+        lastNotification = current
     }
     private fun updateSessionPlaybackState() {
-        sessionPlayer.update(systemQueue, displayedTitle, artwork?.encoded, status, (lastPosition * 1000).toLong(),
+        sessionPlayer.update(systemQueue, mediaText(), artwork?.encoded, status, (lastPosition * 1000).toLong(),
             playbackRate, hasOtherTracks(), error)
         if (session == null && id.isNotEmpty()) createSession()
     }
-    private var displayedTitle = title
-    private fun mediaTitle() = SystemTitleLyrics.title(id, lyricPosition().second, title)
+    private var displayedLyric: String? = null
+    private fun mediaLyric() = SystemTitleLyrics.line(id, lyricPosition().second)
+    private fun mediaText() = SystemTitleLyrics.mediaText(title, artist, displayedLyric)
     private fun updateMetadata() {
         val current = id.takeIf(String::isNotEmpty)?.let {
             val queued = nativeTrack?.takeIf { track -> track.optString("id") == id }
@@ -821,7 +916,7 @@ class PlaybackService : MediaSessionService() {
                 ((lastDuration.takeIf { it > 0 } ?: metadataDuration.takeIf { it > 0 } ?: queued?.optDouble("durationSeconds", 0.0) ?: 0.0) * 1000).toLong())
         }
         systemQueue.update(queue.tracks, current)
-        displayedTitle = mediaTitle()
+        displayedLyric = mediaLyric()
     }
     private fun prepareArtwork(value: String?) {
         if (artworkUrl == value) return
@@ -872,11 +967,27 @@ class PlaybackService : MediaSessionService() {
     }
     private fun pending(action: String, code: Int): PendingIntent = PendingIntent.getService(this, code,
         Intent(this, PlaybackService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    private fun notification(): Notification {
+    private data class NotificationState(
+        val text: SystemMediaText,
+        val cover: Bitmap?,
+        val canSkip: Boolean,
+        val isPlaying: Boolean,
+    )
+    private var lastNotification: NotificationState? = null
+    private fun notificationState() = NotificationState(mediaText(), artwork?.bitmap, hasOtherTracks(),
+        status == "playing" || status == "buffering")
+
+    private fun startPlaybackForeground() {
+        val state = notificationState()
+        startForeground(NOTIFICATION, notification(state))
+        lastNotification = state
+    }
+
+    private fun notification(state: NotificationState): Notification {
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let { PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) }
-        val canSkip = hasOtherTracks()
-        val isPlaying = status == "playing" || status == "buffering"
-        val builder=Notification.Builder(this, CHANNEL).setContentTitle(displayedTitle).setContentText(artist).setLargeIcon(artwork?.bitmap)
+        val (text, cover, canSkip, isPlaying) = state
+        val builder=Notification.Builder(this, CHANNEL)
+            .setContentTitle(text.title).setContentText(text.subtitle).setLargeIcon(cover)
             .setSmallIcon(app.bilimusic.player.R.drawable.ic_music_notification).setColor(Color.rgb(255,115,88))
             .setCategory(Notification.CATEGORY_TRANSPORT).setShowWhen(false)
             .setContentIntent(open).setVisibility(Notification.VISIBILITY_PUBLIC).setOnlyAlertOnce(true)
@@ -904,7 +1015,7 @@ class PlaybackService : MediaSessionService() {
         accountListening(true)
         artworkTask?.cancel(true); artworkExecutor.shutdownNow(); artworkCache.evictAll()
         handler.removeCallbacks(ticker); player?.release(); player = null
-        audioManager.abandonAudioFocusRequest(focus)
+        abandonFocus()
         session?.let { removeSession(it); it.release() }
         session = null; controller = null; unregisterReceiver(unplugged)
         instance = null; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()

@@ -1,5 +1,8 @@
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+
+const MAX_COLLECTIONS: usize = 2000;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Collection {
@@ -169,6 +172,57 @@ pub fn list(c: &Connection) -> rusqlite::Result<Collections> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(Collections { folders, items })
 }
+
+fn validate_metadata(item: &Collection) -> Result<(), String> {
+    if [&item.title, &item.cover_url, &item.uploader_name]
+        .into_iter()
+        .any(|value| value.len() > 4096)
+    {
+        return Err("合集信息过长".into());
+    }
+    Ok(())
+}
+
+pub fn import_seasons(c: &mut Connection, items: &[Collection]) -> Result<usize, String> {
+    for item in items {
+        if !item.bvid.starts_with("season:") || !valid_reference(&item.bvid) {
+            return Err("订阅合集标识无效".into());
+        }
+        validate_metadata(item)?;
+    }
+    let tx = c.transaction().map_err(|e| e.to_string())?;
+    let count = tx
+        .query_row("SELECT COUNT(*) FROM collections", [], |r| {
+            r.get::<_, usize>(0)
+        })
+        .map_err(|e| e.to_string())?;
+    let mut inserted = 0;
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name,created_at)
+                 VALUES(?1,'',?2,?3,?4,strftime('%Y-%m-%d %H:%M:%f','now'))
+                 ON CONFLICT(bvid) DO NOTHING",
+            )
+            .map_err(|e| e.to_string())?;
+        for item in items.iter().rev() {
+            inserted += insert
+                .execute(params![
+                    item.bvid,
+                    item.title,
+                    item.cover_url,
+                    item.uploader_name
+                ])
+                .map_err(|e| e.to_string())?;
+            if inserted > 0 && count + inserted > MAX_COLLECTIONS {
+                return Err(format!("最多收藏 {MAX_COLLECTIONS} 个合集"));
+            }
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(inserted)
+}
+
 pub fn change(
     c: &mut Connection,
     action: &str,
@@ -248,29 +302,23 @@ pub fn change(
                 if !folder_exists(&i.folder_id, i.bvid.starts_with("up:"))? {
                     return Err("文件夹不存在或类型不匹配".into());
                 }
-                if i.title.len() > 4096 || i.cover_url.len() > 4096 || i.uploader_name.len() > 4096
-                {
-                    return Err("合集信息过长".into());
-                }
+                validate_metadata(&i)?;
                 if tx
                     .query_row(
                         "SELECT COUNT(*) FROM collections WHERE bvid<>?1",
                         [&i.bvid],
-                        |r| r.get::<_, i64>(0),
+                        |r| r.get::<_, usize>(0),
                     )
                     .map_err(|e| e.to_string())?
-                    >= 2000
+                    >= MAX_COLLECTIONS
                 {
-                    return Err("最多收藏2000个合集".into());
+                    return Err(format!("最多收藏 {MAX_COLLECTIONS} 个合集"));
                 }
                 tx.execute("INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name,created_at) VALUES(?1,?2,?3,?4,?5,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,cover_url=excluded.cover_url,uploader_name=excluded.uploader_name,created_at=excluded.created_at",params![i.bvid,i.folder_id,i.title,i.cover_url,i.uploader_name]).map_err(|e|e.to_string())?;
             }
             "cache" => {
                 let i = item.ok_or("缺少合集信息")?;
-                if i.title.len() > 4096 || i.cover_url.len() > 4096 || i.uploader_name.len() > 4096
-                {
-                    return Err("合集信息过长".into());
-                }
+                validate_metadata(&i)?;
                 tx.execute(
                     "UPDATE collections SET title=?2,cover_url=?3,uploader_name=?4 WHERE bvid=?1",
                     params![i.bvid, i.title, i.cover_url, i.uploader_name],
@@ -321,6 +369,72 @@ pub fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn season(id: usize, title: &str, folder_id: &str) -> Collection {
+        Collection {
+            bvid: format!("season:42:{id}"),
+            folder_id: folder_id.into(),
+            title: title.into(),
+            cover_url: String::new(),
+            uploader_name: "UP 主".into(),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn import_seasons_preserves_existing_collections_and_playback_progress() {
+        let mut c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        change(&mut c, "create", "", "已有分组", None).unwrap();
+        let folder = list(&c).unwrap().folders.remove(0).id;
+        change(&mut c, "save", "", "", Some(season(1, "原标题", &folder))).unwrap();
+        assert!(save_progress(&c, "season:42:1", "bilibili:BV123:66", 22.0, 1).unwrap());
+
+        let items = [season(1, "来源标题", ""), season(2, "新合集", "")];
+        assert_eq!(import_seasons(&mut c, &items).unwrap(), 1);
+        assert_eq!(import_seasons(&mut c, &items).unwrap(), 0);
+        let saved = list(&c).unwrap().items;
+        assert_eq!(saved.len(), 2);
+        let existing = saved
+            .iter()
+            .find(|item| item.bvid == "season:42:1")
+            .unwrap();
+        assert_eq!(existing.folder_id, folder);
+        assert_eq!(existing.title, "原标题");
+        assert_eq!(
+            progress(&c, "season:42:1").unwrap().unwrap().position_ms,
+            22000
+        );
+        assert!(
+            saved
+                .iter()
+                .find(|item| item.bvid == "season:42:2")
+                .unwrap()
+                .folder_id
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn import_seasons_is_atomic_if_collection_limit_is_reached() {
+        let mut c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        let initial = (1..MAX_COLLECTIONS)
+            .map(|id| season(id, "已有合集", ""))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            import_seasons(&mut c, &initial).unwrap(),
+            MAX_COLLECTIONS - 1
+        );
+        let batch = [
+            season(MAX_COLLECTIONS, "新合集", ""),
+            season(MAX_COLLECTIONS + 1, "另一个合集", ""),
+        ];
+        assert!(import_seasons(&mut c, &batch).is_err());
+        assert_eq!(list(&c).unwrap().items.len(), MAX_COLLECTIONS - 1);
+        assert_eq!(import_seasons(&mut c, &batch[..1]).unwrap(), 1);
+        assert_eq!(import_seasons(&mut c, &batch[..1]).unwrap(), 0);
+    }
     #[test]
     fn creator_notes_survive_cache_refresh_and_group_changes() {
         let mut c = Connection::open_in_memory().unwrap();

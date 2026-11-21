@@ -1,4 +1,4 @@
-import { ChevronRight, Gauge } from 'lucide-react'
+import { ChevronRight, Gauge, RotateCcw } from 'lucide-react'
 import { useRef, useState, type PointerEvent } from 'react'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { playbackRates, usePlayerStore } from '../player/playerStore'
@@ -19,6 +19,7 @@ export function MobilePlaybackRate({ onClose }: { onClose: () => void }) {
   const index = Math.max(0, playbackRates.findIndex(value => value === rate))
   const shown = preview ?? index
   const value = playbackRates[Math.round(shown)]
+  const fillPercent = `${(shown / last) * 100}%`
   const positionAt = (event: PointerEvent<HTMLInputElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
     if (!bounds.width) return index
@@ -27,12 +28,16 @@ export function MobilePlaybackRate({ onClose }: { onClose: () => void }) {
   const cancel = () => { pointer.current = null; setPreview(undefined) }
   return <CollectionDialog title="播放倍速" className="playback-rate-dialog" onClose={onClose}>
     <div className="playback-rate-picker">
-      <output htmlFor="mobile-playback-rate">{value}×</output>
+      <div className="playback-rate-readout">
+        <output htmlFor="mobile-playback-rate">{value}×</output>
+        {rate !== 1 && <button type="button" className="playback-rate-reset" onClick={() => void setRate(1)}><RotateCcw size={13}/>恢复原速</button>}
+      </div>
       <div className="playback-rate-ruler" data-touch-picker>
         <div className="playback-rate-rail" aria-hidden="true">
+          <div className="playback-rate-track"><div className="playback-rate-fill" style={{ width: fillPercent }} /></div>
           {playbackRates.map((option, at) => <span key={option} data-selected={option === value || undefined}
             style={{ left: (at / last * 100) + '%' }}><i/>{option}×</span>)}
-          <b style={{ left: (shown / last * 100) + '%' }}/>
+          <b style={{ left: fillPercent }}/>
         </div>
         <input id="mobile-playback-rate" type="range" min={0} max={last} step={1} value={Math.round(shown)}
           aria-label="播放倍速" aria-valuetext={value + '倍'}
@@ -53,6 +58,9 @@ export function MobilePlaybackRate({ onClose }: { onClose: () => void }) {
             void setRate(next)
           }}
           onPointerCancel={cancel} onLostPointerCapture={cancel}/>
+      </div>
+      <div className="playback-rate-pills playback-rate-quick" role="group" aria-label="快捷倍速">
+        {playbackRates.map(option => <button type="button" key={option} aria-pressed={rate === option} onClick={() => void setRate(option)}>{option}×</button>)}
       </div>
     </div>
   </CollectionDialog>
