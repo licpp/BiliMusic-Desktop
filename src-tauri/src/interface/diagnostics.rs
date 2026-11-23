@@ -303,7 +303,7 @@ pub async fn diagnostics_save_report(
 }
 
 #[cfg(target_os = "windows")]
-pub fn observe_windows_webview(webview: Webview, diagnostics: Diagnostics) {
+pub fn observe_windows_webview(webview: tauri::WebviewWindow, diagnostics: Diagnostics) {
     use crate::infrastructure::diagnostics::{Engine, now_ms};
     use webview2_com::{
         Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND,

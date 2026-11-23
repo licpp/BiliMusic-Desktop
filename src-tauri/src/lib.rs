@@ -136,7 +136,7 @@ pub fn run() {
             diagnostics.startup_step(Step::NativeReady, Outcome::Succeeded);
             diagnostics.startup_step(Step::WebviewReady, Outcome::Started);
             #[cfg(target_os = "windows")]
-            if let Some(webview) = app.get_webview("main") {
+            if let Some(webview) = app.get_webview_window("main") {
                 interface::diagnostics::observe_windows_webview(webview, diagnostics);
             }
             Ok(())

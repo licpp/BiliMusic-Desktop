@@ -11,7 +11,7 @@ on:
       target:
         description: Installer target
         type: choice
-        options: [all, mac-intel, windows-x64, windows-arm64, linux-x64, linux-arm64]
+        options: [all, windows, mac-intel, windows-x64, windows-arm64, linux-x64, linux-arm64]
         default: all
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
               { id: 'linux-arm64', os: 'ubuntu-22.04-arm', target: 'aarch64-unknown-linux-gnu', arch: 'arm64', bundle: 'appimage,deb', artifact: 'bilimusic-Linux-arm64' },
             ]
             const choice = process.env.INSTALLER_TARGET
-            const include = choice === 'all' ? targets : targets.filter(entry => entry.id === choice)
+            const include = choice === 'all' ? targets : targets.filter(entry => entry.id === choice || choice === 'windows' && entry.id.startsWith('windows-'))
             if (!include.length) throw Error('Unknown installer target')
             return { include }
       - uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
           Copy-Item (Join-Path $stage 'nsis_tauri_utils.dll') $plugins
       - name: Configure shared frontend reuse
         shell: bash
-        run: node -e "require('fs').writeFileSync('ci-bundle-config.json', JSON.stringify({app:{macOSPrivateApi:false},build:{beforeBuildCommand:null}}))"
+        run: node -e "require('fs').writeFileSync('ci-bundle-config.json', JSON.stringify({build:{beforeBuildCommand:null}}))"
       - name: Build published source for selected architecture
         shell: bash
         env:
