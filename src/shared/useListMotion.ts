@@ -6,7 +6,7 @@ import { accountEpoch } from '../services/accountScope'
 export function useListDataDuringNavigation<T>(data: T | undefined, scope: unknown, paceLoading = true) {
   const [, retry] = useReducer((revision: number) => revision + 1, 0)
   const accountSession = accountEpoch()
-  const committed = useRef<{ scope: unknown; accountSession: number; data?: T; loadingSince?: number }>({ scope, accountSession })
+  const committed = useRef<{ scope: unknown; accountSession: number; data?: T; loadingSince?: number }>({ scope, accountSession, data })
   const sameList = scope === committed.current.scope && accountSession === committed.current.accountSession
   const delay = paceLoading && sameList && data !== undefined ? listRevealDelay(committed.current.loadingSince, performance.now()) : 0
   // Never carry existing rows into the loading state of another query.

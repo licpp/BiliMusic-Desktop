@@ -29,6 +29,12 @@ pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize
     }
     for part in &video.parts {
         let id = format!("bilibili:{}:{}", video.bvid, part.cid);
+        if part.duration_seconds > 0 {
+            changed += c.execute(
+                "UPDATE tracks SET duration_seconds=?2 WHERE id=?1 AND duration_seconds<=0",
+                params![id, part.duration_seconds],
+            ).map_err(|error| error.to_string())?;
+        }
         changed += crate::infrastructure::repositories::source_artwork::remember(
             c,
             &id,
@@ -82,7 +88,9 @@ fn cache_is_fresh(c: &rusqlite::Connection, bvid: &str) -> bool {
          FROM sync_info WHERE key=?1
          AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-published:'||?2)
          AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-plays:'||?2)
-         AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-artwork-v1-checked:'||?2 AND value='1')",
+         AND EXISTS(SELECT 1 FROM sync_info WHERE key='source-artwork-v1-checked:'||?2 AND value='1')
+         AND NOT EXISTS(SELECT 1 FROM tracks t JOIN source_items s ON s.id=t.source_item_id
+           WHERE s.bvid=?2 AND t.duration_seconds<=0)",
         params![format!("source-title-chapter-v3-checked:{bvid}"), bvid],
         |r| r.get::<_, bool>(0),
     ).unwrap_or(false)
@@ -123,7 +131,7 @@ pub(super) async fn hydrate(
             continue;
         }
         let Ok(video) = provider.video_parts(&bvid).await else {
-            break;
+            continue;
         };
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         if crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?
@@ -196,6 +204,10 @@ mod tests {
                 .cover_url
                 .as_deref(),
             Some("https://bili.test/cover.jpg")
+        );
+        assert_eq!(
+            LibraryRepository::get(&c, &id).unwrap().unwrap().duration_seconds,
+            17325
         );
         assert_eq!(save(&c, &video).unwrap(), 0);
         c.execute(

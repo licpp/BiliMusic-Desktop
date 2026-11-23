@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell } from './desktopApi'
 import { accountEpoch } from './accountScope'
+import { accountKeyAt } from './queryKeys'
+import type { QueryClient } from '@tanstack/react-query'
 export type Collection = { note?: string; followers?: number; bvid: string; folderId: string; title: string; coverUrl: string; uploaderName: string }
 export type CollectionProgress = { bvid: string; cid: number; positionMs: number }
 export const readCollectionProgress = (reference: string) => invoke<CollectionProgress | null>('collection_progress', { reference })
@@ -20,6 +22,22 @@ export async function importSubscribedSeasons(seasons: SubscribedSeason[], expec
   if (count > 0) window.dispatchEvent(new Event('bilimusic-data-changed'))
   return count
 }
+export async function cacheCollectionMetadata(item: Collection, client?: QueryClient, epoch = accountEpoch()) {
+  if (!inDesktopShell || epoch !== accountEpoch()) return
+  const expectedAccountSession = await invoke<string>('account_session')
+  if (epoch !== accountEpoch()) return
+  await invoke('collections_change', { action: 'cache', item, expectedAccountSession })
+  if (!client || epoch !== accountEpoch()) return
+  const key = accountKeyAt(epoch, 'collections')
+  client.setQueryData<Collections>(key, previous => {
+    const saved = previous?.items.find(entry => entry.bvid === item.bvid)
+    if (!saved || saved.title === item.title && saved.coverUrl === item.coverUrl && saved.uploaderName === item.uploaderName) return previous
+    return { ...previous!, items: previous!.items.map(entry => entry === saved ? {
+      ...entry, title: item.title || entry.title, coverUrl: item.coverUrl || entry.coverUrl, uploaderName: item.uploaderName || entry.uploaderName,
+    } : entry) }
+  })
+}
+
 export async function changeCollection(action: 'save' | 'remove' | 'move' | 'create' | 'createCreator' | 'rename' | 'delete' | 'note', id = '', name = '', item?: Collection) {
   await invoke('collections_change', { action, id, name, item })
   window.dispatchEvent(new Event('bilimusic-data-changed'))

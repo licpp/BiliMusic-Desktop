@@ -1,9 +1,9 @@
 import { useLayoutEffect, type RefObject } from 'react'
 
-export function usePanelReveal(panel: RefObject<HTMLElement | null>, open: boolean) {
+export function usePanelReveal(panel: RefObject<HTMLElement | null>, open: boolean | undefined) {
   useLayoutEffect(() => {
     const element = panel.current
-    if (!element) return
+    if (!element || open === undefined) return
     if (open && !element.hasAttribute('data-panel-open')) {
       element.style.removeProperty('--lyrics-exit-y')
       // Commit the initial style before starting the transition. This also

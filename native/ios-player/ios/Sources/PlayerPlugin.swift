@@ -1,5 +1,6 @@
 import AVFoundation
 import MediaPlayer
+import MetricKit
 import Security
 import SwiftRs
 import Tauri
@@ -12,6 +13,7 @@ struct PlayArgs: Decodable {
     let loudnessGainDb: Double?; let loudnessEnabled: Bool?; let loudnessRevision: Double?
     let upgradeUrl: String?
     let automaticResume: AutomaticResumePolicy?
+    let diagnosticId: String?
 }
 struct ControlArgs: Decodable {
     let settingsRevision: Double?
@@ -33,6 +35,8 @@ struct ExportArgs: Decodable { let path: String }
 struct ListenerArgs: Decodable { let event: String; let handler: Channel }
 struct RemoveListenerArgs: Decodable { let event: String; let channelId: UInt64 }
 struct ResolveRequest: Encodable {
+    let diagnosticId: String?
+    let initialErrorCode: String?
     let offlineOnly: Bool
     let visibilityScopes: [String]
     let accountSession: String?
@@ -49,6 +53,24 @@ struct ResolvedTrack: Decodable {
     let automaticResume: AutomaticResumePolicy?
     let position: Double?; let entryId: String?; let parts: [QueueTrack]?; let lyrics: NativeSavedLyrics?
     let kind: String?; let id: String?; let timeline: NativeSavedLyrics?; let subtitleRevision: Int?; let accountSession: String?
+}
+
+@_silgen_name("bilimusic_ios_diagnostic_exit")
+private func diagnosticExit(_ kind: Int32, _ at: UInt64)
+
+@available(iOS 14.0, *)
+private final class PlaybackMetricSubscriber: NSObject, MXMetricManagerSubscriber {
+    static let shared = PlaybackMetricSubscriber()
+    static let registered: Void = { MXMetricManager.shared.add(shared) }()
+
+    func didReceive(_ payloads: [MXDiagnosticPayload]) {
+        for payload in payloads {
+            let timestamp = payload.timeStampEnd.timeIntervalSince1970 * 1000
+            guard timestamp.isFinite, timestamp > 0 else { continue }
+            if payload.crashDiagnostics?.isEmpty == false { diagnosticExit(1, UInt64(timestamp)) }
+            if payload.hangDiagnostics?.isEmpty == false { diagnosticExit(2, UInt64(timestamp)) }
+        }
+    }
 }
 
 @_silgen_name("bilimusic_ios_resolve")
@@ -173,6 +195,7 @@ class PlayerPlugin: Plugin {
     private var lastNowPlayingLyric: String?
 
     override func load(webview: WKWebView) {
+        if #available(iOS 14.0, *) { _ = PlaybackMetricSubscriber.registered }
         self.webview = webview
         applyWindowTheme(light: UserDefaults.standard.bool(forKey: "bilimusic-light-window"))
         activePlayer = self
@@ -368,6 +391,7 @@ class PlayerPlugin: Plugin {
             cancelSourceSwitch()
             accountListening(flush: true)
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
+            beginPlaybackDiagnostic(args.diagnosticId)
             savePosition(force: true)
             collectionRef = args.collectionRef
             cancelPlaybackWatchdog()
@@ -581,6 +605,17 @@ class PlayerPlugin: Plugin {
     }
 
     // Rust-only; deliberately absent from the JavaScript command permissions.
+    @objc public func diagnostic_environment(_ invoke: Invoke) {
+        onMain {
+            let device = UIDevice.current
+            invoke.resolve([
+                "osName": device.userInterfaceIdiom == .pad ? "iPadOS" : "iOS",
+                "osVersion": device.systemVersion,
+                "deviceModel": device.model,
+            ])
+        }
+    }
+
     @objc public func secret(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SecretArgs.self)
         guard args.key.range(of: "^sync-[0-9]+-(cloud|webdav)$", options: .regularExpression) != nil else { invoke.reject("无效的凭据标识"); return }
@@ -777,6 +812,9 @@ class PlayerPlugin: Plugin {
         }
         // Recreate failed items natively so lock-screen playback recovers while
         // the WebView is suspended. One refresh is allowed per user attempt.
+        if diagnosticInitialError == nil {
+            diagnosticInitialError = player.currentItem?.error.map { mediaErrorCode($0 as NSError) } ?? "audio_stalled"
+        }
         if desiredPlaying && recoverCurrentPlayback() { return }
         if player.currentItem?.status == .failed {
             fail("音频加载失败，请重新播放", code: player.currentItem?.error.map { mediaErrorCode($0 as NSError) } ?? "audio_prepare_failed")
@@ -870,12 +908,47 @@ class PlayerPlugin: Plugin {
         let domain = domains.contains(cause.domain) ? cause.domain : "other"
         return "ios_media:\(domain):\(cause.code)"
     }
+    private var diagnosticOwner: String?
+    private var diagnosticAccount: String?
+    private var diagnosticStarted = ProcessInfo.processInfo.systemUptime
+    private var diagnosticPlaying = false
+    private var diagnosticPrepared = false
+    private var diagnosticInitialError: String?
+
+    private func beginPlaybackDiagnostic(_ id: String?) {
+        state.diagnosticId = id ?? UUID().uuidString
+        diagnosticOwner = profile
+        diagnosticAccount = queueSession
+        diagnosticStarted = ProcessInfo.processInfo.systemUptime
+        diagnosticPlaying = false
+        diagnosticPrepared = false
+        diagnosticInitialError = nil
+    }
+
+    private func playbackDiagnostic(_ step: String, _ outcome: String, code: String? = nil) {
+        guard let operation = state.diagnosticId, let owner = diagnosticOwner, let session = diagnosticAccount,
+              let track = state.track else { return }
+        var event: [String: Any] = [
+            "operation": operation, "area": "playback", "step": step, "outcome": outcome,
+            "engine": "av-player", "bvid": track.source.bvid, "cid": track.source.cid,
+            "elapsedMs": Int(max(0, ProcessInfo.processInfo.systemUptime - diagnosticStarted) * 1000),
+        ]
+        if let code { event["code"] = code }
+        if let diagnosticInitialError { event["initialCode"] = diagnosticInitialError }
+        let payload: [String: Any] = ["kind": "diagnostic", "profile": owner, "accountSession": session, "event": event]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        json.withCString { resolveTrack(0, $0) }
+    }
+
     private func fail(_ message: String, code: String? = nil) {
         nativeResolutionPending = false
         pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         accountListening(flush: true)
         cancelInterruptionResume()
+        playbackDiagnostic(nativeResolutionPending ? "source" : (diagnosticPlaying ? "control" : "start"), "failed", code: code)
+        if recoveryAttempted && !diagnosticPlaying { playbackDiagnostic("recovery", "failed", code: code) }
         desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; state.errorCode = code; endBackgroundTask(); publish()
     }
     private func accountListening(flush: Bool = false) {
@@ -934,6 +1007,15 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func publish() {
+        if player.currentItem?.status == .readyToPlay && !diagnosticPrepared {
+            diagnosticPrepared = true
+            playbackDiagnostic("media-ready", "succeeded")
+        }
+        if state.status == "playing" && !diagnosticPlaying {
+            diagnosticPlaying = true
+            playbackDiagnostic("start", "succeeded")
+            if recoveryAttempted { playbackDiagnostic("recovery", "succeeded") }
+        }
         publishSequence += 1
         state.sequence = publishSequence
         state.engineInstanceId = engineInstanceId
@@ -1039,7 +1121,12 @@ class PlayerPlugin: Plugin {
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
-        if !refresh { listeningSession = UUID().uuidString }
+        if !refresh { listeningSession = UUID().uuidString; beginPlaybackDiagnostic(nil) }
+        else {
+            diagnosticPlaying = false
+            diagnosticPrepared = false
+            playbackDiagnostic("recovery", "started")
+        }
         generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
@@ -1054,7 +1141,7 @@ class PlayerPlugin: Plugin {
         nativeResolutionPending = true
         publish()
         let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
-        guard let data = try? JSONEncoder().encode(ResolveRequest(offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
+        guard let data = try? JSONEncoder().encode(ResolveRequest(diagnosticId: state.diagnosticId, initialErrorCode: diagnosticInitialError, offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息", code: "invalid_input"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
@@ -1155,6 +1242,7 @@ class PlayerPlugin: Plugin {
     private func interrupted(_ note: Notification) {
         guard let value = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, let type = AVAudioSession.InterruptionType(rawValue: value) else { return }
         if type == .began {
+            playbackDiagnostic("audio-focus", "succeeded", code: "transient_loss")
             // A suspension notification is delivered after the app wakes.
             // A real interruption already saved its resume intent.
             let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0
@@ -1165,6 +1253,7 @@ class PlayerPlugin: Plugin {
             beginAudioInterruption(otherMedia: reason == AVAudioSession.InterruptionReason.default.rawValue)
         } else {
             let options = AVAudioSession.InterruptionOptions(rawValue: note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            playbackDiagnostic("audio-focus", "succeeded", code: options.contains(.shouldResume) ? "gain" : "action_denied")
             finishAudioInterruption(allowed: options.contains(.shouldResume))
         }
     }

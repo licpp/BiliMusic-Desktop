@@ -27,15 +27,18 @@ export function layoutDanmaku(items: DanmakuItem[], width: number, height: numbe
   const top: DanmakuPlacement[][] = Array.from({ length: topCount }, () => [])
   const bottom: DanmakuPlacement[][] = Array.from({ length: bottomCount }, () => [])
   const result: DanmakuPlacement[] = []
+  let activeEnds: number[] = []
   items.forEach((item, index) => {
     const fixed = item.mode === 4 || item.mode === 5
     const next = { index, time: item.timeSeconds, end: item.timeSeconds + (fixed ? 4 : 8), mode: item.mode, y: 0, ...metrics[index] }
+    activeEnds = activeEnds.filter(end => end > next.time)
+    if (activeEnds.length >= 40) return
     const lanes = item.mode === 4 ? bottom : top
     for (let lane = 0; lane < lanes.length; lane++) {
       lanes[lane] = lanes[lane].filter(p => p.end > next.time)
       if (!lanes[lane].every(p => fits(p, next, width))) continue
       next.y = item.mode === 4 ? height - padding - (lane + 1) * rowHeight : padding + lane * rowHeight
-      lanes[lane].push(next); result.push(next); break
+      lanes[lane].push(next); result.push(next); activeEnds.push(next.end); break
     }
   })
   return result

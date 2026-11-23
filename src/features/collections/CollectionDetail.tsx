@@ -13,7 +13,7 @@ import { useEffect,useMemo,useRef,useState } from 'react'
 import type { Track } from '../../domain/track'
 import { filterSeasonSection,seasonResumeSelection } from '../../domain/seasonSections'
 import { accountEpoch } from '../../services/accountScope'
-import { listCollections,readCollectionProgress,type Collection } from '../../services/collections'
+import { cacheCollectionMetadata, listCollections,readCollectionProgress,type Collection } from '../../services/collections'
 import { toTrack } from '../../services/collectionTrack'
 import { addTracksToPlaylist,commandErrorMessage,createPlaylist,getVideoParts,saveLibraryTrack } from '../../services/desktopApi'
 import { sortList,sortTracks } from '../../services/listOrdering'
@@ -96,7 +96,17 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   })
   const detailSort=useListSort(`collection:${item.bvid}`)
   const client=useQueryClient()
-  useEffect(()=>{const d=q.data;if(!d)return;void invoke('collections_change',{action:'cache',item:{bvid:item.bvid,folderId:item.folderId,title:d.title,coverUrl:d.coverUrl,uploaderName:d.uploaderName}}).then(()=>client.invalidateQueries({queryKey:accountQueryKey('collections')})).catch(()=>undefined)},[q.data,client,item.bvid,item.folderId])
+  useEffect(() => {
+    const detail = q.data
+    if (!detail) return
+    const key = accountQueryKey('collections')
+    const saved = client.getQueryData<import('../../services/collections').Collections>(key)?.items.find(entry => entry.bvid === item.bvid)
+    if (!saved) return
+    const metadata = { ...saved, title: detail.title || saved.title, coverUrl: detail.coverUrl || saved.coverUrl, uploaderName: detail.uploaderName || saved.uploaderName }
+    if (metadata.title !== saved.title || metadata.coverUrl !== saved.coverUrl || metadata.uploaderName !== saved.uploaderName) {
+      void cacheCollectionMetadata(metadata, client).catch(() => undefined)
+    }
+  }, [q.data, client, item.bvid])
   const detail = useListDataDuringNavigation(q.data, item.bvid)
   const loadingTracks = q.isLoading || Boolean(q.data && !detail)
   const player = usePlayerStore.getState()

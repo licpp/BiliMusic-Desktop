@@ -56,7 +56,7 @@ export async function hydrateSourceTitles(ids: string[], client: QueryClient, ca
           const canonical = toTrack(detail, part), original = sourceTrack(track)
           const imageKey = (value?: string) => value?.replace(/^(?:https?:)?\/\//, '')
           const coverUrl = !original.coverUrl || part.firstFrameUrl && imageKey(original.coverUrl) === imageKey(part.firstFrameUrl) ? canonical.coverUrl : original.coverUrl
-          const next = withTrackTitle({...original, coverUrl, sourceTitleContext:canonical.sourceTitleContext, videoTitle:canonical.videoTitle, partCount:canonical.partCount})
+          const next = withTrackTitle({...original, coverUrl, durationSeconds: original.durationSeconds || canonical.durationSeconds, sourceTitleContext:canonical.sourceTitleContext, videoTitle:canonical.videoTitle, partCount:canonical.partCount})
           if(JSON.stringify(next)!==JSON.stringify(track))updates.set(track,next)
         }
       }

@@ -33,6 +33,16 @@ fn observe(handler: tauri::ipc::Channel<Value>) {
 
 struct Native<R: Runtime>(tauri::plugin::PluginHandle<R>);
 
+pub async fn diagnostic_environment<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<Value> {
+    app.state::<Native<R>>()
+        .0
+        .run_mobile_plugin_async("diagnostic_environment", serde_json::json!({}))
+        .await
+        .ok()
+}
+
 pub fn secret<R: Runtime>(
     app: &tauri::AppHandle<R>,
     key: &str,

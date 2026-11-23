@@ -1,3 +1,4 @@
+import type { DiagnosticSource } from './diagnostics'
 import { withTrackTitle } from '../domain/sourceTitle'
 import { sourceTrack } from '../domain/importedPresentation'
 import type { ImportedEntriesSnapshot } from '../domain/importedEntry'
@@ -56,7 +57,7 @@ export async function getSearchSuggestions(keyword: string): Promise<string[]> {
 
 export const getPlaybackSource = (bvid: string, cid: number) => invoke<PlaybackSource>('bili_playback_source', { bvid, cid })
 export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline = false) => invoke<string>('track_playback_url', { trackId: track.id, refresh, preferOnline })
-export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false, offlineOnly = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number }>('track_playback_plan', { trackId: track.id, refresh, preferOnline, ...(offlineOnly ? { offlineOnly } : {}) })
+export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false, offlineOnly = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number; source?: DiagnosticSource; requestedQuality?: number; actualQuality?: number; codec?: string }>('track_playback_plan', { trackId: track.id, refresh, preferOnline, ...(offlineOnly ? { offlineOnly } : {}) })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
   if (track.resolveParts && track.source.cid <= 0) {

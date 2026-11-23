@@ -83,9 +83,20 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            let database = Database::open(app.handle())?;
+            use infrastructure::diagnostics::{Diagnostics, Outcome, Step};
+            let diagnostics = Diagnostics::open(app.path().app_data_dir()?.join("diagnostics-v1"));
+            diagnostics.begin_startup();
+            app.manage(diagnostics.clone());
+            let database = Database::open(app.handle()).inspect_err(|_| {
+                diagnostics.startup_step(Step::Database, Outcome::Failed);
+            })?;
+            diagnostics.startup_step(Step::Database, Outcome::Succeeded);
+            diagnostics.startup_step(Step::MediaProxy, Outcome::Started);
             let media_proxy =
-                tauri::async_runtime::block_on(MediaProxy::start_cached(app.handle().clone()))?;
+                tauri::async_runtime::block_on(MediaProxy::start_cached(app.handle().clone()))
+                    .inspect_err(|_| diagnostics.startup_step(Step::MediaProxy, Outcome::Failed))?;
+            diagnostics.startup_step(Step::MediaProxy, Outcome::Succeeded);
+            diagnostics.startup_step(Step::NativeReady, Outcome::Started);
             let bilibili = BilibiliProvider::new()?;
             let saved_cookie = database.0.lock().ok().and_then(|connection| {
                 AuthRepository::get_cookie(&connection, "bilibili")
@@ -119,7 +130,15 @@ pub fn run() {
                 interface::media::observe_ohos_listening(app.handle().clone());
             }
             #[cfg(desktop)]
-            tray_player::initialize(app.handle())?;
+            tray_player::initialize(app.handle()).inspect_err(|_| {
+                diagnostics.startup_step(Step::NativeReady, Outcome::Failed);
+            })?;
+            diagnostics.startup_step(Step::NativeReady, Outcome::Succeeded);
+            diagnostics.startup_step(Step::WebviewReady, Outcome::Started);
+            #[cfg(target_os = "windows")]
+            if let Some(webview) = app.get_webview("main") {
+                interface::diagnostics::observe_windows_webview(webview, diagnostics);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -194,6 +213,13 @@ pub fn run() {
             sync::sync_export,
             sync::sync_delete_cloud,
             interface::commands::app_health,
+            interface::diagnostics::diagnostic_environment,
+            interface::diagnostics::diagnostics_record,
+            interface::diagnostics::diagnostics_recent,
+            interface::diagnostics::diagnostics_clear,
+            interface::diagnostics::diagnostics_ready,
+            #[cfg(desktop)]
+            interface::diagnostics::diagnostics_save_report,
             interface::commands::app_check_update,
             infrastructure::update_install::app_download_update,
             infrastructure::update_install::app_install_update,
@@ -223,6 +249,7 @@ pub fn run() {
             interface::commands::playlist_remove_tracks,
             interface::commands::playlist_delete,
             interface::media::bili_season,
+            interface::media::bili_season_cover,
             interface::media::bili_subtitles,
             interface::media::bili_subtitle_lines,
             interface::media::bili_media_options,
@@ -231,6 +258,7 @@ pub fn run() {
             interface::media::listening_scope,
             interface::media::listening_record,
             interface::media::listening_statistics,
+            interface::media::listening_hydrate_tags,
             sync::statistics::listening_sync,
             sync::statistics::listening_sync_configure,
             interface::commands::bili_video_parts,
@@ -295,6 +323,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build BiliMusic")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(diagnostics) = app.try_state::<infrastructure::diagnostics::Diagnostics>() {
+                    diagnostics.flush_on_exit();
+                }
+            }
             #[cfg(desktop)]
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 floating_lyrics::remember_placement(app);

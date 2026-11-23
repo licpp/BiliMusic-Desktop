@@ -276,6 +276,8 @@ pub struct FavoriteVideo {
     pub duration: u64,
     #[serde(default)]
     pub cnt_info: serde_json::Value,
+    #[serde(default)]
+    pub attr: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1287,6 +1289,14 @@ impl BilibiliProvider {
             .ok()
     }
 
+    pub async fn video_tags(&self, bvid: &str) -> Result<Vec<String>, ProviderError> {
+        let _permit = self.page_slots.acquire().await.expect("page semaphore remains open");
+        let mut url = self.api_url("/x/tag/archive/tags");
+        url.query_pairs_mut().append_pair("bvid", bvid);
+        let rows: Vec<serde_json::Value> = self.get_data(url).await?;
+        Ok(rows.into_iter().filter_map(|row| row["tag_name"].as_str().map(str::to_owned)).collect())
+    }
+
     pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         let detail = self.video_detail(bvid).await?;
@@ -1521,6 +1531,12 @@ impl BilibiliProvider {
                 },
             ) => {
                 return Err(self.restricted_playback(bvid, false).await.unwrap_or(error));
+            }
+            Err(error @ ProviderError::Api { code: -404, .. }) => {
+                return match tokio::time::timeout(Duration::from_secs(3), self.video_detail(bvid)).await {
+                    Ok(Err(expired @ ProviderError::Api { code: 62002, .. })) => Err(expired),
+                    _ => Err(error),
+                };
             }
             Err(error) => return Err(error),
         };

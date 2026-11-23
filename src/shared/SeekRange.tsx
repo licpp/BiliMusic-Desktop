@@ -1,5 +1,5 @@
 import { useRef, useState, type ComponentProps, type PointerEvent } from 'react'
-import { progressAtPointer } from '../domain/playbackProgress'
+import { progressAtPointerInRect } from '../domain/playbackProgress'
 import { RangeControl } from './RangeControl'
 
 type Props = Omit<ComponentProps<typeof RangeControl>, 'value' | 'onChange' | 'onPointerDown' | 'onPointerMove' | 'onPointerUp'> & {
@@ -19,7 +19,7 @@ export function SeekRange({ value, duration, trackKey, onSeek, onPreview, onValu
     const current = drag.current
     if (!current || current.pointer !== event.pointerId || current.key !== latestKey.current) return
     const rect = event.currentTarget.getBoundingClientRect()
-    current.value = progressAtPointer(event.clientX, rect.left, rect.width, duration)
+    current.value = progressAtPointerInRect(event.clientX, event.clientY, rect, duration)
     setDraft({ key: current.key, value: current.value }); onPreview?.(current.value)
   }
   return <RangeControl {...props} min={0} max={Math.max(1, duration)} step={props.step ?? .1} disabled={props.disabled || duration <= 0}

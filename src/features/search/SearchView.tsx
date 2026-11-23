@@ -37,10 +37,10 @@ import './search-results.css'
 
 type ExpandedState = { open?: boolean; loading?: boolean; detail?: BiliVideoParts; error?: string; request?: number }
 const layoutPreferenceKey = 'bilibili-search-results-layout'
-const minimumTwoColumnWidth = 720
+const minimumTwoColumnWidth = isMobile ? 620 : 720
 
 function readColumnPreference() {
-  try { return !isMobile && localStorage.getItem(layoutPreferenceKey) === 'columns' }
+  try { return localStorage.getItem(layoutPreferenceKey) === 'columns' }
   catch { return false }
 }
 
@@ -78,11 +78,11 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const loadingResults = result.isLoading || Boolean(result.data && !searchData)
   const items = [...new Map(searchData?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const showingResults = loadingResults || items.length > 0
-  const rendered = useListRows(items, query, { active })
+  const rendered = useListRows(items, `search-videos:${query}`, { active })
   useListReveal(resultList, loadingResults, items.length > 0, active)
   useLayoutEffect(() => {
     const section = resultsSection.current
-    if (!columns || !active || !showingResults || !section) return
+    if (!active || !showingResults || !section) return
     const measure = () => setRoomForColumns(section.clientWidth >= minimumTwoColumnWidth)
     measure()
     if (typeof ResizeObserver === 'undefined') {
@@ -92,7 +92,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
     const observer = new ResizeObserver(measure)
     observer.observe(section)
     return () => observer.disconnect()
-  }, [active, columns, showingResults])
+  }, [active, showingResults])
   useEffect(() => {
     if (!active) {
       partsTrigger.current = null
@@ -129,7 +129,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
     const inline = !isMobile && !twoColumns
     const existing = expanded[item.bvid]
     if (twoColumns) setPartsDialog(item)
-    if (existing?.detail && !isMobile) {
+    if (existing?.detail && (!isMobile || twoColumns)) {
       if (inline || existing.error) {
         setExpanded(state => ({ ...state, [item.bvid]: { detail: existing.detail, open: inline ? !existing.open : existing.open } }))
       }
@@ -145,7 +145,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
         if (row?.request !== request) return state
         return { ...state, [item.bvid]: { detail, open: current && inline ? detail.parts.length > 1 : row.open } }
       })
-      if (current && isMobile && detail.parts.length > 1) setPartsPage(detail)
+      if (current && isMobile && !twoColumns && detail.parts.length > 1) setPartsPage(detail)
     } catch (cause) {
       if (epoch !== accountEpoch()) return
       setExpanded(state => {
@@ -215,7 +215,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   return <section ref={resultsSection} className="search-results" aria-label="视频搜索结果" data-columns={twoColumns || undefined}>
     <header className="search-results-toolbar">
       <span>约 {searchData?.pages[0]?.total.toLocaleString()} 个视频</span>
-      {!isMobile && <button type="button" className="search-layout-button" aria-pressed={columns} onClick={toggleLayout} title={columns ? '切换为单列列表' : '切换为双列列表'}>
+      {(!isMobile || roomForColumns) && <button type="button" className="search-layout-button" disabled={!roomForColumns} aria-pressed={twoColumns} onClick={toggleLayout} title={columns ? '切换为单列列表' : '切换为双列列表'}>
         <Columns2 size={16} aria-hidden="true" />双列
       </button>}
     </header>

@@ -17,3 +17,4 @@ pub mod visibility;
 pub mod imported_entries;
 
 pub mod batch_matching;
+pub mod diagnostics;

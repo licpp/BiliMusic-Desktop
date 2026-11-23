@@ -39,7 +39,7 @@ use crate::infrastructure::{
 use model::*;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Default)]
 pub struct SyncState {
@@ -466,18 +466,19 @@ pub async fn sync_now(
 ) -> Result<Outcome, String> {
     let auto = automatic.unwrap_or(false);
     background::run(
+        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>().map(|state| state.inner().clone()),
         &database,
         &state,
         scheduler::Domain::Library,
         auto,
-        sync_now_inner(
-            app,
+        Box::pin(sync_now_inner(
+            app.clone(),
             database.clone(),
             state.clone(),
             resolution,
             preview,
             automatic,
-        ),
+        )),
         |outcome| {
             (
                 outcome.changed,

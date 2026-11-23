@@ -11,7 +11,7 @@ import { lyricAt } from '../../domain/lyricTimeline'
 import { Artwork } from '../../shared/Artwork'
 import { RangeControl } from '../../shared/RangeControl'
 import { useMarquee } from '../../shared/useMarquee'
-import { formatDuration } from '../../shared/time'
+import { formatDuration, formatTrackDuration } from '../../shared/time'
 import { useBiliSubtitles } from '../lyrics/useBiliSubtitles'
 import { usePlayerStore } from './playerStore'
 
@@ -67,7 +67,7 @@ function MiniQueue(){
   const current=usePlayerStore(state=>state.current)
   const panel=useRef<HTMLDivElement>(null)
   useEffect(()=>{panel.current?.querySelector('[aria-current="true"]')?.scrollIntoView({block:'nearest'})},[current?.id,queue.length])
-  return <div ref={panel} className="mini-queue" aria-label="迷你播放队列"><header><span>播放队列</span><small>{queue.length} 首</small></header>{queue.map((track,index)=><button key={track.id} type="button" aria-current={track.id===current?.id||undefined} onClick={()=>void usePlayerStore.getState().playFromList(queue,track.id,usePlayerStore.getState().queueSource)}><span>{index+1}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small></button>)}{!queue.length&&<p>暂无歌曲</p>}</div>
+  return <div ref={panel} className="mini-queue" aria-label="迷你播放队列"><header><span>播放队列</span><small>{queue.length} 首</small></header>{queue.map((track,index)=><button key={track.id} type="button" aria-current={track.id===current?.id||undefined} onClick={()=>void usePlayerStore.getState().playFromList(queue,track.id,usePlayerStore.getState().queueSource)}><span>{index+1}</span><strong>{track.title}</strong><small>{formatTrackDuration(track.durationSeconds)}</small></button>)}{!queue.length&&<p>暂无歌曲</p>}</div>
 }
 function MiniLyric({visible}:{visible:boolean}){
   const track=usePlayerStore(state=>state.current)

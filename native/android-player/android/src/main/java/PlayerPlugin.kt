@@ -5,6 +5,7 @@ import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.os.Build
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -37,6 +38,7 @@ class PlayArgs {
     var rate: Double = 1.0
     var collectionRef: String? = null
     var automaticResume: AutomaticResumePolicy? = null
+    var diagnosticId: String? = null
 }
 @InvokeArg
 class LyricsArgs { var data: String = "{}" }
@@ -149,6 +151,36 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             catch (_: Exception) { invoke.reject("无法显示悬浮歌词，请检查悬浮窗权限") }
         }
     }
+    @Command
+    fun diagnostic_environment(invoke: Invoke) {
+        val webview = runCatching { WebView.getCurrentWebViewPackage() }.getOrNull()
+        val model = listOf(Build.MANUFACTURER, Build.MODEL)
+            .filter { it.isNotBlank() && it != Build.UNKNOWN }.distinct().joinToString(" ")
+        val result = JSObject()
+            .put("osVersion", Build.VERSION.RELEASE)
+            .put("osBuild", Build.DISPLAY)
+            .put("apiLevel", Build.VERSION.SDK_INT)
+            .put("deviceModel", model)
+            .put("webviewVersion", webview?.versionName)
+            .put("webviewPackage", webview?.packageName)
+        if (Build.VERSION.SDK_INT >= 30) {
+            runCatching {
+                val manager = activity.getSystemService(android.app.ActivityManager::class.java)
+                val abnormal = manager?.getHistoricalProcessExitReasons(null, 0, 8)?.firstOrNull {
+                    it.processName == activity.applicationInfo.processName && it.reason in setOf(
+                        android.app.ApplicationExitInfo.REASON_CRASH,
+                        android.app.ApplicationExitInfo.REASON_CRASH_NATIVE,
+                        android.app.ApplicationExitInfo.REASON_ANR,
+                        android.app.ApplicationExitInfo.REASON_LOW_MEMORY,
+                        android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
+                    )
+                }
+                if (abnormal != null) result.put("lastExitReason", abnormal.reason).put("lastExitAt", abnormal.timestamp)
+            }
+        }
+        invoke.resolve(result)
+    }
+
     // Called only by Rust; no frontend ACL permission is granted for this command.
     @Command
     fun secret(invoke: Invoke) {
@@ -342,7 +374,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
-            .putExtra("url", args.url).putExtra("id", args.id)
+            .putExtra("url", args.url).putExtra("id", args.id).putExtra("diagnosticId", args.diagnosticId)
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
             .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
             .putExtra("durationSeconds", args.durationSeconds)

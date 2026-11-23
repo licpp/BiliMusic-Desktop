@@ -94,7 +94,7 @@ impl LibraryRepository {
             "INSERT INTO tracks (id, source_item_id, title, artist, album, cover_url, duration_seconds)
              VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
-               cover_url=excluded.cover_url, duration_seconds=excluded.duration_seconds, updated_at=CURRENT_TIMESTAMP",
+               cover_url=excluded.cover_url, duration_seconds=CASE WHEN excluded.duration_seconds>0 THEN excluded.duration_seconds ELSE tracks.duration_seconds END, updated_at=CURRENT_TIMESTAMP",
             params![track.id, canonical, track.artist, track.album, cover, track.duration_seconds],
         )?;
         if let Some(context) = &cached {
@@ -180,6 +180,14 @@ impl LibraryRepository {
         connection
             .query_row(&sql, params![id], Self::map_row)
             .optional()
+    }
+
+    pub(super) fn downloaded_tracks(connection: &Connection) -> rusqlite::Result<Vec<TrackRecord>> {
+        let mut statement = connection.prepare(&format!(
+            "{} WHERE t.id IN (SELECT track_id FROM downloads)",
+            Self::select_sql()
+        ))?;
+        statement.query_map([], Self::map_row)?.collect()
     }
 
     pub fn saved(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {

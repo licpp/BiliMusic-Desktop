@@ -23,10 +23,12 @@ import type { Track } from '../domain/track'
 import { DownloadListButton } from './TrackActions'
 import { playlistContext, collectionContext } from './playbackContext'
 import { Artwork } from '../shared/Artwork'
-import { formatDuration } from '../shared/time'
+import { formatDuration, formatTrackDuration } from '../shared/time'
 import { CoverCount } from '../shared/CoverCount'
 import { PublishedDate } from '../shared/PublishedDate'
 import { VideoAccessBadge } from '../shared/VideoAccessBadge'
+import { hydrateSourceTitles } from '../services/sourceTitles'
+import { useSeasonCover } from '../shared/useSeasonCover'
 import { useVisibleVideoPages } from '../shared/useVisibleVideoPages'
 import { isVideoSearchInput } from '../domain/bilibili'
 import { getVideoParts, listPlaylists, listPlaylistTracks, getLinkedFolder, searchBilibili, listSearchHistory, commandErrorMessage } from '../services/desktopApi'
@@ -59,12 +61,13 @@ export function Failure({ error, retry }: { error: unknown; retry?: () => void }
   return error ? <div className="large-error" role="alert"><span>{commandErrorMessage(error)}</span>{retry && <button onClick={retry}><RefreshCw size={20}/>重试</button>}</div> : null
 }
 export function Empty({ children }: { children: ReactNode }) { return <div className="large-empty"><Search size={34}/><p>{children}</p></div> }
-export function Card({ title, subtitle, cover, onClick, id, linked, folder, creator, count, elementRef, playlist, videoBvid }: { videoBvid?: string; elementRef?: React.Ref<HTMLButtonElement>; playlist?: boolean; title: string; subtitle?: string; cover?: string; onClick: () => void; id: string; linked?: boolean; folder?: boolean; creator?: boolean; count?: number }) {
+export function Card({ title, subtitle, cover: givenCover, onClick, id, linked, folder, creator, count, elementRef, playlist, videoBvid, seasonReference }: { seasonReference?: string; videoBvid?: string; elementRef?: React.Ref<HTMLButtonElement>; playlist?: boolean; title: string; subtitle?: string; cover?: string; onClick: () => void; id: string; linked?: boolean; folder?: boolean; creator?: boolean; count?: number }) {
+  const { ref: seasonCoverRef, cover } = useSeasonCover(seasonReference, givenCover)
   const [aspect, setAspect] = useState<{ cover?: string; ratio: number }>()
   const ratio = aspect && aspect.cover === cover ? aspect.ratio : 16 / 9
   const { ref, access } = useVisibleVideoPages<HTMLButtonElement>(videoBvid ?? "", Boolean(videoBvid), true)
   return <button style={{ '--large-card-ratio': ratio } as React.CSSProperties} className={`large-card${creator ? ' large-creator' : folder ? ' large-folder' : ''}${playlist ? ' large-playlist-card' : ''}`} ref={elementRef ?? ref} data-focus={id} onClick={onClick}>
-    <span className="large-card-art"><Artwork adaptAspect={!creator} onAspectRatio={ratio => setAspect({ cover, ratio })} src={cover} fallback={folder ? <Folder/> : creator ? <UserRound/> : title === '我喜欢' ? <Heart/> : undefined}/>{count && count > 1 ? <CoverCount count={count} single/> : null}{(linked || folder) && <CoverBadge kind={linked ? 'linked' : 'folder'}/>}<VideoAccessBadge access={access} onCover/></span>
+    <span className="large-card-art"><Artwork elementRef={seasonCoverRef} adaptAspect={!creator} onAspectRatio={ratio => setAspect({ cover, ratio })} src={cover} fallback={folder ? <Folder/> : creator ? <UserRound/> : title === '我喜欢' ? <Heart/> : undefined}/>{count && count > 1 ? <CoverCount count={count} single/> : null}{(linked || folder) && <CoverBadge kind={linked ? 'linked' : 'folder'}/>}<VideoAccessBadge access={access} onCover/></span>
     <strong>{title}</strong>{subtitle && <small>{subtitle}</small>}
   </button>
 }
@@ -76,7 +79,7 @@ function CollectionCard({ item, navigate }: { item: Collection; navigate: Naviga
     if (ref.current) observer.observe(ref.current)
     return () => observer.disconnect()
   }, [])
-  const metadata = useQuery({ queryKey: accountKeyAt(epoch, 'large-collection-metadata', item.bvid), queryFn: () => loadCollectionMetadata(item, epoch), enabled: visible && (!item.title || !item.coverUrl || item.title === item.bvid), staleTime: 300000, retry: false })
+  const metadata = useQuery({ queryKey: accountKeyAt(epoch, 'large-collection-metadata', item.bvid), queryFn: () => loadCollectionMetadata(item, epoch), enabled: visible && (!item.title || !item.coverUrl || item.coverUrl.includes("viedeo_material_default") || item.title === item.bvid), staleTime: 300000, retry: false })
   useEffect(() => {
     if (!metadata.data || epoch !== accountEpoch()) return
     client.setQueryData<Collections>(accountQueryKey('collections'), old => old ? { ...old, items: old.items.map(i => i.bvid === item.bvid ? { ...i, title: metadata.data!.title, coverUrl: metadata.data!.coverUrl, uploaderName: metadata.data!.uploaderName } : i) } : old)
@@ -118,9 +121,9 @@ export function TrackRows({ tracks, source, onMore, onPlayed, onOpen,visibilityS
   const id = usePlayerStore(s => s.current?.id), status = usePlayerStore(s => s.status)
   const offline = useOfflinePlayback()
   const origins=new Map(importedEntries?.filter(e=>e.trackId).map(e=>[e.trackId,e.song]))
-  return <div className="large-tracks">{tracks.map((track, index) => {const unavailable = offlineUnavailable(track, offline); const origin=track.titleOverridden?undefined:origins.get(track.id);return <div data-offline-unavailable={unavailable || undefined} className={`large-track${track.id === id ? ' current' : ''}${visibilityScope&&trackHidden(track,visibilityScope,rules)?' visibility-hidden':''}`} key={track.id}>
+  return <div className="large-tracks">{tracks.map((track, index) => {const unavailable = offlineUnavailable(track, offline) || !offline.offline && track.sourceExpired; const origin=track.titleOverridden?undefined:origins.get(track.id);return <div data-offline-unavailable={unavailable || undefined} className={`large-track${track.id === id ? ' current' : ''}${visibilityScope&&trackHidden(track,visibilityScope,rules)?' visibility-hidden':''}`} key={track.id}>
     <button disabled={unavailable || Boolean(visibilityScope&&trackHidden(track,visibilityScope,rules))} className="large-track-main" data-focus={`track-${track.id}`} onClick={() => { if (onOpen && !offline.offline) onOpen(track); else { void usePlayerStore.getState().playFromList(playbackTracks, track.id, source); onPlayed?.() } }}>
-      <span className="large-track-number">{track.id === id && status === 'playing' ? <span className="large-playing-mark">ııı</span> : index + 1}</span><span className="large-track-art"><Artwork adaptAspect src={origin?.coverUrl||track.coverUrl}/></span><span className="large-track-copy"><strong>{origin?.title||track.displayTitle || track.title}</strong><small>{origin?origin.artists.join(' / ')||'歌手未知':trackSubtitle(track,source)}<PublishedDate value={track.publishedAt}/></small></span><span className="large-track-duration">{formatDuration(track.durationSeconds)}</span>
+      <span className="large-track-number">{track.id === id && status === 'playing' ? <span className="large-playing-mark">ııı</span> : index + 1}</span><span className="large-track-art"><Artwork adaptAspect src={origin?.coverUrl||track.coverUrl}/></span><span className="large-track-copy"><strong>{origin?.title||track.displayTitle || track.title}</strong><small>{track.sourceExpired ? '已失效' : origin ? origin.artists.join(' / ') || '歌手未知' : trackSubtitle(track,source)}<PublishedDate value={track.publishedAt}/></small></span><span className="large-track-duration">{formatTrackDuration(track.durationSeconds)}</span>
     </button><button className="large-icon large-track-more" data-focus={`more-${track.id}`} aria-label={`${track.title}的更多操作`} onClick={() => onMore(track)}><MoreHorizontal/></button>
   </div>})}</div>
 }
@@ -135,7 +138,12 @@ export function LargePlaylist({ playlist, onMore, navigate, filterState }: { fil
   const offline = useOfflinePlayback()
   useEffect(() => { let alive = true; if (linked && !offline.offline) void reloadLinkedFolder(client, linked).catch(e => { if (alive) setRefreshError(e) }); return () => { alive = false } }, [linked, client, epoch, offline.offline])
   const raw = Array.isArray(query.data) ? query.data : query.data?.videos.map(favoriteVideoTrack) ?? []
-  useEffect(() => { if (!linked && Array.isArray(query.data)) void hydrateVisibleTracks(query.data, client).catch(() => undefined) }, [query.data, linked, client])
+  useEffect(() => {
+    if (linked || offline.offline || !Array.isArray(query.data)) return
+    void hydrateVisibleTracks(query.data, client).catch(() => undefined)
+    const unknownDurations = query.data.filter(track => !track.durationSeconds)
+    if (unknownDurations.length) void hydrateSourceTitles(unknownDurations.map(track => track.id), client).catch(() => undefined)
+  }, [query.data, linked, client, offline.offline])
   const entity = playlistEntity(playlist), rule = prefs.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc'
   const tracks = sortTracks(raw, rule, prefs.data?.dates || {}, prefs.data?.playCounts || {}).filter(t => {const entry=imported.byTrack.get(t.id);return matchesTrackSearch(t,filter)||Boolean(entry&&`${entry.song.title} ${entry.song.artists.join(' ')} ${entry.song.album||''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))})
   const source = playlistContext(playlist.name, Boolean(linked))
@@ -149,7 +157,7 @@ export function LargePlaylist({ playlist, onMore, navigate, filterState }: { fil
   }
   return <><header className="large-page-heading"><div><h1>{playlist.name}{linked && <Link2 size={22}/>}</h1><p>{raw.length} {linked ? '个视频 · B站关联收藏夹' : '首歌曲'}</p></div><div className="large-toolbar"><ListSort entity={entity}/>{!selection.selecting && <>
     {linked ? <button disabled={!tracks.length} onClick={selection.enter}><ListChecks/>多选</button> : <button disabled={!tracks.length} onClick={()=>setMatching(true)}>自动匹配</button>}
-    {imported.missing.length>0&&<button onClick={()=>setCompletion(true)}><RefreshCw/>补全未匹配 · {imported.missing.length}</button>}<DownloadListButton tracks={tracks}/><button className="large-primary" disabled={!tracks.some(track => !offlineUnavailable(track, offline))} onClick={() => void usePlayerStore.getState().playFromList(tracks, tracks[0].id, source)}><Play/>播放全部</button>
+    {imported.missing.length>0&&<button onClick={()=>setCompletion(true)}><RefreshCw/>补全未匹配 · {imported.missing.length}</button>}<DownloadListButton tracks={tracks}/><button className="large-primary" disabled={!tracks.some(track => !offlineUnavailable(track, offline) && (offline.offline || !track.sourceExpired))} onClick={() => void usePlayerStore.getState().playFromList(tracks, tracks[0].id, source)}><Play/>播放全部</button>
   </>}</div></header><ListFilter value={filter} onChange={setFilter}/><Failure error={query.error || refreshError} retry={() => { void query.refetch(); if (linked) void reloadLinkedFolder(client, linked).then(() => setRefreshError(undefined)).catch(setRefreshError) }}/>
     {linked && selection.selecting ? <>
       <LinkedSelectionActions folderId={linked} total={tracks.length} selection={selection}
@@ -160,8 +168,8 @@ export function LargePlaylist({ playlist, onMore, navigate, filterState }: { fil
       <div className="large-tracks">{tracks.map(track => <div className="large-track" key={track.id} data-offline-unavailable={offlineUnavailable(track, offline) || undefined}><button type="button"
         className="large-track-main" role="checkbox" data-focus={`track-${track.id}`} aria-checked={selection.ids.has(track.id)} onClick={() => selection.toggle(track.id)}>
         <span className="large-track-number">{selection.ids.has(track.id) ? <Check/> : <span aria-hidden="true">□</span>}</span>
-        <span className="large-track-art"><Artwork src={track.coverUrl}/></span><span className="large-track-copy"><strong>{track.title}</strong></span>
-        <span className="large-track-duration">{formatDuration(track.durationSeconds)}</span>
+        <span className="large-track-art"><Artwork src={track.coverUrl}/></span><span className="large-track-copy"><strong>{track.title}</strong>{track.sourceExpired && <small>已失效</small>}</span>
+        <span className="large-track-duration">{formatTrackDuration(track.durationSeconds)}</span>
       </button></div>)}</div>
     </> : <TrackRows tracks={tracks} source={source} importedEntries={imported.entries} onMore={track=>{const entry=imported.byTrack.get(track.id);onMore(track,entry?()=>setReplacement(entry):undefined)}} onOpen={linked ? t => navigate({ kind: 'collection', item: { bvid: t.source.bvid, folderId: '', title: t.title, coverUrl: t.coverUrl || '', uploaderName: t.source.uploaderName || '' } }) : undefined}/>}
     {!query.isPending && !tracks.length && <Empty>{filter ? '没有匹配的歌曲' : '这个歌单还没有歌曲'}</Empty>}
@@ -230,7 +238,7 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind }: { kind
 export function LargeCreator({ route, navigate, replace }: { route: Extract<Route, { kind: 'creator' }>; navigate: Navigate; replace: Navigate }) {
   const { item } = route, mid = Number(item.bvid.slice(3)), tab = route.tab || 'videos', [input, setInput] = useState(route.query || '')
   const result = useInfiniteQuery({ queryKey: accountQueryKey('large-creator', mid, tab, route.query || ''), initialPageParam: 1, queryFn: ({ pageParam }) => catalog(tab, mid, pageParam, route.query), getNextPageParam: last => last.page * (tab === 'videos' ? 30 : 20) < (tab === 'videos' ? last.data.page?.count || 0 : last.data.items_lists?.page?.total || 0) ? last.page + 1 : undefined })
-  return <><header className="large-page-heading"><div><h1>{item.title}</h1></div></header><div className="large-tabs" role="tablist" aria-label="UP主内容">{(['videos', 'seasons'] as const).map((t, i) => <button key={t} role="tab" aria-selected={tab === t} onClick={() => replace({ ...route, tab: t })}>{['视频', '合集'][i]}</button>)}</div>{tab === 'videos' && <form className="large-search" onSubmit={e => { e.preventDefault(); replace({ ...route, query: input.trim() }) }}><Search size={22}/><input data-primary-focus aria-label="搜索这个UP主的视频" placeholder="搜索这个UP主的视频" value={input} onChange={e => setInput(e.target.value)}/><button type="submit">搜索</button></form>}<Failure error={result.error} retry={() => void result.refetch()}/><div className="large-grid">{tab === 'videos' ? result.data?.pages.flatMap(p => p.data.list?.vlist || []).map(v => <Card key={v.bvid} id={`video-${v.bvid}`} videoBvid={v.bvid} title={v.title} subtitle={v.created ? new Date(v.created * 1000).toLocaleDateString() : ''} cover={v.pic} onClick={() => navigate({ kind: 'collection', item: { bvid: v.bvid, title: v.title, coverUrl: v.pic, uploaderName: item.title, folderId: '' } })}/>) : result.data?.pages.flatMap(p => p.data.items_lists?.seasons_list || []).map(s => <Card key={s.meta.season_id} id={`season-${s.meta.season_id}`} title={s.meta.name} count={s.meta.total} subtitle={`${s.meta.total} 个视频`} cover={s.meta.cover} onClick={() => navigate({ kind: 'collection', item: { bvid: `season:${mid}:${s.meta.season_id}`, title: s.meta.name, coverUrl: s.meta.cover, uploaderName: item.title, folderId: '' } })}/>)}</div><NextPage query={result}/></>
+  return <><header className="large-page-heading"><div><h1>{item.title}</h1></div></header><div className="large-tabs" role="tablist" aria-label="UP主内容">{(['videos', 'seasons'] as const).map((t, i) => <button key={t} role="tab" aria-selected={tab === t} onClick={() => replace({ ...route, tab: t })}>{['视频', '合集'][i]}</button>)}</div>{tab === 'videos' && <form className="large-search" onSubmit={e => { e.preventDefault(); replace({ ...route, query: input.trim() }) }}><Search size={22}/><input data-primary-focus aria-label="搜索这个UP主的视频" placeholder="搜索这个UP主的视频" value={input} onChange={e => setInput(e.target.value)}/><button type="submit">搜索</button></form>}<Failure error={result.error} retry={() => void result.refetch()}/><div className="large-grid">{tab === 'videos' ? result.data?.pages.flatMap(p => p.data.list?.vlist || []).map(v => <Card key={v.bvid} id={`video-${v.bvid}`} videoBvid={v.bvid} title={v.title} subtitle={v.created ? new Date(v.created * 1000).toLocaleDateString() : ''} cover={v.pic} onClick={() => navigate({ kind: 'collection', item: { bvid: v.bvid, title: v.title, coverUrl: v.pic, uploaderName: item.title, folderId: '' } })}/>) : result.data?.pages.flatMap(p => p.data.items_lists?.seasons_list || []).map(s => <Card key={s.meta.season_id} seasonReference={`season:${mid}:${s.meta.season_id}`} id={`season-${s.meta.season_id}`} title={s.meta.name} count={s.meta.total} subtitle={`${s.meta.total} 个视频`} cover={s.meta.cover} onClick={() => navigate({ kind: 'collection', item: { bvid: `season:${mid}:${s.meta.season_id}`, title: s.meta.name, coverUrl: s.meta.cover, uploaderName: item.title, folderId: '' } })}/>)}</div><NextPage query={result}/></>
 }
 function NextPage({ query }: { query: { hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => unknown } }) {
   return query.hasNextPage ? <button className="large-load-more" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? '正在加载…' : '加载更多'}</button> : null

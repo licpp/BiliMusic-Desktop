@@ -13,6 +13,8 @@ pub struct Usage {
     pub elapsed_ms: u64,
     pub retry_after_ms: u64,
     pub unauthorized: bool,
+    #[serde(skip)]
+    pub last_error_status: Option<u16>,
 }
 tokio::task_local! { static USAGE: Arc<Mutex<Usage>>; }
 pub async fn capture<T>(future: impl std::future::Future<Output = T>) -> (T, Usage) {
@@ -44,6 +46,7 @@ pub fn bridge_finished(status: Option<u16>) {
     update(|u| {
         if status.is_none_or(|s| s >= 400) {
             u.failed_requests += 1;
+            u.last_error_status = status;
         }
         if status.is_some_and(|s| matches!(s, 401 | 403)) {
             u.unauthorized = true;
@@ -142,6 +145,7 @@ pub async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response,
                 }
                 if status >= 400 {
                     u.failed_requests += 1;
+                    u.last_error_status = Some(status);
                 }
                 u.unauthorized |= matches!(status, 401 | 403);
                 if status == 429 || status == 503 {

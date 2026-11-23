@@ -91,16 +91,9 @@ pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
     tauri::async_runtime::spawn(async move {
         let payload = serde_json::from_str::<serde_json::Value>(&payload);
         let result = match &payload {
-            Ok(payload) => {
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
-                    crate::native_playback::resolve_with_guard(&app, payload.clone(), || {
-                        RESOLVE_REQUEST.load(Ordering::SeqCst) == token
-                    }),
-                )
-                .await
-                .unwrap_or_else(|_| Err(crate::native_playback::resolution_timeout()))
-            }
+            Ok(payload) => crate::native_playback::resolve_with_guard(&app, payload.clone(), || {
+                RESOLVE_REQUEST.load(Ordering::SeqCst) == token
+            }).await,
             Err(_) => Err(crate::interface::error::CommandError::validation("无效的后台播放请求")),
         };
         if RESOLVE_REQUEST.load(Ordering::SeqCst) != token {
@@ -119,4 +112,17 @@ pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
             }
         }
     });
+}
+
+
+#[napi_derive_ohos::napi]
+pub fn bilimusic_ohos_diagnostic(payload: String) {
+    if let (Some(app), Ok(event)) = (
+        APP.lock().ok().and_then(|handle| handle.clone()),
+        serde_json::from_str::<serde_json::Value>(&payload),
+    ) {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::native_playback::record_diagnostic(&app, &event);
+        });
+    }
 }

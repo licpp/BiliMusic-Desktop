@@ -15,8 +15,8 @@ import { PlaybackSettings } from '../features/lyrics/PlaybackSettings'
 import { DanmakuCanvas } from '../features/lyrics/DanmakuCanvas'
 import { useLargeDanmaku, LargeDanmakuSettings } from './danmaku'
 import { SyncedVideo } from '../features/lyrics/SyncedVideo'
+import { getDiagnosticVideoSource, videoSourceIssue } from '../features/lyrics/videoDiagnostics'
 import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
-import { playbackIssue } from '../features/player/playbackIssue'
 import { VideoStartup } from '../features/lyrics/VideoStartup'
 import { WordLyric } from '../features/lyrics/WordLyric'
 import { hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, type LyricSupplement } from '../domain/lrc'
@@ -25,7 +25,7 @@ import { useBiliSubtitles } from '../features/lyrics/useBiliSubtitles'
 import { useAutoLyricAlignment } from '../features/lyrics/useAutoLyricAlignment'
 import { clampBias } from '../features/lyrics/biasWriter'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
-import { commandErrorMessage, getStoredLyrics, enrichStoredLyricLines, getVideoSource, setStoredLyricsBias } from '../services/desktopApi'
+import { commandErrorMessage, getStoredLyrics, enrichStoredLyricLines, setStoredLyricsBias } from '../services/desktopApi'
 import type { StoredLyrics, LyricLine } from '../domain/lyrics'
 import { accountEpoch } from '../services/accountScope'
 import { controlMobileAudio } from '../features/player/mobileAudio'
@@ -55,7 +55,7 @@ export function LargeProgress() {
     window.addEventListener('bilimusic-back', back, true)
     return () => window.removeEventListener('bilimusic-back', back, true)
   }, [draft])
-  return <div className={`large-progress${draft !== null ? ' adjusting' : ''}`}><SeekRange duration={duration} trackKey={id} onSeek={seconds => { usePlayerStore.getState().seek(seconds); setDraft(null) }} data-focus="playback-seek" aria-label="播放进度" aria-valuetext={`${formatDuration(draft ?? position)}，${draft === null ? '按确定调整进度' : '左右调整，确定保存，返回取消'}`} min={0} max={Math.max(1, duration)} value={Math.min(duration, draft ?? position)} disabled={!duration} onBlur={() => setDraft(null)}
+  return <div className={`large-progress${draft !== null ? ' adjusting' : ''}`}><SeekRange duration={duration} trackKey={id} onSeek={seconds => { usePlayerStore.getState().seek(seconds); setDraft(null) }} data-focus="playback-seek" aria-label="播放进度" aria-valuetext={`${formatDuration(draft ?? position, duration >= 3600)}，${draft === null ? '按确定调整进度' : '左右调整，确定保存，返回取消'}`} min={0} max={Math.max(1, duration)} value={Math.min(duration, draft ?? position)} disabled={!duration} onBlur={() => setDraft(null)}
     onKeyDown={e => {
       const action = progressKeyAction(e.key, draft, position, duration, e.repeat)
       if (!action) return
@@ -63,7 +63,7 @@ export function LargeProgress() {
       e.preventDefault(); e.stopPropagation()
       if (action.kind === 'seek') { usePlayerStore.getState().seek(action.value); setDraft(null) }
       else setDraft(action.value)
-    }} onValueChange={value => { if (draft !== null) setDraft(value); else usePlayerStore.getState().seek(value) }}/><div><span>{formatDuration(draft ?? position)}</span><span>{draft !== null ? '确定保存 · 返回取消' : ''}</span><span>{formatDuration(duration)}</span></div></div>
+    }} onValueChange={value => { if (draft !== null) setDraft(value); else usePlayerStore.getState().seek(value) }}/><div><span>{formatDuration(draft ?? position, duration >= 3600)}</span><span>{draft !== null ? '确定保存 · 返回取消' : ''}</span><span>{formatDuration(duration)}</span></div></div>
 }
 
 export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navigate }: { onBack: () => void; onQueue: () => void; onFavorite: () => void; onMore: (track: Track) => void; onSleep: () => void; navigate: Navigate }) {
@@ -114,16 +114,16 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
   }, [fullscreen, shown, settings])
   const [readyUrl, setReadyUrl] = useState('')
   const ready = useCallback((url: string) => setReadyUrl(url), [])
-  const source = useQuery({ queryKey: accountQueryKey('large-video', current?.id, revision), queryFn: () => getVideoSource(current!.source.bvid, current!.source.cid), enabled: video && Boolean(current && current.source.cid > 0), retry: false })
+  const source = useQuery({ queryKey: accountQueryKey('large-video', current?.id, revision), queryFn: () => getDiagnosticVideoSource(current!.source.bvid, current!.source.cid), enabled: video && Boolean(current && current.source.cid > 0), retry: false })
   const videoIntent = useRef('')
   videoIntent.current = JSON.stringify([accountEpoch(), current?.id, revision, video])
   const reloadVideo = useCallback(async (compatible: boolean) => {
     const epoch = accountEpoch(), intent = videoIntent.current
-    const fresh = await getVideoSource(current!.source.bvid, current!.source.cid, true, compatible || isAndroid)
+    const fresh = await getDiagnosticVideoSource(current!.source.bvid, current!.source.cid, true, compatible || isAndroid, source.data?.diagnostic)
     if (epoch !== accountEpoch() || intent !== videoIntent.current) return
     sourceClient.setQueryData(accountKeyAt(epoch, 'large-video', current!.id, revision), fresh)
     setReadyUrl('')
-  }, [current?.id, revision, sourceClient])
+  }, [current?.id, revision, sourceClient, source.data?.diagnostic])
   const videoReady = video && Boolean(source.data && readyUrl === source.data.videoUrl)
   const danmaku = useLargeDanmaku(current?.source.cid || 0, videoReady)
   useEffect(() => { if (!fullscreen || !isAndroid) return; void controlMobileAudio('videoFullscreen', 1).catch(() => undefined); return () => { void controlMobileAudio('videoFullscreen', 0).catch(() => undefined) } }, [fullscreen])
@@ -136,8 +136,8 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
   useEffect(() => { if (!fullscreen || settings) return; const timer = window.setTimeout(() => { setShown(false) }, 3500); return () => clearTimeout(timer) }, [fullscreen, settings, activity])
   const reveal = () => { setShown(true); setActivity(n => n + 1) }
   if (!current) return null
-  const videoFailure = source.error && playbackIssue('video-source', source.error, '暂时无法获取视频线路')
-  const frame = <>{source.data && <SyncedVideo key={current.id} onReload={reloadVideo} src={source.data.videoUrl} poster={current.coverUrl} track={current} codecs={source.data.codecs} active={video} onReady={ready}/>}
+  const videoFailure = source.error && videoSourceIssue(source.error)
+  const frame = <>{source.data && <SyncedVideo key={current.id} onReload={reloadVideo} src={source.data.videoUrl} poster={current.coverUrl} track={current} codecs={source.data.codecs} diagnostic={source.data.diagnostic} active={video} onReady={ready}/>}
     {videoFailure && <div className="video-error" role="alert"><PlaybackErrorText issue={videoFailure}/><div className="playback-issue-actions"><button type="button" onClick={() => void source.refetch()}>重试</button><CopyPlaybackDiagnostics issue={videoFailure} track={current}/></div></div>}
     {!source.data && !source.error && <VideoStartup key={current.id} poster={current.coverUrl} message="正在准备画面…"/>}</>
   return <div ref={player} className={`large-player${fullscreen ? ' is-fullscreen' : ''}`} data-density={density} data-wide-media={wideMedia || undefined} data-media-error={error ? true : undefined}>

@@ -7,7 +7,7 @@ import React from 'react'
 import {renderToStaticMarkup} from 'react-dom/server'
 const stubComponents=['WindowCloseSettings','ShortcutSettings','FloatingLyricsSettings','UpdateSettings','PlaybackCacheSettings','ResumeSettings','LoudnessSettings','SyncSettings','AndroidDownloadDestinationField','SettingsDisclosure']
 const mocks={
- platform:`export const isIOS=globalThis.titleLyricsTestPlatform==='ios';export const isAndroid=globalThis.titleLyricsTestPlatform==='android';export const isOHOS=globalThis.titleLyricsTestPlatform==='ohos';export const isMobile=isIOS||isAndroid||isOHOS;`,
+ platform:`export const isIOS=globalThis.titleLyricsTestPlatform==='ios';export const isAndroid=globalThis.titleLyricsTestPlatform==='android';export const isOHOS=globalThis.titleLyricsTestPlatform==='ohos';export const isMobile=isIOS||isAndroid||isOHOS;export const isLargeScreen=false;`,
  query:'export const useQuery=()=>({});',keys:'export const accountQueryKey=(...args)=>args;',
  theme:"export const useThemeStore=select=>select({theme:'light',setTheme(){}});",
  attention:'export const useSyncAttention=select=>select({library:null,statistics:null,reveal:0});',

@@ -1,6 +1,6 @@
 [package]
 name = "bilimusic-desktop"
-version = "0.4.2"
+version = "0.4.3"
 description = "A clean-room desktop music client"
 authors = ["BiliMusic Contributors"]
 edition = "2024"
@@ -61,6 +61,8 @@ objc2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+winreg = "0.55"
+webview2-com = "0.38.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 windows = { version = "0.61", features = [
     "Win32_Graphics_Dwm",

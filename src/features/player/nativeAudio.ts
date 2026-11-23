@@ -39,9 +39,9 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
     if (!ready) ready = (bind ? bind(receive) : addPluginListener<State>(plugin, 'state', receive)).catch((error) => { ready = undefined; throw error })
     return ready
   }
-  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0) {
+  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0, diagnosticId?: string) {
     await ready
-    await invoke(`plugin:${plugin}|play`, { ...mediaMetadata(track), loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
+    await invoke(`plugin:${plugin}|play`, { ...mediaMetadata(track), ...(diagnosticId ? { diagnosticId } : {}), loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
   }
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
   const control = (action: NativeControlAction, value = 0, settingsRevision?: number) => invoke(`plugin:${plugin}|control`, { action, value, ...(settingsRevision !== undefined ? {settingsRevision} : {}) })

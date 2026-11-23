@@ -3,6 +3,9 @@ use super::{
     scheduler::{self, Domain, Hint, Saved},
     statistics, traffic,
 };
+use crate::infrastructure::diagnostics::{
+    Area, Diagnostics, Domain as DiagnosticDomain, Outcome as DiagnosticOutcome, Step, Trace,
+};
 use rusqlite::OptionalExtension;
 use tauri::{AppHandle, State};
 
@@ -35,7 +38,7 @@ pub(super) fn scope_key(c: &rusqlite::Connection, cfg: &super::Config) -> Result
     )
 }
 
-fn context(db: &Database, state: &SyncState) -> Result<(String, String), String> {
+fn context(db: &Database, state: &SyncState) -> Result<(String, String, String), String> {
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
     let scope = context_key(db, &c)?;
     let session = crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?;
@@ -47,6 +50,7 @@ fn context(db: &Database, state: &SyncState) -> Result<(String, String), String>
         )
         .optional()
         .map_err(|e| e.to_string())?;
+    let profile = crate::interface::media::profile(db);
     drop(c);
     let mut runtime = state.scheduler.lock().map_err(|_| "同步调度正忙")?;
     runtime.restore(
@@ -57,10 +61,11 @@ fn context(db: &Database, state: &SyncState) -> Result<(String, String), String>
         scheduler::now(),
         scheduler::wall(),
     );
-    Ok((scope, session))
+    Ok((scope, session, profile))
 }
 
 pub async fn run<T>(
+    diagnostics: Option<Diagnostics>,
     db: &Database,
     state: &SyncState,
     domain: Domain,
@@ -77,26 +82,65 @@ pub async fn run<T>(
     } else {
         state.exchange_gate.lock().await
     };
-    let (scope, session) = context(db, state)?;
+    let (scope, session, profile) = context(db, state)?;
+    let mut trace = Trace::with_journal(diagnostics, profile, Area::Sync);
+    trace.event.domain = Some(match domain {
+        Domain::Library => DiagnosticDomain::Library,
+        Domain::Statistics => DiagnosticDomain::Statistics,
+    });
     {
         let mut runtime = state.scheduler.lock().map_err(|_| "同步调度正忙")?;
         if automatic && !runtime.due(domain, scheduler::now()) {
             return Ok(None);
         }
         if !runtime.manual_allowed(scheduler::now()) {
+            trace.emit(
+                Step::Backoff,
+                DiagnosticOutcome::Skipped,
+                Some("rate_limited"),
+            );
             return Err("同步服务正在限流，请稍后重试".into());
         }
         runtime.start(domain, scheduler::now());
     }
+    trace.emit(Step::Exchange, DiagnosticOutcome::Started, None);
     let (result, usage) = traffic::capture(future).await;
-    let (changed, conflict, partial_failure) =
-        result.as_ref().map(inspect).unwrap_or((false, false, false));
+    trace.event.bytes = Some(usage.uploaded_bytes.saturating_add(usage.downloaded_bytes));
+    trace.event.http = usage.last_error_status;
+    let (changed, conflict, partial_failure) = result
+        .as_ref()
+        .map(inspect)
+        .unwrap_or((false, false, false));
     let failed = result.is_err() || partial_failure;
     // Account/connection replacement invalidates the completion. Never write the new profile.
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
-    if context_key(db, &c).ok().as_deref() == Some(&scope)
-        && crate::infrastructure::database::account_session(&c).ok().as_deref() == Some(&session)
-    {
+    let same_scope = context_key(db, &c).ok().as_deref() == Some(&scope)
+        && crate::infrastructure::database::account_session(&c)
+            .ok()
+            .as_deref()
+            == Some(&session);
+    let (status, code) = if !same_scope {
+        (DiagnosticOutcome::Cancelled, Some("account_changed"))
+    } else if usage.retry_after_ms > 0 {
+        (DiagnosticOutcome::Failed, Some("rate_limited"))
+    } else if failed {
+        (
+            DiagnosticOutcome::Failed,
+            Some(if usage.unauthorized {
+                "account"
+            } else if partial_failure {
+                "partial"
+            } else {
+                "transfer_failed"
+            }),
+        )
+    } else if conflict {
+        (DiagnosticOutcome::Skipped, Some("conflict"))
+    } else {
+        (DiagnosticOutcome::Succeeded, None)
+    };
+    trace.emit(Step::Exchange, status, code);
+    if same_scope {
         let saved = {
             let mut runtime = state.scheduler.lock().map_err(|_| "同步调度正忙")?;
             if runtime.scope() != scope {
@@ -170,7 +214,10 @@ pub async fn sync_background(
     hint: Hint,
     bulk_import: Option<bool>,
 ) -> Result<Report, String> {
-    super::v2_net::discovery_round(background_inner(app, database, state, hint, bulk_import)).await
+    // The WebView bridge schedules this future on a small native stack.
+    // Construct the sync job on the async executor when the command is polled.
+    let job = Box::pin(background_inner(app, database, state, hint, bulk_import));
+    super::v2_net::discovery_round(job).await
 }
 async fn background_inner(
     app: AppHandle,
@@ -222,6 +269,36 @@ async fn background_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_command_futures_fit_the_mobile_ipc_stack() {
+        fn future_size<Args, F>(_: impl FnOnce(Args) -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+
+        let sizes = [
+            (
+                "background",
+                future_size(|(app, db, state)| {
+                    sync_background(app, db, state, Hint::Foreground, None)
+                }),
+            ),
+            (
+                "library",
+                future_size(|(app, db, state)| {
+                    super::super::sync_now(app, db, state, None, None, None)
+                }),
+            ),
+            (
+                "statistics",
+                future_size(|(app, db, state)| statistics::listening_sync(app, db, state, None)),
+            ),
+        ];
+        for (command, size) in sizes {
+            assert!(size <= 4096, "{command} sync retains {size} bytes in the IPC future");
+        }
+    }
+
     fn fixture() -> (Database, SyncState) {
         let dir = std::env::temp_dir().join(format!("sync-schedule-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -248,6 +325,7 @@ mod tests {
     async fn conflicts_block_only_library_and_failed_attempts_are_persisted() {
         let (db, state) = fixture();
         let value = run(
+            None,
             &db,
             &state,
             Domain::Library,
@@ -264,6 +342,7 @@ mod tests {
         assert_eq!(value, Some(true));
         assert!(
             run(
+                None,
                 &db,
                 &state,
                 Domain::Library,
@@ -281,6 +360,7 @@ mod tests {
         );
         assert!(
             run(
+                None,
                 &db,
                 &state,
                 Domain::Statistics,
@@ -313,6 +393,7 @@ mod tests {
         let (db, state) = fixture();
         assert!(
             run::<()>(
+                None,
                 &db,
                 &state,
                 Domain::Library,
@@ -330,6 +411,7 @@ mod tests {
         let restarted = SyncState::default();
         assert!(
             run(
+                None,
                 &db,
                 &restarted,
                 Domain::Statistics,
@@ -347,6 +429,7 @@ mod tests {
         );
         assert!(
             run(
+                None,
                 &db,
                 &restarted,
                 Domain::Statistics,
@@ -364,6 +447,7 @@ mod tests {
     async fn completion_for_previous_profile_never_writes_new_profile_metadata() {
         let (db, state) = fixture();
         run(
+            None,
             &db,
             &state,
             Domain::Library,
@@ -402,6 +486,7 @@ mod tests {
     async fn first_upgrade_establishing_baseline_target_keeps_its_traffic_and_cadence() {
         let (db, state) = fixture();
         run(
+            None,
             &db,
             &state,
             Domain::Library,
@@ -423,6 +508,7 @@ mod tests {
         .unwrap();
         assert!(
             run(
+                None,
                 &db,
                 &state,
                 Domain::Library,

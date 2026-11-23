@@ -61,18 +61,14 @@ pub unsafe extern "C" fn bilimusic_ios_resolve(request: i64, raw: *const c_char)
     };
     tauri::async_runtime::spawn(async move {
         let payload = serde_json::from_slice::<Value>(&track);
-        let result = match &payload {
-            Ok(track) => {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
-                    crate::native_playback::resolve(&app, track.clone()),
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => Err(crate::native_playback::resolution_timeout()),
-                }
+        if let Ok(event) = &payload {
+            if event["kind"] == "diagnostic" {
+                crate::native_playback::record_diagnostic(&app, event);
+                return;
             }
+        }
+        let result = match &payload {
+            Ok(track) => crate::native_playback::resolve(&app, track.clone()).await,
             Err(_) => Err(crate::interface::error::CommandError::validation("歌曲信息无效")),
         };
         let json = crate::native_playback::resolution_response(result);
@@ -132,4 +128,15 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
             }
         }
     });
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bilimusic_ios_diagnostic_exit(kind: i32, at: u64) {
+    use crate::infrastructure::diagnostics::{Diagnostics, Step};
+    if let Some(app) = APP.get() {
+        if let Some(diagnostics) = app.try_state::<Diagnostics>() {
+            diagnostics.device_failure(Step::ProcessExit, None, format!("ios_crash:{kind}"), at);
+        }
+    }
 }

@@ -14,7 +14,7 @@ import { isMobile } from '../../services/platform'
 import { Fragment, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Eye, ListChecks, Play } from 'lucide-react'
 import type { Track } from '../../domain/track'
-import { formatDuration } from '../../shared/time'
+import { formatDuration, formatTrackDuration } from '../../shared/time'
 import { PlayingMark } from '../../shared/PlayingMark'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
@@ -59,7 +59,7 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
   const activeTrack = visibleTracks.find(track => track.id === currentId)
     ?? (videoCollection ? visibleTracks.find(track => track.source.bvid === currentBvid) : undefined)
   const playingIndex = locateCurrent && activeTrack ? visibleTracks.indexOf(activeTrack) : -1
-  const rendered = useListRows(visibleTracks, queueSource?.collectionRef || tracks[0]?.source.bvid || '', { through: playingIndex })
+  const rendered = useListRows(visibleTracks, `video-parts:${queueSource?.collectionRef || tracks[0]?.source.bvid || ''}`, { through: playingIndex })
   useLocateCurrentRow(root, locateCurrent, activeTrack?.id)
   const byId = useMemo(() => new Map(playbackTracks.map(track => [track.id, track])), [playbackTracks])
   const selection = useTrackSelection(videoCollection ? visibleTracks.map(track => byId.get(track.id) ?? track) : visibleTracks)
@@ -113,7 +113,7 @@ function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, vi
     }}>
     {selecting ? <label className="video-part-select">
       <input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={checked} onChange={onSelect}/>
-      {track.coverUrl || videoCollection ? <span className="video-part-select-art"><Artwork src={track.coverUrl}/>{videoCollection && <CoverCount count={count}/>}</span> : <span>{label}</span>}<strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small>
+      {track.coverUrl || videoCollection ? <span className="video-part-select-art"><Artwork src={track.coverUrl}/>{videoCollection && <CoverCount count={count}/>}</span> : <span>{label}</span>}<strong>{track.title}</strong><small>{formatTrackDuration(track.durationSeconds)}</small>
     </label> : <>
       <button type="button" className="video-part-play" disabled={hidden || unavailable} aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
         <span className="video-part-index">{videoCollection ? <><Artwork src={track.coverUrl}/><CoverCount count={count}/><VideoAccessBadge access={access} onCover/></> : active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta">{videoCollection && <PublishedDate value={track.publishedAt}/>}{videoCollection && track.playCount !== undefined && <small className="video-part-views">{formatAudienceCount(track.playCount)} 次播放</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>

@@ -224,13 +224,6 @@
   }
 }
 
-@media (min-width: 740px) and (max-width: 960px) {
-  :root[data-layout="mobile"] .search-results .search-hit-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 16px;
-  }
-}
-
 @media (min-width: 800px) and (max-width: 960px) {
   :root[data-layout="mobile"] .playlist-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -578,13 +571,5 @@
   }
   :root[data-platform="ohos"][data-ohos-edge-to-edge] .mobile-page {
     padding-top: 0;
-  }
-}
-
-/* Two-column search hits on spacious landscape tablets */
-@media (min-width: 1140px) {
-  :root[data-layout="mobile"] .search-results .search-hit-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 18px;
   }
 }

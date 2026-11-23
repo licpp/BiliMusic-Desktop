@@ -6,6 +6,16 @@ use tauri::{
 tauri::ios_plugin_binding!(init_plugin_ios_player);
 struct Credentials<R: Runtime>(tauri::plugin::PluginHandle<R>);
 
+pub async fn diagnostic_environment<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<serde_json::Value> {
+    app.state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("diagnostic_environment", serde_json::json!({}))
+        .await
+        .ok()
+}
+
 pub fn secret<R: Runtime>(
     app: &tauri::AppHandle<R>,
     key: &str,

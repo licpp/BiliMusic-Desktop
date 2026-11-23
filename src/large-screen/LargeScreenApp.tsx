@@ -16,11 +16,12 @@ import { commandErrorMessage, listPlaylists, listRecentTracks, saveLibraryTrack,
 import { accountEpoch } from '../services/accountScope'
 import { hydrateVisibleTracks } from '../services/sync'
 import { useSyncAttention } from '../services/syncAttention'
-import { usePlayerStore } from '../features/player/playerStore'
+import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/playerStore'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { controlMobileAudio } from '../features/player/mobileAudio'
 import { isAndroid } from '../services/platform'
 import { LargeSleep } from './Sleep'
+import { formatDuration } from '../shared/time'
 import { hydrateSourceTitles } from '../services/sourceTitles'
 import { installDirectionalFocus } from './focus'
 import { Card, Failure, LargeLibrary, LargePlaylist, LargeCollection, LargeCreator, LargeSearch, TrackRows, type Route, type LibraryTab } from './Library'
@@ -72,6 +73,7 @@ export function LargeScreenApp() {
     if (main.current) main.current.scrollTop = 0
     if (initialFocus.current) { initialFocus.current = false; main.current?.querySelector<HTMLElement>('button,input,summary')?.focus({ preventScroll: true }) }
   }, [route])
+  useEffect(() => { void startPlaybackOnLaunch().catch(() => undefined) }, [])
   useEffect(() => { document.getElementById('app-bootstrap')?.remove(); document.querySelector<HTMLElement>('[data-focus="nav-home"]')?.focus(); return installDirectionalFocus({ onEdit: () => { if (isAndroid) void controlMobileAudio('keyboard', 1).catch(() => undefined) } }) }, [])
   useEffect(connectMediaSession, [])
   useEffect(() => { if (queue.length) void hydrateSourceTitles(queue.slice(0, 50).map(t => t.id), client).catch(() => undefined) }, [queue, client])
@@ -145,7 +147,7 @@ function LargeHome({ navigate, onMore }: { navigate: (r: Route) => void; onMore:
 }
 function ResumeCard({ navigate }: { navigate: (r: Route) => void }) {
   const current = usePlayerStore(s => s.current), progress = usePlayerStore(s => s.progressSeconds), status = usePlayerStore(s => s.status)
-  return <section className="large-resume large-surface"><Artwork adaptAspect src={current?.coverUrl}/><div><small>{current ? `上次听到 ${Math.floor(progress / 60)}:${String(Math.floor(progress % 60)).padStart(2, '0')}` : '你的音乐世界'}</small><h2>{current?.displayTitle || current?.title || '从喜欢的歌开始'}</h2><p>{current?.artist || current?.source.uploaderName || '搜索、收藏，或同步已有音乐库'}</p></div><button className="large-primary" data-focus="resume" data-primary-focus onClick={() => { if (current) { navigate({ kind: 'player' }); if (status !== 'playing' && status !== 'buffering' && status !== 'resolving') void usePlayerStore.getState().toggle() } else navigate({ kind: 'search' }) }}><Play fill="currentColor"/>{current ? status === 'playing' ? '正在播放' : '继续播放' : '寻找音乐'}</button></section>
+  return <section className="large-resume large-surface"><Artwork adaptAspect src={current?.coverUrl}/><div><small>{current ? `上次听到 ${formatDuration(progress)}` : '你的音乐世界'}</small><h2>{current?.displayTitle || current?.title || '从喜欢的歌开始'}</h2><p>{current?.artist || current?.source.uploaderName || '搜索、收藏，或同步已有音乐库'}</p></div><button className="large-primary" data-focus="resume" data-primary-focus onClick={() => { if (current) { navigate({ kind: 'player' }); if (status !== 'playing' && status !== 'buffering' && status !== 'resolving') void usePlayerStore.getState().toggle() } else navigate({ kind: 'search' }) }}><Play fill="currentColor"/>{current ? status === 'playing' ? '正在播放' : '继续播放' : '寻找音乐'}</button></section>
 }
 function LargeQueue({ onClose, onMore }: { onClose: () => void; onMore: (t: Track) => void }) {
   const queue = usePlayerStore(s => s.queue), source = usePlayerStore(s => s.queueSource), [confirm, setConfirm] = useState(false)

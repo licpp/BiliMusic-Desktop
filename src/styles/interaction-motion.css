@@ -12,14 +12,21 @@
   transform: translateY(var(--panel-drag-y,0px)) scale(1);
   transition-duration: 260ms;
 }
-@media (min-width: 961px) {
-  :root:not([data-layout="mobile"]) .lyrics-view :is(.lyrics-cover,.lyrics-track-meta) {
-    opacity: 0;
-    transform: translateY(10px);
-    transition: transform 300ms cubic-bezier(.22,1,.36,1), opacity 220ms ease;
-  }
-  :root:not([data-layout="mobile"]) .lyrics-view[data-panel-open] .lyrics-cover { opacity: 1; transform: none; transition-delay: 40ms; }
-  :root:not([data-layout="mobile"]) .lyrics-view[data-panel-open] .lyrics-track-meta { opacity: 1; transform: none; transition-delay: 85ms; }
+.desktop-lyrics-surface {
+  position:fixed;
+  inset:0;
+  z-index:40;
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr) 80px;
+  opacity:0;
+  pointer-events:none;
+}
+.desktop-lyrics-surface[data-panel-open] { opacity:1;pointer-events:auto; }
+.desktop-lyrics-surface > .lyrics-view { opacity:1;transform:none;transition:none; }
+@media (prefers-reduced-motion:no-preference) {
+  .desktop-lyrics-surface { will-change:opacity;transition:opacity 190ms ease-out; }
+  .desktop-lyrics-surface[data-panel-open] { transition-duration:210ms; }
 }
 .collection-dialog-layer[data-closing] {
   opacity: 0;
@@ -38,7 +45,7 @@
 }
 :root[data-layout="mobile"] .lyrics-view:not([data-panel-open]) { transform:translateY(var(--lyrics-exit-y,38px)); }
 :root[data-layout="mobile"] .lyrics-view[data-panel-open] { transition-duration:245ms; }
-.lyrics-view:not([data-panel-open]), .comments-sheet-overlay:not([data-open]) { pointer-events:none; }
+:root[data-layout="mobile"] .lyrics-view:not([data-panel-open]), .comments-sheet-overlay:not([data-open]) { pointer-events:none; }
 :root[data-layout="mobile"] :is(.lyrics-view .lyrics-close,.comments-sheet .comments-sheet-handle,.collection-dialog .collection-sheet-handle,.action-menu-panel .touch-sheet-handle) { touch-action:none; }
 .app-shell.lyrics-immersive > .immersive-backdrop { opacity:0;transition:opacity 160ms ease; }
 .app-shell.lyrics-immersive > .immersive-backdrop[data-panel-open] { opacity:1;transition-duration:220ms; }

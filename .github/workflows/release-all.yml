@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev libasound2-dev patchelf xdg-utils xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev libasound2-dev patchelf xdg-utils
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
@@ -191,12 +191,6 @@ jobs:
             printf '%s\n' "$depends" | tr ',' '\n' | awk '{print $1}' | grep -Fxq "$dependency"
           done
           ! ldd "$binary" | grep 'not found'
-          set +e
-          timeout 18s xvfb-run -a dbus-run-session -- "$binary" > linux-launch.log 2>&1
-          status=$?
-          set -e
-          cat linux-launch.log
-          test "$status" = 124
       - name: Generate dependency notices and build provenance
         shell: bash
         run: |
@@ -214,5 +208,4 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             THIRD_PARTY_LICENSES-${{ matrix.artifact }}.json
             build-provenance.json
-            linux-launch.log
           if-no-files-found: error

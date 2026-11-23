@@ -2,12 +2,13 @@
 use crate::domain::source_title::{SeasonSummary, SourceTitleContext};
 use crate::infrastructure::{
     database::Database,
+    diagnostics::{Area, Engine, Outcome, Source, Step, Trace},
     media_proxy::MediaProxy,
     providers::bilibili::{BilibiliProvider, VideoParts},
     repositories::library::{LibraryRepository, TrackInput},
 };
 use crate::interface::commands::{
-    compatible_playback_plan, library_record_play, track_playback_plan,
+    compatible_playback_plan, library_record_play, track_playback_plan, validate_track,
 };
 use crate::interface::error::CommandError;
 use serde_json::{Value, json};
@@ -203,6 +204,28 @@ pub(crate) async fn resolve_with_guard(
     payload: Value,
     current: impl Fn() -> bool,
 ) -> Result<Value, CommandError> {
+    let mut trace = None;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        resolve_inner(app, payload, current, &mut trace),
+    ).await.unwrap_or_else(|_| Err(resolution_timeout()));
+    if let Some(trace) = trace {
+        let (outcome, code) = match &result {
+            Ok(result) if result["skip"] == true => (Outcome::Skipped, None),
+            Ok(_) => (Outcome::Succeeded, None),
+            Err(error) if error.code == "account_changed" => (Outcome::Cancelled, Some(error.code)),
+            Err(error) => (Outcome::Failed, Some(error.code)),
+        };
+        trace.emit(Step::Resolve, outcome, code);
+    }
+    result
+}
+async fn resolve_inner(
+    app: &tauri::AppHandle,
+    payload: Value,
+    current: impl Fn() -> bool,
+    diagnostic: &mut Option<Trace>,
+) -> Result<Value, CommandError> {
     let expected_session = payload["accountSession"].as_str();
     let mut track = payload["track"].clone();
     // Check briefly under the account gate; sync network requests must not block playback.
@@ -210,6 +233,18 @@ pub(crate) async fn resolve_with_guard(
     let gate = sync.account_gate.lock().await;
     let profile = validate_scope(app, payload["profile"].as_str(), expected_session, &current)?;
     drop(gate);
+    let mut trace = Trace::for_profile(app, profile.clone(), Area::Playback);
+    if let Some(id) = payload["diagnosticId"].as_str() {
+        trace.event.operation = id.to_owned();
+    }
+    trace.event.bvid = track["source"]["bvid"].as_str().map(str::to_owned);
+    trace.event.cid = track["source"]["cid"].as_u64();
+    trace.event.engine = Some(if cfg!(target_os = "android") { Engine::AndroidMediaPlayer }
+        else if cfg!(target_os = "ios") { Engine::AvPlayer } else { Engine::OhosAvplayer });
+    trace.event.initial_code = payload["initialErrorCode"].as_str().map(str::to_owned);
+    if track["importedEntry"].is_object() { trace.event.origin = Some(Source::Imported); }
+    trace.emit(Step::Resolve, Outcome::Started, None);
+    let trace = diagnostic.insert(trace);
     let entry_id = track["id"].as_str().unwrap_or_default().to_owned();
     let mut parts = Vec::new();
     if track["resolveParts"].as_bool() == Some(true) {
@@ -245,8 +280,21 @@ pub(crate) async fn resolve_with_guard(
                     season: season.filter(|_| !legacy_catalog),
                 })
             };
-            if let Ok(Ok(video)) =
-                tokio::time::timeout(std::time::Duration::from_secs(6), resolve_parts).await
+            let video = match tokio::time::timeout(std::time::Duration::from_secs(10), resolve_parts).await {
+                Ok(Ok(video)) => video,
+                Ok(Err(error)) => {
+                    let _gate = sync.account_gate.lock().await;
+                    validate_scope(app, Some(&profile), expected_session, &current)?;
+                    let error = CommandError::audio_source(error);
+                    if error.code == "source_expired" { return Ok(visibility_skip(&entry_id)); }
+                    return Err(error);
+                }
+                Err(_) => {
+                    let _gate = sync.account_gate.lock().await;
+                    validate_scope(app, Some(&profile), expected_session, &current)?;
+                    return Err(CommandError { code: "source_timeout", message: "获取分 P 超时".into(), retryable: true });
+                }
+            };
             {
                 let chapter = video.season.is_some()
                     || !legacy_catalog && track["chapterContext"].as_bool().unwrap_or(false);
@@ -311,17 +359,55 @@ pub(crate) async fn resolve_with_guard(
         }
     }
     let refresh = payload["refresh"].as_bool() == Some(true);
+    let offline = payload["offlineOnly"].as_bool();
     let stored = if refresh {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
-        LibraryRepository::get(&connection, &entry_id)
-            .map_err(CommandError::database)?
-            .ok_or_else(|| CommandError::validation("歌曲不存在"))?
+        let existing = {
+            let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+            LibraryRepository::get(&connection, &entry_id).map_err(CommandError::database)?
+        };
+        drop(gate);
+        if let Some(record) = existing {
+            record
+        } else {
+            trace.emit(Step::TrackRecord, Outcome::Started, Some("track_missing"));
+            if offline == Some(true) { return Ok(visibility_skip(&entry_id)); }
+            let mut source = input(&track).map_err(CommandError::validation)?;
+            validate_track(&source)?;
+            let pages = app.state::<BilibiliProvider>().video_pagelist(&source.bvid).await;
+            let _gate = sync.account_gate.lock().await;
+            validate_scope(app, Some(&profile), expected_session, &current)?;
+            let pages = match pages {
+                Ok(pages) => pages,
+                Err(error) => {
+                    let error = CommandError::audio_source(error);
+                    if error.code == "source_expired" { return Ok(visibility_skip(&entry_id)); }
+                    return Err(error);
+                }
+            };
+            let part = pages.iter().find(|part| part.cid == source.cid)
+                .ok_or_else(|| playback_error("cid_mismatch", "播放队列中的分 P 已变更，请重新选择"))?;
+            source.page = part.page as i32;
+            if part.duration_seconds > 0 { source.duration_seconds = part.duration_seconds.min(i64::MAX as u64) as i64; }
+            let mut connection = db.0.lock().map_err(CommandError::database)?;
+            if !visibility_allowed(&connection, &payload, &track).map_err(CommandError::database)? {
+                return Ok(visibility_skip(&entry_id));
+            }
+            // A concurrent sync may already have restored this record and its overrides.
+            match LibraryRepository::get(&connection, &entry_id).map_err(CommandError::database)? {
+                Some(record) => record,
+                None => LibraryRepository::upsert(&mut connection, &source).map_err(CommandError::database)?,
+            }
+        }
     } else {
-        library_record_play(app.state::<Database>(), input(&track).map_err(CommandError::validation)?)?
+        let record = library_record_play(app.state::<Database>(), input(&track).map_err(CommandError::validation)?)?;
+        drop(gate);
+        record
     };
-    drop(gate);
-    let offline = payload["offlineOnly"].as_bool();
+    trace.event.bvid = Some(stored.bvid.clone());
+    trace.event.cid = u64::try_from(stored.cid).ok();
+    trace.emit(Step::TrackRecord, Outcome::Succeeded, None);
+    trace.emit(Step::Source, Outcome::Started, None);
     let plan = if cfg!(target_os = "android")
         && refresh
         && offline != Some(true)
@@ -350,9 +436,20 @@ pub(crate) async fn resolve_with_guard(
     validate_scope(app, Some(&profile), expected_session, &current)?;
     let plan = match plan {
         Ok(plan) => plan,
-        Err(error) if error.code == "offline_unavailable" => return Ok(visibility_skip(&entry_id)),
-        Err(error) => return Err(error),
+        Err(error) if matches!(error.code, "offline_unavailable" | "source_expired") => {
+            trace.emit(Step::Source, Outcome::Skipped, Some(error.code));
+            return Ok(visibility_skip(&entry_id));
+        }
+        Err(error) => {
+            trace.emit(Step::Source, Outcome::Failed, Some(error.code));
+            return Err(error);
+        }
     };
+    trace.event.source = Some(plan.source);
+    trace.event.codec = plan.codec.clone();
+    trace.event.requested_quality = plan.requested_quality;
+    trace.event.actual_quality = plan.actual_quality;
+    trace.emit(Step::Source, Outcome::Succeeded, None);
     {
         let db = app.state::<Database>();
         let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
@@ -599,4 +696,25 @@ mod visibility_tests {
             );
         }
     }
+}
+
+
+pub(crate) fn record_diagnostic(app: &tauri::AppHandle, payload: &Value) {
+    use crate::infrastructure::{
+        database::account_session,
+        diagnostics::{Area, Diagnostics, Input},
+    };
+    let Some(expected) = payload["accountSession"].as_str() else { return };
+    let expected_profile = payload["profile"].as_str();
+    let Ok(event) = serde_json::from_value::<Input>(payload["event"].clone()) else { return };
+    if event.area != Area::Playback { return }
+    let database = app.state::<Database>();
+    let Ok(connection) = database.0.lock() else { return };
+    let Ok(owner) = current_profile(app) else { return };
+    if account_session(&connection).ok().as_deref() != Some(expected)
+        || expected_profile.is_some_and(|profile| profile != owner)
+    {
+        return;
+    }
+    app.state::<Diagnostics>().record(Some(owner), event);
 }

@@ -255,6 +255,25 @@ fn paged_season_tracks(mut archives: Vec<Value>, raw: Option<&Value>) -> (Vec<Se
     (tracks, unavailable)
 }
 
+pub(super) fn usable_season_cover(cover: &str) -> bool {
+    !cover.trim().is_empty() && !cover.contains("viedeo_material_default")
+}
+
+pub(super) fn first_archive_cover(archives: &Value) -> Option<&str> {
+    archives.as_array()?.iter()
+        .filter_map(|archive| archive["pic"].as_str())
+        .find(|cover| usable_season_cover(cover))
+}
+
+fn season_cover(mut summary: SeasonSummary, tracks: &[SeasonTrack]) -> SeasonSummary {
+    if !usable_season_cover(&summary.cover_url)
+        && let Some(track) = tracks.iter().find(|track| usable_season_cover(&track.cover_url))
+    {
+        summary.cover_url = track.cover_url.clone();
+    }
+    summary
+}
+
 pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) -> Option<Season> {
     let total = raw["ep_count"]
         .as_u64()
@@ -276,7 +295,7 @@ pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) 
         return None;
     }
     Some(Season {
-        summary: summary.clone(),
+        summary: season_cover(summary.clone(), &tracks),
         sections: season_sections(raw, &tracks),
         tracks,
         unavailable: 0,
@@ -478,7 +497,17 @@ impl BilibiliProvider {
                 .map_err(|_| ProviderError::Api {
                     code: -1,
                     message: "获取分 P 超时".into(),
-                })??;
+                })?;
+                let rows = match rows {
+                    Err(error @ ProviderError::Api { code: -404, .. }) => {
+                        match tokio::time::timeout(Duration::from_secs(3), self.video_detail(bvid)).await {
+                            Ok(Err(confirmed @ ProviderError::Api { code: 62002, .. })) => return Err(confirmed),
+                            Ok(Ok(detail)) => detail.pages,
+                            _ => return Err(error),
+                        }
+                    }
+                    result => result?,
+                };
                 let pages = normalize_pages(rows, "", "");
                 if pages.is_empty() {
                     return Err(ProviderError::Api {
@@ -504,6 +533,31 @@ impl BilibiliProvider {
         }
     }
 
+    fn season_page_url(&self, mid: i64, id: i64, page: u32, size: &str) -> Url {
+        let mut url = self.api_url("/x/polymer/web-space/seasons_archives_list");
+        url.query_pairs_mut()
+            .append_pair("mid", &mid.to_string())
+            .append_pair("season_id", &id.to_string())
+            .append_pair("page_num", &page.to_string())
+            .append_pair("page_size", size)
+            .append_pair("sort_reverse", "false");
+        url
+    }
+
+    pub async fn season_preview_cover(&self, mid: i64, id: i64) -> Result<String, ProviderError> {
+        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
+        if let Some((time, season)) = self.seasons.read().await.get(&(epoch, mid, id))
+            && time.elapsed() < CATALOG_TTL
+        {
+            return Ok(season.summary.cover_url.clone());
+        }
+        let _permit = self.page_slots.acquire().await.expect("page semaphore remains open");
+        let first: Value = self.get_data(self.season_page_url(mid, id, 1, "12")).await?;
+        let cover = first["meta"]["cover"].as_str().filter(|cover| usable_season_cover(cover))
+            .or_else(|| first_archive_cover(&first["archives"]));
+        Ok(cover.map(normalize_url).unwrap_or_default())
+    }
+
     pub async fn season(&self, mid: i64, id: i64, refresh: bool) -> Result<Season, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         if !refresh {
@@ -513,16 +567,7 @@ impl BilibiliProvider {
                 }
             }
         }
-        let page_url = |page: u32| {
-            let mut url = self.api_url("/x/polymer/web-space/seasons_archives_list");
-            url.query_pairs_mut()
-                .append_pair("mid", &mid.to_string())
-                .append_pair("season_id", &id.to_string())
-                .append_pair("page_num", &page.to_string())
-                .append_pair("page_size", "100")
-                .append_pair("sort_reverse", "false");
-            url
-        };
+        let page_url = |page| self.season_page_url(mid, id, page, "100");
         let first: Value = self.get_data(page_url(1)).await?;
         let total = first["page"]["total"].as_u64().unwrap_or(0);
         if total > 2000 {
@@ -573,13 +618,8 @@ impl BilibiliProvider {
             archives.extend(data["archives"].as_array().into_iter().flatten().cloned());
         }
         let (tracks, unavailable) = paged_season_tracks(archives, matching.then_some(raw));
-        if summary.cover_url.is_empty() || summary.cover_url.contains("viedeo_material_default") {
-            if let Some(first) = tracks.first() {
-                summary.cover_url = first.cover_url.clone();
-            }
-        }
         let season = Season {
-            summary,
+            summary: season_cover(summary, &tracks),
             sections: if matching {
                 season_sections(raw, &tracks)
             } else {
@@ -719,6 +759,27 @@ impl BilibiliProvider {
 mod catalog_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn uses_the_first_available_episode_cover_when_the_collection_has_none() {
+        let archives = json!([
+            {"pic":"//i0.hdslb.com/viedeo_material_default.jpg"},
+            {"pic":"//i0.hdslb.com/first.jpg"},
+            {"pic":"//i0.hdslb.com/second.jpg"}
+        ]);
+        assert_eq!(first_archive_cover(&archives), Some("//i0.hdslb.com/first.jpg"));
+        let tracks = archives.as_array().unwrap().iter().map(|archive| season_member(archive, None)).collect::<Vec<_>>();
+        let summary = SeasonSummary {
+            id: 1,
+            uploader_id: 2,
+            title: "合集".into(),
+            cover_url: String::new(),
+            uploader_name: String::new(),
+        };
+        assert_eq!(season_cover(summary.clone(), &tracks).cover_url, "https://i0.hdslb.com/first.jpg");
+        let explicit = SeasonSummary { cover_url: "https://i0.hdslb.com/custom.jpg".into(), ..summary };
+        assert_eq!(season_cover(explicit, &tracks).cover_url, "https://i0.hdslb.com/custom.jpg");
+    }
 
     #[test]
     fn sections_preserve_uploader_order_in_both_complete_and_paged_catalogs() {

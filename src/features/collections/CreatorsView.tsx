@@ -34,6 +34,7 @@ import {
 } from '../player/playerStore'
 import { toTrack } from '../../services/collectionTrack'
 import { VideoPartsList } from '../library/VideoPartsList'
+import { useSeasonCover } from '../../shared/useSeasonCover'
 import { Artwork } from '../../shared/Artwork'
 import { LoadMore } from '../../shared/LoadMore'
 import { SwipeTabPages } from '../../shared/SwipeTabPages'
@@ -46,6 +47,11 @@ type Creator = {
   fans?: number
 }
 type Catalog = { data: any; page: number }
+function CreatorSeasonCover({ reference, cover, count }: { reference: string; cover: string; count: number }) {
+  const image = useSeasonCover(reference, cover)
+  return <span className="creator-season-cover"><Artwork src={image.cover} elementRef={image.ref}/><CoverCount count={count} unit="个视频" single/></span>
+}
+
 const catalog = (action: string, mid?: number, page = 1, keyword = '') =>
   invoke<Catalog>('bili_creator_catalog', { action, mid, page, keyword })
 const creatorVideos = (pages?: Catalog[]) => [...new Map((pages?.flatMap(page => page.data.list?.vlist || []) || [])
@@ -447,7 +453,7 @@ export function CreatorPage({
           })
         }
       >
-        <span className="creator-season-cover"><Artwork src={season.meta.cover}/><CoverCount count={season.meta.total} unit="个视频" single/></span>
+        <CreatorSeasonCover reference={`season:${mid}:${season.meta.season_id}`} cover={season.meta.cover} count={season.meta.total}/>
         <strong>{season.meta.name}</strong>
       </button>
     ))}{renderedSeasons.more ? <div ref={renderedSeasons.tail} className="list-render-tail" aria-hidden="true"/> : seasonPagination}</div>

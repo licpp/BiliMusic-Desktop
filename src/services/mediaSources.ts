@@ -21,6 +21,9 @@ export function seasonCollection(season: SeasonSummary): Collection {
   }
 }
 export function parseSeasonReference(reference:string) { const match=/^season:(\d+):(\d+)$/.exec(reference);return match ? {mid:Number(match[1]),seasonId:Number(match[2])} : null }
+export const usableSeasonCover = (cover?: string) => Boolean(cover?.trim() && !cover.includes('viedeo_material_default'))
+export const getSeasonCover = (reference: NonNullable<ReturnType<typeof parseSeasonReference>>) =>
+  invoke<string>('bili_season_cover', reference)
 export async function getSeason(mid: number, seasonId: number, refresh = false) {
   const epoch = accountEpoch()
   const season = await invoke<Season>('bili_season', { mid, seasonId, refresh })
@@ -56,9 +59,12 @@ export function creatorVideoRow(video: { bvid:string; aid:number; title:string; 
   return catalogVideoTrack({publishedAt:video.pubdate || video.created,bvid:video.bvid,aid:video.aid,cid:0,title:video.title,coverUrl:video.pic,durationSeconds:Number.isFinite(duration) ? duration! : video.duration || 0,playCount:typeof video.play === 'number' && Number.isFinite(video.play) ? video.play : undefined}, mid, name)
 }
 
+export const favoriteVideoExpired = (video: FavoriteVideo) =>
+  Boolean((video.attr ?? 0) & 8) || video.title.trim() === '已失效视频'
+
 export function favoriteVideoTrack(video: FavoriteVideo): Track {
-  return catalogVideoTrack({
+  return { ...catalogVideoTrack({
     bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover,
     durationSeconds: video.duration || 0, publishedAt: video.pubtime, playCount: video.cnt_info?.play,
-  })
+  }), sourceExpired: favoriteVideoExpired(video) || undefined }
 }

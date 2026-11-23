@@ -253,6 +253,16 @@ class BackgroundPlaybackTest {
         assertEquals(1, requests.size)
         assertEquals("android_media:100:1", service.snapshot().getString("errorCode"))
     }
+    @Test fun failedMediaServerRecoveryReportsBothErrors() {
+        load()
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        val recovery = requests.single()
+        service.resolved(recovery.first, JSONObject().put("error", "歌曲不存在").put("errorCode", "invalid_input"))
+        val failed = service.snapshot()
+        assertEquals("error", failed.getString("status"))
+        assertEquals("invalid_input", failed.getString("errorCode"))
+        assertEquals("android_media:100:1", failed.getString("initialErrorCode"))
+    }
     @Test fun unrecognizedStreamRetriesWithCompatibleAudioWithoutLosingResumePosition() {
         val broken = "$url-broken"
         ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(broken), ShadowMediaPlayer.MediaInfo(120_000, 1000))
@@ -412,6 +422,7 @@ class BackgroundPlaybackTest {
         audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         service.control("resume")
         assertEquals("paused", service.snapshot().getString("status"))
+        assertEquals("audio_focus_denied", service.snapshot().getString("errorCode"))
         assertFalse(shadowOf(service).isForegroundStopped)
         focus.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN); idle()
         audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
@@ -453,6 +464,28 @@ class BackgroundPlaybackTest {
         assertEquals("playing", service.snapshot().getString("status"))
         assertEquals(25.0, service.snapshot().getDouble("position"), .1)
         assertTrue(requests.isEmpty())
+    }
+    @Test fun delayedLossFromTheInterruptedRequestCannotPauseAnExplicitResume() {
+        load()
+        service.control("seek", 25.0); idle()
+        val media = player()
+        val audio = shadowOf(service.getSystemService(AudioManager::class.java))
+        val interrupted = audio.lastAudioFocusRequest
+        interrupted.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post { interrupted.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS) }
+
+        service.control("resume")
+        assertEquals("playing", service.snapshot().getString("status"))
+        idle()
+
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertSame(media, player())
+        assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+        assertTrue(requests.isEmpty())
+
+        audio.lastAudioFocusRequest.listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        assertEquals("paused", service.snapshot().getString("status"))
     }
     @Test fun interruptionDuringNativeQueueResolutionKeepsTheResolvedTrackAndPosition() {
         load()

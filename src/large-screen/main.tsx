@@ -12,7 +12,8 @@ import { startFloatingLyrics } from '../services/floatingLyrics'
 import { startUpdateChecks } from '../services/updates'
 import { installAccountQueryScope } from '../services/queryKeys'
 import { installLocalPlayback } from '../app/localPlayback'
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
+import { installStartupDiagnostics } from '../services/diagnostics'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { startCloudSync } from '../services/sync'
@@ -34,6 +35,7 @@ import '../styles/media-features.css'
 import '../styles/playback-cache.css'
 import '../styles/editor-polish.css'
 import './large-screen.css'
+import '../features/settings/diagnostics.css'
 
 document.documentElement.dataset.layout = 'large'
 document.documentElement.style.setProperty('--large-scale', String([0.9, 1, 1.15].includes(Number(localStorage.getItem('large-ui-size'))) ? Number(localStorage.getItem('large-ui-size')) : 1))
@@ -43,6 +45,8 @@ installMobileKeyboard({ scrollContainers: '.large-dialog,.large-main', topInset:
 installOverlayBack()
 if (isAndroid) void controlMobileAudio('largeScreen', 1).catch(() => undefined)
 const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } } })
+const diagnoseReady = installStartupDiagnostics()
+function DiagnosticBoot() { useEffect(diagnoseReady, []); return null }
 installAccountQueryScope(client)
 installLocalPlayback(client)
 startUpdateChecks()
@@ -52,4 +56,4 @@ startFloatingLyrics()
 startListeningStatistics()
 startPreloadingNextTrack()
 startCreatorQueue()
-createRoot(document.getElementById('root')!).render(<StrictMode><QueryClientProvider client={client}><SubtitleController/><LargeScreenApp/></QueryClientProvider></StrictMode>)
+createRoot(document.getElementById('root')!).render(<StrictMode><QueryClientProvider client={client}><SubtitleController/><LargeScreenApp/><DiagnosticBoot/></QueryClientProvider></StrictMode>)

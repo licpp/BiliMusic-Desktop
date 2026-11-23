@@ -6,6 +6,18 @@ use tauri::{
 };
 #[cfg(target_os = "android")]
 struct Credentials<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+#[cfg(target_os = "android")]
+pub async fn diagnostic_environment<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<serde_json::Value> {
+    app.state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("diagnostic_environment", serde_json::json!({}))
+        .await
+        .ok()
+}
+
 #[cfg(target_os = "android")]
 pub fn secret<R: Runtime>(
     app: &tauri::AppHandle<R>,

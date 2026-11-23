@@ -1,0 +1,97 @@
+.diagnostics-dialog {
+  width: min(660px, calc(100% - 28px));
+}
+.diagnostics-environment, .diagnostics-notice {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: .85rem;
+  overflow-wrap: anywhere;
+}
+.diagnostics-filters, .diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.diagnostics-filters button, .diagnostics-actions button, .diagnostics-timeline li button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.diagnostics-dialog button[aria-pressed="true"] {
+  background: var(--panel-raised);
+  color: var(--cyan);
+  border-color: currentColor;
+}
+.diagnostics-actions button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+.diagnostics-actions svg {
+  width: 16px;
+  height: 16px;
+}
+.diagnostics-timeline {
+  max-height: min(36vh, 340px);
+  min-height: 52px;
+  margin: 12px 0;
+  overflow-y: auto;
+  border-block: 1px solid var(--line);
+}
+.diagnostics-timeline ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.diagnostics-timeline li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 9px;
+  align-items: center;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: .85rem;
+}
+.diagnostics-timeline li:last-child { border-bottom: 0; }
+.diagnostics-timeline li time, .diagnostics-timeline li small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.diagnostics-timeline li small:empty { display: none; }
+.diagnostics-timeline li small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.diagnostics-timeline li[data-outcome="failed"] strong { color: var(--coral, var(--ink)); }
+.diagnostics-timeline p { margin: 14px 0; color: var(--muted); }
+.diagnostics-actions { justify-content: flex-end; }
+.diagnostics-notice { margin: 8px 0 0; }
+
+
+.diagnostics-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.diagnostics-settings-feedback {
+  grid-column: 2 / -1;
+  text-align: end;
+}
+@media (max-width: 430px) {
+  .diagnostics-filters button { padding-inline: 7px; }
+  .diagnostics-environment { font-size: .8rem; }
+  .settings-card .diagnostics-settings-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+}

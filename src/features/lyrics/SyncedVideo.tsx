@@ -1,3 +1,4 @@
+import { reportVideoIssue, videoDiagnosticTrace, videoSourceIssue, type VideoDiagnosticTrace } from './videoDiagnostics'
 import { memo, useEffect, useRef, useState } from 'react'
 import { playbackClock, usePlayerStore } from '../player/playerStore'
 import { synchronizeVideo } from './videoSync'
@@ -10,7 +11,7 @@ import { playbackIssue, type PlaybackIssue } from '../player/playbackIssue'
 
 const waitForCompositor = isAndroid && isLargeScreen
 
-export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codecs, active, suspended = false, onReady, onReload }: { src: string; poster?: string; track: Track; codecs?: string; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: (compatible: boolean) => Promise<void> }) {
+export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codecs, diagnostic, active, suspended = false, onReady, onReload }: { src: string; poster?: string; track: Track; codecs?: string; diagnostic?: VideoDiagnosticTrace; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: (compatible: boolean) => Promise<void> }) {
   const ref = useRef<HTMLVideoElement>(null)
   const activeRef = useRef(active && !suspended)
   const syncRef = useRef<(force?: boolean) => void>(() => {})
@@ -31,7 +32,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       },
       restart: () => setRetry(value => value + 1),
       busy: setRecovering,
-      failed: cause => setError(playbackIssue('video-source', cause, '视频重新连接失败')),
+      failed: cause => setError(videoSourceIssue(cause)),
     })
     recovery.current = controller
     return () => { controller.dispose(); recovery.current = null }
@@ -39,6 +40,9 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
   useEffect(() => {
     const video = ref.current
     if (!video) return
+    const trace = diagnostic ?? videoDiagnosticTrace(track.source.bvid, track.source.cid)
+    trace.update({ codec: codecs })
+    trace.emit('start', 'started')
     setError(null); setSlowIssue(null)
     let firstFrameShown = false
     let pendingAlignment = true
@@ -60,6 +64,8 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
     const showFrame = () => {
       if (firstFrameShown || !canRevealFrame()) return
       firstFrameShown = true
+      trace.emit('start', 'succeeded')
+      if (retry > 0) trace.emit('recovery', 'succeeded')
       setFrame({ src, attempt: retry }); setError(null)
       onReady(src)
     }
@@ -113,9 +119,9 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
     const failed = () => {
       if (disposed || video.error?.code === 1) return
       const code = video.error?.code
-      setError(playbackIssue(code === 3 || code === 4 ? 'video-decode' : 'video-buffer', null,
+      setError(reportVideoIssue(trace, playbackIssue(code === 3 || code === 4 ? 'video-decode' : 'video-buffer', null,
         code === 3 ? '视频解码失败，请重新加载' : code === 4 ? '视频线路或编码不可用，请重新加载' : '视频加载失败，请重试',
-        `html_media:${code}`))
+        `html_media:${code}`)))
       if (!document.hidden && activeRef.current) void recovery.current?.recover()
     }
     document.addEventListener('visibilitychange', visibility)
@@ -125,7 +131,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
     video.load()
     sync()
     const slowTimer = window.setTimeout(() => {
-      if (!firstFrameShown) setSlowIssue(playbackIssue('video-buffer', null, '视频缓冲较慢', 'video_stalled'))
+      if (!firstFrameShown) setSlowIssue(reportVideoIssue(trace, playbackIssue('video-buffer', null, '视频缓冲较慢', 'video_stalled')))
     }, 5000)
     const timer = window.setInterval(ready, 250)
     const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status || state.rate !== previous.rate) sync() })
@@ -143,7 +149,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       video.removeAttribute('src')
       video.load()
     }
-  }, [src, retry, onReady])
+  }, [src, retry, onReady, diagnostic, codecs, track.source.bvid, track.source.cid])
   useEffect(() => {
     activeRef.current = active && !suspended
     if (activeRef.current) syncRef.current(true)

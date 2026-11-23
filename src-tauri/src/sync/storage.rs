@@ -391,8 +391,9 @@ pub fn apply_with_inferred_tracks(
             let id = text(r, "id");
             tx.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![id,text(r,"bvid"),r.fields.get("aid").and_then(Value::as_i64),number(r,"cid"),1,"",r.fields.get("uploaderId").and_then(Value::as_i64),optional(r,"uploaderName")])?;
             tx.execute("INSERT INTO tracks(id,source_item_id,title,artist,album,cover_url,duration_seconds) VALUES(?1,?1,?2,?3,?4,?5,?6)
-                ON CONFLICT(id) DO UPDATE SET source_item_id=excluded.source_item_id
-                WHERE NOT EXISTS(SELECT 1 FROM source_items WHERE id=tracks.source_item_id)",params![id,"B站歌曲（待加载）",optional(r,"artist"),optional(r,"album"),optional(r,"coverUrl"),number(r,"duration")])?;
+                ON CONFLICT(id) DO UPDATE SET source_item_id=excluded.source_item_id,
+                duration_seconds=CASE WHEN tracks.duration_seconds<=0 AND excluded.duration_seconds>0 THEN excluded.duration_seconds ELSE tracks.duration_seconds END
+                WHERE tracks.source_item_id=excluded.source_item_id OR NOT EXISTS(SELECT 1 FROM source_items WHERE id=tracks.source_item_id)",params![id,"B站歌曲（待加载）",optional(r,"artist"),optional(r,"album"),optional(r,"coverUrl"),number(r,"duration")])?;
             if inferred.contains(key) {
                 continue;
             }

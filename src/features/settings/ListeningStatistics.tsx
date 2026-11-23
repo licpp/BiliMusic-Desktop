@@ -139,6 +139,17 @@ export function ListeningStatistics({ onClose }: { onClose: () => void }) {
   const loading = query.isLoading || Boolean(query.data && !data)
   const top = data?.[period].top
   useEffect(() => { if (top?.length) void hydrateSourceTitles(top.map(track => track.id), client) }, [top, client])
+  useEffect(() => {
+    if (period !== 'total') return
+    let active = true
+    const epoch = accountEpoch()
+    const hydrate = () => void invoke<number>('listening_hydrate_tags').then(changed => {
+      if (active && changed && epoch === accountEpoch()) void client.invalidateQueries({ queryKey: accountQueryKey('listening-statistics') })
+    }).catch(() => undefined)
+    hydrate()
+    const timer = window.setInterval(hydrate, 15000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [client, period])
   const today = accountToday(), thisYear = today.getUTCFullYear(), todayKey = dayKey(today)
   const daily = new Map(data?.daily.map(d => [d.day, d.seconds]) || [])
   const enabled = !!data?.sync.enabled

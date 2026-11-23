@@ -695,3 +695,48 @@ test('offline resume can explicitly start a non-first saved part inside a groupe
   assert.equal(store.getState().progressSeconds, 42)
   assert.deepEqual(store.getState().queueBase.map(item => item.id), [group.id])
 })
+
+test('queue skips confirmed expired videos but still distinguishes a network failure', async () => {
+  const { store, listeners } = setup()
+  const knownExpired = { ...track('1'), sourceExpired: true }
+  const expiredAtResolution = { ...track('2'), source: { ...track('2').source, bvid: 'BVTEST00002' } }
+  const playable = { ...track('3'), source: { ...track('3').source, bvid: 'BVTEST00003' } }
+  const tried = []
+  globalThis.testApi.resolve = async track => {
+    tried.push(track.id)
+    if (track.id === '2') throw { code: 'source_expired', message: 'B 站视频已失效' }
+    return `local://${track.id}`
+  }
+  await store.getState().playFromList([knownExpired, expiredAtResolution, playable], knownExpired.id)
+  assert.equal(store.getState().status, 'playing')
+  assert.equal(store.getState().current.id, '3')
+  assert.deepEqual(tried, ['2', '3'])
+
+  globalThis.testApi.resolve = async track => {
+    tried.push(track.id)
+    throw { code: 'provider_error', message: 'Bilibili 接口返回错误 -412: 限流' }
+  }
+  await store.getState().play(expiredAtResolution)
+  assert.equal(store.getState().status, 'error')
+  assert.deepEqual(tried, ['2', '3', '2'])
+  listeners.pagehide()
+})
+
+test('launch playback is opt-in, uses the last position and starts only once', async () => {
+  const recent = track('1')
+  const state = { current: recent, queue: [recent, track('2')], progressSeconds: 22 }
+  const off = setup({ state, version: 2 })
+  await off.module.startPlaybackOnLaunch()
+  assert.equal(off.audio.length, 0)
+  off.listeners.pagehide()
+
+  const on = setup({ state, version: 2 })
+  on.storage.set(on.module.launchPlaybackPreference, 'true')
+  await on.module.startPlaybackOnLaunch()
+  await on.module.startPlaybackOnLaunch()
+  assert.equal(on.store.getState().status, 'playing')
+  assert.equal(on.store.getState().current.id, '1')
+  assert.equal(on.store.getState().progressSeconds, 22)
+  assert.equal(on.audio[0].plays, 1)
+  on.listeners.pagehide()
+})

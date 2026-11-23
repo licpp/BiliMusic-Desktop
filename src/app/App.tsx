@@ -3,6 +3,7 @@ import { useOverlayDismiss } from '../shared/useOverlayDismiss'
 import { swipeAxis, trackSwipeDirection } from '../shared/gestureRelease'
 import { useVerticalDismiss } from '../shared/useVerticalDismiss'
 import { usePanelPresence } from '../shared/usePanelPresence'
+import { usePanelReveal } from '../shared/usePanelReveal'
 import { useMobilePlayerSurface } from '../features/player/useMobilePlayerSurface'
 import { usePageMotion } from '../shared/pageMotion'
 import { ListSkeleton } from '../shared/ListSkeleton'
@@ -69,7 +70,7 @@ import {
   Sun,
   Moon,
 } from 'lucide-react'
-import { usePlayerStore } from '../features/player/playerStore'
+import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/playerStore'
 import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
 import { useShortcutStore } from '../services/shortcuts'
 import { listenGlobalShortcuts, syncGlobalShortcuts, showMainWindow } from '../services/globalShortcuts'
@@ -128,6 +129,7 @@ function RetainedStagePage({ active, className = '', swipe, children }: {
 
 export function App() {
   useVisibilityRules()
+  useEffect(() => { void startPlaybackOnLaunch().catch(() => undefined) }, [])
   useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
   const updateAvailable = useUpdateStore(state => state.result?.status === 'available')
@@ -209,17 +211,11 @@ export function App() {
     if (!lyricsOpen || miniMode) setFullscreenLayout(null)
   }, [lyricsOpen, miniMode])
   const mobilePlayer = useMobilePlayerSurface(compactPlayer, lyricsOpen && !miniMode, tabletPlayer)
-  const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, tabletPlayer ? 224 : 160)
+  const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, tabletPlayer ? 224 : isMobile ? 160 : 210)
   const lyricsPresent = compactPlayer ? mobilePlayer.present : immersivePresent
-  const navigationRail = useRef<HTMLElement>(null)
-  const lyricsWasPresent = useRef(false)
-  useLayoutEffect(() => {
-    const returned = lyricsWasPresent.current && !immersivePresent
-    lyricsWasPresent.current = immersivePresent
-    if (!returned || isMobile || miniMode || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const rail = navigationRail.current?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 185, easing: 'ease-out' })
-    return () => rail?.cancel()
-  }, [immersivePresent, miniMode])
+  const desktopLyrics = !isMobile && immersivePresent
+  const desktopLyricsSurface = useRef<HTMLDivElement>(null)
+  usePanelReveal(desktopLyricsSurface, lyricsOpen && !miniMode)
   const lyricsTrigger = useRef<HTMLElement>(null)
   const showLyrics = (trigger: HTMLElement, restoreFocus = true) => {
     lyricsTrigger.current = restoreFocus ? trigger : null
@@ -476,10 +472,12 @@ export function App() {
     } finally { favoriteRunning.current = false; setFavoritePending(false) }
   }
   useEffect(connectMediaSession, [])
+  const immersiveWindowActive = isMobile ? lyricsOpen : desktopLyrics
   useEffect(() => {
     if(!windowReady||miniMode)return
-    void setImmersiveWindow(lyricsOpen, tabletPlayer).catch((error) => setActionError(commandErrorMessage(error)))
-  }, [lyricsOpen,miniMode,windowReady,tabletPlayer])
+    // Keep the desktop viewport steady until the closing surface has faded out.
+    void setImmersiveWindow(immersiveWindowActive, tabletPlayer).catch((error) => setActionError(commandErrorMessage(error)))
+  }, [immersiveWindowActive,miniMode,windowReady,tabletPlayer])
   useEffect(() => {
     const refreshRecent = () => {
       void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') })
@@ -599,9 +597,10 @@ export function App() {
   const renderLyrics = () => (
       <LyricsView open={lyricsOpen} fullscreenRequested={fullscreenLayout !== null} setVideoFullscreen={setVideoFullscreen} motionSurface={compactPlayer ? mobilePlayer.ref : undefined} onSwipeRelease={compactPlayer ? mobilePlayer.releaseDismiss : undefined} inert={queueSheet && queueOpen} onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />
   )
-  const renderDock = (expanded = false) => (
+  const renderDock = (expanded = false, immersiveDesktop = false) => (
     <footer className="player-dock" data-mini-dock={compactPlayer && !expanded || undefined}
-      inert={queueSheet && queueOpen || (expanded ? !lyricsOpen : compactPlayer && browseInert)}
+      data-tablet-lyrics-dock={expanded && tabletPlayer || undefined}
+      inert={queueSheet && queueOpen || (expanded || immersiveDesktop ? !lyricsOpen : (compactPlayer || !isMobile) && browseInert)}
       {...(!expanded ? {
         onPointerDown: startDockSwipe, onPointerMove: moveDockSwipe,
         onPointerUp: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, true),
@@ -613,17 +612,18 @@ export function App() {
           {queueFeedback && (!compactPlayer || expanded === lyricsOpen) && <div className="queue-switch-notice" key={queueFeedback.serial} role="status">
             <ListMusic size={15}/><span>{queueFeedback.title ? `已切换到 ${queueFeedback.title}` : '已切换播放队列'}</span>
           </div>}
-          <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button ref={!compactPlayer || expanded === lyricsOpen ? queueTrigger : undefined} className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
+          <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button ref={(isMobile ? !compactPlayer || expanded === lyricsOpen : immersiveDesktop === desktopLyrics) ? queueTrigger : undefined} className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
           <PlayerProgress />
         </div>
-        {!expanded && <div className="dock-tools"><div id="lyrics-dock-actions" className="lyrics-dock-actions"/><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>}
+        {!expanded && <div className="dock-tools">{(isMobile || immersiveDesktop) && <div id="lyrics-dock-actions" className="lyrics-dock-actions"/>}<Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>}
+        {expanded && tabletPlayer && <div id="lyrics-tablet-dock-actions" className="lyrics-dock-actions"/>}
       </footer>
   )
 
   return (
-    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${immersivePresent && !compactPlayer ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
-      {immersivePresent && !compactPlayer && <><LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" open={lyricsOpen} /><ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} /></>}
-      <aside ref={navigationRail} inert={browseInert || queueSheet && queueOpen} className="rail" aria-label="主导航">
+    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${desktopLyrics ? `desktop-lyrics-present frame-${desktopFrame}` : immersivePresent && !compactPlayer ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
+      {isMobile && immersivePresent && !compactPlayer && <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" open={lyricsOpen} />}
+      <aside inert={browseInert || queueSheet && queueOpen} className="rail" aria-label="主导航">
         <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { resetCollection(); setActiveNav('此刻') }}>
           <Waves size={23} strokeWidth={2.5} />
         </button>
@@ -783,6 +783,12 @@ export function App() {
       </aside>
 
       {renderDock()}
+      {desktopLyrics && <div ref={desktopLyricsSurface} className={`desktop-lyrics-surface lyrics-immersive frame-${desktopFrame}`} inert={!lyricsOpen}>
+        <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" />
+        <ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} />
+        {renderLyrics()}
+        {renderDock(false, true)}
+      </div>}
       {mobilePlayer.present && <div ref={mobilePlayer.ref} className="mobile-player-surface lyrics-immersive"
         inert={!lyricsOpen || queueSheet && queueOpen}>
         <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" />
@@ -798,7 +804,7 @@ export function App() {
         </div>
       </div>}
       <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>
-      {immersivePresent && !compactPlayer && renderLyrics()}
+      {isMobile && immersivePresent && !compactPlayer && renderLyrics()}
       {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id) => {
         setImportOpen(false)
         setRematchPlaylist(undefined)

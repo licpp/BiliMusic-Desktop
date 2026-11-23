@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { usePanelReveal } from '../../shared/usePanelReveal'
 
-export const LyricsBackdrop = memo(function LyricsBackdrop({ cover, className = '', open = true }: { cover?: string; className?: string; open?: boolean }) {
+export const LyricsBackdrop = memo(function LyricsBackdrop({ cover, className = '', open }: { cover?: string; className?: string; open?: boolean }) {
   const container = useRef<HTMLDivElement>(null)
   usePanelReveal(container, open)
   const [scale, setScale] = useState(8)

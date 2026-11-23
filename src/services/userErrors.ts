@@ -48,3 +48,6 @@ export function syncErrorMessage(error: unknown): string {
   const reason = reasons[status] || (status.startsWith('3') ? '同步地址发生重定向，请检查 WebDAV 服务器地址' : '同步服务器返回异常响应，请稍后重试或反馈此状态码')
   return `${operation ? `${operation}失败：` : ''}${reason}（HTTP ${status}）`
 }
+
+export const isExpiredPlaybackSource = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'source_expired'

@@ -10,7 +10,7 @@ import { preferences } from '@kit.ArkData';
 import { asset } from '@kit.AssetStoreKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Artwork } from './Artwork';
@@ -21,7 +21,7 @@ import { NativeQueue, QueueUpdate, QueueTrack, ResolveResult, NotificationLyricL
 
 interface Request { id: number; plugin: string; command: string; payload: string }
 interface Args {
-  data?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string;
+  data?: string; diagnosticId?: string; url?: string; upgradeUrl?: string; id?: string; title?: string; artist?: string;
   album?: string; coverUrl?: string; durationSeconds?: number;
   loudnessGainDb?: number; loudnessEnabled?: boolean; loudnessRevision?: number; settingsRevision?: number;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
@@ -32,7 +32,7 @@ interface Args {
 interface PlaybackCapabilities {autonomousQueue: boolean; seamlessSourceSwitch: boolean; nativeSleepTimer: boolean; snapshotRebind: boolean}
 interface Snapshot {
   capabilities: PlaybackCapabilities;
-  engineInstanceId: string; sessionId: string; sourceRevision: number; autonomousQueue: boolean; queueVersion: number; track?: QueueTrack; expandedEntries?: Record<string, QueueTrack[]>;
+  engineInstanceId: string; sessionId: string; diagnosticId?: string; sourceRevision: number; autonomousQueue: boolean; queueVersion: number; track?: QueueTrack; expandedEntries?: Record<string, QueueTrack[]>;
   id: string; status: string; position: number; duration: number; rate: number;
   sleepDeadline: number; sleepDuration: number; sleepExpired: boolean;
   stopped: boolean; error?: string; errorCode?: string; action?: string; floatingLyricsEnabled?: boolean; revision?: number; sequence?: number; seekRevision?: number;
@@ -43,6 +43,17 @@ class EmptyResult {}
 interface BridgeError { message: string; code?: string }
 interface SecretResult { value?: string }
 interface WindowInsets { active: boolean; top: number; right: number; bottom: number; left: number }
+interface DiagnosticEnvironment {
+  osVersion: string;
+  osBuild: string;
+  apiLevel: number;
+  deviceModel: string;
+}
+interface PlaybackDiagnosticEvent {
+  operation: string; area: string; step: string; outcome: string; engine: string;
+  bvid: string; cid: number; elapsedMs: number; code?: string;
+}
+interface PlaybackDiagnosticPayload { accountSession: string; event: PlaybackDiagnosticEvent }
 interface ListeningSample {
   scope: string; trackId: string; seconds?: number; position?: number;
   observedAt: number; sessionId?: string; collectionRef?: string;
@@ -93,6 +104,7 @@ export class PlayerPlugin {
     this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
     this.accountListening(true);
     this.sessionId = util.generateRandomUUID(true);
+    this.beginDiagnostic();
     this.lyricId = '';
     const previous=this.player; this.player=null; this.pendingSeek=-1;
     const request = this.nativeRequest;
@@ -108,6 +120,7 @@ export class PlayerPlugin {
         this.pendingResolve = resolve;
         this.resolveTimer = setTimeout(()=>{ if(request===this.nativeRequest) {native.bilimusicOhosCancelResolve();this.receiveResolution({request,data:JSON.stringify({error:'后台加载超时，请重新播放',errorCode:'source_timeout'} as ResolveResult)});} },25000);
         const payload = this.queue.payload(track, ended);
+        payload.diagnosticId = this.diagnosticId;
         payload.subtitles = this.subtitlesEnabled;
         payload.subtitleLanguage = this.subtitleLanguage;
         payload.subtitleRevision = this.subtitleRevision;
@@ -315,6 +328,16 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
+    if (request.plugin === 'ohos-player' && request.command === 'diagnostic_environment') {
+      const environment: DiagnosticEnvironment = {
+        osVersion: deviceInfo.displayVersion,
+        osBuild: deviceInfo.osFullName,
+        apiLevel: deviceInfo.sdkApiVersion,
+        deviceModel: deviceInfo.productModel,
+      };
+      native.tauriOhosPluginResponse(request.id, true, JSON.stringify(environment));
+      return;
+    }
     if (request.plugin === 'ohos-player' && request.command === 'resolved') { this.receiveResolution(JSON.parse(request.payload) as Args); native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())); return; }
     if (request.plugin === 'ohos-player' && request.command === 'queue') {
       try { const owner=this.queue.owner,session=this.queue.accountSession; if(this.queue.update(JSON.parse(request.payload) as QueueUpdate) && (owner!==this.queue.owner || session!==this.queue.accountSession || this.pendingResolve!==null && !this.queue.find(this.id))) { const pending=this.pendingResolve!==null; this.cancelResolution(); if(pending){this.desiredPlaying=false;this.status='paused';this.emit();} } native.tauriOhosPluginResponse(request.id,true,JSON.stringify(new EmptyResult())); }
@@ -386,13 +409,39 @@ export class PlayerPlugin {
   }
 
   private snapshot(): Snapshot {
-    return { capabilities:{autonomousQueue:this.queue.accountSession.length>0,seamlessSourceSwitch:true,nativeSleepTimer:true,snapshotRebind:true},engineInstanceId:this.engineInstanceId,sessionId:this.sessionId,sourceRevision:this.mediaRevision,autonomousQueue:this.queue.accountSession.length>0,queueVersion:this.queue.version,track:this.queue.find(this.id),expandedEntries:this.queue.expanded,revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
+    return { capabilities:{autonomousQueue:this.queue.accountSession.length>0,seamlessSourceSwitch:true,nativeSleepTimer:true,snapshotRebind:true},engineInstanceId:this.engineInstanceId,sessionId:this.sessionId,diagnosticId:this.diagnosticId,sourceRevision:this.mediaRevision,autonomousQueue:this.queue.accountSession.length>0,queueVersion:this.queue.version,track:this.queue.find(this.id),expandedEntries:this.queue.expanded,revision:this.mediaRevision,sequence:++this.stateSequence,seekRevision:this.seekRevision,id: this.id, status: this.status, position: Math.max(0, (this.pendingSeek >= 0 ? this.pendingSeek : this.player?.currentTime ?? 0) / 1000),
       duration: Math.max(0, (this.player?.duration ?? 0) / 1000), rate: this.rate,
       sleepDeadline: this.sleepingAt, sleepDuration: this.sleepDuration, sleepExpired: this.sleepExpired,
       stopped: this.id.length === 0, error: this.error || undefined, errorCode: this.error ? this.errorCode || undefined : undefined };
   }
 
+  private diagnosticId: string = util.generateRandomUUID(true);
+  private diagnosticSession: string = '';
+  private diagnosticStarted: number = 0;
+  private diagnosticPlaying: boolean = false;
+
+  private beginDiagnostic(id?: string): void {
+    this.diagnosticId = id ?? util.generateRandomUUID(true);
+    this.diagnosticSession = this.queue.accountSession;
+    this.diagnosticStarted = Date.now();
+    this.diagnosticPlaying = false;
+  }
+
+  private diagnostic(step: string, outcome: string, code?: string): void {
+    const track = this.id.split(':');
+    if (!this.diagnosticSession || track.length !== 3 || track[0] !== 'bilibili') return;
+    const payload: PlaybackDiagnosticPayload = {
+      accountSession: this.diagnosticSession,
+      event: {
+        operation: this.diagnosticId, area: 'playback', step, outcome, engine: 'ohos-avplayer',
+        bvid: track[1], cid: Number(track[2]), elapsedMs: Math.max(0, Date.now() - this.diagnosticStarted), code,
+      },
+    };
+    try { native.bilimusicOhosDiagnostic(JSON.stringify(payload)); } catch (_) {}
+  }
+
   private setPlaybackError(message: string, code: string): void {
+    this.diagnostic(this.pendingResolve !== null ? 'source' : this.diagnosticPlaying ? 'control' : 'start', 'failed', code);
     this.error = message;
     this.errorCode = code;
     this.status = 'error';
@@ -400,6 +449,10 @@ export class PlayerPlugin {
 
   private emit(action?: string): void {
     if (this.destroyed) return;
+    if (this.status === 'playing' && !this.diagnosticPlaying) {
+      this.diagnosticPlaying = true;
+      this.diagnostic('start', 'succeeded');
+    }
     const state = this.snapshot(); state.action = action;
     native.bilimusicOhosState(JSON.stringify(state));
     this.updateSessionPosition();
@@ -511,11 +564,14 @@ export class PlayerPlugin {
   private audioInterrupted(player: media.AVPlayer, event: audio.InterruptEvent): void {
     if (this.player !== player || this.destroyed) return;
     if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
+      this.diagnostic('audio-focus', 'succeeded', 'transient_loss');
       this.resumeAfterInterruption = this.resumeAfterInterruption || this.desiredPlaying;
       if (this.desiredPlaying || this.status !== 'paused') this.interruptionPause = this.control({ action: 'interruptionPause' }).catch(() => {});
     } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_STOP) {
+      this.diagnostic('audio-focus', 'succeeded', 'loss');
       this.enqueueControl('pause');
     } else if (event.hintType === audio.InterruptHint.INTERRUPT_HINT_RESUME && event.eventType === audio.InterruptType.INTERRUPT_TYPE_END) {
+      this.diagnostic('audio-focus', 'succeeded', 'gain');
       const resume = this.resumeAfterInterruption, revision = this.interruptionRevision;
       this.resumeAfterInterruption = false;
       if (resume) this.tasks = this.tasks.catch(() => {}).then(async () => {
@@ -629,6 +685,7 @@ export class PlayerPlugin {
     this.resumeAfterInterruption = false; this.interruptionRevision += 1; this.focusDucked = false;
     this.cancelSourceSwitch?.();
     const revision = ++this.mediaRevision;
+    if (!args.preserveSession) this.beginDiagnostic(args.diagnosticId);
     this.desiredPlaying = args.playing !== false;
     this.pendingUpgradeUrl = /^http:\/\/127\.0\.0\.1:\d+\//.test(args.upgradeUrl ?? '') ? args.upgradeUrl! : '';
     this.upgradeAfterPosition = (args.position ?? 0) * 1000 + 750;
@@ -637,6 +694,7 @@ export class PlayerPlugin {
     this.initialPositionPending = true;
     const previous = this.player; this.player = null;
     this.setTrackMetadata(args.id, args.title, args.artist, args.album, args.durationSeconds);
+    this.diagnostic("start", "started");
     this.collectionRef = args.collectionRef ?? ''; this.error = ''; this.status = this.desiredPlaying ? 'buffering' : 'paused';
     await previous?.release();
     if (revision !== this.mediaRevision) return;
@@ -672,7 +730,7 @@ export class PlayerPlugin {
         hilog.info(0xB110, 'BiliMusicPlayer', 'AVPlayer state=%{public}s', state);
         try {
           if (state === 'initialized') { await player.prepare(); return; }
-          if (state === 'prepared') { clearTimeout(timeout); resolve(); return; }
+          if (state === 'prepared') { this.diagnostic('media-ready', 'succeeded'); clearTimeout(timeout); resolve(); return; }
           if (state === 'playing') this.status = 'playing';
           else if (state === 'paused') { this.accountListening(true); this.status = 'paused'; }
           else if (state === 'completed') {

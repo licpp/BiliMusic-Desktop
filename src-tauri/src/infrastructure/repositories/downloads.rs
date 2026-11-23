@@ -2,6 +2,7 @@ use super::library::{LibraryRepository, TrackRecord};
 use crate::interface::error::CommandError;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +89,48 @@ mod tests {
     }
 
     #[test]
+    fn list_keeps_all_downloads_in_creation_order() {
+        use super::super::library::TrackInput;
+        let mut connection = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
+        let track = LibraryRepository::upsert(
+            &mut connection,
+            &TrackInput {
+                id: "bilibili:BVTEST00001:1".into(),
+                bvid: "BVTEST00001".into(),
+                aid: None,
+                cid: 1,
+                page: 1,
+                source_title: "视频标题".into(),
+                source_title_context: None,
+                title: "歌曲".into(),
+                artist: None,
+                album: None,
+                cover_url: None,
+                duration_seconds: 120,
+                uploader_id: None,
+                uploader_name: None,
+            },
+        )
+        .unwrap();
+        for index in 1..=267 {
+            let id = index.to_string();
+            DownloadRepository::create(&connection, &id, &track.id, "/tmp/song.m4a").unwrap();
+        }
+        DownloadRepository::complete(&connection, "1", 123).unwrap();
+        DownloadRepository::fail(&connection, "2", "fixture").unwrap();
+
+        let rows = DownloadRepository::list_with_tracks(&connection).unwrap();
+        assert_eq!(rows.len(), 267);
+        assert_eq!(rows[0].id, "267");
+        assert_eq!(rows[0].status, "queued");
+        assert_eq!(rows[265].status, "failed");
+        assert_eq!(rows[266].id, "1");
+        assert_eq!(rows[266].status, "completed");
+        assert_eq!(rows[266].track.as_ref().unwrap().id, track.id);
+    }
+
+    #[test]
     fn deletion_preserves_active_download_and_removes_duplicate_completed_rows() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch("CREATE TABLE downloads(id TEXT PRIMARY KEY,track_id TEXT,target_path TEXT,status TEXT,received_bytes INTEGER DEFAULT 0,total_bytes INTEGER,error_message TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);").unwrap();
@@ -118,8 +161,12 @@ impl DownloadRepository {
     // Resolve by download identity, not the 500 most recently updated library tracks.
     pub fn list_with_tracks(connection: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
         let mut records = Self::list(connection)?;
+        let tracks: HashMap<_, _> = LibraryRepository::downloaded_tracks(connection)?
+            .into_iter()
+            .map(|track| (track.id.clone(), track))
+            .collect();
         for record in &mut records {
-            record.track = LibraryRepository::get(connection, &record.track_id)?;
+            record.track = tracks.get(&record.track_id).cloned();
         }
         Ok(records)
     }
@@ -200,7 +247,7 @@ impl DownloadRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
-        let mut statement = connection.prepare("SELECT id,track_id,target_path,status,received_bytes,total_bytes,error_message FROM downloads ORDER BY rowid DESC LIMIT 200")?;
+        let mut statement = connection.prepare("SELECT id,track_id,target_path,status,received_bytes,total_bytes,error_message FROM downloads ORDER BY rowid DESC")?;
         statement
             .query_map([], |row| {
                 Ok(DownloadRecord {

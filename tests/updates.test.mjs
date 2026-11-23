@@ -70,3 +70,9 @@ test('signed builds and the Rust verifier use the same public key',async()=>{
  assert.equal(config.plugins,undefined,'signing overlay inherits the ordinary startup configuration')
  assert.match(await readFile('src-tauri/src/lib.rs','utf8'),/include_str!\("\.\.\/update-public-key\.txt"\)/)
 })
+
+test('a matching iOS build is current even when the catalog says a package is available', async () => {
+ const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+ const app = setup(async () => ({ version, platform: 'ios', currentBuild: 3, build: 3, available: true }))
+ assert.equal((await app.checkForUpdate()).status, 'current')
+})

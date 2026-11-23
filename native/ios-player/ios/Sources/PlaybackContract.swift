@@ -15,6 +15,7 @@ struct PlayerSnapshot: Encodable {
     var capabilities = PlaybackCapabilities()
     var engineInstanceId = ""
     var sessionId = ""
+    var diagnosticId: String?
     var sourceRevision: Int64 = 0
     var autonomousQueue = false
     var queueVersion: Int64 = 0

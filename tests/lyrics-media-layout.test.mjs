@@ -2,13 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
+import {readFileSync} from 'node:fs'
 import {createElement} from 'react'
 import {renderToStaticMarkup} from 'react-dom/server'
 const {QueryClient,QueryClientProvider}=createRequire(import.meta.url)('@tanstack/react-query')
 
 const mocks={
  platform:`export const isMobile=globalThis.mediaLayout.mobile,isIOS=false,isOHOS=false,isAndroid=isMobile,isLargeScreen=false;`,
- useCompactLayout:`export const useCompactLayout=()=>globalThis.mediaLayout.compact;`,
+ useCompactLayout:`export const useCompactLayout=()=>globalThis.mediaLayout.compact;export const useTabletWidth=()=>!globalThis.mediaLayout.compact;`,
  playerStore:`export const usePlayerStore=selector=>selector(globalThis.mediaLayout.state);export const playbackClock=()=>0,playbackRates=[1],reloadCurrentAudioSource=()=>{};`,
  floatingLyrics:`export const useFloatingLyrics=selector=>selector({error:''});`,
  useBiliSubtitles:`export const useBiliSubtitles=()=>({choices:[],toggle(){},active:false,preferred:false});`,
@@ -73,11 +74,20 @@ test('mobile fullscreen keeps its media stage and transport together in both lay
   const fullscreen=html.find(n=>hasClass(n,'video-fullscreen'))
   const media=fullscreen.children.find(n=>hasClass(n,'lyrics-media'))
   assert.ok(media.children.some(n=>hasClass(n,'video-active')))
-  assert.ok(media.children.some(n=>hasClass(n,'video-tools')))
+  assert.ok(media.children.some(n=>hasClass(n,'video-fullscreen-toolbar') && n.children.some(child => child.attrs.includes('退出全屏'))))
   assert.ok(media.children.some(n=>hasClass(n,'video-fullscreen-transport')))
  }
 })
 test('desktop keeps its existing media-stage toolbar without the phone-only action row',async()=>{
  const render=await renderer(false),html=nodes(render(false,'video')),tools=html.find(n=>hasClass(n,'video-tools'))
  assert.ok(hasClass(tools.parent,'lyrics-media'));assert.equal(html.some(n=>hasClass(n,'lyrics-meta-actions')),false)
+})
+
+test('desktop fades the complete lyrics surface without a second animation on the lyrics panel',()=>{
+ const css=readFileSync(new URL('../src/styles/interaction-motion.css',import.meta.url),'utf8')
+ const noMotion=css.match(/\.desktop-lyrics-surface > \.lyrics-view\s*\{([^}]+)\}/)?.[1] ?? ''
+ assert.match(noMotion,/opacity:\s*1\s*;/)
+ assert.match(noMotion,/transform:\s*none\s*;/)
+ assert.match(noMotion,/transition:\s*none\s*;/)
+ assert.match(css,/@media\s*\(prefers-reduced-motion:no-preference\)\s*\{[^{}]*\.desktop-lyrics-surface\s*\{[^}]*transition:\s*opacity\s/)
 })

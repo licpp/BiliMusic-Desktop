@@ -1,4 +1,5 @@
 pub mod database;
+pub mod diagnostics;
 mod fragmented_mp4;
 pub mod media_proxy;
 pub mod migrations;

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { accountEpoch } from '../../services/accountScope'
+import { copyText } from '../../shared/copyText'
 import type { SyncConfig, SyncOutcome } from '../../services/sync'
 import type { SyncIssue } from '../../services/syncIssues'
 import { SyncConflicts } from './SyncConflicts'
@@ -29,7 +30,7 @@ export function SyncRecovery({ issues, outcome, config, busy, message, onClose, 
       `${area} · ${issue.kind}${issue.status ? ` · HTTP ${issue.status}` : ''}`)
     if (conflicts.length) details.push(`待确认修改 ${conflicts.length} 处`)
     try {
-      await navigator.clipboard.writeText(['BiliMusic 云同步', ...details].join('\n'))
+      await copyText(['BiliMusic 云同步', ...details].join('\n'))
       if (session === accountEpoch()) setCopyStatus('诊断信息已复制')
     } catch {
       if (session === accountEpoch()) setCopyStatus('复制失败，请稍后重试')

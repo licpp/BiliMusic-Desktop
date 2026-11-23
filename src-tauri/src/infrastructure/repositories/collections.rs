@@ -320,7 +320,9 @@ pub fn change(
                 let i = item.ok_or("缺少合集信息")?;
                 validate_metadata(&i)?;
                 tx.execute(
-                    "UPDATE collections SET title=?2,cover_url=?3,uploader_name=?4 WHERE bvid=?1",
+                    "UPDATE collections SET title=COALESCE(NULLIF(?2,''),title), cover_url=COALESCE(NULLIF(?3,''),cover_url),
+                     uploader_name=COALESCE(NULLIF(?4,''),uploader_name) WHERE bvid=?1
+                     AND ((?2<>'' AND title<>?2) OR (?3<>'' AND cover_url<>?3) OR (?4<>'' AND uploader_name<>?4))",
                     params![i.bvid, i.title, i.cover_url, i.uploader_name],
                 )
                 .map_err(|e| e.to_string())?;

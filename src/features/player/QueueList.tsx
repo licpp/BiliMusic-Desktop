@@ -10,7 +10,7 @@ import { useRowContextMenu, type MenuPosition } from '../../shared/useRowContext
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { PlayingMark } from '../../shared/PlayingMark'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
-import { formatDuration } from '../../shared/time'
+import { formatTrackDuration } from '../../shared/time'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { presentQueue } from './queueGroups'
 import { prepareSeasonQueueEntry, usePlayerStore } from './playerStore'
@@ -107,7 +107,7 @@ function QueueTrack({ track, active, label, groupIndex, groupCount, child = fals
     onContextMenu={menu.onContextMenu}>
     <button type="button" className="queue-row-main" aria-current={active ? 'true' : undefined} aria-label={`播放 ${title}`} onClick={play}>
       <span className="queue-row-number">{active ? <PlayingMark/> : label}</span>
-      <strong className="queue-track-title">{title}{subtitle && <small>{subtitle}</small>}</strong><small className="queue-row-duration">{formatDuration(track.durationSeconds)}</small>
+      <strong className="queue-track-title">{title}{subtitle && <small>{subtitle}</small>}</strong><small className="queue-row-duration">{formatTrackDuration(track.durationSeconds)}</small>
     </button>
     <QueueActions contextPosition={menu.position} title={title} ids={[track.id]} tracks={[track]} onPlay={play} group={group} flat={!group && !child}
       canUp={groupIndex > 0} canDown={groupIndex < groupCount - 1}/>

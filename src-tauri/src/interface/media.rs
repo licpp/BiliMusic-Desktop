@@ -78,6 +78,17 @@ pub async fn bili_season(
         .map_err(CommandError::provider)
 }
 #[tauri::command]
+pub async fn bili_season_cover(
+    provider: State<'_, BilibiliProvider>,
+    mid: i64,
+    season_id: i64,
+) -> Result<String, CommandError> {
+    if mid <= 0 || season_id <= 0 {
+        return Err(CommandError::validation("合集标识无效"));
+    }
+    provider.season_preview_cover(mid, season_id).await.map_err(CommandError::provider)
+}
+#[tauri::command]
 pub async fn bili_subtitles(
     provider: State<'_, BilibiliProvider>,
     bvid: String,
@@ -278,6 +289,11 @@ pub fn listening_statistics(database: State<'_, Database>) -> Result<Value, Comm
         .map_err(|_| CommandError::database("数据库正忙"))?;
     crate::sync::statistics::query(&c, &database.1, &profile(&database))
         .map_err(CommandError::database)
+}
+
+#[tauri::command]
+pub async fn listening_hydrate_tags(database: State<'_, Database>, provider: State<'_, BilibiliProvider>) -> Result<usize, CommandError> {
+    crate::sync::statistics::hydrate_tags(&database, &provider).await.map_err(CommandError::database)
 }
 
 #[tauri::command]

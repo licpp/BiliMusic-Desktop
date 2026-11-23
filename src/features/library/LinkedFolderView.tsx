@@ -10,7 +10,7 @@ import { formatDuration } from '../../shared/time'
 import { formatPlayCount } from '../../shared/count'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
-import { favoriteVideoTrack } from '../../services/mediaSources'
+import { favoriteVideoExpired, favoriteVideoTrack } from '../../services/mediaSources'
 import { seasonPlaybackQueue } from '../player/playerStore'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -73,7 +73,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   useListReveal(list, loadingFolder, visibleVideos.length > 0)
   const initialVideo = useRef<string | undefined>(usePlayerStore.getState().current?.source.bvid)
   const playingIndex = visibleVideos.findIndex(video => video.bvid === currentBvid)
-  const rendered = useListRows(visibleVideos, String(folderId), { through: playingIndex })
+  const rendered = useListRows(visibleVideos, `linked-folder:${folderId}`, { through: playingIndex })
   const locate = playingIndex >= 0 ? currentBvid : undefined
   useLocateCurrentRow(list, true, locate)
   useEffect(() => {
@@ -175,7 +175,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     <div className="result-list" ref={list}>{rendered.rows.map((video, index) => selection.selecting ?
       <article key={video.bvid} data-offline-unavailable={offlineUnavailable(queue[index], offline) || undefined} className="result-card"><label className="result-main linked-select-row">
         <input className="track-select" type="checkbox" aria-label={`选择 ${video.title || video.bvid}`} checked={selection.ids.has(queue[index].id)} onChange={() => selection.toggle(queue[index].id)}/>
-        <span className="result-cover"><Artwork src={video.cover}/></span><span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
+        <span className="result-cover"><Artwork src={video.cover}/></span><span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{favoriteVideoExpired(video) ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
       </label></article> :
       <LinkedVideoRow key={video.bvid} video={video} queue={queue} title={name} current={currentBvid === video.bvid}
       expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
@@ -191,25 +191,27 @@ function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, 
 }) {
   const { position, onContextMenu } = useRowContextMenu()
   const offline = useOfflinePlayback()
-  const { ref, pages, access } = useVisibleVideoPages<HTMLElement>(video.bvid, !offline.offline, true)
+  const expired = favoriteVideoExpired(video)
+  const { ref, pages, access } = useVisibleVideoPages<HTMLElement>(video.bvid, !expired && !offline.offline, true)
   const entry = queue.find(track => track.source.bvid === video.bvid)
-  const unavailable = !!entry && offlineUnavailable(entry, offline)
+  const unavailable = expired && !offline.offline || !!entry && offlineUnavailable(entry, offline)
   const multiple = !offline.offline && (pages?.length ?? 0) > 1
   const playVideo = async () => {
+    if (unavailable) return
     if (offline.offline) {
-      if (entry && !offlineUnavailable(entry)) await usePlayerStore.getState().playFromList(queue, entry.id, { kind: 'season', title })
+      if (entry && !offlineUnavailable(entry)) await usePlayerStore.getState().playFromList(queue, entry.id, { kind: 'season', title, origin: 'linked-favorite' })
       return
     }
     const detail = await getVideoParts(video.bvid)
     const tracks = detail.parts.map(part => toTrack(detail, part))
-    if (tracks[0]) await usePlayerStore.getState().playFromList(seasonPlaybackQueue(queue, tracks[0], tracks), tracks[0].id, { kind: 'season', title })
+    if (tracks[0]) await usePlayerStore.getState().playFromList(seasonPlaybackQueue(queue, tracks[0], tracks), tracks[0].id, { kind: 'season', title, origin: 'linked-favorite' })
   }
   const [playError, setPlayError] = useState('')
   return <article ref={ref} data-offline-unavailable={unavailable || undefined} className="result-card">
     <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
       <button type="button" className="result-main" disabled={unavailable} aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}>
         <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}<VideoAccessBadge access={access} onCover/></span>
-        <span className="result-copy"><strong>{video.title || video.bvid}</strong><small className="result-byline"><span>{video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</span></small></span>
+        <span className="result-copy"><strong>{video.title || video.bvid}</strong><small className="result-byline"><span>{expired ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</span></small></span>
         {multiple && (expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>)}
       </button>
       <ActionMenu sheet label={`操作 ${video.title || video.bvid}`} contextPosition={position}>{close => <>
@@ -229,5 +231,5 @@ function LinkedVideoParts({ bvid, queue, title }: { bvid: string; queue: import(
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
   const tracks = video.parts.map(part => toTrack(video, part))
-  return <VideoPartsList savedContainer locateCurrent queueSource={{ kind: 'season', title }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
+  return <VideoPartsList savedContainer locateCurrent queueSource={{ kind: 'season', title, origin: 'linked-favorite' }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
 }

@@ -11,7 +11,8 @@ import { installLocalPlayback } from './app/localPlayback'
 import { startPreloadingNextTrack } from './features/player/preloadNextTrack'
 import { startListeningStatistics } from './services/listeningStatistics'
 import { startCloudSync } from './services/sync'
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
+import { installStartupDiagnostics } from './services/diagnostics'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './app/App'
@@ -53,6 +54,8 @@ if (tray) {
   document.documentElement.dataset.auxWindow = 'tray'
   document.getElementById('app-bootstrap')?.remove()
 }
+const diagnoseReady = !floating && !tray ? installStartupDiagnostics() : undefined
+function DiagnosticBoot() { useEffect(() => { diagnoseReady?.() }, []); return null }
 if (!floating && !tray) {
   installLocalPlayback(queryClient)
   startUpdateChecks()
@@ -65,7 +68,7 @@ if (!floating && !tray) {
 }
 function mount() {
   createRoot(document.getElementById('root')!).render(
-    <StrictMode><QueryClientProvider client={queryClient}>{tray ? <TrayPlayer/> : floating ? floatingMode === 'lyrics-unlock' ? <FloatingLyricsUnlockWindow/> : <FloatingLyricsWindow/> : <><SubtitleController/><App/></>}</QueryClientProvider></StrictMode>,
+    <StrictMode><QueryClientProvider client={queryClient}>{tray ? <TrayPlayer/> : floating ? floatingMode === 'lyrics-unlock' ? <FloatingLyricsUnlockWindow/> : <FloatingLyricsWindow/> : <><SubtitleController/><App/><DiagnosticBoot/></>}</QueryClientProvider></StrictMode>,
   )
 }
 
@@ -91,3 +94,5 @@ import './styles/list-toolbar.css'
 import './styles/interaction-motion.css'
 import './styles/tablet.css'
 import './styles/controls.css'
+
+import './features/settings/diagnostics.css'

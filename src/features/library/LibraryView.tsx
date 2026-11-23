@@ -22,7 +22,7 @@ import { ListSearch,matchesTrackSearch } from '../../shared/ListSearch'
 import { ListSort,useListSort } from '../../shared/ListSort'
 import { PlayingMark } from '../../shared/PlayingMark'
 import type { TabOption } from '../../shared/SegmentedTabs'
-import { formatDuration } from '../../shared/time'
+import { formatTrackDuration } from '../../shared/time'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
 import { SwipeTabPages } from '../../shared/SwipeTabPages'
@@ -85,7 +85,9 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   useEffect(() => {
     if (!active || !trackRows?.length) return
     return afterListMotion(() => {
-      void hydrateSourceTitles(trackRows.map(track => track.id), client).catch(() => undefined)
+      const unknownDurations = trackRows.filter(track => !track.durationSeconds)
+      const knownDurations = trackRows.filter(track => track.durationSeconds > 0)
+      void hydrateSourceTitles([...unknownDurations, ...knownDurations].map(track => track.id), client).catch(() => undefined)
       void hydrateVisibleTracks(trackRows, client).catch(() => undefined)
     })
   }, [trackRows, client, active])
@@ -152,7 +154,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
         {currentId === track.id && <PlayingMark/>}
       </button>}
       <div className="library-copy" role={selection.selecting ? undefined : 'button'} aria-current={currentId === track.id ? 'true' : undefined} aria-disabled={!selection.selecting && unavailable || undefined} tabIndex={selection.selecting || unavailable ? undefined : 0} onClick={() => { if (selection.selecting) selection.toggle(track.id); else if (!unavailable) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!unavailable && !selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{originalSong?.title || track.displayTitle || track.title}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
-      <span className="library-duration">{formatDuration(track.durationSeconds)}</span>
+      <span className="library-duration">{formatTrackDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
       <TrackMenuButton track={track} playlistId={playlist?.id} tracks={visibleTracks} actions={rowActions}/>

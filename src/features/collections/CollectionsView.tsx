@@ -90,7 +90,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, actionsH
         const contents = items.filter(item => item.folderId === folder.id)
         const onOpen = () => onOpenFolder(folder.id)
         return <LibraryArtworkEntry gallery={!sidebar} coverBadge="folder" key={`folder:${folder.id}`} title={folder.name} subtitle={`${contents.length} 个收藏`} sidebar={sidebar}
-          coverUrl={contents[0]?.coverUrl} artwork={{ fallback: <Folder aria-hidden="true"/> }}
+          seasonReference={contents[0]?.bvid} coverUrl={contents[0]?.coverUrl} artwork={{ fallback: <Folder aria-hidden="true"/> }}
           dropFolderId={folder.id} onOpen={onOpen}
           menu={position => <FolderMenu folder={folder} contextPosition={position} onOpen={onOpen}
             onChanged={refresh} onRemoved={() => onFolderRemoved?.(folder.id)}/>}/>
@@ -105,7 +105,7 @@ export function CollectionsView({ hideHeading = false, sidebar = false, actionsH
       const onOpen = () => onSelect(item)
       const canMove = (root || !compact) && !move.isPending && folders.some(folder => folder.id !== item.folderId)
       return <LibraryArtworkEntry gallery={!sidebar} key={item.bvid} title={title} subtitle={item.uploaderName || (parseSeasonReference(item.bvid) ? '打开查看视频' : '打开查看分 P')} sidebar={sidebar}
-        coverUrl={item.coverUrl} onOpen={onOpen}
+        seasonReference={item.bvid} coverUrl={item.coverUrl} onOpen={onOpen}
         drag={canMove && !isMobile ? { folderId: item.folderId, onMove: target => move.mutate({ item, target }) } : undefined}
         menu={position => <CollectionMenu item={item} contextPosition={position} onOpen={onOpen}/>}/>
     })}

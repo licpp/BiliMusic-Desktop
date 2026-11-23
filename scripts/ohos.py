@@ -278,7 +278,7 @@ def verify_hap(target):
         stripped = APP / f'gen/ohos/entry/build/default/intermediates/stripped_native_libs/default/{abi}/libbilimusic_lib.so'
         if binary != stripped.read_bytes() or elf_loadable_sections(binary) != elf_loadable_sections(source):
             raise RuntimeError('Packaged native runtime contents differ from the build output')
-        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'bilimusicOhosResolve', 'bilimusicOhosCancelResolve', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
+        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'bilimusicOhosResolve', 'bilimusicOhosDiagnostic', 'bilimusicOhosCancelResolve', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
             if symbol.encode() not in binary:
                 raise RuntimeError(f'Native bridge export missing: {symbol}')
         if len(package.read('ets/modules.abc')) < 1000:

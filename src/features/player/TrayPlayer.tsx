@@ -76,7 +76,7 @@ export function TrayPlayer() {
       </div>
     </div>
     <div className="tray-player-time">
-      <span>{formatDuration(position)}</span>
+      <span>{formatDuration(position, duration >= 3600)}</span>
       <progress aria-label="播放进度" value={position} max={Math.max(1, duration)} />
       <span>{formatDuration(duration)}</span>
     </div>
