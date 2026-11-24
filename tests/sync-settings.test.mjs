@@ -13,6 +13,7 @@ const output = await build({
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: 'invoke', namespace: 'test' }))
     builder.onResolve({ filter: /syncAttention$/ }, () => ({path:'attention',namespace:'test'}))
     builder.onResolve({ filter: /services\/(sync|desktopApi)$/ }, args => ({ path: args.path.endsWith('/sync') ? 'sync' : 'api', namespace: 'test' }))
+    builder.onResolve({ filter: /librarySync$/ }, () => ({ path: 'library-sync', namespace: 'test' }))
     builder.onResolve({ filter: /player\/playerStore$/ }, () => ({ path: 'player', namespace: 'test' }))
     builder.onResolve({ filter: /shared\/ActionMenu$/ }, () => ({ path: 'menu', namespace: 'test' }))
     builder.onResolve({ filter: /shared\/CollectionDialog$/ }, () => ({ path: 'dialog', namespace: 'test' }))
@@ -24,7 +25,8 @@ const output = await build({
       'react-hooks': `export const useState = initial => globalThis.syncSettingsTest.useState(initial); export const useEffect = () => {};`,
       queries: `export const useQuery = () => globalThis.syncSettingsTest.query; export const useQueryClient = () => ({invalidateQueries:async()=>{}});`,
       invoke: `export const invoke = (...args) => globalThis.syncSettingsTest.invoke(...args);`,
-      sync: `export const defaultSyncConfig={enabled:false,provider:'webdav',uid:'42',url:'https://dav.jianguoyun.com/dav/',history:false,initialized:false,deviceId:''}; export const refreshSyncedLibrary=async()=>{}; export const syncNow=(...args)=>globalThis.syncSettingsTest.syncNow(...args); export const syncStatus=async()=>({});`,
+      sync: `export const defaultSyncConfig={enabled:false,provider:'webdav',uid:'42',url:'https://dav.jianguoyun.com/dav/',history:false,initialized:false,deviceId:''}; export const syncNow=(...args)=>globalThis.syncSettingsTest.syncNow(...args); export const syncStatus=async()=>({});`,
+      'library-sync': `export const refreshSyncedLibrary=async()=>{};`,
       api: `export const inDesktopShell=true; export const commandErrorMessage=e=>e.message;`,
       player: `export const resetPlayerForAccount=async()=>{throw new Error('Connecting sync must not reset the account or player')};`,
     }[path] }))

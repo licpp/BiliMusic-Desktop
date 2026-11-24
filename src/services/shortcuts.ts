@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { defaultShortcuts, globalShortcutConflict, readShortcuts, shortcutActions, shortcutProblem, type Shortcut, type ShortcutAction, type ShortcutBindings } from '../features/player/shortcuts'
+import { defaultShortcuts, globalShortcutConflict, readShortcuts, shortcutActions, shortcutProblem, type Shortcut, type ShortcutAction, type ShortcutBindings } from '../domain/shortcuts'
 export const shortcutMac = /Macintosh|Mac OS X/i.test(navigator.userAgent)
 export const shortcutWindows = /Windows/i.test(navigator.userAgent)
 export const shortcutDesktop = shortcutMac || shortcutWindows

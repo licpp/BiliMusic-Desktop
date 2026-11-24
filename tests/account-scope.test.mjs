@@ -39,7 +39,7 @@ test('late sync metadata refresh cannot overwrite the next account player', asyn
   globalThis.accountRefreshTest = { current: { id: 'same-track' }, updateTrack() { updates++ } }
   try {
     const compiled = await build({
-      stdin: { contents: "export { refreshSyncedLibrary } from './src/services/sync'; export { advanceAccountEpoch } from './src/services/accountScope'", resolveDir: process.cwd(), loader: 'ts' },
+      stdin: { contents: "export { refreshSyncedLibrary } from './src/features/sync/librarySync'; export { advanceAccountEpoch } from './src/services/accountScope'", resolveDir: process.cwd(), loader: 'ts' },
       bundle:true, format:'cjs', platform:'node', write:false,
       plugins:[{name:'player-boundary',setup(builder){
         builder.onResolve({filter:/playerStore$/},()=>({path:'player',namespace:'mock'}))

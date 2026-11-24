@@ -5,7 +5,7 @@ import { usePlaybackChapters, type PlaybackChapters } from '../features/chapters
 import type { PlaybackChapter } from '../domain/playbackChapters'
 import { useOverlayDismiss } from '../shared/useOverlayDismiss'
 import { PlayingVideoReplacement } from '../features/library/PlayingVideoReplacement'
-import { useSourceTitleMetadata } from '../shared/useSourceTitleMetadata'
+import { useSourceTitleMetadata } from '../features/player/useSourceTitleMetadata'
 import { trackSubtitle } from '../domain/sourceTitle'
 import { accountQueryKey, accountKeyAt } from '../services/queryKeys'
 import { createPortal } from 'react-dom'

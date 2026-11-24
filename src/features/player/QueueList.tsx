@@ -1,6 +1,6 @@
 import { trackSubtitle, hasSeriesHeading, knownArtist, withoutSeriesPrefix } from '../../domain/sourceTitle'
 import { useQueryClient } from '@tanstack/react-query'
-import { hydrateSourceTitles } from '../../services/sourceTitles'
+import { hydrateSourceTitles } from './sourceTitles'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, GripVertical, ListMusic, Play, ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'

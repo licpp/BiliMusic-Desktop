@@ -14,28 +14,14 @@ const runtimeGraph = build({
   logLevel: 'silent',
 })
 
-const existingServiceFeatureImports = new Set([
-  'updates.ts -> player/playerStore.ts',
-  'floatingLyrics.ts -> player/playerStore.ts',
-  'floatingLyrics.ts -> lyrics/useBiliSubtitles.ts',
-  'listeningStatistics.ts -> player/playerStore.ts',
-  'sync.ts -> player/playerStore.ts',
-  'sourceTitles.ts -> player/playerStore.ts',
-  'importedPlayback.ts -> player/playerStore.ts',
-  'shortcuts.ts -> player/shortcuts.ts',
-  'globalShortcuts.ts -> player/shortcuts.ts',
-])
-
-test('runtime entry points cannot add service dependencies on features', async () => {
+test('services never depend on features or app code at runtime', async () => {
   const { metafile } = await runtimeGraph
-  const serviceRoot = 'src/services/'
-  const featureRoot = 'src/features/'
   for (const [file, input] of Object.entries(metafile.inputs)) {
-    if (!file.startsWith(serviceRoot)) continue
+    if (!file.startsWith('src/services/')) continue
     for (const dependency of input.imports) {
-      if (dependency.external || !dependency.path.startsWith(featureRoot)) continue
-      const edge = file.slice(serviceRoot.length) + ' -> ' + dependency.path.slice(featureRoot.length)
-      assert.ok(existingServiceFeatureImports.has(edge), `Move feature-dependent logic out of services: ${edge}`)
+      if (dependency.external) continue
+      assert.doesNotMatch(dependency.path, /^src\/(features|app)\//,
+        `Move application logic out of services: ${file} -> ${dependency.path}`)
     }
   }
 })

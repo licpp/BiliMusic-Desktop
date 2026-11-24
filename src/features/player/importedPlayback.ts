@@ -1,7 +1,7 @@
-import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
-import type { ImportChoice } from './playlistImportModel'
-import { withTrackTitle } from '../domain/sourceTitle'
-import { playbackIntent, usePlayerStore } from '../features/player/playerStore'
+import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
+import type { ImportChoice } from '../../services/playlistImportModel'
+import { withTrackTitle } from '../../domain/sourceTitle'
+import { playbackIntent, usePlayerStore } from './playerStore'
 
 /** A binding changes a playlist slot, never an existing song's identity.
  * Late writes cannot take over a newer playback intent. */

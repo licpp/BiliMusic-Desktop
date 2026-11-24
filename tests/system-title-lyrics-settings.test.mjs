@@ -38,6 +38,7 @@ test('iOS native metadata has no persisted title-mode override and clients canno
  const native=await readFile('native/ios-player/ios/Sources/PlayerPlugin.swift','utf8')
  assert.doesNotMatch(native,/systemTitleLyrics|bilimusic-system-title-lyrics/)
  const service=await readFile('src/services/floatingLyrics.ts','utf8')
- assert.match(service,/if \(isMobile && !isIOS\) void setSystemTitleLyrics/)
+ const runtime=await readFile('src/features/lyrics/floatingLyricsRuntime.ts','utf8')
+ assert.match(runtime,/if \(isMobile && !isIOS\) void setSystemTitleLyrics/)
  assert.match(service,/if \(!isMobile \|\| isIOS\) return Promise.resolve\(\)/)
 })

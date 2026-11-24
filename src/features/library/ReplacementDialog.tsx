@@ -12,7 +12,7 @@ import { Artwork } from '../../shared/Artwork'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { formatDuration } from '../../shared/time'
 import { playbackIntent, usePlayerStore } from '../player/playerStore'
-import { refreshImportedPlayback } from '../../services/importedPlayback'
+import { refreshImportedPlayback } from '../player/importedPlayback'
 import '../../styles/components/import-matching.css'
 
 export function formatMatchPlayCount(value: number) {

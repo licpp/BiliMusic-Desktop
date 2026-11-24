@@ -1,4 +1,4 @@
-import { dispatchBack, isTopOverlay } from '../shared/overlayStack'
+import { isTopOverlay } from '../shared/overlayStack'
 import { useOverlayDismiss } from '../shared/useOverlayDismiss'
 import { swipeAxis, trackSwipeDirection } from '../shared/gestureRelease'
 import { useVerticalDismiss } from '../shared/useVerticalDismiss'
@@ -12,7 +12,6 @@ import { useListDataDuringNavigation, useListReveal } from '../shared/useListMot
 import { useListRows } from '../shared/useListRows'
 import { captureStagePreview, mountStagePreview } from './stageBackPreview'
 import { focusSearch } from '../shared/focusSearch'
-import { suppressBrowserContextMenu } from '../shared/nativeTextEditing'
 import { offlineUnavailable, useOfflinePlayback } from '../features/player/offlinePlayback'
 import { useUpdateStore } from '../services/updates'
 import { trackSubtitle } from '../domain/sourceTitle'
@@ -35,7 +34,7 @@ import { SleepTimer } from '../features/player/SleepTimer'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaylistsView } from '../features/library/PlaylistsView'
 import { MyView } from '../features/settings/MyView'
-import { hydrateVisibleTracks } from '../services/sync'
+import { hydrateVisibleTracks } from '../features/sync/librarySync'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { setImmersiveWindow } from '../services/immersiveWindow'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
@@ -72,9 +71,7 @@ import {
   Moon,
 } from 'lucide-react'
 import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/playerStore'
-import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
-import { useShortcutStore } from '../services/shortcuts'
-import { listenGlobalShortcuts, syncGlobalShortcuts, showMainWindow } from '../services/globalShortcuts'
+import { installWindowShortcuts } from './windowShortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { SearchView } from '../features/search/SearchView'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
@@ -544,49 +541,7 @@ export function App() {
     if (direction < 0) void next()
     else if (direction > 0) void previous()
   }
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || (event.target as HTMLElement)?.closest('[data-shortcut-editor]')) return
-      if (event.key === 'Escape' || event.key === 'BrowserBack') {
-        if (dispatchBack()) event.preventDefault()
-        return
-      }
-      const target = event.target as HTMLElement
-      if (target.closest('input, textarea, select, [contenteditable="true"]')) return
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
-      // Space belongs to playback controls even after a mouse click leaves
-      // previous/next focused. Other buttons retain native keyboard activation.
-      if (target.isContentEditable) return
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && [' ', 'Enter'].includes(event.key) && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
-      if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
-      const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
-      if (!shortcut) return
-      if (event.repeat && ['show','toggle','next','previous','refreshSync'].includes(shortcut)) { event.preventDefault();return }
-      if(run(shortcut))event.preventDefault()
-    }
-    const run=(shortcut:ShortcutAction)=>{
-      if(shortcut==='show'){void showMainWindow();return true}
-      if(shortcut==='refreshSync'){window.dispatchEvent(new Event('bilimusic-refresh-requested'));return true}
-      if(shortcut==='listSearch'){
-        const search=new Event('bilimusic-list-search',{cancelable:true});window.dispatchEvent(search);return search.defaultPrevented
-      }
-      const state=usePlayerStore.getState()
-      if(shortcut==='toggle')void state.toggle()
-      else if(shortcut==='next')void state.next()
-      else if(shortcut==='previous')void state.previous()
-      else if(shortcut==='seekBack'||shortcut==='seekForward')state.seek(state.progressSeconds+(shortcut==='seekBack'?-10:10))
-      else state.setVolume(Math.max(0,Math.min(1,state.volume+(shortcut==='volumeUp'?.05:-.05))))
-      return true
-    }
-    const stopMouse=isMobile?()=>undefined:installMouseShortcuts(window,()=>useShortcutStore.getState().bindings,run,event=>Boolean((event.target as Element)?.closest?.('[data-shortcut-editor],input,textarea,select,[contenteditable="true"]')||document.querySelector('[aria-modal="true"]')))
-    const stopGlobal = isMobile ? () => undefined : listenGlobalShortcuts(run)
-    const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings,state.globalEnabled))
-    if (!isMobile) { const state=useShortcutStore.getState();syncGlobalShortcuts(state.bindings,state.globalEnabled) }
-    window.addEventListener('keydown', handler)
-    const disableBrowserMenu = (event: MouseEvent) => suppressBrowserContextMenu(event, isMobile)
-    document.addEventListener('contextmenu', disableBrowserMenu)
-    return () => { stopMouse();stopGlobal();stopSync();if(!isMobile)syncGlobalShortcuts(useShortcutStore.getState().bindings,false);window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
-  }, [])
+  useEffect(installWindowShortcuts, [])
 
   useEffect(() => {
     const back = (event: Event) => {

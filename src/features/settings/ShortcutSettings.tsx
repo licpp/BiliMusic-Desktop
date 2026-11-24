@@ -2,7 +2,7 @@ import { Keyboard, RotateCcw, X } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
 import { useEffect, useState } from 'react'
 import { suspendGlobalShortcuts, useGlobalShortcutStatus } from '../../services/globalShortcuts'
-import { shortcutActions, shortcutFromEvent, shortcutFromMouseEvent, shortcutLabel, type ShortcutAction } from '../player/shortcuts'
+import { shortcutActions, shortcutFromEvent, shortcutFromMouseEvent, shortcutLabel, type ShortcutAction } from '../../domain/shortcuts'
 import { shortcutMac, shortcutDesktop, useShortcutStore } from '../../services/shortcuts'
 export function ShortcutSettings() {
   const {bindings,globalEnabled,setGlobalEnabled,setBinding,reset}=useShortcutStore()

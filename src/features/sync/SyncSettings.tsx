@@ -13,7 +13,8 @@ import { describeSyncIssue, type SyncIssue } from '../../services/syncIssues'
 import { accountEpoch } from '../../services/accountScope'
 import { inDesktopShell } from '../../services/desktopApi'
 import { hydrateSources } from '../../services/sourceHydration'
-import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome, type TrackRepairPreview } from '../../services/sync'
+import { defaultSyncConfig, syncNow, syncStatus, type SyncConfig, type SyncOutcome, type TrackRepairPreview } from '../../services/sync'
+import { refreshSyncedLibrary } from './librarySync'
 
 function syncTime(value?: string) {
   if (!value) return '尚未同步'

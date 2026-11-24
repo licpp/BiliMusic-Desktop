@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { create } from 'zustand'
-import { globalShortcutBinding, shortcutActions, type ShortcutAction, type ShortcutBindings } from '../features/player/shortcuts'
+import { globalShortcutBinding, shortcutActions, type ShortcutAction, type ShortcutBindings } from '../domain/shortcuts'
 import { inDesktopShell } from './desktopApi'
 import { shortcutDesktop } from './shortcuts'
 

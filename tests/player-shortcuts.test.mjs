@@ -1,7 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
-const r=await build({entryPoints:['src/features/player/shortcuts.ts'],bundle:true,write:false,format:'esm',platform:'node'})
+const r=await build({stdin:{contents:"export * from './src/domain/shortcuts'; export * from './src/shared/installMouseShortcuts'",resolveDir:process.cwd()},bundle:true,write:false,format:'esm',platform:'node'})
 const {playerShortcut}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
 test('Mac 和 Windows 快捷键区分切歌、快进与音量，保留其他组合',()=>{
  const event={key:'ArrowRight',code:'ArrowRight',metaKey:false,ctrlKey:false,altKey:false,shiftKey:false}

@@ -1,15 +1,16 @@
-import { withTrackTitle } from '../domain/sourceTitle'
-import { sourceTrack } from '../domain/importedPresentation'
-import type { ImportedEntry } from '../domain/importedEntry'
-import { toTrack } from './collectionTrack'
-import type { Track } from '../domain/track'
+import { withTrackTitle } from '../../domain/sourceTitle'
+import { sourceTrack } from '../../domain/importedPresentation'
+import type { ImportedEntry } from '../../domain/importedEntry'
+import { toTrack } from '../../services/collectionTrack'
+import type { Track } from '../../domain/track'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryClient } from '@tanstack/react-query'
-import { usePlayerStore } from '../features/player/playerStore'
-import { inDesktopShell, fromStoredTrack, getVideoParts } from './desktopApi'
-import type { StoredTrack } from '../domain/library'
-import { accountEpoch } from './accountScope'
-import { hydrateSources } from './sourceHydration'
+import { usePlayerStore } from './playerStore'
+import { inDesktopShell, fromStoredTrack, getVideoParts } from '../../services/desktopApi'
+import type { StoredTrack } from '../../domain/library'
+import { accountEpoch } from '../../services/accountScope'
+import { hydrateSources } from '../../services/sourceHydration'
+import { getSyncedTrack } from '../../services/sync'
 const attempted = new Map<string, number>()
 export async function hydrateSourceTitles(ids: string[], client: QueryClient, cacheOnly = false) {
   if (!inDesktopShell) return
@@ -42,7 +43,7 @@ export async function hydrateSourceTitles(ids: string[], client: QueryClient, ca
       let stored: StoredTrack | null
       try {
         let read = reads.get(track.id)
-        if (!read) { read = invoke<StoredTrack | null>('sync_current_track', {trackId:track.id}); reads.set(track.id, read) }
+        if (!read) { read = getSyncedTrack(track.id); reads.set(track.id, read) }
         stored = await read
       }
       catch { if (epoch !== accountEpoch()) return; continue }

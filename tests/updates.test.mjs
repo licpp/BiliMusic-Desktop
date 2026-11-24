@@ -5,15 +5,14 @@ import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 const compiled = await build({entryPoints:['src/services/updates.ts'],bundle:true,write:false,format:'cjs',platform:'node',plugins:[{name:'update-boundaries',setup(b){
  b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}))
- b.onResolve({filter:/player\/playerStore$/},()=>({path:'player',namespace:'mock'}))
- b.onLoad({filter:/.*/,namespace:'mock'},({path})=>({contents:path==='player'?'export const prepareForApplicationUpdate=async()=>{globalThis.updateTest.flushed++}':`export const isTauri=()=>true;export const invoke=(...args)=>globalThis.updateTest.invoke(...args);export class Channel{set onmessage(fn){globalThis.updateTest.progress=fn}}`}))
+ b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:`export const isTauri=()=>true;export const invoke=(...args)=>globalThis.updateTest.invoke(...args);export class Channel{set onmessage(fn){globalThis.updateTest.progress=fn}}`}))
 }}]})
 function setup(invoke) {
  const f=globalThis.updateTest={invoke,flushed:0}
  globalThis.window=Object.assign(new EventTarget(),{setTimeout:fn=>(f.first=fn,1),setInterval:fn=>(f.tick=fn,2)})
  globalThis.document=Object.assign(new EventTarget(),{hidden:false})
  const m={exports:{}};new Function('require','module','exports',compiled.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
- return {...m.exports, f}
+ return {...m.exports, installUpdate: () => m.exports.installUpdate(async () => { f.flushed++ }), f}
 }
 const newer={version:'9.0.0',available:true,installable:true,requestId:'plan-one',platform:'android-large',size:100}
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {resolve,reject,promise}}

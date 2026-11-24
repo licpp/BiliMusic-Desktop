@@ -1,5 +1,6 @@
 import { ArrowUpCircle, Download, ExternalLink, LoaderCircle, RefreshCw } from 'lucide-react'
 import { checkUpdates, downloadUpdate, installUpdate, openUpdateDownload, useUpdateStore } from '../../services/updates'
+import { prepareForApplicationUpdate } from '../player/playerStore'
 import { currentDisplayVersion, formatReleaseVersion } from '../../shared/version'
 
 export function UpdateSettings() {
@@ -16,7 +17,7 @@ export function UpdateSettings() {
     <button type="button" aria-disabled={busy || ready} onClick={() => void checkUpdates()}>{phase === 'checking' ? <LoaderCircle className="spin" /> : <RefreshCw/>}{phase === 'checking' ? '正在检查…' : '检查更新'}</button>
     {(message || error) && <div className="update-status" role="status" aria-live="polite">
       <span className={error ? 'update-error' : ''}>{error || notice || message}</span>
-      {result?.status === 'available' && (result.installable ? <button type="button" aria-disabled={busy} onClick={() => void (ready ? installUpdate() : downloadUpdate())}>{busy ? <LoaderCircle className="spin"/> : <Download/>}{busy ? phase === 'installing' ? '正在安装…' : '正在准备…' : ready ? desktopInstaller ? '安装并重启' : '安装更新' : '下载更新'}</button> : <button type="button" onClick={() => void openUpdateDownload().catch(() => useUpdateStore.setState({ error: '无法打开官网，请检查网络' }))}><ExternalLink/>前往官网下载</button>)}
+      {result?.status === 'available' && (result.installable ? <button type="button" aria-disabled={busy} onClick={() => void (ready ? installUpdate(prepareForApplicationUpdate) : downloadUpdate())}>{busy ? <LoaderCircle className="spin"/> : <Download/>}{busy ? phase === 'installing' ? '正在安装…' : '正在准备…' : ready ? desktopInstaller ? '安装并重启' : '安装更新' : '下载更新'}</button> : <button type="button" onClick={() => void openUpdateDownload().catch(() => useUpdateStore.setState({ error: '无法打开官网，请检查网络' }))}><ExternalLink/>前往官网下载</button>)}
     </div>}
     {(phase === 'downloading' || phase === 'verifying') && <div className="update-transfer"><progress aria-label="更新下载进度" max={100} value={percent}/><small>{percent === undefined ? '下载中' : `${percent}%`}{total ? ` · ${(received / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB` : ''}</small></div>}
   </section>

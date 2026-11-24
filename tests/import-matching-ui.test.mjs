@@ -14,7 +14,7 @@ const mocks={
  useCompactLayout:`export const useCompactLayout=()=>false`,
  useLocateCurrentRow:`export const useLocateCurrentRow=()=>{}`,
  sourceTitles:`export const hydrateSourceTitles=async()=>{}`,
- sync:`export const hydrateVisibleTracks=async()=>{}`,
+ librarySync:`export const hydrateVisibleTracks=async()=>{}`,
  TrackMenuButton:`import {createElement} from 'react';export const TrackMenuButton=p=>createElement('button',{'data-track-menu':p.track.id,'data-can-replace':Boolean(p.actions?.replaceVideo)},'更多操作')`,
  DownloadsView:`export const DownloadsView=()=>null`,
  ListSort:`export const ListSort=()=>null;export const useListSort=()=>({rule:'source:asc',dates:{},playCounts:{}})`,
@@ -24,7 +24,7 @@ const mocks={
  core:`export const isTauri=()=>false;export const invoke=async()=>null;export class Channel {}`,
 }
 b.onResolve({filter:/@tauri-apps\/api\/core$/},()=>({path:'core',namespace:'fixture'}))
-b.onResolve({filter:/\/(playerStore|playlistImport|importedEntries|useCompactLayout|useLocateCurrentRow|sourceTitles|sync|TrackMenuButton|DownloadsView|ListSort|useTrackSelection|ActionMenu|platform)$/},a=>({path:a.path.split('/').at(-1),namespace:'fixture'}))
+b.onResolve({filter:/\/(playerStore|playlistImport|importedEntries|useCompactLayout|useLocateCurrentRow|sourceTitles|librarySync|TrackMenuButton|DownloadsView|ListSort|useTrackSelection|ActionMenu|platform)$/},a=>({path:a.path.split('/').at(-1),namespace:'fixture'}))
 b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:mocks[a.path],loader:'js'}))
 }}]})
 const m={exports:{}};new Function('require','module','exports',result.outputFiles[0].text)(require,m,m.exports)

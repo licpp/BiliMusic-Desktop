@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
-const compiled=await build({entryPoints:['src/services/sourceTitles.ts'],bundle:true,write:false,format:'cjs',platform:'node',plugins:[{name:'source-fixture',setup(b){
+const compiled=await build({entryPoints:['src/features/player/sourceTitles.ts'],bundle:true,write:false,format:'cjs',platform:'node',plugins:[{name:'source-fixture',setup(b){
  b.onResolve({filter:/playerStore$|desktopApi$|accountScope$|^@tauri-apps\/api\/core$/},a=>({path:a.path,namespace:'fixture'}))
  b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('playerStore')?'export const usePlayerStore={getState:()=>globalThis.titleFixture.state,setState:fn=>{Object.assign(globalThis.titleFixture.state,fn(globalThis.titleFixture.state));globalThis.titleFixture.writes++}}':path.endsWith('desktopApi')?'export const inDesktopShell=true;export const fromStoredTrack=t=>t;export const getVideoParts=async()=>globalThis.titleFixture.detail':path.endsWith('accountScope')?'export const accountEpoch=()=>globalThis.titleFixture.epoch':'export const invoke=(...a)=>globalThis.titleFixture.invoke(...a)'}))
 }}]})

@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Track } from '../domain/track'
-import { accountEpoch } from '../services/accountScope'
-import { getVideoParts } from '../services/desktopApi'
-import { hydrateSourceTitles } from '../services/sourceTitles'
+import type { Track } from '../../domain/track'
+import { accountEpoch } from '../../services/accountScope'
+import { getVideoParts } from '../../services/desktopApi'
+import { hydrateSourceTitles } from './sourceTitles'
 
 /** Source details are public cache data; apply them through the guarded stored
  * read so a late response can never overwrite a newer manual title. */

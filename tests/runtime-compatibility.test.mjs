@@ -193,17 +193,17 @@ test('secure IDs preserve native UUIDs and use UUID v4 bits with legacy Web Cryp
 
 test('desktop statistics use secure fallback session IDs and skip initialization if Web Crypto is unavailable', async () => {
   const { outputFiles: [source] } = await build({
-    entryPoints: ['src/services/listeningStatistics.ts'], bundle: true, write: false, format: 'cjs',
+    entryPoints: ['src/features/player/listeningStatistics.ts'], bundle: true, write: false, format: 'cjs',
     plugins: [{
       name: 'statistics-fixtures',
       setup(builder) {
         const fixtures = new Map([
           ['@tauri-apps/api/core', 'export const invoke = nativeCommand'],
-          ['./platform', 'export const isMobile = false'],
-          ['./desktopApi', 'export const inDesktopShell = true'],
-          ['../features/player/playerStore', 'export const usePlayerStore = player; export const playbackClock = clock'],
+          ['../../services/platform', 'export const isMobile = false'],
+          ['../../services/desktopApi', 'export const inDesktopShell = true'],
+          ['./playerStore', 'export const usePlayerStore = player; export const playbackClock = clock'],
         ])
-        builder.onResolve({ filter: /^(?:@tauri-apps\/api\/core|\.\/platform|\.\/desktopApi|\.\.\/features\/player\/playerStore)$/ }, args =>
+        builder.onResolve({ filter: /^(?:@tauri-apps\/api\/core|\.\.\/\.\.\/services\/(?:platform|desktopApi)|\.\/playerStore)$/ }, args =>
           ({ path: args.path, namespace: 'statistics-fixtures' }))
         builder.onLoad({ filter: /.*/, namespace: 'statistics-fixtures' }, args => ({ contents: fixtures.get(args.path) }))
       },

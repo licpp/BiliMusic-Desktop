@@ -2,8 +2,8 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
-const compiled=await build({stdin:{contents:"export * from './src/services/sourceTitles';export {fromStoredTrack,recordPlayedTrack} from './src/services/desktopApi';export {advanceAccountEpoch} from './src/services/accountScope'",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'title-boundaries',setup(b){
- b.onResolve({filter:/player\/playerStore$/},()=>({path:'store',namespace:'mock'}))
+const compiled=await build({stdin:{contents:"export * from './src/features/player/sourceTitles';export {fromStoredTrack,recordPlayedTrack} from './src/services/desktopApi';export {advanceAccountEpoch} from './src/services/accountScope'",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'title-boundaries',setup(b){
+ b.onResolve({filter:/playerStore$/},()=>({path:'store',namespace:'mock'}))
  b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'core',namespace:'mock'}))
  b.onLoad({filter:/.*/,namespace:'mock'},({path})=>({contents:path==='store'?`export const usePlayerStore={getState:()=>globalThis.titleState,setState:patch=>Object.assign(globalThis.titleState,typeof patch==='function'?patch(globalThis.titleState):patch)};`:`export const isTauri=()=>true;export const invoke=(command,...args)=>command==='playlist_import_contexts'?Promise.resolve([]):globalThis.titleIpc(command,...args); export class Channel {}`}))
 }}]})

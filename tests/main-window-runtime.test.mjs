@@ -6,12 +6,12 @@ const installers = {
   queryKeys: 'installAccountQueryScope',
   localPlayback: 'installLocalPlayback',
   updates: 'startUpdateChecks',
-  sync: 'startCloudSync',
+  librarySync: 'startCloudSync',
   automaticLyrics: 'startAutomaticLyrics',
   listeningStatistics: 'startListeningStatistics',
   preloadNextTrack: 'startPreloadingNextTrack',
   creatorQueue: 'startCreatorQueue',
-  floatingLyrics: 'startFloatingLyrics',
+  floatingLyricsRuntime: 'startFloatingLyrics',
 }
 const output = await build({
   entryPoints: ['src/app/mainWindowRuntime.ts'], bundle: true, write: false, format: 'esm',
@@ -33,7 +33,7 @@ test('main window services share one startup order and release their install sco
   const stop = installMainWindowRuntime(client)
   const order = Object.keys(installers)
   assert.deepEqual(started.map(({ name }) => name), order)
-  assert.deepEqual(started.filter(({ args }) => args.length).map(({ name, args }) => [name, args[0]]), [['queryKeys', client], ['localPlayback', client], ['sync', client]])
+  assert.deepEqual(started.filter(({ args }) => args.length).map(({ name, args }) => [name, args[0]]), [['queryKeys', client], ['localPlayback', client], ['librarySync', client]])
   stop()
   stop()
   assert.deepEqual(stopped, [...order].reverse())

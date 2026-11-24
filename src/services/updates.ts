@@ -1,6 +1,5 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
 import { create } from 'zustand'
-import { prepareForApplicationUpdate } from '../features/player/playerStore'
 import { version } from '../../package.json'
 import { compareVersions } from '../shared/version'
 
@@ -56,14 +55,14 @@ export async function downloadUpdate() {
     if (token === operation) useUpdateStore.setState({ phase: 'ready' })
   } catch (cause) { if (token === operation) useUpdateStore.setState({ phase: 'idle', error: errorText(cause) }) }
 }
-export async function installUpdate() {
+export async function installUpdate(prepareLocalState: () => Promise<void>) {
   const state = useUpdateStore.getState()
   if (state.phase !== 'ready' || !state.result?.requestId) return
   const token = ++operation
   useUpdateStore.setState({ phase: 'installing', error: '', notice: '' })
   try {
     // Save the local queue and position before a desktop installer restarts the process.
-    await prepareForApplicationUpdate()
+    await prepareLocalState()
     const status = await invoke<string>('app_install_update', { requestId: state.result.requestId })
     if (token === operation) useUpdateStore.setState({ phase: 'ready', notice: status === 'permission-required' ? '请允许安装应用，返回后点击安装更新' : '已打开系统安装器，请完成安装' })
   } catch (cause) { if (token === operation) useUpdateStore.setState({ phase: 'ready', error: errorText(cause) }) }
