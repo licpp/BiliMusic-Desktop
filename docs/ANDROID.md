@@ -37,7 +37,7 @@ npm run android:large-screen -- --target armv7 # 单架构诊断包
 
 ### 旧版车机回归
 
-Android 系统版本、系统 WebView 和应用 ABI 分别核验。本机有两套 Google SDK AOSP 回归镜像。
+Android 系统版本、系统 WebView 和应用 ABI 分别核验。车机回归使用下列 Google SDK AOSP 镜像。
 
 | AVD | 系统 | 实际 WebView | 分辨率 |
 | --- | --- | --- | --- |
@@ -54,14 +54,21 @@ Android 9 镜像还复现了部分 B 站 AAC 音频播放进度停在 0 的问�
 # 在仓库根目录启动已准备好的回归镜像。
 sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ANDROID_AVD_HOME="$PWD/artifacts/android-car-compat/avd" \
-  "$sdk/emulator/emulator" -avd BiliMusicCarLegacy28 -port 5584 -no-snapshot-save
+  "$sdk/emulator/emulator" -avd BiliMusicCarLegacy28 -port 5584 -no-snapshot-save -noaudio
 # 另开终端执行
 "$sdk/platform-tools/adb" -s emulator-5584 shell getprop ro.product.cpu.abilist
 "$sdk/platform-tools/adb" -s emulator-5584 shell dumpsys webviewupdate
 "$sdk/platform-tools/adb" -s emulator-5584 install -r /path/to/signed-universal.apk
 ```
 
-在报告支持 ARMv7 的环境中，用 `adb install --abi armeabi-v7a` 强制选择通用包内的 32 位库，再通过 `dumpsys package app.bilimusic.large` 核对 `primaryCpuAbi`。有条件时可用支持 ARMv7 转译的 Android 9 x86 模拟器补测；车机定制固件仍需用对应设备的 WebView 版本和日志定位。[Android 模拟器 ABI 说明](https://developer.android.com/studio/releases/emulator)
+可用脚本覆盖安装签名测试包并验证启动、浏览切页和原生数据库调用。传入 BV 号时，还会通过应用搜索起播，检查原生播放进度、视频解码与进出全屏。脚本需要独立的 `BiliMusicCar…` AVD 和允许 WebView 调试的测试包。测试记录保存实际系统、WebView、装载 ABI 和关键页面截图。
+
+```sh
+node scripts/android-car-smoke.mjs emulator-5584 /path/to/signed-universal.apk \
+  arm64-v8a artifacts/android-car-compat/current BV1v5wyzBESJ
+```
+
+在 `ro.product.cpu.abilist` 包含 `armeabi-v7a` 的环境中，将 ABI 参数换成 `armeabi-v7a`，脚本会强制装载该库并核对 `primaryCpuAbi`。Apple Silicon 上的上述镜像仅提供 `arm64-v8a`。在 x86 主机上可使用支持 ARMv7 转译的 Android 9 系统镜像。比亚迪定制固件的渲染结果需结合实际设备验证。[Android 模拟器 ABI 说明](https://developer.android.com/studio/releases/emulator#30-0-0)
 
 默认 SDK 在 `~/Library/Android/sdk`，JDK 在 `~/Library/Java/JavaVirtualMachines/`。自定义位置可设置 `ANDROID_HOME`、`NDK_HOME`、`BILIMUSIC_ANDROID_JAVA_HOME`。本地 Release 包仍需签名；要覆盖官网版本，必须沿用原发布签名。
 
