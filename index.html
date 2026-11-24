@@ -11,7 +11,10 @@
     <title>BiliMusic</title>
   </head>
   <body>
-    <div id="app-bootstrap" role="status" aria-label="正在打开 BiliMusic"><img src="/app-icon.png" alt=""/><span>BiliMusic</span></div>
+    <div id="app-bootstrap" role="status" aria-label="正在打开 BiliMusic">
+      <img src="/app-icon.png" alt=""/><span>BiliMusic</span>
+      <small id="app-webview-upgrade" hidden>请更新 Android System WebView（安卓系统 WebView）后重新打开 BiliMusic。</small>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

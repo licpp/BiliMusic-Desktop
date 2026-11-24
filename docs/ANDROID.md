@@ -1,6 +1,6 @@
 # Android 预览版
 
-Android 8.0（API 26）及以上，首批提供 ARM64 APK。应用 ID 为 `app.bilimusic.mobile`，与桌面客户端独立保存数据。
+Android 8.0（API 26）及以上，首批提供 ARM64 APK。启动还需要基于 Chromium 105 或更新版本的 Android System WebView。旧版 WebView 会在载入界面前显示升级提示。应用 ID 为 `app.bilimusic.mobile`，与桌面客户端独立保存数据。
 
 ## 已接入
 

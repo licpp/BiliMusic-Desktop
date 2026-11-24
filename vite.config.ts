@@ -1,11 +1,26 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const androidWebViewPreflight: Plugin = {
+  name: 'bilimusic-android-webview-preflight',
+  apply: 'build',
+  transformIndexHtml: {
+    order: 'post',
+    handler(html) {
+      const entry = /<script type="module" crossorigin src="([^"]+)"><\/script>/
+      if (!entry.test(html)) throw new Error('Missing module entry for Android WebView preflight')
+      return html
+        .replace(entry, '<meta name="bilimusic-android-entry" content="$1">')
+        .replace(/<link rel="modulepreload"[^>]*>/g, '')
+    },
+  },
+}
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === 'large-screen' ? [{
     name: 'bilimusic-large-screen-entry',
     transformIndexHtml: { order: 'pre' as const, handler: (html: string) => html.replace('/src/main.tsx', '/src/large-screen/main.tsx') },
-  }] : [])],
+  }] : process.env.TAURI_ENV_PLATFORM === 'android' ? [androidWebViewPreflight] : [])],
   define: {
     'import.meta.env.VITE_BILIMUSIC_EDITION': JSON.stringify(mode === 'large-screen' ? 'large-screen' : 'standard'),
     __BILIMUSIC_BUILD_NUMBER__: Number(process.env.BILIMUSIC_BUILD_NUMBER ?? '1'),
