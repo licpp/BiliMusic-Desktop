@@ -202,20 +202,25 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
   storedRef.current = stored
   const mounted = useRef(false)
   const [biasSaveError, setBiasSaveError] = useState(false)
-  const biasScope = useRef(accountEpoch())
   const [biasWriter] = useState(() => {
-    return createBiasWriter(async (id, value) => {
-      if (accountEpoch() !== biasScope.current) return
-      await setStoredLyricsBias(id, value)
-    }, (id, value, error) => {
-      if (mounted.current && storedRef.current?.trackId === id && storedRef.current.biasMs === value) setBiasSaveError(Boolean(error))
+    return createBiasWriter((expected, value) => setStoredLyricsBias(expected.trackId, value, expected), (expected, value, error) => {
+      const current = storedRef.current
+      if (!mounted.current || current?.trackId !== expected.trackId || current.writeToken !== expected.writeToken
+        || current.accountSession !== expected.accountSession || current.biasMs !== value) return
+      setBiasSaveError(Boolean(error))
+      if (error) {
+        const restored = { ...current, biasMs: expected.biasMs }
+        storedRef.current = restored
+        setStored(restored)
+        window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias', { detail: restored }))
+      }
     })
   })
   useEffect(() => {
     mounted.current = true
     const flush = () => { void biasWriter.flush() }
     const hidden = () => { if (document.hidden) flush() }
-    const cancel = () => { biasWriter.cancel(); biasScope.current = accountEpoch() }
+    const cancel = () => biasWriter.cancel()
     window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', hidden)
     window.addEventListener('bilimusic-account-changing', cancel)
@@ -255,6 +260,7 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
     const update = (event: Event) => {
       const lyrics = (event as CustomEvent<StoredLyrics>).detail
       if (lyrics.trackId !== current?.id) return
+      storedRef.current = lyrics
       setStored(lyrics); setLines(storedLyricLines(lyrics)); setError(''); setWarning('')
     }
     window.addEventListener('bilimusic-lyrics-updated', update)
@@ -501,6 +507,7 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
         saved = pair.stored
       } else saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
       if (!valid()) return
+      storedRef.current = saved
       setStored(saved); setLines(parsed); setChooserOpen(false); setError('')
     } catch (cause) { if (valid()) setError(commandErrorMessage(cause)) }
     finally { savingSelection.current = false; setSavingLyrics(false) }
@@ -513,7 +520,7 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
     storedRef.current = next
     window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias',{detail:next}))
     setStored(next); setBiasSaveError(false); setError(''); setBiasActivity(Date.now())
-    biasWriter.set(current.id, next.biasMs)
+    biasWriter.set(lyrics, next.biasMs)
   }
 
   function alignLine(timeMs: number) {

@@ -190,8 +190,8 @@ export async function saveLyricsWithMetadata(trackId: string, candidate: LyricCa
   return { stored, track: fromStoredTrack(track) }
 }
 
-export const setStoredLyricsBias = (trackId: string, biasMs: number, expected?: StoredLyrics) =>
-  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs, ...(expected ? { expected } : {}) })
+export const setStoredLyricsBias = (trackId: string, biasMs: number, expected: StoredLyrics) =>
+  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs, expected })
 
 export async function listPlaylists(): Promise<Playlist[]> {
   if (!inDesktopShell) return [{ ...FAVORITES_PLAYLIST }]

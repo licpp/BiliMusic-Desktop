@@ -1044,19 +1044,16 @@ pub fn lyrics_set_bias(
     expected_account_session: String,
     track_id: String,
     bias_ms: i64,
-    expected: Option<StoredLyrics>,
+    expected: StoredLyrics,
 ) -> Result<StoredLyrics, CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     check_account_session(&connection, &expected_account_session)?;
-    if let Some(expected) = expected {
-        return LyricsRepository::set_bias_if_current(&connection, &track_id, bias_ms, &expected)
-            .map_err(CommandError::database)?
-            .ok_or_else(|| CommandError::validation("歌词已变化，请重新自动对齐"));
-    }
-    LyricsRepository::set_bias(&connection, &track_id, bias_ms).map_err(CommandError::database)
+    LyricsRepository::set_bias_if_current(&connection, &track_id, bias_ms, &expected)
+        .map_err(CommandError::database)?
+        .ok_or_else(|| CommandError::validation("歌词已变化，请重新调整偏移"))
 }
 
 #[tauri::command]
