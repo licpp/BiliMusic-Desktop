@@ -5,6 +5,9 @@ export const isLargeScreen = import.meta.env?.VITE_BILIMUSIC_EDITION === 'large-
 // before bundling the same frontend used by the other four platforms.
 export const isOHOS = isTauri() && import.meta.env?.VITE_BILIMUSIC_PLATFORM === 'ohos'
 export const isAndroid = isTauri() && !isOHOS && /Android/i.test(navigator.userAgent)
+const androidChromium = isAndroid && /\bChrome\/(\d+)/.exec(navigator.userAgent)
+// The old car WebView can stall when video is seeked at HAVE_METADATA.
+export const needsDecodedFrameBeforeVideoSeek = isLargeScreen && !!androidChromium && Number(androidChromium[1]) < 75
 // iPadOS may use a desktop Safari user agent.
 export const isIOS = isTauri() && !isOHOS && (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1))
 export const isMobile = isAndroid || isIOS || isOHOS

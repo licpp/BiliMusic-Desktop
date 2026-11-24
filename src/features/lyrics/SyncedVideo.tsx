@@ -4,12 +4,13 @@ import { playbackClock, usePlayerStore } from '../player/playerStore'
 import { synchronizeVideo } from './videoSync'
 import { VideoStartup } from './VideoStartup'
 import { createVideoRecovery } from './videoRecovery'
-import { isAndroid, isLargeScreen } from '../../services/platform'
+import { isAndroid, isLargeScreen, needsDecodedFrameBeforeVideoSeek } from '../../services/platform'
 import type { Track } from '../../domain/track'
 import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../player/PlaybackError'
 import { playbackIssue, type PlaybackIssue } from '../player/playbackIssue'
 
 const waitForCompositor = isAndroid && isLargeScreen
+const startupAlignment = { waitForDecodedFrame: needsDecodedFrameBeforeVideoSeek }
 
 export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codecs, diagnostic, active, suspended = false, onReady, onReload }: { src: string; poster?: string; track: Track; codecs?: string; diagnostic?: VideoDiagnosticTrace; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: (compatible: boolean) => Promise<boolean | void> }) {
   const ref = useRef<HTMLVideoElement>(null)
@@ -96,7 +97,8 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       } else if (player.status === 'paused') startupRequested = false
       pendingAlignment = synchronizeVideo(
         video, time, player.status === 'playing',
-        previousTime, force || pendingAlignment, (now - previousCheck) / 1000, player.rate, !firstFrameShown,
+        previousTime, force || pendingAlignment, (now - previousCheck) / 1000, player.rate,
+        firstFrameShown ? undefined : startupAlignment,
       )
       previousTime = time
       previousCheck = now

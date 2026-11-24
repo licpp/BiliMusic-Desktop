@@ -31,10 +31,25 @@ test('already aligned first frame does not trigger another startup seek', () => 
 })
 test('a short audio lead at startup keeps the initial video request', () => {
   const element = video({ readyState: 1, currentTime: 0 })
-  assert.equal(synchronizeVideo(element, .8, true, .6, true, .2, 1, true), false)
+  const startup = { waitForDecodedFrame: false }
+  assert.equal(synchronizeVideo(element, .8, true, .6, true, .2, 1, startup), false)
   assert.equal(element.currentTime, 0)
-  synchronizeVideo(element, 12, true, .8, false, .25, 1, true)
+  synchronizeVideo(element, 12, true, .8, false, .25, 1, startup)
   assert.equal(element.currentTime, 12)
+})
+
+test('old car WebView defers initial alignment at metadata and seeks when a frame is decoded', () => {
+  const element = video({ currentTime: 0, readyState: 1, paused: false })
+  const startup = { waitForDecodedFrame: true }
+  const initialAlignment = synchronizeVideo(element, 4, true, 3.75, true, .25, 1, startup)
+  assert.equal(initialAlignment, true)
+  assert.equal(element.currentTime, 0)
+  const pendingAlignment = synchronizeVideo(element, 34, true, 4, initialAlignment, .25, 1, startup)
+  assert.equal(pendingAlignment, true)
+  assert.equal(element.currentTime, 0)
+  element.readyState = 2
+  assert.equal(synchronizeVideo(element, 34.25, true, 34, pendingAlignment, .25, 1, startup), false)
+  assert.equal(element.currentTime, 34.25)
 })
 test('small drift adjusts playback speed without discarding buffered frames', () => {
   const element = video()
