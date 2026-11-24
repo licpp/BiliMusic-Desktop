@@ -48,4 +48,5 @@ jobs:
           path: |
             src-tauri/target/ios-unsigned/*
             docs/iOS-self-sign.md
+            dist/frontend-build.json
           if-no-files-found: error

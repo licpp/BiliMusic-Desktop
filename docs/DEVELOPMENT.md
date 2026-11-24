@@ -92,6 +92,7 @@ npm run ohos:build    # 共用前端构建 + ARM64 HAP
 - [iOS 自签与构建](iOS-self-sign.md)
 - [坚果云同步](CLOUD_SYNC_USAGE.md)
 - [听歌统计](PLAYBACK_STATISTICS.md)
+- [播放状态所有权](PLAYBACK_STATE_OWNERSHIP.md)
 
 ## 后续设计原则
 
@@ -117,6 +118,7 @@ npm run ohos:build    # 共用前端构建 + ARM64 HAP
 
 - 页面负责布局、导航和交互；共享用例负责业务编排；领域函数负责规则；服务负责 IPC/网络；仓储负责持久化。
 - 通用按钮和编辑器不从页面模块导出供其他页面依赖。用实际 runtime import graph 检查循环，类型引用不作运行时循环处理。
+- 普通版与车机入口共用依赖图检查。扩展功能从服务层调用平台能力，服务层已有的反向引用逐步迁出。仓储返回存储错误，由 IPC 边界映射用户提示。
 - 手机、桌面、大屏共享业务用例，保留各自视图与焦点实现。系统音频焦点、后台任务与通知放各平台适配层，不复制搜索、续播、统计和同步算法。
 - 临时兼容出口只转发到唯一实现；迁移完成删除旧实现，不长期维护双写和两套真源。
 - 新增抽象必须对应真实重复或生命周期问题，不引入万能 controller、全局事件总线或只有一处用途的框架。
@@ -132,6 +134,8 @@ npm run ohos:build    # 共用前端构建 + ARM64 HAP
 - 目录缓存限定单轮观察；跨额度窗口只恢复未完成、基准相同的发现前缀，完整发现后立即清除。优化扫描次数不能跳过已确认水位、分叉或缺失依赖校验。
 
 统一 Rust 入口 `npm run test:rust` 使用测试专用 Tauri 配置；生产打包仍使用平台生产配置。大屏前端检查使用 `npm run build:large-screen`，鸿蒙 Rust 检查使用 `npm run ohos:check`。
+
+前端生产构建在输出目录生成 `frontend-build.json`，记录版型、构建平台、Vite 实际转译目标及输出文件的 SHA-256。共用桌面产物的打包流程校验下载的前端文件，并将其前端目标与各自的原生目标一并归档。
 
 本次实现位置：播放操作守卫在 `operationScope.ts`，合集续播在 `listPlayback.ts`，纯来源转换在 `domain/videoMetadata.ts`；列表偏好持久化位于 Rust repository，interface 只包装命令。歌词 V6 的 write token 和 SQLite TEMP 账号会话均不参与云同步。
 
