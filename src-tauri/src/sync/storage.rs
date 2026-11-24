@@ -94,8 +94,14 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
         if history {
-            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at FROM collection_progress p JOIN collections c ON c.bvid=p.reference LIMIT 2001")?;
-            for row in q.query_map([], |r| {
+            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at
+                 FROM collection_progress p
+                 LEFT JOIN collections own ON own.bvid=p.reference
+                 LEFT JOIN collections creator ON creator.bvid=p.creator_ref
+                 WHERE own.bvid IS NOT NULL OR creator.bvid IS NOT NULL
+                 ORDER BY own.bvid IS NOT NULL DESC,p.observed_at DESC,p.reference
+                 LIMIT ?1")?;
+            for row in q.query_map([COLLECTION_PROGRESS_LIMIT], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -210,6 +216,33 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
     }
     crate::infrastructure::repositories::list_preferences::export(c, &mut s)?;
     s.compact(history);
+    for key in s.restore_missing_tracks() {
+        let r = s.records.get_mut(&key).unwrap();
+        let id = text(r, "id");
+        let overrides = c
+            .query_row(
+                "SELECT title,artist,album,cover_url FROM metadata_overrides WHERE track_id=?1",
+                [id],
+                |r| {
+                    Ok([
+                        r.get::<_, Option<String>>(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get::<_, Option<String>>(3)?.filter(|v| safe_cover(v)),
+                    ])
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(overrides) = overrides {
+            for (field, value) in ["overrideTitle", "overrideArtist", "overrideAlbum", "overrideCover"]
+                .into_iter()
+                .zip(overrides)
+            {
+                r.fields.insert(field.into(), json!(value));
+            }
+        }
+    }
     s.validate(uid)
         .map_err(|e| format!("本机同步资料校验失败：{e}"))?;
     Ok(s)
@@ -218,6 +251,15 @@ fn optional<'a>(r: &'a Record, k: &str) -> Option<&'a str> {
     r.fields.get(k).and_then(Value::as_str)
 }
 pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> {
+    apply_with_inferred_tracks(c, s, history, &Default::default())
+}
+
+pub fn apply_with_inferred_tracks(
+    c: &Connection,
+    s: &Snapshot,
+    history: bool,
+    inferred: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
     init(c)?;
     crate::infrastructure::repositories::imported_entries::init(c).map_err(|e| e.to_string())?;
     crate::infrastructure::repositories::collections::init_folders(c).map_err(|e| e.to_string())?;
@@ -239,7 +281,8 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             .query_map([], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for id in ids {
-            if !keep.contains(id.as_str()) && s.records.contains_key(&format!("track:{id}")) {
+            let key = format!("track:{id}");
+            if !keep.contains(id.as_str()) && s.records.contains_key(&key) && !inferred.contains(&key) {
                 tx.execute("INSERT OR REPLACE INTO sync_lyric_archive(track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at) SELECT track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at FROM lyrics WHERE track_id=?1",[&id])?;
                 tx.execute("DELETE FROM lyrics WHERE track_id=?1", [&id])?;
             }
@@ -329,10 +372,7 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
             "DELETE FROM creator_notes WHERE bvid NOT IN (SELECT bvid FROM collections)",
             [],
         )?;
-        tx.execute(
-            "DELETE FROM collection_progress WHERE reference NOT IN (SELECT bvid FROM collections)",
-            [],
-        )?;
+        crate::infrastructure::repositories::collections::prune_progress(tx)?;
         if history {
             for r in s
                 .records
@@ -350,10 +390,16 @@ pub fn apply(c: &Connection, s: &Snapshot, history: bool) -> Result<(), String> 
                 }
             }
         }
-        for r in s.records.values().filter(|r| r.kind == "track") {
+        for (key, r) in s.records.iter().filter(|(_, r)| r.kind == "track") {
             let id = text(r, "id");
             tx.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![id,text(r,"bvid"),r.fields.get("aid").and_then(Value::as_i64),number(r,"cid"),1,"",r.fields.get("uploaderId").and_then(Value::as_i64),optional(r,"uploaderName")])?;
-            tx.execute("INSERT INTO tracks(id,source_item_id,title,artist,album,cover_url,duration_seconds) VALUES(?1,?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO NOTHING",params![id,"B站歌曲（待加载）",optional(r,"artist"),optional(r,"album"),optional(r,"coverUrl"),number(r,"duration")])?;
+            tx.execute("INSERT INTO tracks(id,source_item_id,title,artist,album,cover_url,duration_seconds) VALUES(?1,?1,?2,?3,?4,?5,?6)
+                ON CONFLICT(id) DO UPDATE SET source_item_id=excluded.source_item_id,
+                duration_seconds=CASE WHEN tracks.duration_seconds<=0 AND excluded.duration_seconds>0 THEN excluded.duration_seconds ELSE tracks.duration_seconds END
+                WHERE tracks.source_item_id=excluded.source_item_id OR NOT EXISTS(SELECT 1 FROM source_items WHERE id=tracks.source_item_id)",params![id,"B站歌曲（待加载）",optional(r,"artist"),optional(r,"album"),optional(r,"coverUrl"),number(r,"duration")])?;
+            if inferred.contains(key) {
+                continue;
+            }
             tx.execute("DELETE FROM metadata_overrides WHERE track_id=?1", [id])?;
             if [
                 "overrideTitle",

@@ -8,6 +8,7 @@ test('source preparation stays silent, waits for playable data and catches up wi
  assert.equal(candidate.muted,true);assert.equal(candidate.volume,0)
  candidate.metadata();await tick();assert.equal(candidate.currentTime,10);assert.equal(settled,false)
  clock=12;candidate.ready();await tick();assert.equal(candidate.currentTime,12);assert.equal(settled,false)
+ clock=15;candidate.ready();await tick();assert.equal(candidate.currentTime,15);assert.equal(settled,false)
  candidate.ready();assert.equal(await pending,candidate);assert.equal(candidate.playbackRate,1.5)
 })
 test('preparation failures and cancelled requests dispose the candidate without touching an original player',async()=>{

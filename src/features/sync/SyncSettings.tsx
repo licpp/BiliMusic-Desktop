@@ -7,9 +7,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { Check, ChevronDown, Cloud, LoaderCircle, RefreshCw } from 'lucide-react'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { SyncDevices } from './SyncDevices'
-import { SyncConflicts } from './SyncConflicts'
+import { SyncTrackRepair } from './SyncTrackRepair'
+import { SyncRecovery, type IssueArea } from './SyncRecovery'
+import { describeSyncIssue, type SyncIssue } from '../../services/syncIssues'
+import { accountEpoch } from '../../services/accountScope'
 import { inDesktopShell } from '../../services/desktopApi'
-import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome } from '../../services/sync'
+import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome, type TrackRepairPreview } from '../../services/sync'
 
 function syncTime(value?: string) {
   if (!value) return '尚未同步'
@@ -19,7 +22,8 @@ function syncTime(value?: string) {
 
 export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   const pending = useSyncAttention(state => state.outcome)
-  const attention = useSyncAttention(state => state.library || state.statistics)
+  const libraryIssue = useSyncAttention(state => state.libraryIssue)
+  const statisticsIssue = useSyncAttention(state => state.statisticsIssue)
   const client = useQueryClient()
   const status = useQuery({ queryKey: accountQueryKey('sync-status'), queryFn: syncStatus, enabled: inDesktopShell, retry: false })
   const [config, setConfig] = useState<SyncConfig>(defaultSyncConfig)
@@ -27,37 +31,132 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   const [consent, setConsent] = useState(false), [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(''), [outcome, setOutcome] = useState<SyncOutcome | null>(pending)
   const [editing, setEditing] = useState(false), [confirmDelete, setConfirmDelete] = useState(false)
+  const [repair, setRepair] = useState<TrackRepairPreview | null>(null)
+  const [repairBackup, setRepairBackup] = useState('')
+  const [recovery, setRecovery] = useState(false)
+  const [requestIssue, setRequestIssue] = useState<SyncIssue | null>(null)
+  useEffect(() => {
+    const reset = () => {
+      setRepair(null); setRepairBackup(''); setRecovery(false); setRequestIssue(null)
+      setOutcome(null); setMessage(''); setEditing(false); setPassword(''); setConsent(false)
+    }
+    window.addEventListener('bilimusic-account-changing', reset)
+    return () => window.removeEventListener('bilimusic-account-changing', reset)
+  }, [])
   useEffect(() => { setOutcome(pending) }, [pending])
   const saved = status.data?.config
   const connected = !!(saved?.enabled || saved?.initialized)
   useEffect(() => { if (status.data) setConfig(status.data.config) }, [status.data])
   const notify = () => window.dispatchEvent(new Event('bilimusic-sync-configured'))
-  const action = async (fn: () => Promise<void>) => {
+  const action = async (fn: (session: number) => Promise<void>, syncAction: 'sync' | 'connect' | false = false) => {
+    const session = accountEpoch()
     setBusy(true); setMessage('')
-    try { await fn() } catch (e) { setMessage(syncErrorMessage(e)) }
-    finally { await status.refetch(); setBusy(false) }
+    if (syncAction) setRequestIssue(null)
+    try { await fn(session) } catch (e) {
+      if (session === accountEpoch()) {
+        setMessage(syncErrorMessage(e))
+        if (syncAction) {
+          if (syncAction === 'connect') setRequestIssue(describeSyncIssue(e))
+          setRecovery(true)
+        }
+      }
+    } finally {
+      if (session === accountEpoch()) await status.refetch()
+      setBusy(false)
+    }
   }
-  const applyOutcome = async (result: SyncOutcome) => {
+  const syncStatistics = async (session: number) => {
+    try {
+      const synced = await invoke<boolean>('listening_sync')
+      if (!synced || session !== accountEpoch()) return
+      reportSyncError('statistics', false)
+      await client.invalidateQueries({queryKey:accountQueryKey('listening-statistics')})
+    } catch (e) {
+      if (session !== accountEpoch()) return
+      reportSyncError('statistics', true, e)
+      setRecovery(true)
+    }
+  }
+  const applyOutcome = async (result: SyncOutcome, session: number) => {
+    if (session !== accountEpoch() || result.skipped) return
     setOutcome(result)
-    if (result.conflicts.length) { setMessage('发现不同修改，请选择保留哪一侧。'); return }
+    if (result.conflicts.length) {
+      setMessage('发现不同修改，请选择保留哪一侧。')
+      setRecovery(true)
+      return
+    }
     await refreshSyncedLibrary(client)
-    setOutcome(null); setMessage('同步完成'); notify()
-    try { await invoke('listening_sync'); reportSyncError('statistics', false); await client.invalidateQueries({queryKey:accountQueryKey('listening-statistics')}) }
-    catch(e) { reportSyncError('statistics', true); setMessage(`资料已同步，听歌统计尚未完成：${syncErrorMessage(e)}`) }
-    void invoke<number>('sync_hydrate_sources').then(() => refreshSyncedLibrary(client)).catch(() => undefined)
+    if (session !== accountEpoch()) return
+    setOutcome(null)
+    if (result.importError || result.visibilityError || result.chaptersError) {
+      await status.refetch()
+      if (session !== accountEpoch()) return
+      setMessage('音乐库已同步，部分资料待处理')
+      setRecovery(true)
+    } else {
+      setMessage('同步完成')
+    }
+    notify()
+    await syncStatistics(session)
+    if (session === accountEpoch()) void invoke<number>('sync_hydrate_sources')
+      .then(() => { if (session === accountEpoch()) return refreshSyncedLibrary(client) }).catch(() => undefined)
   }
-  const connect = () => action(async () => {
+  const connect = () => action(async session => {
     setOutcome(null)
     await invoke('sync_connect', { settings: config, username, password, consent })
+    if (session !== accountEpoch()) return
+    clearSyncAttention()
     setPassword(''); setConsent(false); setEditing(false); window.dispatchEvent(new Event('bilimusic-statistics-sync-requested'))
     await client.invalidateQueries()
-    await applyOutcome(await syncNow(false))
+    if (session === accountEpoch()) await applyOutcome(await syncNow(false), session)
+  }, 'connect')
+  const merge = (resolution?: string) => action(async session => { await applyOutcome(await syncNow(false, resolution), session) }, 'sync')
+  const preview = () => action(async session => {
+    const result = await syncNow(true)
+    if (session !== accountEpoch() || result.skipped) return
+    setOutcome(result)
+    if (result.conflicts.length) setRecovery(true)
+    else setRecovery(false)
+  }, 'sync')
+  const archive = (revision: string) => {
+    const session = accountEpoch()
+    setRepair(null)
+    void action(async () => {
+      const path = await invoke<string>('sync_archive_invalid_track_references', { revision })
+      if (session !== accountEpoch()) return
+      setRepairBackup(path)
+      setRequestIssue(null)
+      setOutcome(null)
+      await refreshSyncedLibrary(client)
+      if (session !== accountEpoch()) return
+      if (saved?.enabled) {
+        const result = await syncNow(false)
+        if (session === accountEpoch()) await applyOutcome(result, session)
+      } else setMessage('修复完成')
+    }, 'sync')
+  }
+  const issues: { area: IssueArea; issue: SyncIssue }[] = []
+  const currentIssue = requestIssue || libraryIssue
+  if (!status.data?.trackRepair) {
+    if (currentIssue && !status.data?.localError) issues.push({ area: '音乐库', issue: currentIssue })
+    else if (status.error) issues.push({ area: '音乐库', issue: describeSyncIssue(status.error) })
+  }
+  if (status.data?.localError) issues.push({ area: '本机资料', issue: describeSyncIssue(status.data.localError) })
+  if (status.data?.importError) issues.push({ area: '导入歌单', issue: describeSyncIssue(status.data.importError) })
+  if (status.data?.visibilityError) issues.push({ area: '隐藏偏好', issue: describeSyncIssue(status.data.visibilityError) })
+  if (status.data?.chaptersError) issues.push({ area: '章节', issue: describeSyncIssue(status.data.chaptersError) })
+  if (statisticsIssue) issues.push({ area: '听歌统计', issue: statisticsIssue })
+  const exportBackup = () => action(async session => {
+    const path = await invoke<string>('sync_export')
+    if (session === accountEpoch()) setMessage(`备份已保存到 ${path}`)
   })
-  const merge = (resolution?: string) => action(async () => { await applyOutcome(await syncNow(false, resolution)) })
-  const preview = () => action(async () => { setOutcome(await syncNow(true)) })
+  const retry = (statisticsOnly: boolean) => {
+    if (statisticsOnly) return action(session => syncStatistics(session))
+    if (!saved?.enabled) return status.refetch()
+    if (outcome?.conflicts.length || issues.some(({issue}) => issue.kind === 'conflict')) return preview()
+    return merge()
+  }
   return <section className={`sync-settings${embedded?' sync-settings-embedded':''}`} aria-label="云同步设置">
-    {status.data?.visibilityError && <p className="sync-attention-message" role="status">隐藏偏好尚未同步：{status.data.visibilityError}。可点击立即同步重试。</p>}
-    {attention && <p className="sync-attention-message" role="status">{attention}{!outcome && '。请点击“立即同步”重试。'}</p>}
     {(!embedded||connected)&&<div className="sync-heading">
       {!embedded&&<><div className="settings-icon"><Cloud /></div>
       <div className="sync-heading-copy"><h3>云同步</h3><p>{connected ? `${saved?.provider === 'cloud' ? 'BiliMusic 云' : '坚果云'} · ${saved?.enabled ? saved.initialized ? '已开启' : '待首次同步' : '已暂停'}` : '在不同设备间同步你的音乐资料，默认关闭'}</p></div></>}
@@ -89,8 +188,25 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
           <div className="sync-actions"><button className="sync-primary" type="submit" disabled={!consent || config.provider === 'cloud'}>{busy && <LoaderCircle className="spin" />}连接并同步</button>{(!embedded||connected)&&<button type="button" onClick={() => { setEditing(false); setPassword(''); setConsent(false); if (saved) setConfig(saved) }}>取消</button>}</div>
         </fieldset>
       </form>}
-      {outcome && <div className="sync-preview"><strong>{outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改需要确认` : '资料已准备好合并'}</strong><p>{outcome.records} 条资料 · 首次同步前自动保留本机备份</p>{outcome.conflicts.length ? <SyncConflicts conflicts={outcome.conflicts} busy={busy} onMerge={resolution => void merge(resolution)} /> : <button className="sync-primary" disabled={busy || !saved?.enabled} onClick={() => void merge()}>确认合并并同步</button>}</div>}
-      {(message || status.error) && <p className="sync-message" role="status">{message || syncErrorMessage(status.error)}</p>}
+      {status.data?.trackRepair && <div className="sync-preview">
+        <strong>同步记录缺少歌曲</strong>
+        <p>有 {status.data.trackRepair.total} 条本机记录需要处理。</p>
+        <button type="button" className="sync-primary" disabled={busy} onClick={() => setRepair(status.data?.trackRepair ?? null)}>查看并修复</button>
+      </div>}
+      {repair && <SyncTrackRepair preview={repair} onClose={() => setRepair(null)} onArchive={archive} />}
+      {repairBackup && <p className="sync-repair-backup" role="status">修复备份已保存到 <code>{repairBackup}</code></p>}
+      {(outcome?.conflicts.length || issues.length > 0) ? <div className="sync-preview">
+        <strong>{outcome?.conflicts.length ? `有 ${outcome.conflicts.length} 处修改需要确认` : '同步待处理'}</strong>
+        {issues.length > 0 && <p>{issues.map(({area}) => area).join('、')}</p>}
+        <button className="sync-primary" type="button" onClick={() => setRecovery(true)}>处理同步问题</button>
+      </div> : outcome && <div className="sync-preview"><strong>资料已准备好合并</strong><p>{outcome.records} 条资料 · 首次同步前自动保留本机备份</p><button className="sync-primary" disabled={busy || !saved?.enabled} onClick={() => void merge()}>确认合并并同步</button></div>}
+      {recovery && !repair && (!status.data?.trackRepair || issues.length > 0 || !!outcome?.conflicts.length) && <SyncRecovery
+        issues={issues} outcome={outcome} config={saved} busy={busy} message={requestIssue || outcome?.conflicts.length && issues.length === 0 ? '' : message}
+        onClose={() => setRecovery(false)} onMerge={resolution => void merge(resolution)} onRetry={onlyStatistics => void retry(onlyStatistics)}
+        onReconnect={() => { setRecovery(false); setConsent(false); setEditing(true) }}
+        onBackup={saved?.uid && !status.data?.localError && !status.data?.trackRepair ? () => void exportBackup() : undefined}
+      />}
+      {message && <p className="sync-message" role="status">{message}</p>}
       {connected && saved?.provider === 'webdav' && saved.initialized && <SyncDevices />}
       <details className="sync-more"><summary>资料管理与隐私</summary><div className="sync-more-content">
         {saved?.uid && <>

@@ -1,5 +1,5 @@
 import type { LyricLine } from './lyrics'
-import { Converter } from 'opencc-js/t2cn'
+import { isLyricCredit, simplifiedLyricText } from './lyricText'
 
 export type LyricAlignment =
   | { ok: true; biasMs: number; matchedLines: number; spreadMs: number }
@@ -9,14 +9,11 @@ type TextLine = { text: string; time: number; index: number }
 type Block = { text: string; time: number; start: number; end: number }
 type Anchor = { lyric: Block; caption: Block; offset: number; similarity: number; weight: number }
 const tolerance = 1200
-// Conversion is for comparison only; the user's lyric text and word times stay intact.
-const simplified = Converter({ from: 't', to: 'cn' })
-const normalized = (value: string) => simplified(value.normalize('NFKC')).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
-const credits = /^(?:(?:作[词曲](?:OP|SP)?|[词曲]|词曲|编曲|制作人?|配唱制作|演唱|和[音声]|吉他|贝[司斯]|鼓|弦乐(?:编写|监制|录音(?:师|棚)?)?|乐[队谱](?:监制)?|录[音影](?:师|室|棚)?|人声(?:录音(?:师|棚)?|编辑)|混音(?:[&＆]母带)?|母带|发行|字幕)|lyrics?\s*(?:by)?|music\s*by)\s*[:：]/i
+const normalized = (value: string) => simplifiedLyricText(value.normalize('NFKC')).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
 
 function clean(lines: readonly LyricLine[]): TextLine[] {
   return lines.flatMap((line, index) => {
-    if (!Number.isFinite(line.timeMs) || line.timeMs < 0 || credits.test(simplified(line.text.normalize('NFKC')).trim())) return []
+    if (!Number.isFinite(line.timeMs) || line.timeMs < 0 || isLyricCredit(line.text.normalize('NFKC'))) return []
     const text = normalized(line.text)
     return text.length && text.length <= 240 ? [{ text, time: line.timeMs, index }] : []
   }).sort((a, b) => a.time - b.time)

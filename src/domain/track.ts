@@ -19,6 +19,7 @@ export type Track = {
   coverUrl?: string
   durationSeconds: number
   liked: boolean
+  sourceExpired?: boolean
   resolveParts?: boolean
   chapterContext?: boolean
   sourceTitleContext?: SourceTitleContext

@@ -1,51 +1,65 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { ChevronLeft } from 'lucide-react'
 
+import { lockAppForPortal } from './overlayStack'
+import { useOverlayDismiss } from './useOverlayDismiss'
+import { animatePage, stopPageMotion } from './pageMotion'
+import { slideNavigation, type SlideTiming } from './slideNavigation'
+import { edgeBackTiming } from './gestureRelease'
+import { holdListUpdates } from './navigationListMotion'
+
 const pages: HTMLElement[] = []
-let originalRootInert = false
 function updatePageStack() {
-  const root = document.getElementById('root')
-  if (root) root.inert = pages.length > 0 || originalRootInert
   if (pages.length) document.documentElement.dataset.mobilePageOpen = 'true'
   else delete document.documentElement.dataset.mobilePageOpen
-  for (const page of pages) page.inert = page !== pages.at(-1)
+  for (const page of pages) page.inert = page !== pages.at(-1) || page.hasAttribute('data-page-closing')
 }
 
 // A navigation page, with its own scroll view and fixed layout.
 // Keeping the previous page mounted preserves drafts and the search position.
-export function MobilePage({ title, onBack, actions, children, className = '' }: {
-  title: string; onBack: () => void; actions?: ReactNode; children: ReactNode; className?: string
+export function MobilePage({ title, onBack, actions, children, scrollContent = true, className = '' }: {
+  title: string; onBack: () => void; actions?: ReactNode; children?: ReactNode; scrollContent?: boolean; className?: string
 }) {
   const layer = useRef<HTMLElement>(null)
   const back = useRef(onBack)
   back.current = onBack
-  useEffect(() => {
-    const root = document.getElementById('root')
+  const close = (timing?: SlideTiming) => {
+    const page = layer.current
+    if (!page || page.hasAttribute('data-page-closing')) return
+    if (document.activeElement instanceof HTMLElement && page.contains(document.activeElement)) document.activeElement.blur()
+    // Keep the underlay mounted and slide this opaque page entirely out of view.
+    const position = getComputedStyle(page).transform
+    stopPageMotion(page)
+    page.setAttribute('data-page-closing', '')
+    updatePageStack()
+    const releaseLists = holdListUpdates()
+    const exitDistance = Math.max(page.clientWidth, window.innerWidth - page.getBoundingClientRect().left)
+    const animation = slideNavigation(page, position, exitDistance, timing ?? edgeBackTiming(exitDistance, exitDistance), () => flushSync(() => back.current()))
+    if (animation) void animation.finished.then(releaseLists, releaseLists)
+    else releaseLists()
+  }
+  useOverlayDismiss(layer, true, close, true)
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null
     const page = layer.current!
-    if (!pages.length) originalRootInert = root?.inert || false
+    const unlock = lockAppForPortal()
     pages.push(page); updatePageStack()
-    const top = () => [...document.querySelectorAll('[data-mobile-page]')].at(-1) === layer.current
-    const dismiss = (event: Event) => {
-      if (!top() || event.defaultPrevented || document.querySelector('[data-overflow-panel],.track-context-menu,.dialog-backdrop,.lyric-chooser-backdrop')) return
-      event.preventDefault(); event.stopImmediatePropagation(); back.current()
-    }
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(event) }
-    window.addEventListener('bilimusic-back', dismiss, true)
-    document.addEventListener('keydown', key, true)
-    layer.current?.querySelector<HTMLElement>('header button')?.focus({ preventScroll: true })
+    animatePage(page, 'forward', true)
+    const backButton = page.querySelector<HTMLElement>('header button')
+    backButton?.focus({ preventScroll: true })
     return () => {
-      window.removeEventListener('bilimusic-back', dismiss, true)
-      document.removeEventListener('keydown', key, true)
+      stopPageMotion(page)
+      unlock()
       const index = pages.indexOf(page)
       if (index >= 0) pages.splice(index, 1)
       updatePageStack()
       if (previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true })
     }
   }, [])
-  return createPortal(<section ref={layer} className={`mobile-page ${className}`} data-mobile-page role="dialog" aria-modal="true" aria-label={title}>
-    <header className="mobile-page-header"><button type="button" aria-label="返回" onClick={onBack}><ChevronLeft size={24}/></button><h2>{title}</h2><div>{actions}</div></header>
-    <div className="mobile-page-content">{children}</div>
-  </section>, document.body)
+  const header = <header className="mobile-page-header"><button type="button" aria-label="返回" onClick={() => close()}><ChevronLeft size={24}/></button><h2>{title}</h2><div>{actions}</div></header>
+  return createPortal(<><div className="mobile-page-scrim" aria-hidden="true" onClick={() => close()} /><section ref={layer} className={`mobile-page ${className}`} data-mobile-page data-edge-back role="dialog" aria-modal="true" aria-label={title}>
+    {header}
+    <div className={scrollContent ? "mobile-page-content" : "mobile-page-content mobile-page-content-expanded"}>{children}</div>
+  </section></>, document.body)
 }

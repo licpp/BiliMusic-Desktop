@@ -19,8 +19,7 @@ export default class EntryAbility extends RustAbility {
 
   async onWindowStageCreate(stage: window.WindowStage): Promise<void> {
     const win = stage.getMainWindowSync();
-    this.player?.setWindow(win);
-    await win.setWindowLayoutFullScreen(false);
+    await this.player?.setWindow(win).catch(() => {});
     await super.onWindowStageCreate(stage);
   }
 

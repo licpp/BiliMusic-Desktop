@@ -29,6 +29,13 @@ test('already aligned first frame does not trigger another startup seek', () => 
   assert.equal(seeks, 0)
   assert.equal(element.plays, 1)
 })
+test('a short audio lead at startup keeps the initial video request', () => {
+  const element = video({ readyState: 1, currentTime: 0 })
+  assert.equal(synchronizeVideo(element, .8, true, .6, true, .2, 1, true), false)
+  assert.equal(element.currentTime, 0)
+  synchronizeVideo(element, 12, true, .8, false, .25, 1, true)
+  assert.equal(element.currentTime, 12)
+})
 test('small drift adjusts playback speed without discarding buffered frames', () => {
   const element = video()
   synchronizeVideo(element, 10.5, true, 10.25)

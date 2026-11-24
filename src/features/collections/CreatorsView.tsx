@@ -1,10 +1,12 @@
+import { useListRows } from '../../shared/useListRows'
+import { useListDataDuringNavigation, useListReveal } from '../../shared/useListMotion'
+import { ListSkeleton } from '../../shared/ListSkeleton'
 import { accountQueryKey } from '../../services/queryKeys'
-import { CoverCount } from '../../shared/CoverCount'
+import { VideoResultRow } from '../../shared/VideoResultRow'
 import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { CreatorActions, CreatorManager } from './CreatorTools'
-import { listen } from '@tauri-apps/api/event'
 import { formatAudienceCount } from '../../shared/count'
 import { accountEpoch } from '../../services/accountScope'
 import { formatDuration } from '../../shared/time'
@@ -14,26 +16,24 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
-  readCollectionProgress,
   changeCollection,
   listCollections,
   type Collection,
 } from '../../services/collections'
 import { commandErrorMessage, getVideoParts } from '../../services/desktopApi'
-import { creatorVideoRow, seasonTracks } from '../../services/mediaSources'
-import {
-  playbackIntent,
-  seasonPlaybackQueue,
-  usePlayerStore,
-} from '../player/playerStore'
+import { creatorVideoRow } from '../../services/mediaSources'
+import { seasonPlaybackQueue } from '../player/playerStore'
 import { toTrack } from '../../services/collectionTrack'
 import { VideoPartsList } from '../library/VideoPartsList'
+import { useSeasonCover } from '../../shared/useSeasonCover'
 import { Artwork } from '../../shared/Artwork'
 import { LoadMore } from '../../shared/LoadMore'
-import { SegmentedTabs } from '../../shared/SegmentedTabs'
+import { SwipeTabPages } from '../../shared/SwipeTabPages'
+import { createCollectionResume, isCurrentCollectionResume, resolveCreatorContinuation, resumeCreatorUploads, type OpenCollection } from './creatorContinuation'
+import { useCollectionProgress } from './useCollectionProgress'
 
 type Creator = {
   mid: number
@@ -43,8 +43,18 @@ type Creator = {
   fans?: number
 }
 type Catalog = { data: any; page: number }
+function CreatorSeasonRow({ collection, count, onOpen }: { collection: Collection; count: number; onOpen?: OpenCollection }) {
+  const image = useSeasonCover(collection.bvid, collection.coverUrl)
+  return <div className="video-result-card">
+    <VideoResultRow title={collection.title} coverUrl={image.cover} coverRef={image.ref} count={count} countUnit="个视频"
+      onClick={() => onOpen?.(collection)}/>
+  </div>
+}
+
 const catalog = (action: string, mid?: number, page = 1, keyword = '') =>
   invoke<Catalog>('bili_creator_catalog', { action, mid, page, keyword })
+const creatorVideos = (pages?: Catalog[]) => [...new Map((pages?.flatMap(page => page.data.list?.vlist || []) || [])
+  .map(video => [video.bvid, video])).values()]
 export const creatorItem = (up: Creator): Collection => ({
   followers: up.fans,
   bvid: `up:${up.mid}`,
@@ -133,6 +143,7 @@ export function CreatorsView({
   onOpen,
   followed = false,
   sidebar = false,
+  actionsHost,
   folderId, onOpenFolder, onFolderRemoved,
 }: {
   folderId?:string;onOpenFolder?:(id:string)=>void;onFolderRemoved?:(id:string)=>void
@@ -140,6 +151,7 @@ export function CreatorsView({
   onOpen: (item: Collection) => void
   followed?: boolean
   sidebar?: boolean
+  actionsHost?: HTMLElement | null
 }) {
   const [group, setGroup] = useState('all')
   const [expanded, setExpanded] = useState(() => localStorage.getItem('creators-expanded') !== 'false')
@@ -155,43 +167,51 @@ export function CreatorsView({
     getNextPageParam: (last) =>
       last.page * 20 < last.data.numResults ? last.page + 1 : undefined,
   })
-  const items: Collection[] = followed
-    ? saved.data?.items.filter((item) => item.bvid.startsWith('up:')) || []
-    : result.data?.pages.flatMap((page) =>
-        (page.data.result || []).map((up: Creator) => creatorItem(up)),
-      ) || []
-  const folders=(saved.data?.folders||[]).filter(f=>f.scope==='creators')
+  const followedData = useListDataDuringNavigation(saved.data, 'followed-creators', !sidebar)
+  const found = useListDataDuringNavigation(result.data, query)
+  const folders = (followedData?.folders || []).filter(folder => folder.scope === 'creators')
+  const savedCreators = new Map(followedData?.items.filter(item => item.bvid.startsWith('up:')).map(item => [item.bvid, item]))
+  const items: Collection[] = followed ? [...savedCreators.values()] :
+    found?.pages.flatMap(page => (page.data.result || []).map((up: Creator) => creatorItem(up))) || []
   const selectedFolder=folderId??(group==='all'?undefined:group)
   const root=selectedFolder===undefined
+  const visibleItems = followed ? items.filter(item => item.folderId === (selectedFolder || '')) : items
+  const loading = followed ? saved.isLoading || Boolean(saved.data && !followedData) : result.isLoading || Boolean(result.data && !found)
+  const rowsRef = useRef<HTMLDivElement>(null)
+  const rendered = useListRows(visibleItems, followed ? `followed:${selectedFolder ?? ''}` : `creator-search:${query ?? ''}`, { active: !sidebar || expanded })
+  useListReveal(rowsRef, loading, Boolean(visibleItems.length), !sidebar || expanded)
   const openFolder=(id:string)=>onOpenFolder?onOpenFolder(id):setGroup(id)
   return (
-    <section className={`creators-view${sidebar ? ' creators-sidebar' : ''}`}>
-      {followed && root && <CreatorManager sidebar={sidebar} expanded={expanded} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} folders={folders} items={items}/>}
+    <section className={`creators-view${sidebar ? ' creators-sidebar sidebar-section' : ''}`}>
+      {followed && root && <CreatorManager sidebar={sidebar} expanded={expanded} actionsHost={actionsHost} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} folders={folders} items={items}/>}
       {followed&&!root&&<div className="collections-heading"><h3>{folders.find(f=>f.id===selectedFolder)?.name||'关注文件夹'}</h3><div className="collections-heading-actions">{!folderId&&<button className="collection-icon" aria-label="返回关注" onClick={()=>setGroup('all')}><ArrowLeft size={18}/></button>}{folders.filter(f=>f.id===selectedFolder).map(folder=><FolderMenu key={folder.id} creator folder={folder} onChanged={()=>void saved.refetch()} onRemoved={()=>{setGroup('all');onFolderRemoved?.(folder.id)}}/>)}</div></div>}
       <div hidden={sidebar && !expanded}>
       {followed&&root&&folders.map(folder=><LibraryEntry coverBadge="folder" key={folder.id} title={folder.name} subtitle={`${items.filter(item=>item.folderId===folder.id).length} 位 UP 主`} sidebar={sidebar} cover={<Artwork fallback={<Folder aria-hidden="true"/>}/>} onOpen={()=>openFolder(folder.id)} menu={position=><FolderMenu creator folder={folder} contextPosition={position} onOpen={()=>openFolder(folder.id)} onChanged={()=>void saved.refetch()} onRemoved={()=>{if(selectedFolder===folder.id)setGroup('all');onFolderRemoved?.(folder.id)}}/>}/>)}
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}
-      {items.filter(item => !followed || item.folderId === (selectedFolder||'')).map((item) => (
+      {loading && !sidebar && <ListSkeleton label={followed ? '正在读取关注' : '正在搜索 UP 主'}/>}
+      <div ref={rowsRef}>
+      {rendered.rows.map((item) => (
         <CreatorEntry
           key={item.bvid}
-          item={{...item,...saved.data?.items.find(saved=>saved.bvid===item.bvid)}}
-          editable={Boolean(saved.data?.items.some(saved=>saved.bvid===item.bvid))}
+          item={{...item,...savedCreators.get(item.bvid)}}
+          editable={savedCreators.has(item.bvid)}
           onOpen={onOpen}
           sidebar={sidebar}
-          folders={(saved.data?.folders || []).filter(f=>f.scope==='creators')}
+          folders={folders}
         />
       ))}
-      {result.isLoading && <p>正在搜索 UP 主…</p>}
-      {!items.filter(item=>!followed||item.folderId===(selectedFolder||'')).length && (!root||!folders.length) && !result.isLoading && (
-        <p className="batch-message">
+      {rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}
+      </div>
+      {!visibleItems.length && (!root || !folders.length) && !loading && (
+        <p className={sidebar ? 'sidebar-empty' : 'batch-message'}>
           {sidebar ? '暂无关注' : followed
             ? root ? '关注喜欢的 UP 主，随时查看最新投稿' : '这个关注文件夹还没有 UP 主。'
             : '没有找到相关 UP 主'}
         </p>
       )}
-      {result.hasNextPage && (
+      {result.hasNextPage && !rendered.more && (
         <LoadMore
           label="加载更多"
           busy={result.isFetchingNextPage}
@@ -203,14 +223,21 @@ export function CreatorsView({
   )
 }
 
+const creatorTabs = [
+  { id: 'videos', label: '全部投稿' },
+  { id: 'seasons', label: '合集' },
+] as const
+
 export function CreatorPage({
   item,
   onOpen,
   searchQuery,
+  active = true,
 }: {
   item: Collection
-  onOpen?: (item: Collection) => void
+  onOpen?: OpenCollection
   searchQuery?: string
+  active?: boolean
 }) {
   const mid = Number(item.bvid.slice(3))
   const profile = useQuery({
@@ -227,24 +254,10 @@ export function CreatorPage({
     queryFn: listCollections,
   })
   const followed = saved.data?.items.some((value) => value.bvid === item.bvid)
-  const checkpoint = useQuery({
-    queryKey: accountQueryKey('collection-progress', item.bvid),
-    queryFn: () => readCollectionProgress(item.bvid),
-    enabled: Boolean(followed),
-  })
-  useEffect(() => {
-    if (!followed) return
-    const subscription = listen<string>(
-      'collection-progress-changed',
-      (event) => {
-        if (event.payload === item.bvid) void checkpoint.refetch()
-      },
-    ).catch(() => undefined)
-    return () => {
-      void subscription.then((stop) => stop?.())
-    }
-  }, [followed, item.bvid, checkpoint.refetch])
+  const checkpoint = useCollectionProgress(item.bvid, active && Boolean(followed))
   const [resuming, setResuming] = useState(false)
+  const resumeVersion = useRef(0)
+  useLayoutEffect(() => { setResuming(false); return () => { resumeVersion.current++ } }, [active, item.bvid])
 
   const [localSearch, setLocalSearch] = useState('')
   const inputQuery = (searchQuery ?? localSearch).trim()
@@ -281,25 +294,21 @@ export function CreatorPage({
         : undefined,
   })
   const result = activeTab === 'videos' ? videoResult : seasonResult
-  const videos = [...new Map((videoResult.data?.pages.flatMap((page) => page.data.list?.vlist || []) || [])
-    .map(video => [video.bvid, video])).values()]
-  const seasons =
-    seasonResult.data?.pages.flatMap(
+  const videoData = useListDataDuringNavigation(videoResult.data, `${mid}:videos:${keyword}`)
+  const seasonData = useListDataDuringNavigation(seasonResult.data, `${mid}:seasons`)
+  const loadingVideos = settling || videoResult.isLoading || Boolean(videoResult.data && !videoData)
+  const loadingSeasons = seasonResult.isLoading || Boolean(seasonResult.data && !seasonData)
+  const videos = useMemo(() => creatorVideos(videoData?.pages), [videoData])
+  const seasons = useMemo(() =>
+    seasonData?.pages.flatMap(
       (page) => page.data.items_lists?.seasons_list || [],
-    ) || []
+    ) || [], [seasonData])
+  const seasonList = useRef<HTMLDivElement>(null)
+  const renderedSeasons = useListRows(seasons, `creator-seasons:${mid}`, { active: activeTab === 'seasons' })
+  useListReveal(seasonList, loadingSeasons, seasons.length > 0, activeTab === 'seasons')
   const totalVideos: number | undefined =
-    videoResult.data?.pages[0]?.data.page?.count
-  const queue = seasonTracks({
-    unavailable: 0,
-    summary: {
-      id: mid,
-      uploaderId: mid,
-      title: item.title,
-      uploaderName: item.title,
-      coverUrl: item.coverUrl,
-    },
-    tracks: videos.map(creatorVideoRow),
-  })
+    videoData?.pages[0]?.data.page?.count
+  const queue = useMemo(() => videos.map(video => creatorVideoRow(video, mid, item.title)), [mid, item.title, videos])
   const expandedBvid = !settling && activeTab === 'videos' && partsChoice?.scope === partsScope &&
     videos.some(video => video.bvid === partsChoice.bvid) ? partsChoice.bvid : undefined
   const partsQuery = useQuery({
@@ -312,69 +321,39 @@ export function CreatorPage({
   const partTracks = parts?.parts.map(part => toTrack(parts,part)) || []
   const queueSource = {
     kind: 'season' as const, title:item.title, collectionRef:item.bvid, creatorMid:mid,
-    creatorPage:videoResult.data?.pages.length || 1,creatorTotal:totalVideos || 0,creatorKeyword:keyword,
+    creatorPage:videoData?.pages.length || 1,creatorTotal:totalVideos || 0,creatorKeyword:keyword,
   }
   useEffect(() => { setError('') }, [keyword, mid])
+  const videoPagination = !loadingVideos && videoResult.hasNextPage && <LoadMore label="加载更多" busy={videoResult.isFetchingNextPage}
+    onLoad={() => void videoResult.fetchNextPage()}/>
+  const seasonPagination = !loadingSeasons && seasonResult.hasNextPage && <LoadMore label="加载更多" busy={seasonResult.isFetchingNextPage}
+    onLoad={() => void seasonResult.fetchNextPage()}/>
   const resumeButton = followed && checkpoint.data && (
     <button
       className="creator-resume"
       disabled={resuming}
       onClick={async () => {
+        const point = checkpoint.data
+        if (!active || !point || resuming) return
+        const request = createCollectionResume(point)
+        const version = ++resumeVersion.current
+        const present = () => version === resumeVersion.current && request.account === accountEpoch()
+        const current = () => present() && isCurrentCollectionResume(request)
         setResuming(true)
         setError('')
-        const scope = accountEpoch(),
-          intent = playbackIntent()
-        const point = checkpoint.data!
         try {
-          let entries = keyword ? [] : [...videos],
-            page = keyword ? 0 : videoResult.data?.pages.length || 0
-          let total = keyword ? Infinity : totalVideos ?? Infinity
-          while (
-            !entries.some((video) => video.bvid === point.bvid) &&
-            entries.length < total
-          ) {
-            const next = await catalog('videos', mid, ++page)
-            if (scope !== accountEpoch() || intent !== playbackIntent()) return
-            const rows = next.data.list?.vlist || []
-            if (!rows.length) break
-            entries.push(...rows)
-            total = next.data.page?.count ?? entries.length
+          const target = await resolveCreatorContinuation(point, item, current)
+          if (!target || !current()) return
+          if ('collection' in target && onOpen) {
+            onOpen(target.collection, request)
+            return
           }
-          if (!entries.some((video) => video.bvid === point.bvid))
-            throw new Error('上次播放的视频已不在这个 UP 主的投稿中')
-          const detail = await getVideoParts(point.bvid)
-          if (scope !== accountEpoch() || intent !== playbackIntent()) return
-          const parts = detail.parts.map((part) => toTrack(detail, part))
-          const selected = parts.find((track) => track.source.cid === point.cid)
-          if (!selected) throw new Error('上次播放的分 P 已不可用')
-          const full = seasonTracks({
-            unavailable: 0,
-            summary: {
-              id: mid,
-              uploaderId: mid,
-              title: item.title,
-              uploaderName: item.title,
-              coverUrl: item.coverUrl,
-            },
-            tracks: entries.map(creatorVideoRow),
-          })
-          await usePlayerStore.getState().playFromList(
-            seasonPlaybackQueue(full, selected, parts),
-            selected.id,
-            {
-              kind: 'season',
-              title: item.title,
-              collectionRef: item.bvid,
-              creatorMid: mid,
-              creatorPage: page,
-              creatorTotal: total,
-            },
-            point.positionMs / 1000, true,
-          )
+          const detail = 'detail' in target ? target.detail : await getVideoParts(point.bvid)
+          await resumeCreatorUploads(item, point, detail, current, page => catalog('videos', mid, page), keyword ? [] : videoResult.data?.pages)
         } catch (cause) {
-          setError(commandErrorMessage(cause))
+          if (current()) setError(commandErrorMessage(cause))
         } finally {
-          setResuming(false)
+          if (present()) setResuming(false)
         }
       }}
     >
@@ -387,6 +366,48 @@ export function CreatorPage({
       <small>{formatDuration(checkpoint.data.positionMs / 1000)}</small>
     </button>
   )
+  const renderVideosPane = () => <>
+    {loadingVideos && <ListSkeleton label={inputQuery ? '正在搜索这位 UP 主的投稿' : '正在读取投稿'} />}
+    {!loadingVideos && !videoResult.isPending && !videoResult.error && inputQuery && !videos.length && <p className="collection-empty">这位 UP 主暂无匹配的投稿，试试其他关键词。</p>}
+    {videoResult.error && (
+      <p role="alert">{commandErrorMessage(videoResult.error)}</p>
+    )}
+    {!settling && (
+      <VideoPartsList
+        videoCollection
+        totalCount={totalVideos}
+        locateCurrent
+        tracks={queue}
+        queueSource={queueSource}
+        loading={loadingVideos}
+        footer={videoPagination}
+        onOpenParts={(track) => {
+          setPartsChoice(previous => previous?.scope === partsScope && previous.bvid === track.source.bvid
+            ? undefined : {scope:partsScope,bvid:track.source.bvid})
+        }}
+        renderDetails={track => track.source.bvid === expandedBvid && <section className="collection-nested-parts creator-inline-parts" aria-label={`${track.title}的选集`} data-expanded-for={track.source.bvid}>
+          <header><button type="button" className="collection-flat-button" onClick={() => setPartsChoice(undefined)}><ChevronDown size={16}/>收起选集</button></header>
+          {partsQuery.isPending && <ListSkeleton label="正在读取选集"/>}
+          {partsQuery.isError && <p className="inline-error" role="alert">{commandErrorMessage(partsQuery.error)}<button type="button" className="collection-flat-button" onClick={() => void partsQuery.refetch()}>重试</button></p>}
+          {parts && (partTracks.length ? <VideoPartsList tracks={partTracks}
+            playbackTracks={seasonPlaybackQueue(queue,partTracks[0],partTracks)} queueSource={queueSource}/> : <p className="batch-message">暂无可播放的分 P</p>)}
+        </section>}
+      />
+    )}
+  </>
+
+  const renderSeasonsPane = () => <>
+    {loadingSeasons && <ListSkeleton label="正在读取合集" />}
+    {!loadingSeasons && !seasonResult.isPending && !seasonResult.error && !seasons.length && <p className="collection-empty">这位 UP 主暂时还没有合集。</p>}
+    {seasonResult.error && (
+      <p role="alert">{commandErrorMessage(seasonResult.error)}</p>
+    )}
+    <div ref={seasonList} className="video-result-layout video-result-list">{renderedSeasons.rows.map((season) => {
+      const collection = { bvid: `season:${mid}:${season.meta.season_id}`, folderId: '', title: season.meta.name, coverUrl: season.meta.cover, uploaderName: item.title }
+      return <CreatorSeasonRow collection={collection} count={season.meta.total} onOpen={onOpen} key={collection.bvid}/>
+    })}{renderedSeasons.more ? <div ref={renderedSeasons.tail} className="list-render-tail" aria-hidden="true"/> : seasonPagination}</div>
+  </>
+
   return (
     <section className="creator-page">
       <header className="creator-row creator-header">
@@ -414,72 +435,21 @@ export function CreatorPage({
           </button>
         </div>
       </header>
+      {error && <p role="alert">{error}</p>}
       {searchQuery === undefined && <ScopedSearchField creator value={localSearch} onChange={setLocalSearch} className="creator-content-search"/>}
-      {inputQuery ? <p className="creator-search-summary" role="status">在这位 UP 主的投稿中搜索“{inputQuery}”{!settling && totalVideos !== undefined ? ` · ${totalVideos} 个结果` : ''}</p> : <SegmentedTabs
+      {inputQuery ? <>
+        <p className="creator-search-summary" role="status">在这位 UP 主的投稿中搜索“{inputQuery}”{!settling && totalVideos !== undefined ? ` · ${totalVideos} 个结果` : ''}</p>
+        <div id="creator-content">{renderVideosPane()}</div>
+      </> : <SwipeTabPages
         className="listening-tabs"
-        tabs={[
-          { id: 'videos', label: '全部投稿' },
-          { id: 'seasons', label: '合集' },
-        ]}
+        tabs={creatorTabs}
         value={tab}
         onChange={setTab}
         idPrefix="creator"
         panelId="creator-content"
         label="UP 主内容"
+        renderPanel={(kind) => kind === 'videos' ? renderVideosPane() : renderSeasonsPane()}
       />}
-      <div id="creator-content">
-        {(result.isLoading || settling) && <p role="status">{inputQuery ? '正在搜索这位 UP 主的投稿…' : '正在读取投稿…'}</p>}
-        {!settling && !result.isPending && !result.error && inputQuery && !videos.length && <p className="collection-empty">这位 UP 主暂无匹配的投稿，试试其他关键词。</p>}
-        {(result.error || error) && (
-          <p role="alert">{commandErrorMessage(result.error || error)}</p>
-        )}
-        {!settling && (activeTab === 'videos' ? (
-          <VideoPartsList
-            videoCollection
-            totalCount={totalVideos}
-            locateCurrent
-            tracks={queue}
-            queueSource={queueSource}
-            onOpenParts={(track) => {
-              setPartsChoice(previous => previous?.scope === partsScope && previous.bvid === track.source.bvid
-                ? undefined : {scope:partsScope,bvid:track.source.bvid})
-            }}
-            renderDetails={track => track.source.bvid === expandedBvid && <section className="collection-nested-parts creator-inline-parts" aria-label={`${track.title}的选集`} data-expanded-for={track.source.bvid}>
-              <header><button type="button" className="collection-flat-button" onClick={() => setPartsChoice(undefined)}><ChevronDown size={16}/>收起选集</button></header>
-              {partsQuery.isPending && <p className="batch-message" role="status">正在读取选集…</p>}
-              {partsQuery.isError && <p className="inline-error" role="alert">{commandErrorMessage(partsQuery.error)}<button type="button" className="collection-flat-button" onClick={() => void partsQuery.refetch()}>重试</button></p>}
-              {parts && (partTracks.length ? <VideoPartsList tracks={partTracks}
-                playbackTracks={seasonPlaybackQueue(queue,partTracks[0],partTracks)} queueSource={queueSource}/> : <p className="batch-message">暂无可播放的分 P</p>)}
-            </section>}
-          />
-        ) : (
-          seasons.map((season) => (
-            <button
-              className="creator-row creator-season"
-              key={season.meta.season_id}
-              onClick={() =>
-                onOpen?.({
-                  bvid: `season:${mid}:${season.meta.season_id}`,
-                  folderId: '',
-                  title: season.meta.name,
-                  coverUrl: season.meta.cover,
-                  uploaderName: item.title,
-                })
-              }
-            >
-              <span className="creator-season-cover"><Artwork src={season.meta.cover}/><CoverCount count={season.meta.total} unit="个视频" single/></span>
-              <strong>{season.meta.name}</strong>
-            </button>
-          ))
-        ))}
-        {!settling && result.hasNextPage && (
-          <LoadMore
-            label="加载更多"
-            busy={result.isFetchingNextPage}
-            onLoad={() => void result.fetchNextPage()}
-          />
-        )}
-      </div>
     </section>
   )
 }

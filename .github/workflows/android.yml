@@ -1,6 +1,11 @@
 name: android-build
 on:
   workflow_dispatch:
+    inputs:
+      build_number:
+        description: Android phone and tablet build number
+        type: number
+        default: 1
   push:
     branches: [main]
     paths: ['src/**', 'src-tauri/**', 'native/**', 'scripts/android-*', 'package*', 'vite.config.ts', '.github/workflows/android.yml']
@@ -14,6 +19,8 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    env:
+      BILIMUSIC_BUILD_NUMBER: ${{ inputs.build_number || 1 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,7 +50,7 @@ jobs:
       - run: npm run build
       - run: npm run android:init
       # Optimized native code and stripped symbols; sign the release APK with the existing preview key.
-      - run: npm run tauri -- android build --apk --target aarch64
+      - run: npm run android:build
       - name: Test media controls and native lyric rendering
         working-directory: src-tauri/gen/android
         run: ./gradlew :tauri-plugin-android-player:testReleaseUnitTest --no-daemon
@@ -69,7 +76,7 @@ jobs:
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | head -8
-          expected_code=$(node -p "const [major,minor,patch]=require('./package.json').version.split('.').map(Number);major*1000000+minor*10000+patch*100")
+          expected_code=$(node --input-type=module -e "import {mobileVersion} from './scripts/mobile-version.mjs'; import {readFileSync} from 'node:fs'; console.log(mobileVersion(JSON.parse(readFileSync('package.json')).version).androidVersionCode)")
           actual_badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK")
           [[ "$actual_badging" == *"versionCode='$expected_code'"* ]] || { echo 'APK upgrade versionCode mismatch'; exit 1; }
           python3 - "$APK" <<'PYAPK'

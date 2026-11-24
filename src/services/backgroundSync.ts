@@ -21,7 +21,7 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
       if (report.statistics || report.statisticsError) await client.invalidateQueries({ queryKey: accountQueryKey('listening-statistics') })
       if (stopped || switching || epoch !== accountEpoch()) return
       if (report.statistics) reportSyncError('statistics', false)
-      if (report.statisticsError) reportSyncError('statistics', true)
+      if (report.statisticsError) reportSyncError('statistics', true, report.statisticsError)
       if (report.library) {
         reportSyncOutcome(report.library)
         await onLibrary(report.library)
@@ -29,12 +29,15 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
         if (stopped || switching || epoch !== accountEpoch()) return
         await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
         if (stopped || switching || epoch !== accountEpoch()) return
-        if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '' }))
+        if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: report.library.importError || report.library.visibilityError || report.library.chaptersError ? '部分资料待同步' : '' }))
       }
-      if (report.libraryError) reportSyncError('library', true)
-      if (report.libraryError) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '同步暂未完成，请到设置中查看或手动重试' }))
-    } catch {
-      if (!stopped && !switching && epoch === accountEpoch()) reportSyncError('library', true)
+      if (report.libraryError) {
+        reportSyncError('library', true, report.libraryError)
+        window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '同步暂未完成，请到设置中查看或手动重试' }))
+        await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
+      }
+    } catch (error) {
+      if (!stopped && !switching && epoch === accountEpoch()) reportSyncError('library', true, error)
       // No retry loop here. The next lifecycle hint/heartbeat reaches the Rust policy.
     } finally {
       if (!stopped && !switching && epoch !== accountEpoch()) void run('foreground')

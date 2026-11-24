@@ -6,7 +6,10 @@ export default defineConfig(({ mode }) => ({
     name: 'bilimusic-large-screen-entry',
     transformIndexHtml: { order: 'pre' as const, handler: (html: string) => html.replace('/src/main.tsx', '/src/large-screen/main.tsx') },
   }] : [])],
-  define: { 'import.meta.env.VITE_BILIMUSIC_EDITION': JSON.stringify(mode === 'large-screen' ? 'large-screen' : 'standard') },
+  define: {
+    'import.meta.env.VITE_BILIMUSIC_EDITION': JSON.stringify(mode === 'large-screen' ? 'large-screen' : 'standard'),
+    __BILIMUSIC_BUILD_NUMBER__: Number(process.env.BILIMUSIC_BUILD_NUMBER ?? '1'),
+  },
   clearScreen: false,
   server: {
     host: process.env.TAURI_DEV_HOST || '127.0.0.1',
@@ -17,7 +20,9 @@ export default defineConfig(({ mode }) => ({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     outDir: mode === 'large-screen' ? 'dist-large-screen' : 'dist',
-    target: ['windows', 'android'].includes(process.env.TAURI_ENV_PLATFORM || '') ? 'chrome105' : 'safari13',
+    // Many car head units have a vendor-pinned Android WebView.
+    target: mode === 'large-screen' ? 'chrome66'
+      : ['windows', 'android'].includes(process.env.TAURI_ENV_PLATFORM || '') ? 'chrome105' : 'safari13',
     minify: process.env.TAURI_ENV_DEBUG ? false : 'esbuild',
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
   },

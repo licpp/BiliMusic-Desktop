@@ -59,18 +59,24 @@ impl LibraryRepository {
         connection: &mut Connection,
         track: &TrackInput,
     ) -> rusqlite::Result<TrackRecord> {
+        let transaction = connection.transaction()?;
+        Self::upsert_source(&transaction, track)?;
+        transaction.commit()?;
+        Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    /// Write the source and base track within the caller's transaction.
+    pub(crate) fn upsert_source(
+        connection: &Connection,
+        track: &TrackInput,
+    ) -> rusqlite::Result<()> {
         let previous =
             crate::infrastructure::repositories::source_titles::get(connection, &track.id)?;
         let cached = track
             .source_title_context
             .clone()
             .map(|mut value| {
-                if let Some(old) = &previous {
-                    if value.season.is_none() {
-                        value.season = old.season.clone()
-                    }
-                    value.chapter_context |= old.chapter_context;
-                }
+                value.preserve_membership(previous.as_ref());
                 value
             })
             .or(previous);
@@ -87,30 +93,26 @@ impl LibraryRepository {
             &track.id,
             track.cover_url.as_deref(),
         )?;
-        let transaction = connection.transaction()?;
-        transaction.execute(
+        connection.execute(
             "INSERT INTO source_items (id, provider, bvid, aid, cid, page, uploader_id, uploader_name, source_title)
              VALUES (?1, 'bilibili', ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET aid=excluded.aid, page=excluded.page, uploader_id=excluded.uploader_id,
                uploader_name=excluded.uploader_name, source_title=excluded.source_title, updated_at=CURRENT_TIMESTAMP",
             params![track.id, track.bvid, track.aid, track.cid, track.page, track.uploader_id, track.uploader_name, raw],
         )?;
-        transaction.execute(
+        connection.execute(
             "INSERT INTO tracks (id, source_item_id, title, artist, album, cover_url, duration_seconds)
              VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, album=excluded.album,
-               cover_url=excluded.cover_url, duration_seconds=excluded.duration_seconds, updated_at=CURRENT_TIMESTAMP",
+               cover_url=excluded.cover_url, duration_seconds=CASE WHEN excluded.duration_seconds>0 THEN excluded.duration_seconds ELSE tracks.duration_seconds END, updated_at=CURRENT_TIMESTAMP",
             params![track.id, canonical, track.artist, track.album, cover, track.duration_seconds],
         )?;
         if let Some(context) = &cached {
             crate::infrastructure::repositories::source_titles::save(
-                &transaction,
-                &track.id,
-                context,
+                connection, &track.id, context,
             )?;
         }
-        transaction.commit()?;
-        Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+        Ok(())
     }
 
     pub fn record_play(
@@ -185,6 +187,14 @@ impl LibraryRepository {
         connection
             .query_row(&sql, params![id], Self::map_row)
             .optional()
+    }
+
+    pub(super) fn downloaded_tracks(connection: &Connection) -> rusqlite::Result<Vec<TrackRecord>> {
+        let mut statement = connection.prepare(&format!(
+            "{} WHERE t.id IN (SELECT track_id FROM downloads)",
+            Self::select_sql()
+        ))?;
+        statement.query_map([], Self::map_row)?.collect()
     }
 
     pub fn saved(connection: &Connection, limit: i64) -> rusqlite::Result<Vec<TrackRecord>> {
@@ -266,7 +276,7 @@ impl LibraryRepository {
     }
 
     pub(crate) fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRecord> {
-        Ok(TrackRecord {
+        let mut record = TrackRecord {
             id: row.get(0)?,
             bvid: row.get(1)?,
             aid: row.get(2)?,
@@ -296,7 +306,16 @@ impl LibraryRepository {
                         .and_then(|value| serde_json::from_str(&value).ok()),
                 }
             }),
-        })
+        };
+        if let Some(context) = &mut record.source_title_context {
+            if context.discard_legacy_catalog() {
+                record.source_display_title = context.title();
+                if !record.title_overridden {
+                    record.title.clone_from(&record.source_display_title);
+                }
+            }
+        }
+        Ok(record)
     }
 }
 
@@ -376,6 +395,51 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn legacy_catalog_source_title_is_repaired_on_read_and_replay() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/single-part-catalog.json"
+        ))
+        .unwrap();
+        let video = fixture["videoTitle"].as_str().unwrap();
+        let part = fixture["partTitle"].as_str().unwrap();
+        for season in fixture["catalogs"].as_array().unwrap() {
+            let mut c = database();
+            let mut input = track(fixture["cid"].as_i64().unwrap());
+            input.bvid = fixture["bvid"].as_str().unwrap().into();
+            input.id = format!("bilibili:{}:{}", input.bvid, input.cid);
+            input.title = part.into();
+            input.source_title = video.into();
+            LibraryRepository::upsert(&mut c, &input).unwrap();
+            c.execute("INSERT INTO source_title_cache(track_id,video_title,part_title,part_count,season_json,chapter_context) VALUES(?1,?2,?3,1,?4,1)",
+                rusqlite::params![input.id, video, part, season.to_string()]).unwrap();
+            let restored = LibraryRepository::get(&c, &input.id).unwrap().unwrap();
+            assert_eq!(restored.title, video);
+            assert_eq!(restored.source_display_title, video);
+            input.source_title_context = Some(serde_json::from_value(serde_json::json!({
+                "videoTitle":video,"partTitle":part,"partCount":1,"chapterContext":true,"season":season,
+            })).unwrap());
+            LibraryRepository::update_metadata(
+                &c,
+                &input.id,
+                &MetadataPatch {
+                    title: "我的歌名".into(),
+                    artist: None,
+                    album: None,
+                    cover_url: None,
+                },
+            )
+            .unwrap();
+            let played = LibraryRepository::record_play(&mut c, &input).unwrap();
+            assert_eq!(played.cid, input.cid);
+            assert_eq!(played.title, "我的歌名");
+            assert_eq!(played.source_display_title, video);
+            let stored_legacy: bool = c.query_row("SELECT season_json IS NOT NULL OR chapter_context FROM source_title_cache WHERE track_id=?1",
+                [&input.id], |row| row.get(0)).unwrap();
+            assert!(!stored_legacy);
+        }
     }
 
     #[test]

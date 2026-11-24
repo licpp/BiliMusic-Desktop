@@ -27,6 +27,8 @@ export function parseLrc(source: string): LyricLine[] {
   return lines.filter(line => line.text).sort((left,right) => left.timeMs-right.timeMs)
 }
 
+export const hasTimedLyrics = (source?: string) => Boolean(source && parseLrc(source).length)
+
 export function candidateLines(candidate: LyricCandidate): LyricLine[] {
   const synced = candidate.syncedLyrics ? parseLrc(candidate.syncedLyrics) : []
   if (synced.length) return attachSupplementalLyrics(synced, candidate.translatedLyrics, candidate.romanizedLyrics)

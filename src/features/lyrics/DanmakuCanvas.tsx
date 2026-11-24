@@ -15,7 +15,7 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
       .sort((a, b) => a.timeSeconds - b.timeSeconds)
       .filter((_, index) => index % stride === 0)
     const sprites = new Map<number, { canvas: HTMLCanvasElement; width: number; height: number }>()
-    let width = 0, height = 0, ratio = 1, frame = 0
+    let width = 0, height = 0, ratio = 1, frame = 0, resizeFrame = 0
     let placements: DanmakuPlacement[] = []
     const measure = (item: DanmakuItem) => {
       const font = Math.max(12, Math.min(56, item.fontSize * scale))
@@ -28,8 +28,9 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
       const time = playbackClock()
       let low = 0, high = placements.length
       while (low < high) { const middle = (low + high) >>> 1; if (placements[middle].time <= time) low = middle + 1; else high = middle }
-      let visible = 0
-      for (let at = Math.max(0, low - 100); at < low && visible < 40; at++) {
+      let first = low
+      while (first > 0 && placements[first - 1].time > time - 8) first--
+      for (let at = first; at < low; at++) {
         const placement = placements[at], index = placement.index
         const item = sorted[index], age = time - item.timeSeconds
         if (age > 8) continue
@@ -47,7 +48,7 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
           sprite = { canvas: image, width: textWidth, height: textHeight }; sprites.set(index, sprite)
           if (sprites.size > 80) sprites.delete(sprites.keys().next().value!)
         }
-        context.drawImage(sprite.canvas, danmakuX(placement, time, width), placement.y, sprite.width, sprite.height); visible++
+        context.drawImage(sprite.canvas, danmakuX(placement, time, width), placement.y, sprite.width, sprite.height)
       }
     }
     const tick = () => { frame = 0; if (document.hidden) return; draw(); if (usePlayerStore.getState().status === 'playing') frame = requestAnimationFrame(tick) }
@@ -64,16 +65,20 @@ export const DanmakuCanvas = memo(function DanmakuCanvas({ items, scale, opacity
       context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0)
       sprites.clear(); placements = layoutDanmaku(sorted, width, height, density, measure); schedule()
     }
-    const observer = new ResizeObserver(resize)
+    const requestResize = () => {
+      if (resizeFrame) return
+      resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; resize() })
+    }
+    const observer = new ResizeObserver(requestResize)
     observer.observe(canvas)
-    window.addEventListener('resize', resize)
-    window.visualViewport?.addEventListener('resize', resize)
-    screen.orientation?.addEventListener('change', resize)
+    window.addEventListener('resize', requestResize)
+    window.visualViewport?.addEventListener('resize', requestResize)
+    screen.orientation?.addEventListener('change', requestResize)
     resize()
     const unsubscribe = usePlayerStore.subscribe(schedule)
     document.addEventListener('visibilitychange', schedule)
     schedule()
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize', resize); window.visualViewport?.removeEventListener('resize', resize); screen.orientation?.removeEventListener('change', resize); unsubscribe(); document.removeEventListener('visibilitychange', schedule); sprites.clear() }
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(resizeFrame); observer.disconnect(); window.removeEventListener('resize', requestResize); window.visualViewport?.removeEventListener('resize', requestResize); screen.orientation?.removeEventListener('change', requestResize); unsubscribe(); document.removeEventListener('visibilitychange', schedule); sprites.clear() }
   }, [items, scale, opacity, density])
   return <canvas ref={ref} className="danmaku-canvas" aria-label="弹幕" />
 })

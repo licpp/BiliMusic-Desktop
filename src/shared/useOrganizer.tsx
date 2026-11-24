@@ -77,12 +77,19 @@ export function useOrganizer(items: OrganizeItem[], label = '整理') {
     while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
     if (scroller) { const rect = scroller.getBoundingClientRect(); if (event.clientY < rect.top + 48) scroller.scrollTop -= 14; else if (event.clientY > rect.bottom - 48) scroller.scrollTop += 14 }
   }
+  const canEdit = items.length >= 2 && !query.isPending
+  const start = () => {
+    if (!canEdit) return
+    scope.current = accountEpoch(); fingerprint.current = signature; setDraft(items); setError('')
+  }
   return {
     editing: !!draft,
+    canEdit,
+    start,
     controls: <span className="organizer-controls">{draft ? <>
       <button type="button" title="取消整理" aria-label="取消整理" disabled={busy} onClick={cancel}><X size={16}/><span className="organizer-label">取消</span></button>
       <button type="button" className="organizer-done" title="完成整理" aria-label="完成整理" disabled={busy} onClick={() => void finish()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>}<span className="organizer-label">完成</span></button>
-    </> : <button type="button" title={label} aria-label={label} disabled={items.length < 2 || query.isPending} onClick={() => { scope.current = accountEpoch(); fingerprint.current = signature; setDraft(items); setError('') }}><ListFilter size={16}/><span className="organizer-label">整理</span></button>}</span>,
+    </> : <button type="button" title={label} aria-label={label} disabled={!canEdit} onClick={start}><ListFilter size={16}/><span className="organizer-label">整理</span></button>}</span>,
     editor: <>{error && <p className="inline-error" role="alert">{error}</p>}{draft && <div className="order-editor" ref={editor} data-order-editor data-drag-active={!!dragging}
       onPointerMove={pointerMove} onPointerUp={() => { if (drag.current) endDrag() }} onPointerCancel={() => { if (drag.current) endDrag() }} onLostPointerCapture={() => { if (drag.current) endDrag() }}>
       <p className="order-editor-hint"><GripVertical size={14}/><span>拖动手柄调整顺序</span></p>

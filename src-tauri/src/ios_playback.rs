@@ -1,6 +1,6 @@
 //! Resolve native queue transitions even when WKWebView JavaScript is suspended.
 use crate::infrastructure::media_proxy::MediaProxy;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     ffi::{CStr, CString, c_char},
     sync::OnceLock,
@@ -35,7 +35,8 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn bilimusic_ios_profile() -> *mut c_char {
     APP.get()
-        .and_then(|app| CString::new(crate::native_playback::current_profile(app)).ok())
+        .and_then(|app| crate::native_playback::current_profile(app).ok())
+        .and_then(|profile| CString::new(profile).ok())
         .map(CString::into_raw)
         .unwrap_or(std::ptr::null_mut())
 }
@@ -59,24 +60,30 @@ pub unsafe extern "C" fn bilimusic_ios_resolve(request: i64, raw: *const c_char)
         return;
     };
     tauri::async_runtime::spawn(async move {
-        let result = match serde_json::from_slice::<Value>(&track) {
-            Ok(track) => {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
-                    crate::native_playback::resolve(&app, track),
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => Err("加载超时，请重新播放".into()),
-                }
+        let payload = serde_json::from_slice::<Value>(&track);
+        if let Ok(event) = &payload {
+            if event["kind"] == "diagnostic" {
+                crate::native_playback::record_diagnostic(&app, event);
+                return;
             }
-            Err(_) => Err("歌曲信息无效".into()),
+        }
+        let result = match &payload {
+            Ok(track) => crate::native_playback::resolve(&app, track.clone()).await,
+            Err(_) => Err(crate::interface::error::CommandError::validation("歌曲信息无效")),
         };
-        let json = result.unwrap_or_else(|error| json!({"error":error}));
+        let json = crate::native_playback::resolution_response(result);
         if let Ok(json) = CString::new(json.to_string()) {
             unsafe {
                 bilimusic_ios_resolved(request, json.as_ptr());
+            }
+        }
+        if let Ok(payload) = payload {
+            if let Some(lyrics) =
+                crate::native_playback::lyrics::follow_up(&app, &payload, &json).await
+            {
+                if let Ok(lyrics) = CString::new(lyrics.to_string()) {
+                    unsafe { bilimusic_ios_resolved(request, lyrics.as_ptr()) };
+                }
             }
         }
     });
@@ -121,4 +128,15 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
             }
         }
     });
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bilimusic_ios_diagnostic_exit(kind: i32, at: u64) {
+    use crate::infrastructure::diagnostics::{Diagnostics, Step};
+    if let Some(app) = APP.get() {
+        if let Some(diagnostics) = app.try_state::<Diagnostics>() {
+            diagnostics.device_failure(Step::ProcessExit, None, format!("ios_crash:{kind}"), at);
+        }
+    }
 }

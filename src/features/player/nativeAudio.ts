@@ -9,6 +9,13 @@ import type { AutomaticResumePolicy } from './resumePolicy'
 
 import type { NativeAudioState as State, PlayerSnapshot } from './contracts'
 
+function mediaMetadata(track: Track) {
+  return {
+    id: track.id, title: track.title, artist: track.artist || '歌手未知',
+    album: track.album, coverUrl: track.coverUrl, durationSeconds: track.durationSeconds,
+  }
+}
+
 export function createNativeAudio(plugin: string, bind?: (callback: (state: State) => void) => Promise<unknown>) {
   let ready: Promise<unknown> | undefined
   let consumer: (state: PlayerSnapshot) => void = () => undefined
@@ -32,21 +39,24 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
     if (!ready) ready = (bind ? bind(receive) : addPluginListener<State>(plugin, 'state', receive)).catch((error) => { ready = undefined; throw error })
     return ready
   }
-  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0) {
+  async function play(track: Track, url: string, position: number, volume: number, playing = true, collectionRef?: string, rate = 1, seamless = false, upgradeUrl?: string, automaticResume?: AutomaticResumePolicy, loudnessGainDb = 0, diagnosticId?: string) {
     await ready
-    await invoke(`plugin:${plugin}|play`, { loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
+    await invoke(`plugin:${plugin}|play`, { ...mediaMetadata(track), ...(diagnosticId ? { diagnosticId } : {}), loudnessEnabled: useLoudnessSettings.getState().enabled, loudnessRevision: useLoudnessSettings.getState().revision, loudnessGainDb, url, position, volume, playing, collectionRef, rate, ...(seamless?{seamless:true}:{}), ...(upgradeUrl?{upgradeUrl}:{}), ...(automaticResume?{automaticResume}:{}) })
   }
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
   const control = (action: NativeControlAction, value = 0, settingsRevision?: number) => invoke(`plugin:${plugin}|control`, { action, value, ...(settingsRevision !== undefined ? {settingsRevision} : {}) })
   const snapshot = async () => {
+    const observed = order.latest
     const state = await invoke<State>(`plugin:${plugin}|snapshot`)
-    if (!order.accept(state)) return normalizeNativeSnapshot(order.latest!)
+    const serviceStopped = state.stopped && !state.engineInstanceId && !state.id && !state.action
+    const accepted = serviceStopped ? order.retireIfCurrent(observed) : order.accept(state)
+    if (!accepted) return normalizeNativeSnapshot(order.latest ?? { stopped: true })
     clock.update(state, performance.now())
     return normalizeNativeSnapshot(state)
   }
   function playbackClock() { return clock.position(performance.now()) }
 
-  const prepare = (track: Track) => invoke(`plugin:${plugin}|control`, { action: 'prepare', id: track.id, title: track.title, artist: track.artist || '歌手未知', coverUrl: track.coverUrl })
+  const prepare = (track: Track) => invoke(`plugin:${plugin}|control`, { action: 'prepare', ...mediaMetadata(track) })
 
   return { observe, play, setCollection, control, snapshot, playbackClock, prepare }
 }

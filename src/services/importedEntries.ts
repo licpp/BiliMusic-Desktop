@@ -62,4 +62,24 @@ export async function bindImportedEntries(playlistId:string,changes:ImportBindin
   return snapshot
 }
 export const replaceImportedEntry=(entry:ImportedEntry,choice:ImportChoice,session:string)=>bindImportedEntries(entry.playlistId,[{entryId:entry.entryId,expectedRevision:entry.revision,track:choice.track,mode:'manual'}],session)
+export async function removeUnmatchedImportedEntry(entry: ImportedEntry, session: string): Promise<ImportedEntriesSnapshot> {
+  const epoch = accountEpoch()
+  const { playlistId, entryId, revision } = entry
+  let snapshot: ImportedEntriesSnapshot
+  if (inDesktopShell) {
+    snapshot = await invoke('playlist_import_remove_missing', { expectedSession: session, playlistId, entryId, expectedRevision: revision })
+  } else {
+    if (session !== `preview:${epoch}`) throw sessionExpired()
+    const key = `${epoch}:${playlistId}`
+    const entries = preview.get(key) || []
+    const currentEntry = entries.find(row => row.entryId === entryId)
+    if (!currentEntry || currentEntry.trackId || currentEntry.revision !== revision) throw Error('这首歌已更新，请刷新后重试')
+    snapshot = { session, entries: entries.filter(row => row.entryId !== entryId) }
+    preview.set(key, snapshot.entries)
+  }
+  current(epoch)
+  window.dispatchEvent(new Event('bilimusic-data-changed'))
+  window.dispatchEvent(new Event('bilimusic-import-updated'))
+  return snapshot
+}
 if(typeof window!=='undefined')window.addEventListener('bilimusic-account-changing',()=>preview.clear())

@@ -1,7 +1,8 @@
 package app.bilimusic.player
 
 internal class FocusResume {
-    private var pending = false
+    var pending = false
+        private set
     fun interrupted(wasPlaying: Boolean) { pending = pending || wasPlaying }
     fun cancel() { pending = false }
     fun regained(): Boolean {

@@ -5,6 +5,7 @@ import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.os.Build
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -23,18 +24,21 @@ class PlayArgs {
     lateinit var id: String
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
     var position: Double = 0.0
     var loudnessGainDb: Double = 0.0
     var loudnessEnabled: Boolean = false
     var loudnessRevision: Long = 0
-    var volume: Double = 0.7
+    var volume: Double = 1.0
     var playing: Boolean = true
     var seamless: Boolean = false
     var upgradeUrl: String? = null
     var rate: Double = 1.0
     var collectionRef: String? = null
     var automaticResume: AutomaticResumePolicy? = null
+    var diagnosticId: String? = null
 }
 @InvokeArg
 class LyricsArgs { var data: String = "{}" }
@@ -43,10 +47,13 @@ class ControlArgs {
     var settingsRevision: Long = 0
     lateinit var action: String
     var value: Double = 0.0
+    var keepSystemInsets: Boolean = false
     var id: String = ""
     var collectionRef: String? = null
     var title: String = "BiliMusic"
     var artist: String = "歌手未知"
+    var album: String? = null
+    var durationSeconds: Double = 0.0
     var coverUrl: String? = null
 }
 
@@ -69,12 +76,13 @@ class ResolvedArgs { var request: Long = 0; var data: String = "{}" }
 class DownloadPathArgs { lateinit var path: String }
 
 @InvokeArg
-class InstallUpdateArgs { lateinit var path: String; lateinit var version: String }
+class InstallUpdateArgs { lateinit var path: String; lateinit var version: String; var versionCode: Long? = null }
 
 @TauriPlugin
 class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private val downloadStorage by lazy { DownloadStorage(activity.applicationContext) }
     private val downloadWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var playbackNotificationPermission: PlaybackNotificationPermission? = null
 
     // These storage commands are called by Rust only; they have no WebView ACL grant.
     @Command
@@ -126,7 +134,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(InstallUpdateArgs::class.java)
         downloadWorker.execute {
             try {
-                val file = ApkUpdateInstaller.prepare(activity, args.path, args.version)
+                val file = ApkUpdateInstaller.prepare(activity, args.path, args.version, args.versionCode)
                 activity.runOnUiThread {
                     try { invoke.resolve(JSObject().put("status", ApkUpdateInstaller.launch(activity, file))) }
                     catch (_: Exception) { invoke.reject("无法打开系统安装器，请检查安装权限或前往官网下载") }
@@ -143,6 +151,36 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             catch (_: Exception) { invoke.reject("无法显示悬浮歌词，请检查悬浮窗权限") }
         }
     }
+    @Command
+    fun diagnostic_environment(invoke: Invoke) {
+        val webview = runCatching { WebView.getCurrentWebViewPackage() }.getOrNull()
+        val model = listOf(Build.MANUFACTURER, Build.MODEL)
+            .filter { it.isNotBlank() && it != Build.UNKNOWN }.distinct().joinToString(" ")
+        val result = JSObject()
+            .put("osVersion", Build.VERSION.RELEASE)
+            .put("osBuild", Build.DISPLAY)
+            .put("apiLevel", Build.VERSION.SDK_INT)
+            .put("deviceModel", model)
+            .put("webviewVersion", webview?.versionName)
+            .put("webviewPackage", webview?.packageName)
+        if (Build.VERSION.SDK_INT >= 30) {
+            runCatching {
+                val manager = activity.getSystemService(android.app.ActivityManager::class.java)
+                val abnormal = manager?.getHistoricalProcessExitReasons(null, 0, 8)?.firstOrNull {
+                    it.processName == activity.applicationInfo.processName && it.reason in setOf(
+                        android.app.ApplicationExitInfo.REASON_CRASH,
+                        android.app.ApplicationExitInfo.REASON_CRASH_NATIVE,
+                        android.app.ApplicationExitInfo.REASON_ANR,
+                        android.app.ApplicationExitInfo.REASON_LOW_MEMORY,
+                        android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
+                    )
+                }
+                if (abnormal != null) result.put("lastExitReason", abnormal.reason).put("lastExitAt", abnormal.timestamp)
+            }
+        }
+        invoke.resolve(result)
+    }
+
     // Called only by Rust; no frontend ACL permission is granted for this command.
     @Command
     fun secret(invoke: Invoke) {
@@ -221,6 +259,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     private var previousOrientation: Int? = null
     private var immersive = false
+    private var keepSystemInsets = false
+    private val drawsUnderSystemBars get() = immersive && !keepSystemInsets
     private var largeScreen = false
 
     private fun setVideoFullscreen(enabled: Boolean) {
@@ -259,10 +299,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
             val params = view.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-            val left = if (immersive) 0 else bars.left
-            val top = if (immersive) 0 else bars.top
-            val right = if (immersive) 0 else bars.right
-            val bottom = if (immersive) 0 else bars.bottom
+            // Tablet lyrics use the same viewport as browsing so the WebView
+            // does not resize during a crossfade.
+            val drawUnderBars = drawsUnderSystemBars
+            val left = if (drawUnderBars) 0 else bars.left
+            val top = if (drawUnderBars) 0 else bars.top
+            val right = if (drawUnderBars) 0 else bars.right
+            val bottom = if (drawUnderBars) 0 else bars.bottom
             params?.let {
                 if (it.leftMargin != left || it.topMargin != top || it.rightMargin != right || it.bottomMargin != bottom) {
                     it.setMargins(left, top, right, bottom)
@@ -270,10 +313,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 }
             }
             val density = activity.resources.displayMetrics.density
-            val safeTop = if (immersive) bars.top / density else 0f
-            val safeBottom = if (immersive && keyboard.bottom == 0) bars.bottom / density else 0f
-            val safeLeft = if (immersive) bars.left / density else 0f
-            val safeRight = if (immersive) bars.right / density else 0f
+            val safeTop = if (drawUnderBars) bars.top / density else 0f
+            val safeBottom = if (drawUnderBars && keyboard.bottom == 0) bars.bottom / density else 0f
+            val safeLeft = if (drawUnderBars) bars.left / density else 0f
+            val safeRight = if (drawUnderBars) bars.right / density else 0f
             val keyboardOverlap = (keyboard.bottom - bottom).coerceAtLeast(0) / density
             val layoutHeight = (view.rootView.height - top - bottom).coerceAtLeast(0) / density
             webView.evaluateJavascript("document.documentElement.style.setProperty('--native-layout-height','${layoutHeight}px');" +
@@ -293,6 +336,11 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         // CSP and the network security config limit HTTP media to loopback.
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         val owner = activity as? androidx.appcompat.app.AppCompatActivity
+        if (owner != null && playbackNotificationPermission == null) {
+            playbackNotificationPermission = PlaybackNotificationPermission(owner) {
+                PlaybackService.instance?.refreshPlaybackNotification()
+            }
+        }
         owner?.onBackPressedDispatcher?.addCallback(
             owner, object : androidx.activity.OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
@@ -326,9 +374,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
-            .putExtra("url", args.url).putExtra("id", args.id)
+            .putExtra("url", args.url).putExtra("id", args.id).putExtra("diagnosticId", args.diagnosticId)
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
-            .putExtra("title", args.title).putExtra("artist", args.artist)
+            .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+            .putExtra("durationSeconds", args.durationSeconds)
             .putExtra("coverUrl", args.coverUrl).putExtra("collectionRef", args.collectionRef)
             .putExtra("loudnessGainDb", args.loudnessGainDb).putExtra("loudnessEnabled", args.loudnessEnabled).putExtra("loudnessRevision", args.loudnessRevision)
             .putExtra("position", args.position).putExtra("volume", args.volume).putExtra("playing", args.playing).putExtra("rate", args.rate)
@@ -339,6 +388,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         activity.startForegroundService(intent)
         invoke.resolve()
+        if (args.playing) activity.runOnUiThread { playbackNotificationPermission?.requestForPlayback() }
     }
     @Command
     fun control(invoke: Invoke) {
@@ -349,7 +399,8 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 // tracks still works after the activity goes into the background.
                 activity.startForegroundService(Intent(activity, PlaybackService::class.java)
                     .setAction("prepare").putExtra("id", args.id)
-                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("coverUrl", args.coverUrl))
+                    .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
+                    .putExtra("durationSeconds", args.durationSeconds).putExtra("coverUrl", args.coverUrl))
             } else if (args.action == "largeScreen") {
                 largeScreen = args.value > 0
                 if (largeScreen) activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -363,9 +414,13 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             } else if (args.action == "videoFullscreen") {
                 setVideoFullscreen(args.value > 0)
             } else if (args.action == "immersive") {
+                val drewUnderSystemBars = drawsUnderSystemBars
                 immersive = args.value > 0
+                keepSystemInsets = args.keepSystemInsets
                 updateSystemBars()
-                managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
+                if (drewUnderSystemBars != drawsUnderSystemBars) {
+                    managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
+                }
             } else if (args.action == "theme") {
                 val light = args.value > 0
                 val controller = androidx.core.view.WindowCompat.getInsetsController(activity.window, activity.window.decorView)
@@ -375,6 +430,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 activity.window.decorView.setBackgroundColor(android.graphics.Color.parseColor(if (light) "#f4f6fa" else "#071019"))
             } else {
                 val service = PlaybackService.instance
+                if (args.action == "resume" && service?.hasResumeTarget() != true) {
+                    invoke.reject("原生播放器尚未就绪", "native_not_ready")
+                    return@runOnUiThread
+                }
                 if (args.action.startsWith("sleep") && service == null) {
                     invoke.reject("请先开始播放"); return@runOnUiThread
                 }
@@ -382,6 +441,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 else if (args.action == "collection") service?.updateCollection(args.id, args.collectionRef)
                 else try {
                     service?.control(args.action, args.value)
+                    if (args.action == "resume" && service != null) playbackNotificationPermission?.requestForPlayback()
                 } catch (_: IllegalArgumentException) {
                     invoke.reject("当前无法调整播放器设置，请重试")
                     return@runOnUiThread
@@ -392,6 +452,6 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     }
     @Command
     fun snapshot(invoke: Invoke) {
-        activity.runOnUiThread { invoke.resolve(PlaybackService.instance?.snapshot() ?: JSObject()) }
+        activity.runOnUiThread { invoke.resolve(PlaybackService.instance?.snapshot() ?: JSObject().put("stopped", true)) }
     }
 }

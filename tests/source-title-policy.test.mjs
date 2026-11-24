@@ -3,6 +3,38 @@ import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 const text=(await build({entryPoints:['src/domain/sourceTitle.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
 const {sourceTitle}=await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`)
+test('single-P videos keep the BV title after lazy catalog resolution and queue restore', async () => {
+ const {readFile}=await import('node:fs/promises')
+ const fixture=JSON.parse(await readFile('tests/fixtures/single-part-catalog.json','utf8'))
+ const {bvid,aid,cid,videoTitle,partTitle,catalogs}=fixture
+ const {outputFiles}=await build({
+  stdin:{contents:"export {creatorVideoRow,favoriteVideoTrack,videoDetailFromTrack,seasonVideoRow} from './src/services/mediaSources';export {toTrack} from './src/services/collectionTrack';export {withTrackTitle} from './src/domain/sourceTitle'",resolveDir:process.cwd()},
+  bundle:true,write:false,format:'esm',
+ })
+ const {creatorVideoRow,favoriteVideoTrack,videoDetailFromTrack,seasonVideoRow,toTrack,withTrackTitle}=await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
+ const video={bvid,aid,cid:0,title:videoTitle,pic:'',cover:'',coverUrl:'',duration:240,durationSeconds:240}
+ const part={cid,page:1,title:partTitle,durationSeconds:240}
+ const verify = row => {
+  const detail=videoDetailFromTrack(row,[part])
+  const track=toTrack(detail,part)
+  assert.equal(track.id,`bilibili:${bvid}:${cid}`)
+  assert.equal(track.title,videoTitle)
+  assert.equal(track.sourceTitleContext.season,undefined)
+  assert.equal(toTrack(videoDetailFromTrack(row,[part,{...part,cid:cid+1,page:2}]),part).title,partTitle)
+ }
+ const creator=creatorVideoRow(video,catalogs[0].uploaderId,catalogs[0].uploaderName)
+ assert.equal(creator.source.uploaderId,catalogs[0].uploaderId)
+ verify(creator)
+ verify(favoriteVideoTrack(video))
+ for (const season of catalogs) {
+  const old={...creator,chapterContext:true,sourceTitleContext:{videoTitle,partTitle,partCount:1,chapterContext:true,season}}
+  verify(old)
+  assert.equal(withTrackTitle({...old,title:partTitle}).title,videoTitle)
+  assert.equal(withTrackTitle({...old,title:'我的歌名',titleOverridden:true}).title,'我的歌名')
+ }
+ const actualSeason={...catalogs[0],id:54812,title:'忘川风华录主题曲合集'}
+ assert.equal(toTrack(videoDetailFromTrack(seasonVideoRow(video,actualSeason),[part]),part).title,partTitle)
+})
 test('chapter titles are consistent for single-P season members and multi-P videos',()=>{
  assert.equal(sourceTitle('长 BV 标题','四、周旋权臣',1,true),'四、周旋权臣')
  assert.equal(sourceTitle('普通视频','不同的P1名称',1,false),'普通视频')

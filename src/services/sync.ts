@@ -7,9 +7,14 @@ import { inDesktopShell, fromStoredTrack } from './desktopApi'
 import type { QueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '../features/player/playerStore'
 export type SyncConfig = { enabled: boolean; provider: 'cloud' | 'webdav'; uid: string; url: string; history: boolean; statistics: boolean; initialized: boolean; deviceId: string }
-export type SyncStatus = { visibilityError?:string; config: SyncConfig; lastSuccess?: string; records: number; bytes: number }
+export type TrackRepairPreview = {
+  revision: string
+  total: number
+  entries: { kind: 'favorite' | 'playlist' | 'history'; label: string; trackId: string }[]
+}
+export type SyncStatus = { visibilityError?:string; importError?:string; chaptersError?:string; localError?:string; trackRepair?: TrackRepairPreview | null; config: SyncConfig; lastSuccess?: string; records: number; bytes: number }
 export type SyncConflict = { key: string; field: string; local: unknown; remote: unknown }
-export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean }
+export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean; skipped?: boolean; visibilityError?: string; importError?: string; chaptersError?: string }
 export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav', uid: '', url: 'https://dav.jianguoyun.com/dav/', history: false, statistics: false, initialized: false, deviceId: '' }
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export async function syncNow(preview = false, resolution?: string, automatic = false) {
@@ -19,7 +24,7 @@ export async function syncNow(preview = false, resolution?: string, automatic = 
     if (epoch === accountEpoch()) reportSyncOutcome(result, preview)
     return result
   } catch (error) {
-    if (epoch === accountEpoch()) reportSyncError('library', true)
+    if (epoch === accountEpoch()) reportSyncError('library', true, error)
     throw error
   }
 }

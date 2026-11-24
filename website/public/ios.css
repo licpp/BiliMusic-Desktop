@@ -1,7 +1,69 @@
-.installation-guide { max-width:760px;padding-block:56px; }
-.installation-guide h1 { margin-block:28px; }
-.installation-guide h2 { margin-block:28px 12px; }
-.installation-guide ol { line-height:2;margin-block:24px;padding-left:24px; }
-.installation-guide li + li { margin-top:12px; }
-.installation-guide a { color:var(--mint);text-decoration:underline;text-underline-offset:4px; }
-.installation-guide .guide-feedback { margin-top:28px; }
+.installation-guide {
+  max-width: 780px;
+  padding-block: 48px 72px;
+}
+.installation-guide .eyebrow {
+  margin-bottom: 14px;
+}
+.installation-guide h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  letter-spacing: -1px;
+  margin-bottom: 16px;
+}
+.installation-guide .guide-lead {
+  color: #a9b2ba;
+  font-size: 14.5px;
+  line-height: 1.85;
+  margin-bottom: 28px;
+}
+.guide-card {
+  padding: 24px 26px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.guide-card h2 {
+  font-size: 18px;
+  margin: 0 0 14px;
+  letter-spacing: -.3px;
+}
+.guide-card p {
+  color: #aeb7be;
+  font-size: 13.5px;
+  line-height: 1.85;
+}
+.guide-card p + p {
+  margin-top: 12px;
+}
+.installation-guide ol {
+  line-height: 1.9;
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: #c2cbd2;
+  font-size: 13.5px;
+}
+.installation-guide li + li {
+  margin-top: 10px;
+}
+.installation-guide code {
+  padding: 2px 6px;
+  border: 1px solid #303942;
+  border-radius: 5px;
+  background: #11161a;
+  color: var(--mint);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.installation-guide a:not(.button):not(.brand):not(.nav-download) {
+  color: var(--mint);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.installation-guide .guide-feedback {
+  margin-top: 28px;
+}
+@media (max-width: 640px) {
+  .installation-guide { padding-block: 32px 56px; }
+  .guide-card { padding: 18px; }
+}

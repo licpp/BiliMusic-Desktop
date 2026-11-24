@@ -40,6 +40,8 @@ test('large screen target preserves native Android identity and uses isolated ou
  assert.match(entry,/startFloatingLyrics/,"native system-title lyrics share the mobile controller without enabling an overlay")
  assert.match(entry,/startCloudSync/)
  assert.match(entry,/startListeningStatistics/)
+ assert.match(entry,/installLocalPlayback\(client\)/)
+ assert.match(await readFile('src/main.tsx','utf8'),/installLocalPlayback\(queryClient\)/)
 })
 test('manifest preparation is repeatable after regenerating or preparing twice',()=>{
  const once=editionManifest(manifest,true)
@@ -123,7 +125,47 @@ test('cross-region focus enters the nearest menu row rather than its active page
 })
 
 const layoutCode=(await build({entryPoints:['src/large-screen/playerLayout.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
-const {fitMediaFrame,centeredLyricScroll}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
+const {fitMediaFrame,centeredLyricScroll,playerViewportLayout,lyricRowCount}=await import(`data:text/javascript;base64,${Buffer.from(layoutCode).toString('base64')}`)
+test('the safe width and height select the expanded media layout only when the controls fit in one row',()=>{
+ assert.deepEqual(playerViewportLayout(1280,800),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1280,720),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1920,720),{density:'regular',wideMedia:false})
+ assert.deepEqual(playerViewportLayout(1864,612),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(1280,480),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(1224,372),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(968,312),{density:'tight',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(814,256),{density:'tight',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(740,430),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(720,372),{density:'compact',wideMedia:true})
+ assert.deepEqual(playerViewportLayout(719,372),{density:'compact',wideMedia:false})
+})
+test('short lyric windows prioritize the current line and budget room for translations',()=>{
+ assert.equal(lyricRowCount(140,false),1)
+ assert.equal(lyricRowCount(185,false),3)
+ assert.equal(lyricRowCount(185,true),1)
+ assert.equal(lyricRowCount(275,true),3)
+ assert.equal(lyricRowCount(400,true),5)
+ assert.equal(lyricRowCount(600,false),7)
+})
+test('old car WebViews can place the lyric viewport and pad the first and final lines', async () => {
+ const css = await readFile('src/large-screen/large-screen.css', 'utf8')
+ const legacyRules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[^{}]*:is\([^{}]*\{[^{}]*\}/g, '')
+ const flattenedRegions = [...legacyRules.matchAll(/([^{}]+)\{\s*display:contents\s*;?\s*\}/g)]
+   .flatMap(match => match[1].split(',').map(selector => selector.trim()))
+ for (const region of ['body', 'info', 'footer']) {
+   assert.ok(flattenedRegions.includes(`.large-player[data-wide-media] .large-player-${region}`))
+ }
+ assert.match(legacyRules, /html\[data-layout="large"\] #root\s*\{\s*min-width:0;/)
+ assert.match(legacyRules, /\.large-lyric-window\s*\{[^{}]*padding-top:var\(--large-lyric-inset,[^{}]*padding-bottom:var\(--large-lyric-inset,/)
+})
+test('the standard car player bounds the shared row when timed lyrics resize', async () => {
+ const css = await readFile('src/large-screen/large-screen.css', 'utf8')
+ // Chromium 74 grew an implicit auto row on each lyric viewport measurement.
+ for (const selector of ['large-player-body', 'large-lyrics']) {
+   const declarations = css.match(new RegExp(`^\\.${selector}\\s*\\{([^{}]*)\\}`, 'm'))?.[1] ?? ''
+   assert.match(declarations, /(?:^|;)\s*grid-template-rows:\s*minmax\(0(?:px)?,\s*1fr\)\s*(?:;|$)/, `.${selector} requires a bounded grid row`)
+ }
+})
 test('video frames retain their ratio inside the reserved stage on wide, narrow and portrait sources',()=>{
  for(const [width,height,ratio] of [[480,204,16/9],[200,360,16/9],[480,300,9/16],[800,300,4/3]]){
   const fit=fitMediaFrame(width,height,ratio)

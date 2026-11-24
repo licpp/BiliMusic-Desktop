@@ -6,7 +6,7 @@ import { compareVersions } from '../shared/version'
 
 export const currentRelease = version
 const downloadPage = 'https://bilimusic.cn/#download'
-export type UpdateRelease = { version: string; available: boolean; installable?: boolean; requestId?: string; platform?: string; size?: number }
+export type UpdateRelease = { version: string; build?: number; currentBuild?: number; available: boolean; installable?: boolean; requestId?: string; platform?: string; size?: number }
 export type UpdateCheck = UpdateRelease & { status: 'available' | 'current' | 'ahead' | 'unsupported' }
 export type UpdateProgress = { phase: 'downloading' | 'verifying' | 'ready'; received: number; total?: number }
 type Phase = 'idle' | 'checking' | 'downloading' | 'verifying' | 'ready' | 'installing'
@@ -16,7 +16,7 @@ const errorText = (cause: unknown) => cause instanceof Error ? cause.message : t
 export async function checkForUpdate(): Promise<UpdateCheck> {
   if (!isTauri()) throw new Error('请在 BiliMusic 应用中检查更新')
   const release = await invoke<UpdateRelease>('app_check_update')
-  const order = compareVersions(release.version, currentRelease)
+  const order = compareVersions(release.version, currentRelease) || (release.build ?? 0) - (release.currentBuild ?? 0)
   return { ...release, status: !release.available ? 'unsupported' : order > 0 ? 'available' : order < 0 ? 'ahead' : 'current' }
 }
 export async function openUpdateDownload() {

@@ -10,6 +10,14 @@ pub struct SeasonSummary {
     pub uploader_name: String,
 }
 
+impl SeasonSummary {
+    pub fn is_legacy_catalog(&self) -> bool {
+        // Older creator and linked-folder queues synthesized these season records.
+        (self.uploader_id == 0 && self.uploader_name.is_empty() && self.cover_url.is_empty())
+            || (self.id == self.uploader_id && self.title == self.uploader_name)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceTitleContext {
@@ -21,6 +29,29 @@ pub struct SourceTitleContext {
     pub chapter_context: bool,
 }
 impl SourceTitleContext {
+    pub fn discard_legacy_catalog(&mut self) -> bool {
+        if !self
+            .season
+            .as_ref()
+            .is_some_and(SeasonSummary::is_legacy_catalog)
+        {
+            return false;
+        }
+        self.season = None;
+        self.chapter_context = false;
+        true
+    }
+
+    pub fn preserve_membership(&mut self, previous: Option<&Self>) {
+        self.discard_legacy_catalog();
+        if let Some(previous) = previous {
+            if self.season.is_none() {
+                self.season = previous.season.clone();
+            }
+            self.chapter_context |= previous.chapter_context;
+        }
+    }
+
     pub fn title(&self) -> String {
         source_title(
             &self.video_title,

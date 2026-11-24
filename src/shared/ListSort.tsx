@@ -7,9 +7,11 @@ import type { SortRule } from '../services/listOrdering'
 import { commandErrorMessage } from '../services/desktopApi'
 import '../styles/list-sorting.css'
 
+const emptySortValues: Record<string, number> = {}
+
 export function useListSort(entity: string) {
   const query = useListPreferences()
-  return { rule: query.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc' as SortRule, dates: query.data?.dates || {}, playCounts: query.data?.playCounts || {} }
+  return { rule: query.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc' as SortRule, dates: query.data?.dates || emptySortValues, playCounts: query.data?.playCounts || emptySortValues }
 }
 
 export function ListSort({ entity }: { entity: string }) {

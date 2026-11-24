@@ -1,7 +1,7 @@
 //! One transactional entry point for fresh, account and guest databases.
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-const VERSION: i64 = 10;
+const VERSION: i64 = 13;
 
 pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
     let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -98,12 +98,52 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES(10); PRAGMA user_version=10;",
         )?;
     }
+    if version < 11 {
+        c.execute_batch(include_str!("../../migrations/0011_linked_batch_matching.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(11); PRAGMA user_version=11;",
+        )?;
+    }
+    if version < 12 {
+        c.execute_batch(include_str!("../../migrations/0012_chapters.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(12); PRAGMA user_version=12;",
+        )?;
+    }
+    if newest < 13 {
+        c.execute_batch(include_str!("../../migrations/0013_collection_progress.sql"))?;
+        c.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES(13); PRAGMA user_version=13;",
+        )?;
+    } else if version < 13 {
+        c.execute_batch("PRAGMA user_version=13;")?;
+    }
     tx.commit()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_collection_checkpoint_survives_the_membership_migration() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        c.execute_batch("INSERT INTO collections(bvid) VALUES('up:42'),('season:42:73');
+            INSERT INTO collection_progress VALUES('season:42:73','BV1tZuKzgENQ',7,85000,1794355030000);
+            PRAGMA user_version=1;").unwrap();
+        migrate(&c).unwrap();
+        c.execute("DELETE FROM collections WHERE bvid='season:42:73'", []).unwrap();
+        migrate(&c).unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT creator_ref,position_ms FROM collection_progress WHERE reference='season:42:73'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            ).unwrap(),
+            ("up:42".to_owned(), 85_000)
+        );
+    }
+
     #[test]
     fn historical_variants_and_fresh_databases_converge() {
         for legacy in [false, true] {

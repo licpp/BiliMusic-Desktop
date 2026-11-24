@@ -4,11 +4,12 @@ import { AutomaticResumePolicy } from './ResumePolicy';
 // resolved by the shared Rust executor, never by the WebView.
 export interface QueueSource { provider: string; bvid: string; cid: number; page: number; aid?: number; uploaderId?: number; uploaderName?: string }
 export interface QueueTrack { id: string; title: string; artist?: string; album?: string; coverUrl?: string; durationSeconds: number; source: QueueSource; resolveParts?: boolean; partCount?: number; videoTitle?: string; displayTitle?: string; chapterContext?: boolean; publishedAt?: number; playCount?: number }
-export interface QueueUpdate { entryOrder?: string[]; entryOrigins?: Record<string,string[]>; tracks: QueueTrack[]; repeatMode: string; shuffled: boolean; autoResume?: boolean; resumeThresholdSeconds?: number; collectionPlayback?: boolean; collectionRef?: string; accountSession: string; version: number; owner: string }
-export interface ResolvePayload { visibilityScopes: string[]; track: QueueTrack; accountSession: string; restart: boolean; autoResume: boolean; resumeThresholdSeconds: number; collectionPlayback: boolean }
+export interface QueueUpdate { offlineOnly?: boolean; entryOrder?: string[]; entryOrigins?: Record<string,string[]>; tracks: QueueTrack[]; repeatMode: string; shuffled: boolean; autoResume?: boolean; resumeThresholdSeconds?: number; collectionPlayback?: boolean; collectionRef?: string; accountSession: string; version: number; owner: string }
+export interface ResolvePayload { diagnosticId?: string; offlineOnly?: boolean; visibilityScopes: string[]; track: QueueTrack; accountSession: string; restart: boolean; autoResume: boolean; resumeThresholdSeconds: number; collectionPlayback: boolean; subtitles?: boolean; subtitleLanguage?: string; subtitleRevision?: number }
 export interface NotificationLyricLine { timeMs: number; text: string; endTimeMs?: number }
-export interface NativeLyrics { rawText: string; lines: NotificationLyricLine[]; biasMs: number }
-export interface ResolveResult { skip?: boolean; loudnessGainDb?: number; lyrics?: NativeLyrics; url?: string; upgradeUrl?: string; error?: string; track?: QueueTrack; position?: number; entryId?: string; parts?: QueueTrack[]; automaticResume?: AutomaticResumePolicy }
+export interface NativeLyrics { rawText: string; lines: NotificationLyricLine[]; biasMs: number; subtitles?: boolean }
+export interface ResolveResult { skip?: boolean; loudnessGainDb?: number; lyrics?: NativeLyrics; url?: string; upgradeUrl?: string; error?: string; errorCode?: string; track?: QueueTrack; position?: number; entryId?: string; parts?: QueueTrack[]; automaticResume?: AutomaticResumePolicy; kind?: string; id?: string; timeline?: NativeLyrics; subtitleRevision?: number }
+interface SessionNeighbors { previous?: string; next?: string }
 export class NativeQueue {
   private shuffle: ShuffleDeck = new ShuffleDeck();
   tracks: QueueTrack[] = [];
@@ -19,6 +20,7 @@ export class NativeQueue {
   accountSession: string = '';
   collectionRef: string = '';
   private origins: Record<string,string[]> = {};
+  private offlineOnly: boolean = false;
   private entryOrder: string[] = [];
   private repeatMode: string = 'off';
   private shuffled: boolean = false;
@@ -42,6 +44,7 @@ export class NativeQueue {
     if (this.accountSession !== args.accountSession || this.shuffled !== args.shuffled) this.shuffle.reset();
     this.owner = args.owner;
     this.expanded = expanded; this.tracks = next; this.version = args.version; this.accountSession = args.accountSession;
+    this.offlineOnly = args.offlineOnly === true;
     this.origins = args.entryOrigins ?? {};
     this.entryOrder = (args.entryOrder ?? args.tracks.map(track=>track.id)).flatMap(id=>expanded[id]?.map(track=>track.id) ?? [id]);
     for (const id of Object.keys(expanded)) {for (const part of expanded[id]) if(!this.origins[part.id]) this.origins[part.id]=this.origins[id] ?? []; }
@@ -50,6 +53,17 @@ export class NativeQueue {
     return true;
   }
   find(id: string): QueueTrack | undefined { return this.tracks.find(track => track.id === id); }
+  sessionNeighbors(id: string): SessionNeighbors {
+    // Publishing a media card must not consume or reshuffle a random skip.
+    const length = this.tracks.length;
+    if (this.shuffled || length < 2) return {};
+    const index = this.tracks.findIndex(track => track.id === id);
+    if (index < 0) return {};
+    return {
+      previous: this.tracks[(index + length - 1) % length].id,
+      next: this.tracks[(index + 1) % length].id
+    };
+  }
   target(id: string, direction: number, ended: boolean): QueueTrack | undefined {
     if (!this.tracks.length) return undefined;
     const index = this.tracks.findIndex(track => track.id === id);
@@ -70,7 +84,7 @@ export class NativeQueue {
   observe(id: string): void { if (this.shuffled) this.shuffle.observe(this.shuffleItems(),id); }
 
   payload(track: QueueTrack, ended: boolean): ResolvePayload {
-    return {visibilityScopes:this.origins[track.id] ?? [],track, accountSession:this.accountSession, restart:ended && this.repeatMode === 'one', autoResume:this.autoResume, resumeThresholdSeconds:this.threshold,
+    return {offlineOnly:this.offlineOnly, visibilityScopes:this.origins[track.id] ?? [],track, accountSession:this.accountSession, restart:ended && this.repeatMode === 'one', autoResume:this.autoResume, resumeThresholdSeconds:this.threshold,
       collectionPlayback:this.collection || (track.partCount ?? 0) > 1 || track.source.page > 1 || this.tracks.some(item=>item.id!==track.id && item.source.bvid===track.source.bvid)};
   }
   skip(entry: string): QueueTrack | undefined {

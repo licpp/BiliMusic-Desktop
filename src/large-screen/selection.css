@@ -1,0 +1,12 @@
+.large-linked-selection { flex-wrap:wrap;margin-block:10px; }
+.large-linked-selection > span { color:var(--muted); font-size:.9rem; }
+@media (max-width: 1000px) {
+  .large-linked-selection { gap:4px 6px; }
+  [data-layout="large"] .large-linked-selection > button { padding-inline:8px; gap:5px; }
+  [data-layout="large"] .large-linked-selection > button svg { width:20px; height:20px; }
+}
+.large-match-track-list .large-match-track-art { display:block;flex:0 0 56px;width:56px;height:42px; }
+.large-match-track-art > .artwork { width:100%;height:100%;border-radius:8px; }
+.large-linked-picker .playlist-destinations { display:grid;gap:8px; }
+.large-linked-picker .playlist-destinations > button { display:grid;grid-template-columns:40px minmax(0,1fr) 24px;gap:12px;align-items:center;text-align:left; }
+.large-linked-picker .playlist-destinations > button small { display:block;color:var(--muted); }

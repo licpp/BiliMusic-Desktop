@@ -1,25 +1,28 @@
 import { getVideoParts } from './desktopApi'
 import type { BiliVideoParts } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
+import { biliRequestPause } from './biliRequestStatus'
 
 type Job = { bvid: string; epoch: number; resolve: (detail: BiliVideoParts) => void; reject: (error: unknown) => void }
 const pending = new Map<string, Promise<BiliVideoParts>>()
 const waiting: Job[] = []
-let running = 0, cooldown = 0
+let running = 0
 
 function drain() {
   while (running < 2 && waiting.length) {
     const job = waiting.shift()!
-    if (job.epoch !== accountEpoch() || Date.now() < cooldown) {
+    if (job.epoch !== accountEpoch()) {
       job.reject(new Error('封面补全暂缓'))
       continue
     }
     running++
-    void getVideoParts(job.bvid).then(detail => {
+    void getVideoParts(job.bvid, false, { background: true }).then(detail => {
       if (job.epoch !== accountEpoch()) throw new Error('账号已切换')
       job.resolve(detail)
     }).catch(error => {
-      if (/\b(412|429)\b/.test(String(error?.message || error))) cooldown = Date.now() + 60_000
+      if (job.epoch === accountEpoch() && biliRequestPause(error)) {
+        for (const queued of waiting.splice(0)) queued.reject(error)
+      }
       job.reject(error)
     }).finally(() => { running--; drain() })
   }

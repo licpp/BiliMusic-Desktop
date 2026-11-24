@@ -1,0 +1,57 @@
+.search-results { padding: 8px 0 34px; }
+.search-results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.search-layout-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.search-layout-button:hover { background: var(--line); }
+.search-layout-button[aria-pressed="true"] {
+  background: var(--playing-row-surface, var(--panel-raised));
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.search-results > .list-skeleton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 18px;
+}
+.search-results[data-columns] > :is(.video-result-list, .list-skeleton) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.search-results .video-result-card .parts-list, .search-parts-dialog .parts-list { padding: 4px 6px 8px; }
+.collection-dialog.search-parts-dialog { width: min(640px, calc(100% - 24px)); }
+.search-parts-dialog > header { position: sticky; z-index: 1; top: 0; padding: 5px 0; background: var(--panel); }
+.search-parts-summary { display: flex; align-items: center; gap: 12px; padding: 0 4px 12px; }
+.search-parts-summary > .artwork { width: 72px; aspect-ratio: 16 / 9; flex: none; border-radius: 6px; }
+.search-parts-summary > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.search-parts-message { display: flex; align-items: center; gap: 8px; padding: 12px 4px; color: var(--muted); font-size: 13px; }
+.search-parts-dialog .library-toast { position: sticky; right: auto; bottom: 0; margin: 8px 4px 0; }
+
+:root[data-layout="mobile"] .search-results-toolbar { min-height: 32px; }

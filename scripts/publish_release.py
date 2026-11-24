@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -110,11 +111,37 @@ def public_download(url, expected=None, destination=None):
             time.sleep(2)
 
 
+def stage_website_apks(site, work, manifest):
+    directory = Path(site) / 'apk-downloads'
+    packages = {p['file']: p for p in manifest.get('platforms', [])
+                if p.get('status') == 'available' and re.fullmatch(r'[a-zA-Z0-9_.-]+\.apk', p.get('file', ''))
+                and any(c.get('id') == 'gitee' and c.get('url') for c in p.get('channels', []))}
+
+    def matches(path, package):
+        if not path.is_file() or path.stat().st_size != package['size']:
+            return False
+        with path.open('rb') as file:
+            return hashlib.file_digest(file, 'sha256').hexdigest() == package['sha256']
+
+    for name, package in packages.items():
+        destination = directory / name
+        if matches(destination, package):
+            continue
+        source = Path(work) / 'assets' / name
+        require(matches(source, package), 'Website APK missing or changed: ' + name)
+        directory.mkdir(exist_ok=True)
+        temporary = directory / (name + '.tmp')
+        temporary.unlink(missing_ok=True)
+        os.link(source, temporary)
+        temporary.replace(destination)
+
+
 def deploy_site(site, work, candidate, previous, run, get):
     """Replace only the manifest, preserving the site and PostgreSQL counters."""
     path, backup = Path(site) / 'releases.json', Path(work) / 'previous-live-releases.json'
     current = json.loads(path.read_text())
     require(current in (previous, candidate), 'Live website changed concurrently; refusing deployment')
+    stage_website_apks(site, work, candidate)
     before = get('/api/v1/download-stats')['total']
     if not backup.exists():
         require(current == previous, 'Missing rollback manifest for already-active candidate')
@@ -223,6 +250,7 @@ class Publisher:
         except ApiError as error:
             if error.status != 404:
                 raise
+            require('previousUpdater' not in self.plan, 'Platform patches require an existing published release')
             # New versions start as public prereleases so package URLs can be
             # verified before promotion and before the website is switched.
             self.api(channel, '/commits/' + self.plan['source'])
@@ -406,7 +434,8 @@ class Publisher:
         members = [a for a in self.plan['assets'] if not a['binary'] and a['name'] not in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')]
         if not members:
             return None
-        path = self.work / 'assets' / 'RELEASE_DOCUMENTS.tar.xz'
+        archive_name = f'RELEASE_DOCUMENTS-{self.plan["revision"]}.tar.xz' if 'previousUpdater' in self.plan else 'RELEASE_DOCUMENTS.tar.xz'
+        path = self.work / 'assets' / archive_name
         with tarfile.open(path, 'w:xz', preset=6) as archive:
             for asset in sorted(members, key=lambda a: a['name']):
                 data = (self.work / 'assets' / asset['name']).read_bytes()
@@ -422,7 +451,7 @@ class Publisher:
         verification = json.loads((self.work / 'download-verification.json').read_text())
         require(verification['planDigest'] == fingerprint(self.plan), 'Download verification belongs to another plan')
         downloads = verification['results']
-        expected_count = sum(len(p['channels']) for p in self.plan['manifest']['platforms'])
+        expected_count = len({c['url'] for p in self.plan['manifest']['platforms'] for c in p['channels']})
         require(len(downloads) == expected_count and len({d['url'] for d in downloads}) == expected_count, 'Expected every manifest download to be verified')
         for package in self.plan['manifest']['platforms']:
             for channel in package['channels']:
@@ -444,7 +473,8 @@ class Publisher:
                 if not asset['binary'] and (channel != 'gitee' or not documents or asset['name'] in ('SHA256SUMS.txt', 'build-info.json', 'updater.json')):
                     self.stage_asset(channel, release, asset)
             title = next(line[2:] for line in self.plan['notes'].splitlines() if line.startswith('# '))
-            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + ('\n许可及独立签名文件收录于 `RELEASE_DOCUMENTS.tar.xz`。\n' if documents else ''), 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
+            document_note = f'\n许可及独立签名文件收录于 `{documents["name"]}`。\n' if documents else ''
+            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + document_note, 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(upload_metadata, releases))
         self.record('releaseMetadata', {'channels': ['github', 'gitee'], 'assets': len(self.plan['assets'])})
@@ -463,6 +493,10 @@ class Publisher:
         updater = self.plan.get('updater')
         if updater is None:
             return
+        previous = self.plan.get('previousUpdater')
+        site_feed = Path(self.plan['siteRoot']) / 'updater.json'
+        if previous is not None:
+            require(site_feed.exists() and json.loads(site_feed.read_text()) in (previous, updater), 'Live updater changed concurrently')
         # Every archive/signature was uploaded and hash-verified before exposing this feed.
         for channel in ('github', 'gitee'):
             path = '/contents/website/updater.json'
@@ -472,17 +506,18 @@ class Publisher:
                 if error.status != 404:
                     raise
                 current = {}
-            if current.get('content') and json.loads(base64.b64decode(current['content'])) == updater:
+            installed = json.loads(base64.b64decode(current['content'])) if current.get('content') else None
+            if installed == updater:
                 continue
+            require(previous is None or installed == previous, 'Update feed changed concurrently: ' + channel)
             payload = {'message': f'Publish {self.plan["version"]} signed updater [skip ci]', 'branch': 'main',
                        'content': base64.b64encode((json.dumps(updater, ensure_ascii=False, indent=2) + '\n').encode()).decode()}
             if current.get('sha'):
                 payload['sha'] = current['sha']
             self.api(channel, path, 'PUT' if current.get('sha') or channel == 'github' else 'POST', payload)
-        path = Path(self.plan['siteRoot']) / 'updater.json'
-        temporary = path.with_suffix('.json.publish-tmp')
+        temporary = site_feed.with_suffix('.json.publish-tmp')
         save_json(temporary, updater)
-        temporary.replace(path)
+        temporary.replace(site_feed)
         self.record('updater', {'version': updater['version'], 'platforms': list(updater['platforms'])})
 
     site_filing_pending = False
@@ -493,7 +528,8 @@ class Publisher:
 
     def activate(self, verify_public=True):
         require(len(self.report.get('downloads', [])) >= 8, 'Cannot activate before eight downloads are verified')
-        require(len(self.report['downloads']) == sum(len(p['channels']) for p in self.plan['manifest']['platforms']), 'Cannot activate before every manifest download is verified')
+        expected_urls = {c['url'] for p in self.plan['manifest']['platforms'] for c in p['channels']}
+        require({d['url'] for d in self.report['downloads']} == expected_urls, 'Cannot activate before every manifest download is verified')
         run = lambda args: subprocess.check_output(args, stderr=subprocess.PIPE, timeout=60)
         result = deploy_site(self.plan['siteRoot'], self.work, self.plan['manifest'], self.plan['previous'], run, self.get_site)
         self.record('website', result)
@@ -537,23 +573,28 @@ class Publisher:
         require(all(r.get('manifest') == self.plan['manifest'] for r in results), 'Public manifest contents differ from the release')
         self.record('publicManifests', {'urls': urls, 'sha256': fingerprint(self.plan['manifest']), 'verifiedBy': 'publishing-workstation'})
 
-    def prune(self):
+    def prune(self, keep_superseded=False):
         require('publicManifests' in self.report, 'Cannot remove old assets before all update sources are verified')
         new = {a['name'] for a in self.plan['assets']} | {p['file'] for p in self.plan['manifest']['platforms']}
-        old = {p['file'] for p in self.plan['previous']['platforms']} - new
+        def updater_files(feed):
+            archives = {Path(urllib.parse.urlsplit(entry['url']).path).name for entry in feed.get('platforms', {}).values()}
+            return archives | {name + '.sig' for name in archives}
+        new |= updater_files(self.plan.get('updater', {}))
+        old = ({p['file'] for p in self.plan['previous']['platforms']} | updater_files(self.plan.get('previousUpdater', {}))) - new
         removed = []
-        for channel in ('github', 'gitee'):
-            release = self.release(channel)
-            for asset in self.list_assets(channel, release):
-                if asset['name'] in old:
-                    self.delete_asset(channel, release, asset)
-                    removed.append({'channel': channel, 'file': asset['name']})
+        if not keep_superseded:
+            for channel in ('github', 'gitee'):
+                release = self.release(channel)
+                for asset in self.list_assets(channel, release):
+                    if asset['name'] in old:
+                        self.delete_asset(channel, release, asset)
+                        removed.append({'channel': channel, 'file': asset['name']})
         self.record('removedSupersededBinaries', removed)
         self.report.pop('lastFailure', None)
         self.record('complete', {'version': self.plan['version'], 'source': self.plan['source'], 'verifiedDownloadCount': len(self.report['downloads']), 'downloadCountPreserved': True})
 
 
-def remote_main(work, phase, site_filing_pending=False):
+def remote_main(work, phase, site_filing_pending=False, keep_superseded=False):
     secrets = json.loads(sys.stdin.readline())  # Encrypted SSH stdin; never persisted.
     plan = json.loads((Path(work) / 'plan.json').read_text())
     publisher = Publisher(plan, secrets, work)
@@ -571,7 +612,7 @@ def remote_main(work, phase, site_filing_pending=False):
                 publisher.activate(verify_public=False)
             else:
                 publisher.verify_manifest_proof()
-                publisher.prune()
+                publisher.prune(keep_superseded)
                 save_json(owner, {'planDigest': fingerprint(plan), 'work': work, 'complete': True})
     except Exception as error:
         publisher.report['lastFailure'] = {'type': type(error).__name__, 'message': str(error)}
@@ -619,7 +660,7 @@ def local_main(args):
         print(json.dumps({'stagedInputs': len(plan['assets']), 'uploaded': uploaded, 'reused': len(plan['assets']) - uploaded}), flush=True)
         def run_phase(phase):
             secrets = {name: subprocess.check_output([cli, 'auth', 'token'], text=True, stderr=subprocess.DEVNULL).strip() for name, cli in [('github', 'gh'), ('gitee', 'gitee')]}
-            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase + (' --site-filing-pending' if args.site_filing_pending else '')
+            cmd = 'python3 ' + shlex.quote(work + '/publish_release.py') + ' --remote-work ' + shlex.quote(work) + ' --remote-phase ' + phase + (' --site-filing-pending' if args.site_filing_pending else '') + (' --keep-superseded' if args.keep_superseded else '')
             stdin, stdout, stderr = ssh.exec_command(cmd, timeout=2400)
             stdin.write(json.dumps(secrets) + '\n')
             stdin.flush()
@@ -685,6 +726,7 @@ if __name__ == '__main__':
     parser.add_argument('--stage-only', action='store_true', help='Upload and verify binaries without activating release or website')
     parser.add_argument('--site-filing-pending', action='store_true', help='Publish verified site configuration while explicitly recording public access pending ICP filing')
     parser.add_argument('--full-download-audit', action='store_true', help='Audit every public installer by downloading and hashing it again')
+    parser.add_argument('--keep-superseded', action='store_true', help='Keep superseded installer assets available for rollback')
     parser.add_argument('--previous-bundle', help='Optional original release directory used to reuse verified metadata backups')
     parser.add_argument('--remote-work', help=argparse.SUPPRESS)
     parser.add_argument('--remote-phase', choices=['stage', 'activate', 'finalize'], help=argparse.SUPPRESS)
@@ -692,7 +734,7 @@ if __name__ == '__main__':
     try:
         if args.remote_work:
             require(args.remote_phase, 'Remote phase is required')
-            remote_main(args.remote_work, args.remote_phase, args.site_filing_pending)
+            remote_main(args.remote_work, args.remote_phase, args.site_filing_pending, args.keep_superseded)
         else:
             require(args.bundle and (args.plan_only or args.ssh_host), 'Provide --bundle and --ssh-host (or --plan-only)')
             local_main(args)

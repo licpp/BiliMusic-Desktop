@@ -22,6 +22,8 @@ The QRC decoding module at `src-tauri/src/infrastructure/providers/qrc_codec.rs`
 
 Desktop system media controls use [souvlaki](https://github.com/Sinono3/souvlaki), distributed under the MIT license.
 
+Android system media controls use [AndroidX Media3](https://github.com/androidx/media), distributed under the Apache License 2.0.
+
 ## Experimental Harmony build tooling
 
 The source overlay and SDK compiler setup in `scripts/ohos.py` are adapted from [LeenHawk/tauri-harmony](https://github.com/LeenHawk/tauri-harmony), copyright (c) 2026 LeenHawk, under the MIT License. The complete license is in `licenses/tauri-harmony-MIT.txt`. Experimental runtime revisions are pinned in `platforms/ohos/toolchain-pins.json`; fetched sources retain their upstream licenses.

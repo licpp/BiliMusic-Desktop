@@ -12,9 +12,12 @@ class OutputGain {
         if (version < revision) return false
         enabled = value; revision = version; return true
     }
-    fun plan(db: Double) { gainDb = if (db.isFinite()) db.coerceIn(-80.0, 0.0) else 0.0 }
+    fun plan(db: Double) { gainDb = if (db.isFinite()) db.coerceIn(-80.0, 6.0) else 0.0 }
     fun current(now: Long): Double = from + (target - from) * ((now - began) / 300.0).coerceIn(0.0, 1.0)
     fun transition(now: Long, smooth: Boolean) { val next = if (enabled) gainDb else 0.0; from = if (smooth) current(now) else next; target = next; began = now }
     fun active(now: Long): Boolean = now < began + 300 && from != target
-    fun level(volume: Float, duck: Float, now: Long): Float = (volume.coerceIn(0f,1f) * Math.pow(10.0, current(now) / 20.0) * duck.coerceIn(0f,1f)).toFloat()
+    fun level(volume: Float, duck: Float, now: Long): Float {
+        val normalized = volume.coerceIn(0f, 1f) * Math.pow(10.0, current(now) / 20.0)
+        return (normalized.coerceAtMost(1.0) * duck.coerceIn(0f, 1f)).toFloat()
+    }
 }

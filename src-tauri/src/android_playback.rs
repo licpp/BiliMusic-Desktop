@@ -15,17 +15,31 @@ pub fn initialize(app: tauri::AppHandle) {
         }
         if let Ok(request) = body.deserialize::<Request>() {
             let app = handle.clone();
+            if request.payload["kind"] == "diagnostic" {
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::native_playback::record_diagnostic(&app, &request.payload);
+                });
+                return Ok(());
+            }
             tauri::async_runtime::spawn(async move {
-                let result = tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
-                    crate::native_playback::resolve(&app, request.payload),
-                )
-                .await;
-                let result = match result {
-                    Ok(Ok(value)) => value,
-                    Ok(Err(error)) => json!({"error":error}),
-                    Err(_) => json!({"error":"加载超时，请重新播放"}),
-                };
+                if request.payload["kind"] == "lyrics" {
+                    let timeline = tokio::time::timeout(
+                        std::time::Duration::from_secs(12),
+                        crate::native_playback::lyrics::resolve(&app, &request.payload),
+                    )
+                    .await
+                    .ok()
+                    .flatten();
+                    let result = json!({"kind":"lyrics", "timeline":timeline});
+                    if let Err(error) =
+                        tauri_plugin_android_player::resolved(&app, request.request, &result).await
+                    {
+                        eprintln!("Native lyric reply failed: {error}");
+                    }
+                    return;
+                }
+                let result = crate::native_playback::resolve(&app, request.payload).await;
+                let result = crate::native_playback::resolution_response(result);
                 if let Err(error) =
                     tauri_plugin_android_player::resolved(&app, request.request, &result).await
                 {

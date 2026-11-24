@@ -2,7 +2,7 @@ use super::playback_cache::{CHUNK_SIZE, PlaybackCache, Variant};
 use axum::{
     Router,
     body::Body,
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::{HeaderMap, HeaderValue, Response, StatusCode, header},
     routing::get,
 };
@@ -55,6 +55,7 @@ struct MediaEntry {
     expires_at: Instant,
     local_path: Option<std::path::PathBuf>,
     prefix: Arc<RwLock<(Vec<u8>, u64)>>,
+    legacy_edit: Arc<tokio::sync::OnceCell<Option<usize>>>,
     cached: Option<Arc<CachedAudio>>,
 }
 
@@ -291,6 +292,7 @@ impl MediaProxy {
                 expires_at: Instant::now() + ENTRY_LIFETIME,
                 local_path: None,
                 prefix: Arc::new(RwLock::new((Vec::new(), 0))),
+                legacy_edit: Default::default(),
                 cached: None,
             },
         );
@@ -320,6 +322,7 @@ impl MediaProxy {
                 expires_at: Instant::now() + Duration::from_secs(24 * 3600),
                 local_path: Some(path),
                 prefix: Arc::new(RwLock::new((Vec::new(), 0))),
+                legacy_edit: Default::default(),
                 cached: None,
             },
         );
@@ -337,11 +340,12 @@ impl MediaProxy {
         Some(self.register_cached(variant, vec![]).await)
     }
     pub async fn complete_cached_audio(&self, track_id: &str, quality: u32) -> Option<String> {
-        let cache = self.state.cache.as_ref()?;
-        let variant = cache.find(track_id, quality)?;
-        if !cache.complete(&variant) {
-            return None;
-        }
+        let cache = self.state.cache.as_ref()?.clone();
+        let id = track_id.to_owned();
+        let variant =
+            tauri::async_runtime::spawn_blocking(move || cache.find_complete(&id, quality))
+                .await
+                .ok()??;
         Some(self.register_cached(variant, vec![]).await)
     }
     pub async fn guard_upgrade(&self, url: &str, bandwidth: u64) -> String {
@@ -551,6 +555,7 @@ impl MediaProxy {
                 expires_at: Instant::now() + Duration::from_secs(24 * 3600),
                 local_path: None,
                 prefix: Arc::new(RwLock::new((vec![], 0))),
+                legacy_edit: Default::default(),
                 cached: Some(Arc::new(audio)),
             },
         );
@@ -813,6 +818,7 @@ impl CachedAudio {
             expires_at: Instant::now() + ENTRY_LIFETIME,
             local_path: None,
             prefix: Arc::new(RwLock::new((vec![], 0))),
+            legacy_edit: Default::default(),
             cached: None,
         };
         let stream = resumable_media(
@@ -1004,6 +1010,7 @@ async fn serve_cached_audio(
 async fn proxy_media(
     State(state): State<ProxyState>,
     Path((token, media_id)): Path<(String, String)>,
+    OriginalUri(uri): OriginalUri,
     request_headers: HeaderMap,
 ) -> Response<Body> {
     if token != state.access_token {
@@ -1031,11 +1038,81 @@ async fn proxy_media(
             return status_response(StatusCode::SERVICE_UNAVAILABLE);
         }
     }
+    let patch = if uri.query() == Some("legacy_mp4=1") && entry.content_type == "audio/mp4" {
+        entry
+            .legacy_edit
+            .get_or_try_init(|| async {
+                const LIMIT: usize = 64 * 1024;
+                let mut headers = HeaderMap::new();
+                headers.insert(header::RANGE, HeaderValue::from_static("bytes=0-65535"));
+                let prefix = tokio::time::timeout(Duration::from_secs(3), async {
+                    let response =
+                        serve_media_entry(&state, &media_id, entry.clone(), &headers).await;
+                    if response_span(response.headers()).is_none_or(|span| span.0 != 0) {
+                        return Err(());
+                    }
+                    axum::body::to_bytes(response.into_body(), LIMIT)
+                        .await
+                        .map_err(|_| ())
+                })
+                .await
+                .map_err(|_| ())??;
+                Ok::<_, ()>(super::fragmented_mp4::empty_audio_edit_offset(&prefix))
+            })
+            .await
+            .ok()
+            .copied()
+            .flatten()
+    } else {
+        None
+    };
+    let response = serve_media_entry(&state, &media_id, entry, &request_headers).await;
+    match patch {
+        Some(offset) => neutralize_legacy_edit(response, offset as u64),
+        None => response,
+    }
+}
+
+fn neutralize_legacy_edit(response: Response<Body>, offset: u64) -> Response<Body> {
+    let mut position = match response.status() {
+        StatusCode::OK => 0,
+        StatusCode::PARTIAL_CONTENT => match response_span(response.headers()) {
+            Some((start, _, _)) => start,
+            None => return response,
+        },
+        _ => return response,
+    };
+    let (parts, body) = response.into_parts();
+    let data = body.into_data_stream().map(move |chunk| {
+        let chunk = chunk?;
+        let end = position + chunk.len() as u64;
+        let first = position.max(offset);
+        let last = end.min(offset + 4);
+        let chunk = if first < last {
+            let mut replacement = chunk.to_vec();
+            replacement[(first - position) as usize..(last - position) as usize]
+                .copy_from_slice(&b"free"[(first - offset) as usize..(last - offset) as usize]);
+            replacement.into()
+        } else {
+            chunk
+        };
+        position = end;
+        Ok::<_, axum::Error>(chunk)
+    });
+    Response::from_parts(parts, Body::from_stream(data))
+}
+
+async fn serve_media_entry(
+    state: &ProxyState,
+    media_id: &str,
+    entry: MediaEntry,
+    request_headers: &HeaderMap,
+) -> Response<Body> {
     if let Some(path) = entry.local_path {
-        return serve_local(&path, &request_headers).await;
+        return serve_local(&path, request_headers).await;
     }
     if let Some(audio) = &entry.cached {
-        return serve_cached_audio(&state, audio.clone(), &request_headers).await;
+        return serve_cached_audio(state, audio.clone(), request_headers).await;
     }
 
     // Only answer fully cached ranges; large or open-ended requests still stream.
@@ -1069,7 +1146,7 @@ async fn proxy_media(
         return status_response(StatusCode::BAD_GATEWAY);
     };
     if selected > 0 {
-        if let Some(stored) = state.entries.write().await.get_mut(&media_id) {
+        if let Some(stored) = state.entries.write().await.get_mut(media_id) {
             if let Some(position) = stored
                 .upstream_urls
                 .iter()
@@ -1512,6 +1589,85 @@ fn status_response(status: StatusCode) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::MediaProxy;
+
+    #[tokio::test]
+    async fn legacy_mp4_repairs_only_the_empty_audio_edit_and_preserves_ranges() {
+        use super::*;
+        fn atom(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+            [(data.len() as u32 + 8).to_be_bytes().as_slice(), kind, data].concat()
+        }
+        let fixture = |duration: u8| {
+            let mut edit = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0];
+            edit[11] = duration;
+            let track = [
+                atom(b"edts", &atom(b"elst", &edit)),
+                atom(b"mdia", &atom(b"hdlr", b"\0\0\0\0\0\0\0\0soun")),
+            ]
+            .concat();
+            [
+                atom(b"ftyp", b"iso6"),
+                atom(
+                    b"moov",
+                    &[atom(b"trak", &track), atom(b"mvex", &[])].concat(),
+                ),
+                atom(b"moof", b"sample"),
+            ]
+            .concat()
+        };
+        let path = std::env::temp_dir().join(format!("bilimusic-legacy-{}.m4a", Uuid::new_v4()));
+        let original = fixture(0);
+        let offset = original
+            .windows(4)
+            .position(|data| data == b"edts")
+            .unwrap();
+        std::fs::write(&path, &original).unwrap();
+        let proxy = MediaProxy::start().await.unwrap();
+        let url = proxy.register_local(path.clone()).await;
+        let client = reqwest::Client::new();
+        let compat = format!("{url}?legacy_mp4=1");
+        let response = client.get(&compat).send().await.unwrap();
+        let mut expected = original.clone();
+        expected[offset..offset + 4].copy_from_slice(b"free");
+        assert_eq!(response.content_length(), Some(original.len() as u64));
+        assert_eq!(response.bytes().await.unwrap().as_ref(), expected);
+        for range in [offset - 1..offset + 2, offset + 2..offset + 6] {
+            let response = client
+                .get(&compat)
+                .header(
+                    header::RANGE,
+                    format!("bytes={}-{}", range.start, range.end - 1),
+                )
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(response.bytes().await.unwrap().as_ref(), &expected[range]);
+        }
+        assert_eq!(
+            client
+                .get(&url)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            original
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let valid_edit = fixture(25);
+        std::fs::write(&path, &valid_edit).unwrap();
+        let url = proxy.register_local(path.clone()).await;
+        let response = client
+            .get(format!("{url}?legacy_mp4=1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.bytes().await.unwrap().as_ref(), valid_edit);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[tokio::test]
     async fn segmented_mp4_manifest_reuses_exact_cached_ranges_and_upgrade_gates() {
@@ -2131,7 +2287,6 @@ mod tests {
             504,
             "missing offline data must fail, never fabricate silence"
         );
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
         let response = client
             .get(&offline)
             .header("range", "bytes=0-")
@@ -2143,6 +2298,35 @@ mod tests {
             format!("bytes 0-{}/{}", payload.len() - 1, payload.len())
         );
         drop(response);
+        assert!(proxy.complete_cached_audio("test:42", 0).await.is_none());
+        // A completed track remains seekable from a fresh cache/proxy process
+        // after the upstream has been stopped and its signed URL discarded.
+        let variant = reopened.find("test:42", 0).unwrap();
+        for (index, chunk) in payload.chunks(CHUNK_SIZE as usize).enumerate() {
+            reopened
+                .write(&variant, payload.len() as u64, index as u64, chunk, 0)
+                .unwrap();
+        }
+        drop(proxy);
+        drop(reopened);
+        let reopened =
+            Arc::new(PlaybackCache::open(root.join("media"), root.join("config.json")).unwrap());
+        let proxy = MediaProxy::start_inner(Some(reopened.clone()), None)
+            .await
+            .unwrap();
+        let complete = proxy.complete_cached_audio("test:42", 0).await.unwrap();
+        let response = client
+            .get(&complete)
+            .header("range", "bytes=-50")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(
+            &response.bytes().await.unwrap()[..],
+            &payload[payload.len() - 50..]
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(reopened.clear().unwrap().used_bytes, 0);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2411,6 +2595,7 @@ mod tests {
             expires_at: std::time::Instant::now() + std::time::Duration::from_secs(60),
             local_path: None,
             prefix: cache.clone(),
+            legacy_edit: Default::default(),
             cached: None,
         };
         let stream = super::resumable_media(

@@ -7,10 +7,12 @@ import { getStoredLyrics, inDesktopShell } from '../../services/desktopApi'
 import type { StoredLyrics } from '../../domain/lyrics'
 import { setMiniPlayerPanel } from '../../services/immersiveWindow'
 import { parseLrc } from '../../domain/lrc'
+import { lyricAt } from '../../domain/lyricTimeline'
 import { Artwork } from '../../shared/Artwork'
 import { RangeControl } from '../../shared/RangeControl'
 import { useMarquee } from '../../shared/useMarquee'
-import { formatDuration } from '../../shared/time'
+import { formatDuration, formatTrackDuration } from '../../shared/time'
+import { useBiliSubtitles } from '../lyrics/useBiliSubtitles'
 import { usePlayerStore } from './playerStore'
 
 type Props = { busy: boolean; onRestore: (lyrics?: boolean, queue?: boolean) => void; onFavorite: () => void; favoritePending: boolean; onError: (cause: unknown) => void }
@@ -65,11 +67,12 @@ function MiniQueue(){
   const current=usePlayerStore(state=>state.current)
   const panel=useRef<HTMLDivElement>(null)
   useEffect(()=>{panel.current?.querySelector('[aria-current="true"]')?.scrollIntoView({block:'nearest'})},[current?.id,queue.length])
-  return <div ref={panel} className="mini-queue" aria-label="迷你播放队列"><header><span>播放队列</span><small>{queue.length} 首</small></header>{queue.map((track,index)=><button key={track.id} type="button" aria-current={track.id===current?.id||undefined} onClick={()=>void usePlayerStore.getState().playFromList(queue,track.id,usePlayerStore.getState().queueSource)}><span>{index+1}</span><strong>{track.title}</strong><small>{formatDuration(track.durationSeconds)}</small></button>)}{!queue.length&&<p>暂无歌曲</p>}</div>
+  return <div ref={panel} className="mini-queue" aria-label="迷你播放队列"><header><span>播放队列</span><small>{queue.length} 首</small></header>{queue.map((track,index)=><button key={track.id} type="button" aria-current={track.id===current?.id||undefined} onClick={()=>void usePlayerStore.getState().playFromList(queue,track.id,usePlayerStore.getState().queueSource)}><span>{index+1}</span><strong>{track.title}</strong><small>{formatTrackDuration(track.durationSeconds)}</small></button>)}{!queue.length&&<p>暂无歌曲</p>}</div>
 }
 function MiniLyric({visible}:{visible:boolean}){
   const track=usePlayerStore(state=>state.current)
   const position=usePlayerStore(state=>state.progressSeconds)
+  const subtitles=useBiliSubtitles()
   const client=useQueryClient()
   const stored=useQuery({queryKey:accountQueryKey('mini-lyrics', track?.id),queryFn:()=>getStoredLyrics(track!.id),enabled:visible&&!!track&&inDesktopShell,staleTime:60000})
   useEffect(()=>{
@@ -77,10 +80,11 @@ function MiniLyric({visible}:{visible:boolean}){
     window.addEventListener('bilimusic-lyrics-updated',update)
     return()=>window.removeEventListener('bilimusic-lyrics-updated',update)
   },[track?.id,client])
-  const lines=useMemo(()=>stored.data?parseLrc(stored.data.rawText):[],[stored.data])
-  const time=position*1000-(stored.data?.biasMs||0)
-  let line=''
-  if(visible)for(const item of lines){if(item.timeMs>time)break;line=item.text}
+  const matched=useMemo(()=>stored.data?parseLrc(stored.data.rawText):[],[stored.data])
+  const captions=subtitles.active?subtitles.lines:undefined
+  const lines=captions??matched
+  const bias=captions?0:stored.data?.biasMs??0
+  const line=visible?lines[lyricAt(lines,position*1000-bias)]?.text:undefined
   return <MarqueeText text={line||(track?track.artist||'歌手未知':'选择歌曲，开始聆听')}/>
 }
 function MarqueeText({text,title=false}:{text:string;title?:boolean}){

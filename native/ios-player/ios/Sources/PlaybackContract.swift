@@ -15,6 +15,7 @@ struct PlayerSnapshot: Encodable {
     var capabilities = PlaybackCapabilities()
     var engineInstanceId = ""
     var sessionId = ""
+    var diagnosticId: String?
     var sourceRevision: Int64 = 0
     var autonomousQueue = false
     var queueVersion: Int64 = 0
@@ -26,6 +27,7 @@ struct PlayerSnapshot: Encodable {
     var stopped = true
     var floatingLyricsEnabled = false
     var error: String?
+    var errorCode: String?
     var track: QueueTrack?
     var revision: Int64 = 0
     var sequence: Int64 = 0

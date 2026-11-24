@@ -12,6 +12,7 @@ function hasBufferedTarget(buffered: TimeRanges, target: number) {
 // Returns whether an explicit alignment still needs to be applied.
 export function synchronizeVideo(
   video: VideoClock, audioTime: number, playing: boolean, previousTime: number, force = false, elapsedSeconds = 0, rate = 1,
+  starting = false,
 ) {
   if (!playing && !video.paused) video.pause()
   const change = audioTime - previousTime
@@ -22,10 +23,12 @@ export function synchronizeVideo(
   const target = Math.max(0, audioTime)
   const drift = target - video.currentTime
   const ready = video.readyState >= 2
+  // A short lead while audio starts does not need a second range request.
+  const nearBeginning = starting && playing && !jumped && target <= 1 && video.currentTime < .2
   // A completed seek can already be seconds behind the still-playing audio.
   // Don't discard that frame and start another CDN request to chase the clock.
   const bufferedCorrection = ready && Math.abs(drift) > 2 && hasBufferedTarget(video.buffered, target)
-  if (Math.abs(drift) > .2 && (align || (ready && !playing) || bufferedCorrection)) {
+  if (!nearBeginning && Math.abs(drift) > .2 && (align || (ready && !playing) || bufferedCorrection)) {
     video.currentTime = target
     video.playbackRate = rate
     return false

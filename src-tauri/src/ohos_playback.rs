@@ -89,19 +89,40 @@ pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
         return;
     };
     tauri::async_runtime::spawn(async move {
-        let result = match serde_json::from_str(&payload) {
-            Ok(payload) => {
-                crate::native_playback::resolve_with_guard(&app, payload, || {
-                    RESOLVE_REQUEST.load(Ordering::SeqCst) == token
-                })
-                .await
-            }
-            Err(_) => Err("无效的后台播放请求".into()),
+        let payload = serde_json::from_str::<serde_json::Value>(&payload);
+        let result = match &payload {
+            Ok(payload) => crate::native_playback::resolve_with_guard(&app, payload.clone(), || {
+                RESOLVE_REQUEST.load(Ordering::SeqCst) == token
+            }).await,
+            Err(_) => Err(crate::interface::error::CommandError::validation("无效的后台播放请求")),
         };
         if RESOLVE_REQUEST.load(Ordering::SeqCst) != token {
             return;
         }
-        let data = result.unwrap_or_else(|error| serde_json::json!({"error":error}));
+        let data = crate::native_playback::resolution_response(result);
         let _ = tauri_plugin_ohos_player::resolved(&app, request, data.to_string()).await;
+        if let Ok(payload) = payload {
+            if let Some(lyrics) =
+                crate::native_playback::lyrics::follow_up(&app, &payload, &data).await
+            {
+                if RESOLVE_REQUEST.load(Ordering::SeqCst) == token {
+                    let _ =
+                        tauri_plugin_ohos_player::resolved(&app, request, lyrics.to_string()).await;
+                }
+            }
+        }
     });
+}
+
+
+#[napi_derive_ohos::napi]
+pub fn bilimusic_ohos_diagnostic(payload: String) {
+    if let (Some(app), Ok(event)) = (
+        APP.lock().ok().and_then(|handle| handle.clone()),
+        serde_json::from_str::<serde_json::Value>(&payload),
+    ) {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::native_playback::record_diagnostic(&app, &event);
+        });
+    }
 }

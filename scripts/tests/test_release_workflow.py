@@ -13,12 +13,126 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
-from release_packages import validate_bundle
+from publish_release import ApiError, Publisher, deploy_site, stage_website_apks, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
+from release_packages import validate_bundle, verify_android_bridge, verify_android_libraries
 from prepare_release import prepare
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_universal_car_patch_keeps_both_existing_update_ids_on_one_asset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            version, source = '0.4.2', 'a' * 40
+            name = f'BiliMusic_{version}_Android_LargeScreen_universal.apk'
+            data = b'universal car build'
+            (root / name).write_bytes(data)
+            package = dict(platform='Android Large Screen', architecture='universal', file=name,
+                           source=source, version=version, build=4, bytes=len(data),
+                           sha256=hashlib.sha256(data).hexdigest())
+            (root / 'build-info.json').write_text(json.dumps(dict(
+                version=version, source=source, validation={}, platforms=[package],
+            )))
+            for name in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
+                (root / name).write_text('# BiliMusic 0.4.2')
+            (root / 'THIRD_PARTY_LICENSES-Android-Large-Screen.json').write_text(json.dumps(
+                dict(version=version, sourceCommit=source),
+            ))
+            channels = [{'id': 'github'}, {'id': 'gitee'}]
+            previous = dict(version=version, history=[{'version': version, 'changes': ['Earlier update']}], platforms=[
+                dict(id=key, file=f'{key}.apk', build=3, status='available', channels=channels, sha256='1' * 64)
+                for key in ('android', 'android-large-armv7', 'android-large')
+            ])
+            ota = dict(version=version, platforms={})
+            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'car-build-4', previous, ota, ['Universal APK'])
+            verifier = Mock()
+            plan = validate_bundle(output, verifier)
+            phone, legacy, main = plan['manifest']['platforms']
+            self.assertEqual(phone, previous['platforms'][0])
+            self.assertEqual(legacy | {'id': 'android-large'}, main)
+            self.assertEqual(main['build'], 4)
+            self.assertEqual(main['architecture'], 'ARM64 / ARMv7')
+            self.assertEqual(plan['manifest']['history'][0]['changes'], ['Universal APK', 'Earlier update'])
+            self.assertEqual([a['name'] for a in plan['assets'] if a['binary']], [main['file']])
+            self.assertEqual((output / 'SHA256SUMS.txt').read_text().count(main['file']), 1)
+            verifier.assert_called_once_with(output / main['file'], package['platform'], version, None, 'universal', 4)
+
+    def test_universal_apk_rejects_a_missing_or_mislabeled_architecture(self):
+        arm64 = b'\x7fELF\x02\x01' + bytes(12) + (183).to_bytes(2, 'little')
+        armv7 = b'\x7fELF\x01\x01' + bytes(12) + (40).to_bytes(2, 'little')
+        for library, error in ((None, 'library missing'), (arm64, 'ELF architecture'), (armv7, None)):
+            with zipfile.ZipFile(io.BytesIO(), 'w') as archive:
+                archive.writestr('lib/arm64-v8a/libbilimusic_lib.so', arm64)
+                if library:
+                    archive.writestr('lib/armeabi-v7a/libbilimusic_lib.so', library)
+                if error:
+                    with self.assertRaisesRegex(ValueError, error):
+                        verify_android_libraries(archive, 'universal')
+                else:
+                    verify_android_libraries(archive, 'universal')
+
+    def test_android_release_keeps_tauri_plugin_manager_for_jni(self):
+        player_bridge = b'\0'.join(
+            b'Lapp/bilimusic/player/' + name + b';'
+            for name in (b'PlayerPlugin', b'PlayArgs', b'ControlArgs', b'SecretArgs')
+        )
+        with self.assertRaisesRegex(ValueError, 'plugin manager getter removed'):
+            verify_android_bridge(player_bridge)
+        verify_android_bridge(player_bridge + b'\0getPluginManager\0')
+
+    def test_android_patch_retains_other_installers_and_ota_feed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            version, source = '0.4.0', 'a' * 40
+            name = f'BiliMusic_{version}_Android_arm64.apk'
+            data = b'android build 2'
+            (root / name).write_bytes(data)
+            (root / 'build-info.json').write_text(json.dumps({
+                'version': version, 'source': source, 'validation': {},
+                'platforms': [{'platform': 'Android', 'architecture': 'arm64', 'file': name,
+                               'source': source, 'version': version, 'build': 2, 'bytes': len(data),
+                               'sha256': hashlib.sha256(data).hexdigest()}],
+            }))
+            for filename in ['THIRD_PARTY_NOTICES.md', 'qrc-codec-MIT.txt', 'notes.md']:
+                (root / filename).write_text('# BiliMusic 0.4.0')
+            (root / 'THIRD_PARTY_LICENSES-Android.json').write_text(json.dumps({'version': version, 'sourceCommit': source}))
+            channels = [{'id': 'github'}, {'id': 'gitee'}]
+            previous = {'version': version, 'history': [
+                {'version': version, 'changes': ['Initial notes']},
+                {'version': '0.3.7', 'changes': ['Previous release notes']},
+            ], 'platforms': [
+                {'id': 'android', 'build': 1, 'file': 'phone.apk', 'channels': channels, 'status': 'available', 'sha256': '1' * 64},
+                {'id': 'android-large', 'build': 1, 'file': 'large.apk', 'channels': channels, 'status': 'available', 'sha256': '2' * 64},
+                {'id': 'mac', 'build': 1, 'file': 'mac.dmg', 'channels': channels, 'status': 'available', 'sha256': '3' * 64},
+            ]}
+            ota = {'version': version, 'platforms': {'darwin-aarch64': {'build': 1, 'url': 'existing'}}}
+            output = prepare(root, {}, root / 'notes.md', root / 'staged', 'android-build-2', previous, ota)
+            verifier = Mock()
+            plan = validate_bundle(output, verifier)
+            self.assertEqual(plan['manifest']['platforms'][0]['build'], 2)
+            self.assertEqual(plan['manifest']['platforms'][1:], previous['platforms'][1:])
+            self.assertEqual(plan['updater'], ota)
+            self.assertEqual(verifier.call_args.args[-1], 2)
+            self.assertIn('  large.apk', (output / 'SHA256SUMS.txt').read_text())
+            self.assertIn('build-info-android-build-2.json', {asset['name'] for asset in plan['assets']})
+            package = root / 'staged' / 'candidate-releases.json'
+            candidate = json.loads(package.read_text())
+            candidate['history'][0]['changes'].insert(0, 'Fixed Android media keys')
+            package.write_text(json.dumps(candidate))
+            published = validate_bundle(output, verifier)
+            self.assertEqual(published['manifest']['history'][0]['changes'], ['Fixed Android media keys', 'Initial notes'])
+            for index in (0, 1):
+                changes = candidate['history'][index]['changes']
+                original = changes[-1]
+                changes[-1] = 'Rewritten notes'
+                package.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, 'only add notes to the current release history'):
+                    validate_bundle(output, verifier)
+                changes[-1] = original
+            candidate['platforms'][1]['build'] = 2
+            package.write_text(json.dumps(candidate))
+            with self.assertRaisesRegex(ValueError, 'Unbuilt platform'):
+                validate_bundle(output, verifier)
+
     def test_large_upload_timeout_scales_with_payload_size(self):
         with tempfile.TemporaryDirectory() as folder:
             p=Publisher({'version':'0.3.5','source':'a'*40,'revision':'stable','repos':{'github':'owner/repo'}},{'github':'TOKEN'},folder)
@@ -304,11 +418,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_pending_icp_filing_skips_only_public_site_check_and_records_the_limit(self):
         for pending in (False, True):
             with tempfile.TemporaryDirectory() as directory:
-                manifest = {'platforms': [{'channels': [{}, {}]} for _ in range(4)]}
+                manifest = {'platforms': [{'channels': [{'url': f'https://{mirror}.example/{index}'} for mirror in ('github', 'gitee')]} for index in range(4)]}
                 plan = {'version': '0.3.1', 'source': 'a' * 40, 'revision': 'stable', 'siteHost': 'bilimusic.cn', 'siteRoot': '/opt/test', 'manifest': manifest, 'previous': {}, 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}}
                 publisher = Publisher(plan, {}, directory)
                 publisher.site_filing_pending = pending
-                publisher.report['downloads'] = [{} for _ in range(8)]
+                publisher.report['downloads'] = [channel for item in manifest['platforms'] for channel in item['channels']]
                 publisher.mirror = Mock()
                 response = MagicMock()
                 response.__enter__.return_value.read.return_value = json.dumps(manifest).encode()
@@ -344,10 +458,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_activation_can_defer_public_checks_until_workstation_proof(self):
         with tempfile.TemporaryDirectory() as directory:
-            manifest = {'version': '0.3.4', 'platforms': [{'channels': [{}, {}]} for _ in range(4)]}
+            manifest = {'version': '0.3.4', 'platforms': [{'channels': [{'url': f'https://{mirror}.example/{index}'} for mirror in ('github', 'gitee')]} for index in range(4)]}
             plan = {'version': '0.3.4', 'source': 'a' * 40, 'revision': 'stable', 'siteHost': 'bilimusic.cn', 'siteRoot': '/opt/test', 'manifest': manifest, 'previous': {}, 'repos': {'github': 'owner/repo', 'gitee': 'owner/repo'}}
             publisher = Publisher(plan, {}, directory)
-            publisher.report['downloads'] = [{} for _ in range(8)]
+            publisher.report['downloads'] = [channel for item in manifest['platforms'] for channel in item['channels']]
+            # The second car architecture references both previously verified URLs.
+            manifest['platforms'].append(manifest['platforms'][0])
             publisher.mirror = Mock()
             with patch('publish_release.deploy_site', return_value={'version': '0.3.4'}), patch('publish_release.urllib.request.urlopen') as request:
                 publisher.activate(verify_public=False)
@@ -557,6 +673,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'concurrently'):
                 publisher.mirror('github')
             self.assertEqual(publisher.api.call_count, 1)
+
+    def test_website_apks_follow_manifest_and_reuse_unchanged_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            work = site / 'release'
+            (work / 'assets').mkdir(parents=True)
+            data = b'signed Android APK'
+            package = dict(file='phone.apk', status='available', size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                           channels=[{'id':'gitee', 'url':'https://gitee.com/'}])
+            manifest = {'platforms': [package]}
+            source = work / 'assets' / package['file']
+            source.write_bytes(bytes(len(data)))
+            with self.assertRaisesRegex(ValueError, 'missing or changed'):
+                stage_website_apks(site, work, manifest)
+            source.write_bytes(data)
+            stage_website_apks(site, work, manifest)
+            source.unlink()
+            stage_website_apks(site, work, manifest)
+            self.assertEqual((site / 'apk-downloads' / package['file']).read_bytes(), data)
 
     def test_failed_site_health_restores_previous_manifest(self):
         with tempfile.TemporaryDirectory() as directory:

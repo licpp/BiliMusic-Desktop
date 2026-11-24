@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
+import { readFile } from 'node:fs/promises'
 const output = await build({
   entryPoints: ['src/features/player/playerStore.ts'], bundle: true, write: false, format: 'cjs', platform: 'node', external: ['zustand', 'zustand/middleware'],
   plugins: [{name:'visibility-boundary',setup(b){
@@ -202,4 +203,15 @@ test('mobile next waits for the latest shuffle mode mirror before asking native 
  release();await pending
  assert.equal(iosTest.queues.at(-1)[2],true)
  assert.equal(iosTest.controls.at(-1)[0],'next')
+})
+
+test('iOS quality handoff keeps the original Now Playing session and both of its player bindings', async () => {
+  const sources = new URL('../native/ios-player/ios/Sources/', import.meta.url)
+  const [transport, session] = await Promise.all(['PlayerPlugin.swift', 'SystemMediaSession.swift']
+    .map(name => readFile(new URL(name, sources), 'utf8')))
+  // Removing a player from a manually published session throws in MediaPlayer
+  // on iOS 27. The standby player must be bound before either slot is used.
+  assert.match(transport, /SystemMediaSession\(players: \[player, standbyPlayer\]\)/)
+  assert.doesNotMatch(transport + session, /\.(?:removePlayer|addPlayer)\(/)
+  assert.match(transport, /candidate\.status == \.readyToPlay, candidate\.rate == 0/)
 })

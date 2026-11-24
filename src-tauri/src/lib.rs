@@ -17,7 +17,11 @@ mod native_playback;
 #[cfg(target_env = "ohos")]
 mod ohos_playback;
 mod sync;
+#[cfg(desktop)]
+mod tray_player;
 mod window_lifecycle;
+#[cfg(target_os = "windows")]
+mod windows_taskbar;
 
 use infrastructure::database::Database;
 use infrastructure::media_proxy::MediaProxy;
@@ -26,12 +30,6 @@ use infrastructure::providers::lrclib::LrclibProvider;
 use infrastructure::providers::music_catalog::MusicCatalogProvider;
 use infrastructure::repositories::auth::AuthRepository;
 use tauri::Manager;
-#[cfg(desktop)]
-use tauri::{
-    Emitter,
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-};
 
 #[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
@@ -58,7 +56,7 @@ pub fn run() {
     let builder = builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&["floating-lyrics-unlock"])
+                .with_denylist(&["floating-lyrics", "floating-lyrics-unlock", tray_player::LABEL])
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
@@ -85,9 +83,21 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            let database = Database::open(app.handle())?;
+            use infrastructure::diagnostics::{Diagnostics, Outcome, Step};
+            let diagnostics = Diagnostics::open(app.path().app_data_dir()?.join("diagnostics-v1"));
+            diagnostics.begin_startup();
+            app.manage(diagnostics.clone());
+            let database = Database::open(app.handle()).inspect_err(|_| {
+                diagnostics.startup_step(Step::Database, Outcome::Failed);
+            })?;
+            diagnostics.startup_step(Step::Database, Outcome::Succeeded);
+            diagnostics.startup_step(Step::MediaProxy, Outcome::Started);
             let media_proxy =
-                tauri::async_runtime::block_on(MediaProxy::start_cached(app.handle().clone()))?;
+                tauri::async_runtime::block_on(MediaProxy::start_cached(app.handle().clone()))
+                    .inspect_err(|_| diagnostics.startup_step(Step::MediaProxy, Outcome::Failed))?;
+            diagnostics.startup_step(Step::MediaProxy, Outcome::Succeeded);
+            diagnostics.startup_step(Step::NativeReady, Outcome::Started);
+            infrastructure::providers::bilibili::initialize_requests(&app.path().app_data_dir()?);
             let bilibili = BilibiliProvider::new()?;
             let saved_cookie = database.0.lock().ok().and_then(|connection| {
                 AuthRepository::get_cookie(&connection, "bilibili")
@@ -121,61 +131,28 @@ pub fn run() {
                 interface::media::observe_ohos_listening(app.handle().clone());
             }
             #[cfg(desktop)]
-            {
-                let show = MenuItem::with_id(app, "show", "显示 BiliMusic", true, None::<&str>)?;
-                let play_pause =
-                    MenuItem::with_id(app, "play_pause", "播放 / 暂停", true, None::<&str>)?;
-                let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show, &play_pause, &quit])?;
-                let mut tray = TrayIconBuilder::new()
-                    .tooltip("BiliMusic")
-                    .menu(&menu)
-                    .show_menu_on_left_click(false)
-                    .on_tray_icon_event(|tray, event| {
-                        #[cfg(target_os = "windows")]
-                        if matches!(
-                            event,
-                            tauri::tray::TrayIconEvent::Click {
-                                button: tauri::tray::MouseButton::Left,
-                                button_state: tauri::tray::MouseButtonState::Up,
-                                ..
-                            }
-                        ) {
-                            show_main_window(tray.app_handle());
-                        }
-                        #[cfg(not(target_os = "windows"))]
-                        let _ = (tray, event);
-                    })
-                    .on_menu_event(|app, event| match event.id.as_ref() {
-                        "show" => {
-                            show_main_window(app);
-                        }
-                        "play_pause" => {
-                            let _ = app.emit("tray-play-pause", ());
-                        }
-                        "quit" => app.exit(0),
-                        _ => {}
-                    });
-                #[cfg(target_os = "macos")]
-                {
-                    tray = tray
-                        .icon(tauri::include_image!("icons/tray/32x32.png"))
-                        .icon_as_template(false);
-                }
-                #[cfg(not(target_os = "macos"))]
-                if let Some(icon) = app.default_window_icon() {
-                    tray = tray.icon(icon.clone());
-                }
-                tray.build(app)?;
+            tray_player::initialize(app.handle()).inspect_err(|_| {
+                diagnostics.startup_step(Step::NativeReady, Outcome::Failed);
+            })?;
+            diagnostics.startup_step(Step::NativeReady, Outcome::Succeeded);
+            diagnostics.startup_step(Step::WebviewReady, Outcome::Started);
+            #[cfg(target_os = "windows")]
+            if let Some(webview) = app.get_webview_window("main") {
+                interface::diagnostics::observe_windows_webview(webview, diagnostics);
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             interface::playback_cache::playback_cache_status,
+            interface::playback_cache::offline_playable_tracks,
             interface::playback_cache::playback_cache_limit,
             interface::playback_cache::playback_cache_clear,
             #[cfg(desktop)]
             desktop_media::desktop_media_update,
+            #[cfg(desktop)]
+            tray_player::tray_player_snapshot,
+            #[cfg(desktop)]
+            tray_player::tray_player_action,
             #[cfg(desktop)]
             mini_player::desktop_mini_state,
             #[cfg(desktop)]
@@ -197,6 +174,8 @@ pub fn run() {
             #[cfg(desktop)]
             mini_player::desktop_mini_panel,
             interface::playlist_import::external_playlist_read,
+            #[cfg(all(desktop, not(target_env = "ohos")))]
+            interface::local_playlist::local_playlist_pick,
             interface::playlist_import::playlist_import_scope,
             interface::playlist_import::playlist_import_archive,
             interface::playlist_import::playlist_import_commit,
@@ -204,14 +183,21 @@ pub fn run() {
             interface::imported_entries::playlist_import_contexts,
             interface::imported_entries::playlist_import_seed,
             interface::imported_entries::playlist_import_bind,
+            interface::imported_entries::playlist_import_remove_missing,
             interface::batch_matching::batch_match_snapshot,
             interface::batch_matching::batch_match_commit,
+            interface::batch_matching::lyric_match_version,
+            interface::linked_batch_matching::linked_batch_match_job,
+            interface::linked_batch_matching::linked_batch_match_start,
+            interface::linked_batch_matching::linked_batch_match_update,
             global_shortcuts::global_shortcuts_apply,
             global_shortcuts::global_shortcuts_show,
             interface::media::bili_creator_catalog,
             interface::commands::collections_list,
             interface::commands::collections_change,
+            interface::commands::collections_import_seasons,
             sync::sync_status,
+            sync::repair::sync_archive_invalid_track_references,
             sync::devices::sync_devices,
             sync::devices::sync_retire_device,
             sync::background::sync_background,
@@ -225,16 +211,26 @@ pub fn run() {
             sync::sync_hydrate_sources,
             interface::visibility::content_visibility,
             interface::visibility::content_visibility_save,
+            interface::chapters::get_saved_chapters,
+            interface::chapters::save_chapters,
             interface::list_preferences::list_preferences,
             interface::list_preferences::list_preferences_save,
             sync::sync_current_track,
             sync::sync_export,
             sync::sync_delete_cloud,
             interface::commands::app_health,
+            interface::diagnostics::diagnostic_environment,
+            interface::diagnostics::diagnostics_record,
+            interface::diagnostics::diagnostics_recent,
+            interface::diagnostics::diagnostics_clear,
+            interface::diagnostics::diagnostics_ready,
+            #[cfg(desktop)]
+            interface::diagnostics::diagnostics_save_report,
             interface::commands::app_check_update,
             infrastructure::update_install::app_download_update,
             infrastructure::update_install::app_install_update,
             interface::commands::app_open_download_page,
+            interface::commands::bili_open_verification_page,
             interface::commands::library_summary,
             interface::commands::library_record_play,
             interface::commands::library_save_track,
@@ -260,6 +256,8 @@ pub fn run() {
             interface::commands::playlist_remove_tracks,
             interface::commands::playlist_delete,
             interface::media::bili_season,
+            interface::media::bili_season_cover,
+            interface::media::bili_video_chapters,
             interface::media::bili_subtitles,
             interface::media::bili_subtitle_lines,
             interface::media::bili_media_options,
@@ -268,6 +266,7 @@ pub fn run() {
             interface::media::listening_scope,
             interface::media::listening_record,
             interface::media::listening_statistics,
+            interface::media::listening_hydrate_tags,
             sync::statistics::listening_sync,
             sync::statistics::listening_sync_configure,
             interface::commands::bili_video_parts,
@@ -280,16 +279,20 @@ pub fn run() {
             interface::commands::bili_qr_login_poll,
             interface::commands::bili_account_profile,
             interface::commands::bili_favorite_folders,
+            interface::commands::bili_subscribed_seasons,
             interface::commands::bili_favorite_videos,
             interface::linked_folders::bili_linked_folder,
+            interface::linked_folders::bili_linked_matched_covers,
             interface::linked_folders::bili_linked_create,
             interface::linked_folders::bili_linked_refresh,
             interface::linked_folders::bili_linked_change,
+            interface::linked_folders::bili_linked_remove_selected,
             interface::linked_folders::bili_linked_unlink,
             interface::commands::bili_logout,
             interface::commands::bili_comments,
             interface::commands::bili_comment_emotes,
             interface::commands::bili_comment_replies,
+            interface::commands::bili_comment_reply_page,
             interface::commands::bili_comment_like,
             interface::commands::bili_comment_reply,
             interface::commands::lyrics_search,
@@ -299,6 +302,7 @@ pub fn run() {
             interface::commands::lyrics_complete_selected,
             interface::commands::lyrics_restore_selected,
             interface::commands::lyrics_save,
+            interface::commands::lyrics_save_with_metadata,
             interface::commands::lyrics_set_bias,
             interface::commands::mobile_download_directory,
             #[cfg(target_os = "android")]
@@ -329,6 +333,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build BiliMusic")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(diagnostics) = app.try_state::<infrastructure::diagnostics::Diagnostics>() {
+                    diagnostics.flush_on_exit();
+                }
+            }
+            #[cfg(desktop)]
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                floating_lyrics::remember_placement(app);
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 show_main_window(app);

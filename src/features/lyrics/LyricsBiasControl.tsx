@@ -27,7 +27,7 @@ export function LyricsBiasControl({ value, enabled, error, onAdjust, onClose, on
 }) {
   return <aside className="lyrics-bias expanded" aria-label="歌词时间调整" onPointerDown={onActivity} onKeyDown={onActivity}>
     <button type="button" className="bias-trigger" aria-label="关闭歌词时间调整" title="关闭" onClick={onClose}><X size={16}/></button>
-    <button type="button" className="bias-auto" disabled={!enabled || autoBusy} aria-label="自动对齐歌词" title="使用 AI 字幕自动对齐歌词" aria-busy={autoBusy} onClick={onAutoAlign}>{autoBusy ? <LoaderCircle size={16} className="spin"/> : <WandSparkles size={16}/>}<span>{autoBusy ? '对齐中' : '自动'}</span></button>
+    <button type="button" className="bias-auto" disabled={!enabled || autoBusy} aria-label="自动对齐歌词" title="使用视频字幕自动对齐歌词" aria-busy={autoBusy} onClick={onAutoAlign}>{autoBusy ? <LoaderCircle size={16} className="spin"/> : <WandSparkles size={16}/>}<span>{autoBusy ? '对齐中' : '自动'}</span></button>
     <Step delta={500} onAdjust={onAdjust} disabled={!enabled || autoBusy}/>
     <output aria-live="polite" className={error ? 'bias-save-error' : undefined} title={error ? '偏移保存失败，请重试' : '点选歌词可对齐到当前播放'}>{value > 0 ? '+' : ''}{(value / 1000).toFixed(1)}s</output>
     <Step delta={-500} onAdjust={onAdjust} disabled={!enabled || autoBusy}/>

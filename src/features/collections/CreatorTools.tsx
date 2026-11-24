@@ -4,7 +4,7 @@ import { FolderEditor } from './CollectionFolderControls'
 import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, ChevronDown, ChevronRight, UserRoundPlus, UserRoundMinus, UserRound, Search, FolderPlus, Folder, Pencil, LoaderCircle } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, UserRoundPlus, UserRoundMinus, UserRound, Search, FolderPlus, Folder, Pencil, LoaderCircle, Plus } from 'lucide-react'
 import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { CollectionDialog } from '../../shared/CollectionDialog'
@@ -13,6 +13,7 @@ import { LoadMore } from '../../shared/LoadMore'
 import { accountEpoch } from '../../services/accountScope'
 import { changeCollection, type Collection, type CollectionFolder } from '../../services/collections'
 import { commandErrorMessage } from '../../services/desktopApi'
+import { HubToolbar } from '../library/HubToolbar'
 
 export function CreatorActions({ item, folders, contextPosition }: { item: Collection; folders: CollectionFolder[];contextPosition?:MenuPosition }) {
   const client = useQueryClient()
@@ -36,7 +37,14 @@ export function CreatorActions({ item, folders, contextPosition }: { item: Colle
 }
 
 type Following = { mid:number; uname:string; face:string; sign?:string }
-export function CreatorManager({ folders, items, sidebar = false, expanded = true, onToggle }: { folders:CollectionFolder[];items:Collection[];sidebar?:boolean;expanded?:boolean;onToggle?:()=>void }) {
+export function CreatorManager({ folders, items, sidebar = false, expanded = true, actionsHost, onToggle }: {
+  folders: CollectionFolder[]
+  items: Collection[]
+  sidebar?: boolean
+  expanded?: boolean
+  actionsHost?: HTMLElement | null
+  onToggle?: () => void
+}) {
   const client=useQueryClient(), epoch=accountEpoch()
   const [importOpen,setImportOpen]=useState(false),[groupOpen,setGroupOpen]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('')
   const [chosen,setChosen]=useState<Set<number>>(new Set()),[destination,setDestination]=useState(''),[busy,setBusy]=useState(false),[filter,setFilter]=useState('')
@@ -59,7 +67,25 @@ export function CreatorManager({ folders, items, sidebar = false, expanded = tru
     }catch(cause){if(alive.current)setError(`已导入 ${count} 位。${commandErrorMessage(cause)}`)}finally{importing.current=false;if(alive.current){setBusy(false);void client.invalidateQueries({queryKey:accountQueryKey('collections')})}}
   }
   return <>
-    {sidebar ? <div className="section-heading creator-sidebar-heading"><button className="sidebar-collapse" aria-expanded={expanded} onClick={onToggle}>关注{expanded?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button><div className="sidebar-heading-actions library-action-rail" hidden={sidebar&&!expanded}><button className="collection-icon library-create-action" title="新建关注文件夹" aria-label="新建关注文件夹" onClick={()=>{setError('');setGroupOpen(true)}}><FolderPlus size={18}/></button><button className="collection-icon creator-import-entry library-import-action" title="从 B站导入关注" aria-label="从 B站导入关注" onClick={()=>{setError('');setFilter('');setDestination('');setChosen(new Set());setImportOpen(true)}}><UserRoundPlus size={18}/><span>导入</span></button></div></div> : <div className="creators-tools"><span className="hub-summary">{items.length} 位 UP 主</span><div className="sidebar-heading-actions library-action-rail" hidden={sidebar&&!expanded}><button className="collection-icon library-create-action" title="新建关注文件夹" aria-label="新建关注文件夹" onClick={()=>{setError('');setGroupOpen(true)}}><FolderPlus size={18}/></button><button className="collection-icon creator-import-entry library-import-action" title="从 B站导入关注" aria-label="从 B站导入关注" onClick={()=>{setError('');setFilter('');setDestination('');setChosen(new Set());setImportOpen(true)}}><UserRoundPlus size={18}/><span>导入</span></button></div></div>}
+    {sidebar ? <div className="section-heading creator-sidebar-heading">
+      <button className="sidebar-collapse" aria-expanded={expanded} onClick={onToggle}>
+        {expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+        <span>关注</span>
+        {items.length > 0 && <small className="sidebar-count">{items.length}</small>}
+      </button>
+      <div className="sidebar-heading-actions library-action-rail" hidden={sidebar && !expanded}>
+        <ActionMenu panelClassName="sidebar-add-menu" label="导入或新建关注分组" icon={<Plus size={16}/>}>{close => <>
+          <button role="menuitem" onClick={() => { close(); setError(''); setFilter(''); setDestination(''); setChosen(new Set()); setImportOpen(true) }}><UserRoundPlus size={16}/><span><strong>从 B 站导入关注</strong><small>批量选择已关注的 UP 主</small></span></button>
+          <button role="menuitem" onClick={() => { close(); setError(''); setGroupOpen(true) }}><FolderPlus size={16}/><span><strong>新建关注分组</strong><small>按主题归类关注的 UP 主</small></span></button>
+        </>}</ActionMenu>
+      </div>
+    </div> : <HubToolbar className="creators-tools" summary={`${items.length} 位 UP 主`} actionsHost={actionsHost}
+      actions={<div className="sidebar-heading-actions library-action-rail">
+        <button type="button" className="collection-icon library-create-action" title="新建关注文件夹" aria-label="新建关注文件夹"
+          onClick={() => { setError(''); setGroupOpen(true) }}><FolderPlus size={18}/></button>
+        <button type="button" className="collection-icon creator-import-entry library-import-action" title="从 B站导入关注" aria-label="从 B站导入关注"
+          onClick={() => { setError(''); setFilter(''); setDestination(''); setChosen(new Set()); setImportOpen(true) }}><UserRoundPlus size={18}/><span>导入</span></button>
+      </div>}/>}
     {message&&<p className="batch-message" role="status">{message}</p>}
     <FolderEditor creator action="create" controlledOpen={groupOpen} onClose={()=>setGroupOpen(false)} onDone={()=>{setGroupOpen(false);void client.invalidateQueries({queryKey:accountQueryKey('collections')});if(sidebar&&!expanded)onToggle?.()}}/>
     {importOpen&&<CollectionDialog mobileSheet title="导入 B站关注" onClose={()=>{cancelImport.current=true;setImportOpen(false)}} className="creator-import-dialog"><div className="creator-import-toolbar"><TouchOptions label="分组" icon={<Folder size={16}/>} selected={destination} options={[{value:'',label:'未分组'},...folders.map(group=>({value:group.id,label:group.name}))]} disabled={busy} onChange={setDestination}/><button disabled={busy||!available.length} className="creator-select-all" aria-pressed={allChosen} onClick={()=>setChosen(previous=>{const next=new Set(previous);available.forEach(up=>allChosen?next.delete(up.mid):next.add(up.mid));return next})}><Check size={15}/>{allChosen?'取消全选':'全选'}</button></div>

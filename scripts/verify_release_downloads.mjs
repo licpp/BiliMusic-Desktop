@@ -6,9 +6,23 @@ import { verifyPublicAsset, probePublicAsset, uploadProofMatches } from './downl
 const [planPath, reportPath, planDigest] = process.argv.slice(2)
 if (!planPath || !reportPath || !/^[a-f0-9]{64}$/.test(planDigest || '')) throw new Error('Usage: node verify_release_downloads.mjs plan.json report.json plan-sha256')
 const plan = JSON.parse(await readFile(planPath, 'utf8'))
-const work = plan.manifest.platforms.flatMap(platform => platform.channels.map(channel => ({ platform, channel })))
+const downloads = plan.manifest.platforms.flatMap(platform => platform.channels.map(channel => ({ platform, channel })))
 const ids = plan.manifest.platforms.map(p => p.id)
-if (work.length !== ids.length * 2 || new Set(ids).size !== ids.length || !['mac','windows','android','ios'].every(id => ids.includes(id)) || ids.some(id => !['mac','mac-intel','windows','windows-arm64','android','ios','ohos','android-large','android-large-armv7','linux-x64-appimage','linux-x64-deb','linux-arm64-appimage','linux-arm64-deb'].includes(id)) || plan.manifest.platforms.some(p => p.channels.length !== 2 || new Set(p.channels.map(c => c.id)).size !== 2 || p.channels.some(c => !['github','gitee'].includes(c.id))) || new Set(work.map(x => x.channel.url)).size !== work.length) throw new Error('Expected both public downloads for every distinct supported platform and architecture')
+if (downloads.length !== ids.length * 2 || new Set(ids).size !== ids.length || !['mac','windows','android','ios'].every(id => ids.includes(id)) || ids.some(id => !['mac','mac-intel','windows','windows-arm64','android','ios','ohos','android-large','android-large-armv7','linux-x64-appimage','linux-x64-deb','linux-arm64-appimage','linux-arm64-deb'].includes(id)) || plan.manifest.platforms.some(p => p.channels.length !== 2 || new Set(p.channels.map(c => c.id)).size !== 2 || p.channels.some(c => !['github','gitee'].includes(c.id)))) throw new Error('Expected both public downloads for every distinct supported platform and architecture')
+const uniqueDownloads = new Map()
+for (const entry of downloads) {
+  const existing = uniqueDownloads.get(entry.channel.url)
+  if (existing) {
+    const pair = [entry.platform, existing.platform]
+    const isUniversalPair = pair.map(p => p.id).sort().join(':') === 'android-large:android-large-armv7' &&
+      pair.every(p => p.architecture === 'ARM64 / ARMv7') &&
+      ['file', 'size', 'sha256', 'version', 'build'].every(key => pair[0][key] === pair[1][key]) &&
+      existing.channel.id === entry.channel.id
+    if (!isUniversalPair) throw new Error('Unexpected duplicate public download URL')
+  }
+  if (!existing || entry.platform.id === 'android-large') uniqueDownloads.set(entry.channel.url, entry)
+}
+const work = [...uniqueDownloads.values()]
 const proofIndex = process.argv.indexOf('--upload-proof')
 const uploadReport = proofIndex >= 0 ? JSON.parse(await readFile(process.argv[proofIndex + 1], 'utf8')) : undefined
 if (uploadReport && uploadReport.planDigest !== planDigest) throw Error('Upload proofs belong to another release plan')

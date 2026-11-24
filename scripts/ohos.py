@@ -177,7 +177,7 @@ const fs=require('fs'); const JSON5=require(process.argv[1]); const root=process
 const edit=(file,fn)=>{const path=root+'/'+file; const value=JSON5.parse(fs.readFileSync(path,'utf8'));fn(value);fs.writeFileSync(path,JSON.stringify(value,null,2)+'\\n')};
 edit('build-profile.json5',v=>{for(const p of v.app.products){delete p.signingConfig;p.compatibleSdkVersion='6.0.0(20)';p.targetSdkVersion='26.0.0';}});
 edit('AppScope/app.json5',v=>{v.app.bundleName='app.bilimusic.harmony';v.app.icon='$media:app_icon';v.app.versionName='0.3.0';v.app.versionCode=30000;});
-edit('entry/src/main/module.json5',v=>{v.module.abilities[0].icon='$media:app_icon';v.module.abilities[0].startWindowIcon='$media:app_icon';v.module.abilities[0].backgroundModes=['audioPlayback'];v.module.requestPermissions=[{name:'ohos.permission.INTERNET'},{name:'ohos.permission.KEEP_BACKGROUND_RUNNING'}];});
+edit('entry/src/main/module.json5',v=>{v.module.abilities[0].icon='$media:app_icon';v.module.abilities[0].startWindowIcon='$media:app_icon';v.module.abilities[0].backgroundModes=['audioPlayback'];v.module.requestPermissions=[{name:'ohos.permission.INTERNET'},{name:'ohos.permission.GET_NETWORK_INFO'},{name:'ohos.permission.KEEP_BACKGROUND_RUNNING'}];});
 edit('entry/src/main/resources/base/element/string.json',v=>{for(const s of v.string){if(s.name==='EntryAbility_label'||s.name==='module_desc')s.value='BiliMusic';}});
 """
     env, _ = sdk_env('aarch64')
@@ -191,8 +191,7 @@ edit('entry/src/main/resources/base/element/string.json',v=>{for(const s of v.st
     native_version = tomllib.loads((ROOT / 'src-tauri/Cargo.toml').read_text())['package']['version']
     if version != native_version:
         raise RuntimeError('Frontend and native bundle versions must match')
-    android = json.loads((ROOT / 'src-tauri/tauri.android.conf.json').read_text())
-    app_version = json.dumps({'version': version, 'code': android['bundle']['android']['versionCode'], 'target': target_sdk})
+    app_version = json.dumps({'version': version, 'code': mobile_version(version)['androidVersionCode'], 'target': target_sdk})
     json5 = studio / 'tools/hvigor/hvigor-ohos-plugin/node_modules/json5'
     script = script.replace("const root=process.argv[2];", "const root=process.argv[2]; const version=JSON.parse(process.argv[3]);")
     script = script.replace("delete p.signingConfig;", "if(!v.app.signingConfigs?.some(c=>c.name===p.signingConfig))delete p.signingConfig;")
@@ -245,6 +244,14 @@ def elf_loadable_sections(binary):
     return result
 
 
+def mobile_version(version):
+    return json.loads(subprocess.check_output([
+        'node', '--input-type=module', '-e',
+        "import { mobileVersion } from './scripts/mobile-version.mjs'; console.log(JSON.stringify(mobileVersion(process.argv[1])))",
+        version,
+    ], cwd=ROOT, text=True))
+
+
 def verify_hap(target):
     abi = {'aarch64': 'arm64-v8a', 'x86_64': 'x86_64'}[target]
     machine = {'aarch64': 183, 'x86_64': 62}[target]
@@ -254,8 +261,11 @@ def verify_hap(target):
             raise RuntimeError('HAP ZIP integrity check failed')
         metadata = json.loads(package.read('module.json'))
         version = json.loads((ROOT / 'package.json').read_text())['version']
-        if metadata['app']['versionName'] != version or metadata['app']['bundleName'] != 'app.bilimusic.harmony':
+        expected = mobile_version(version)
+        if metadata['app']['versionName'] != version or metadata['app']['versionCode'] != expected['androidVersionCode'] or metadata['app']['bundleName'] != 'app.bilimusic.harmony':
             raise RuntimeError('Unexpected HAP bundle identity/version')
+        if not any(permission['name'] == 'ohos.permission.GET_NETWORK_INFO' for permission in metadata['module']['requestPermissions']):
+            raise RuntimeError('HAP is missing the permission required for network status')
         if metadata['app']['icon'] != '$media:app_icon' or metadata['module']['abilities'][0]['icon'] != '$media:app_icon':
             raise RuntimeError('HAP is using a template icon')
         if package.read('resources/base/media/app_icon.png') != (ROOT / 'public/app-icon.png').read_bytes():
@@ -268,7 +278,7 @@ def verify_hap(target):
         stripped = APP / f'gen/ohos/entry/build/default/intermediates/stripped_native_libs/default/{abi}/libbilimusic_lib.so'
         if binary != stripped.read_bytes() or elf_loadable_sections(binary) != elf_loadable_sections(source):
             raise RuntimeError('Packaged native runtime contents differ from the build output')
-        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'bilimusicOhosResolve', 'bilimusicOhosCancelResolve', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
+        for symbol in ('bilimusicOhosState', 'bilimusicOhosListening', 'bilimusicOhosResolve', 'bilimusicOhosDiagnostic', 'bilimusicOhosCancelResolve', 'tauriOhosPluginInitialize', 'tauriOhosPluginResponse'):
             if symbol.encode() not in binary:
                 raise RuntimeError(f'Native bridge export missing: {symbol}')
         if len(package.read('ets/modules.abc')) < 1000:
@@ -277,7 +287,7 @@ def verify_hap(target):
     shutil.copy2(hap, output)
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
-    report = {'bundle': 'app.bilimusic.harmony', 'version': version, 'architecture': abi,
+    report = {'bundle': 'app.bilimusic.harmony', 'version': version, 'build': expected['build'], 'architecture': abi,
               'source_commit': head, 'working_tree_dirty': dirty, 'toolchain': PINS,
               'artifact': str(output), 'bytes': output.stat().st_size,
               'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),

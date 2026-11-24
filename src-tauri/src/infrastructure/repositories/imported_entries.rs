@@ -698,7 +698,10 @@ pub fn project(c: &Connection) -> Result<(), String> {
         c.execute("INSERT INTO source_items(id,provider,bvid,aid,cid,page,source_title,uploader_id,uploader_name) VALUES(?1,'bilibili',?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO NOTHING",params![t.id,t.bvid,t.aid,t.cid,t.page,t.source_title,t.uploader_id,t.uploader_name]).map_err(err)?;
         c.execute("INSERT INTO tracks(id,source_item_id,title,artist,album,cover_url,duration_seconds) VALUES(?1,?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO NOTHING",params![t.id,t.title,t.artist,t.album,t.cover_url,t.duration_seconds]).map_err(err)?;
         if let Some(context) = &t.source_title_context {
-            super::source_titles::save(c, &t.id, context).map_err(err)?;
+            let mut context = context.clone();
+            let previous = super::source_titles::get(c, &t.id).map_err(err)?;
+            context.preserve_membership(previous.as_ref());
+            super::source_titles::save(c, &t.id, &context).map_err(err)?;
         }
         c.execute("INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3) ON CONFLICT(playlist_id,track_id) DO UPDATE SET position=excluded.position",params![v.playlist_id,t.id,v.order as i64]).map_err(err)?;
     }
@@ -737,6 +740,38 @@ pub fn remove(c: &Connection, playlist: &str, track: Option<&str>) -> Result<(),
         }
     }
     Ok(())
+}
+
+pub fn remove_missing(
+    c: &Connection,
+    playlist: &str,
+    entry_id: &str,
+    expected_revision: &str,
+) -> Result<(), String> {
+    init(c).map_err(err)?;
+    let tx = c.unchecked_transaction().map_err(err)?;
+    let old = read(c, entry_id)?;
+    let mut entry = selected(&old).ok_or("这首歌已移除，请刷新歌单")?;
+    if entry.playlist_id != playlist {
+        return Err("导入条目不属于该歌单".into());
+    }
+    if revision(&old) != expected_revision
+        || (entry.track.is_some()
+            && list(c, playlist)?
+                .iter()
+                .any(|row| row.entry_id == entry_id && row.track_id.is_some()))
+    {
+        return Err("这首歌已更新，请刷新后重试".into());
+    }
+    entry.deleted = true;
+    assign(
+        c,
+        entry_id,
+        playlist,
+        &old,
+        Cell::Value(serde_json::to_value(entry).map_err(err)?),
+    )?;
+    tx.commit().map_err(err)
 }
 
 #[cfg(test)]
@@ -815,6 +850,69 @@ mod tests {
         let tx = b.unchecked_transaction().unwrap();
         merge(b, &registers(a, false).unwrap()).unwrap();
         tx.commit().unwrap()
+    }
+    #[test]
+    fn removing_unmatched_slot_survives_sync_and_reseeding() {
+        let a = db();
+        let b = db();
+        for database in [&a, &b] {
+            seed(database, LIST, "歌单", "qq", &rows()).unwrap();
+        }
+        replicate(&a, &b);
+        replicate(&b, &a);
+        let entry = list(&a, LIST).unwrap().remove(1);
+        assert!(remove_missing(&a, "import:other", &entry.entry_id, &entry.revision).is_err());
+        remove_missing(&a, LIST, &entry.entry_id, &entry.revision).unwrap();
+        edit(&b, 1, 9, "manual");
+        replicate(&a, &b);
+        replicate(&b, &a);
+        for database in [&a, &b] {
+            seed(database, LIST, "歌单", "qq", &rows()).unwrap();
+            let positions: Vec<_> = list(database, LIST)
+                .unwrap()
+                .iter()
+                .map(|r| r.order)
+                .collect();
+            assert_eq!(positions, [0, 2]);
+        }
+    }
+
+    #[test]
+    fn removing_unmatched_slot_cannot_delete_a_new_binding() {
+        let c = db();
+        seed(&c, LIST, "歌单", "qq", &rows()).unwrap();
+        let before = list(&c, LIST).unwrap().remove(1);
+        edit(&c, 1, 9, "manual");
+        let matched = list(&c, LIST).unwrap().remove(1);
+        assert!(remove_missing(&c, LIST, &before.entry_id, &before.revision).is_err());
+        assert!(remove_missing(&c, LIST, &matched.entry_id, &matched.revision).is_err());
+        assert_eq!(list(&c, LIST).unwrap()[1].track_id, Some(track(9).id));
+    }
+
+    #[test]
+    fn removing_duplicate_unmatched_slot_keeps_the_winning_binding() {
+        let a = db();
+        let b = db();
+        seed(&a, LIST, "歌单", "qq", &rows()).unwrap();
+        seed(&b, LIST, "歌单", "qq", &rows()).unwrap();
+        edit(&a, 0, 9, "manual");
+        edit(&b, 1, 9, "manual");
+        replicate(&a, &b);
+        let entries = list(&b, LIST).unwrap();
+        assert!(entries[1].track_id.is_none() && entries[1].message.is_some());
+        remove_missing(&b, LIST, &entries[1].entry_id, &entries[1].revision).unwrap();
+        replicate(&b, &a);
+        for database in [&a, &b] {
+            assert_eq!(list(database, LIST).unwrap()[0].track_id, Some(track(9).id));
+            let position: i64 = database
+                .query_row(
+                    "SELECT position FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
+                    params![LIST, track(9).id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(position, 0);
+        }
     }
     #[test]
     fn stable_slot_seed_is_idempotent_and_does_not_guess_bili_copy_provenance() {

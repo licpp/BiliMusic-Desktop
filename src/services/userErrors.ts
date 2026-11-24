@@ -1,3 +1,5 @@
+import { biliPauseMessage, biliRequestPause } from './biliRequestStatus'
+
 function rawMessage(error: unknown) {
   if (typeof error === 'string') return error.trim()
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message.trim()
@@ -9,6 +11,8 @@ export function isConnectionError(error: unknown) {
 }
 
 export function commandErrorMessage(error: unknown, fallback = '请求失败，请稍后重试'): string {
+  const pause = biliRequestPause(error)
+  if (pause) return biliPauseMessage(pause)
   const message = rawMessage(error)
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   if (code === 'database_error') return '无法读取或保存本机数据，请重试'
@@ -48,3 +52,6 @@ export function syncErrorMessage(error: unknown): string {
   const reason = reasons[status] || (status.startsWith('3') ? '同步地址发生重定向，请检查 WebDAV 服务器地址' : '同步服务器返回异常响应，请稍后重试或反馈此状态码')
   return `${operation ? `${operation}失败：` : ''}${reason}（HTTP ${status}）`
 }
+
+export const isExpiredPlaybackSource = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'source_expired'

@@ -1,13 +1,15 @@
+import { audioDiagnosticEngine, startDiagnosticTrace, type DiagnosticDetails } from '../../services/diagnostics'
 import { listVisibilityOrigins, entryAllowed, orderedQueueTarget, visibleCheckpoint, packQueueBase,unpackQueueBase,type VisibilityOrigin } from '../../domain/contentVisibility'
 import { ensureVisibility, useContentVisibility } from '../../services/contentVisibility'
 import { ShuffleDeck, type ShuffleState } from '../../domain/shuffle'
+import { indexOfflineTracks, isOfflineVideoRow, offlineEntries, useOfflinePlayback, waitForOfflineLibrary } from './offlinePlayback'
 import { useLoudnessSettings } from '../../services/loudness'
 import { createOutputGain, outputVolume, safeGainDb } from './outputGain'
 import { withTrackTitle } from '../../domain/sourceTitle'
 import { sourceTrack } from '../../domain/importedPresentation'
 import { syncOHOSQueue } from './ohosAudio'
 import { createOperationScope } from './operationScope'
-import { prepareAudioSource } from './sourceSwitch'
+import { alignAudioSource, prepareAudioSource } from './sourceSwitch'
 import { accountEpoch, advanceAccountEpoch } from '../../services/accountScope'
 import { isMobile, isIOS, isAndroid, isOHOS } from '../../services/platform'
 import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobileAudio, controlMobileAudio, snapshotMobileAudio, mobilePlaybackClock } from './mobileAudio'
@@ -24,18 +26,18 @@ import { toTrack } from '../../services/collectionTrack'
 import { playbackPositionScope, readPlaybackPosition, usablePlaybackPosition, writePlaybackPosition } from './playbackPosition'
 import { automaticResumePolicy, automaticResumePosition, isCollectionPlayback, normalizeResumeThreshold, type ResumeThreshold } from './resumePolicy'
 import { preparePlaybackStart } from './playbackStart'
-import { moveQueueTracks } from './queueGroups'
+import { moveQueueTracks, reorderQueueTracks, type QueueReorderScope } from './queueGroups'
 import { replaceSeasonEntry } from './seasonQueue'
-import { commandErrorMessage, isConnectionError } from '../../services/userErrors'
+import { isExpiredPlaybackSource, isConnectionError } from '../../services/userErrors'
+import { playbackDiagnosticStep, playbackIssue, type PlaybackIssue } from './playbackIssue'
 import { demoTracks } from '../library/demoTracks'
+import { createDesktopSleepTimer, noSleep, type SleepState } from './desktopSleepTimer'
 
 export type PlaybackStatus = 'idle' | 'resolving' | 'buffering' | 'playing' | 'paused' | 'error'
 export const playbackRates = [0.75, 1, 1.25, 1.5, 1.75, 2] as const
 export type RepeatMode = 'off' | 'all' | 'one'
-type SleepState = { deadline: number; duration: number; expired: boolean }
-const noSleep = { deadline: 0, duration: 0, expired: false }
-export type QueueSource = { visibilityManaged?: boolean; entryOrder?:string[]; entryOrigins?: Record<string, VisibilityOrigin[]>; creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
-type PlayerState = { queueBase?: Track[]; queueOrigins?: Record<string,VisibilityOrigin[]>; shuffleState?: ShuffleState; queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: string | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number, originPlayback?: boolean) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
+export type QueueSource = { origin?: 'linked-favorite'; offlineOnly?: boolean; visibilityManaged?: boolean; entryOrder?:string[]; entryOrigins?: Record<string, VisibilityOrigin[]>; creatorKeyword?: string; creatorMid?: number; creatorPage?: number; creatorTotal?: number; kind: 'video' | 'season'; title: string; collectionRef?: string }
+type PlayerState = { queueBase?: Track[]; queueOrigins?: Record<string,VisibilityOrigin[]>; shuffleState?: ShuffleState; queueSource?: QueueSource; queueFeedback?: { serial: number; title?: string }; sleep: SleepState; current: Track | null; queue: Track[]; status: PlaybackStatus; error: PlaybackIssue | null; queueOpen: boolean; queueReversed: boolean; reverseQueue: () => void; progressSeconds: number; durationSeconds: number; volume: number; rate: number; resumeThresholdSeconds: ResumeThreshold; setResumeThreshold: (threshold: ResumeThreshold) => void; setRate: (rate: number) => Promise<void>; shuffled: boolean; repeatMode: RepeatMode; play: (track: Track, startAt?: number, refreshing?: boolean, checkpointAt?: number, originPlayback?: boolean, expired?: ReadonlySet<string>) => Promise<void>; playAll: (tracks: Track[]) => Promise<void>; playFromList: (tracks: Track[], trackId: string, source?: QueueSource, startAt?: number, resumeCheckpoint?: boolean) => Promise<void>; enqueue: (tracks: Track[]) => void; removeFromQueue: (id: string) => void; removeQueueRows: (ids: string[]) => void; moveQueueRows: (ids: string[], direction: -1 | 1, byVideo: boolean) => void; reorderQueueRows: (sourceIds: string[], targetIds: string[], position: 'before' | 'after', scope: QueueReorderScope) => void; clearQueue: () => void; moveInQueue: (id: string, direction: -1 | 1) => void; toggle: () => Promise<void>; toggleQueue: () => void; next: (fromEnded?: boolean) => Promise<void>; previous: () => Promise<void>; seek: (seconds: number) => void; setVolume: (volume: number) => void; toggleShuffle: () => void; cycleRepeat: () => void; cyclePlaybackMode: () => void; updateTrack: (track: Track) => void }
 
 let shuffleDeck = new ShuffleDeck()
 const shuffleItems = (tracks: Track[]) => tracks.map(track => ({ id:track.id, artist:track.artist ?? '', bvid:track.source.bvid }))
@@ -63,12 +65,33 @@ export async function applyLoudnessSetting() {
 }
 const controlScope = createOperationScope()
 let playRequest = 0
+let logicalPlaybackVersion = 0
+export const logicalPlaybackIdentity = () => `${logicalPlaybackVersion}:${isMobile ? nativeSession || '' : ''}`
+let playbackTrace: { id: string; trace: ReturnType<typeof startDiagnosticTrace>; firstData: boolean } | undefined
+function trackDiagnosticDetails(track: Track, source?: QueueSource): DiagnosticDetails {
+  return {
+    bvid: track.source.bvid, cid: track.source.cid, engine: audioDiagnosticEngine(),
+    origin: track.importedEntry ? 'imported' : source?.origin === 'linked-favorite' ? 'linked-favorite' :
+      source?.kind === 'season' ? 'collection' : source ? 'playlist' : undefined,
+  }
+}
+
+function diagnosticTrace(track: Track, source?: QueueSource) {
+  if (playbackTrace?.id !== track.id || !playbackTrace.trace.valid) {
+    playbackTrace = { id: track.id, trace: startDiagnosticTrace('playback', trackDiagnosticDetails(track, source)), firstData: false }
+  }
+  return playbackTrace.trace
+}
+
+let sleepPauseRevision = 0
 let requestedStartAt: number | undefined
 let initialPositionPending = false
 let sourceSwitchRequest = 0
 let pendingDesktopUpgrade: { url: string; startAt: number; request: number; qualityIntent: number } | undefined
 let desktopSeekRevision=0
+let unloadedDesktopSeek: { trackId: string; seconds: number } | undefined
 let loadedTrackId: string | null = null
+let androidDetachedPosition: { request: number; trackId: string; seconds: number } | undefined
 let queueIntent = 0
 let loadedCollectionRef: string | undefined
 let recoveryAttempted = false
@@ -103,6 +126,8 @@ function recoverPlayback(error: unknown) {
   const transportFailure=isConnectionError(error) || /timed?\s*out|timeout|缓冲超时|缓冲停滞|音频准备超时|音源已更新|请联网|音频(?:加载|播放|流加载).*失败|音频无法播放|片段.*(?:变化|更新|中断|不完整)|\b(?:403|410)\b/i.test(message)
   if (!transportFailure || recoveryAttempted || !state.current || state.current.source.provider !== 'bilibili') return false
   recoveryAttempted = true
+  const issue = playbackIssue('audio-playback', error, '')
+  diagnosticTrace(state.current, state.queueSource).emit('recovery', 'started', { initialCode: issue.code })
   const position = state.status === 'resolving' || initialPositionPending ? requestedStartAt :
     usablePlaybackPosition(state.progressSeconds, state.durationSeconds)
   void state.play(state.current, position, true)
@@ -110,6 +135,12 @@ function recoverPlayback(error: unknown) {
 }
 
 export async function resolveSeasonEntry(entry: Track) {
+  if (useOfflinePlayback.getState().offline) {
+    const epoch = accountEpoch()
+    await waitForOfflineLibrary()
+    if (epoch !== accountEpoch()) return []
+    if (useOfflinePlayback.getState().offline) return offlineEntries(entry)
+  }
   const bvid = entry.source.bvid
   const video = entry.source.aid
     ? videoDetailFromTrack(entry, await getVideoPages(bvid))
@@ -152,10 +183,31 @@ export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Tra
   switchCollectionContext(collectionRef)
 }
 
+async function resumeAndroidPlayback(track: Track, valid: () => boolean, position: number | undefined) {
+  usePlayerStore.setState({ status: 'buffering', error: null })
+  try {
+    await controlMobileAudio('resume')
+  } catch (error) {
+    if (!valid() || usePlayerStore.getState().status === 'playing') return
+    const issue = playbackIssue('audio-control', error, '恢复播放失败')
+    if (issue.code === 'native_not_ready') {
+      loadedTrackId = null
+      await usePlayerStore.getState().play(track, position, false, undefined, true)
+    } else {
+      usePlayerStore.setState({ status: 'paused', error: issue })
+    }
+  }
+}
+
 async function ensurePlaying() {
   const state = usePlayerStore.getState()
   if (!state.current || state.status !== 'paused') return
+  if (!isMobile) desktopSleep.dismiss()
   const valid = controlScope.begin('transport')
+  if (isAndroid) {
+    await resumeAndroidPlayback(state.current, valid, initialPositionPending ? requestedStartAt : state.progressSeconds)
+    return
+  }
   usePlayerStore.setState({ status: 'playing', error: null })
   try {
     if (isMobile) await controlMobileAudio('resume')
@@ -163,7 +215,7 @@ async function ensurePlaying() {
   } catch (error) {
     if (!valid()) return
     const snapshot = isMobile ? await snapshotMobileAudio().catch(() => null) : null
-    if (valid()) usePlayerStore.setState({ status: snapshot?.id === state.current.id ? snapshot.status as PlaybackStatus : 'paused', error: commandErrorMessage(error, '恢复播放失败') })
+    if (valid()) usePlayerStore.setState({ status: snapshot?.id === state.current.id ? snapshot.status as PlaybackStatus : 'paused', error: playbackIssue('audio-control', error, '恢复播放失败') })
   }
 }
 
@@ -173,12 +225,15 @@ export function resetPlayerForAccount() {
   flushPosition()
   controlScope.invalidate()
   advanceAccountEpoch()
+  playbackTrace = undefined
   ++queueIntent; ++playRequest;
   loadedTrackId = null
+  unloadedDesktopSeek = undefined
   initialPositionPending = false
   loadedCollectionRef = undefined
   nativeHistorySession = undefined
   recoveryAttempted = false
+  if (!isMobile) desktopSleep.cancel()
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
   usePlayerStore.setState({ shuffleState:undefined, sleep: noSleep, current: null, queue: [],queueBase:[],queueOrigins:{}, queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
   flushPlayerSnapshot()
@@ -219,22 +274,31 @@ function bindAudioEvents(element:HTMLAudioElement) {
       stallTimer = undefined
       if (id && id === loadedTrackId && usePlayerStore.getState().status === 'buffering' &&
           (audio?.currentTime || 0) < position + .1) {
-        if (!recoverPlayback('Network error')) usePlayerStore.setState({ status: 'error', error: '音频缓冲停滞，请重新播放' })
+        if (!recoverPlayback('Network error')) usePlayerStore.setState({ status: 'error', error: playbackIssue('audio-buffer', null, '音频缓冲停滞，请重新播放', 'audio_stalled') })
       }
     }, 12000)
   })
   for (const event of ['playing', 'pause', 'emptied', 'error', 'ended']) element.addEventListener(event, clearStall)
   on('waiting', () => usePlayerStore.setState({ status: 'buffering' }))
+  on('loadeddata', () => {
+    const trace = playbackTrace
+    if (trace?.id === loadedTrackId && !trace.firstData) {
+      trace.firstData = true
+      trace.trace.emit('media-ready', 'succeeded')
+    }
+  })
   on('playing', () => usePlayerStore.setState({ status: 'playing', error: null }))
   on('pause', () => { if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }) })
-  on('timeupdate', () => { usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }); maybeUpgradeDesktop() })
+  on('timeupdate', () => { usePlayerStore.setState({ progressSeconds: audio?.currentTime || 0 }); if (!desktopSleep.check()) maybeUpgradeDesktop() })
   on('seeked', () => flushPosition(true))
   on('durationchange', () => { if (Number.isFinite(audio?.duration)) usePlayerStore.setState({ durationSeconds: audio?.duration || 0 }) })
   on('ended', () => void usePlayerStore.getState().next(true))
   on('error', () => {
     if (loadedTrackId !== usePlayerStore.getState().current?.id) return
-    if (audio?.error?.code === 2 && recoverPlayback('Network error')) return
-    usePlayerStore.setState({ status: 'error', error: '音频流加载失败，请重试' })
+    if (audio?.error?.code === 2 && recoverPlayback({ code: 'html_media:2', message: 'Network error' })) return
+    const mediaCode = audio?.error?.code
+    usePlayerStore.setState({ status: 'error', error: playbackIssue(mediaCode === 3 ? 'audio-decode' : 'audio-playback',
+      null, mediaCode === 3 ? '音频解码失败，请尝试更换音质' : '音频流加载失败，请重试', `html_media:${mediaCode}`) })
   })
 }
 function playerAudio() {
@@ -243,19 +307,33 @@ function playerAudio() {
 }
 
 export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
-  sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: .7, rate: 1, resumeThresholdSeconds: 0, setResumeThreshold: value => set({ resumeThresholdSeconds: normalizeResumeThreshold(value) }), shuffled: false, repeatMode: 'off',
-  play: async (track, startAt, refreshing = false, checkpointAt, originPlayback = false) => {
+  sleep: noSleep, current: inDesktopShell ? null : demoTracks[1], queue: inDesktopShell ? [] : demoTracks, status: 'paused', error: null, queueOpen: false, queueReversed: false, progressSeconds: 0, durationSeconds: inDesktopShell ? 0 : demoTracks[1].durationSeconds, volume: isMobile ? 1 : .7, rate: 1, resumeThresholdSeconds: 0, setResumeThreshold: value => set({ resumeThresholdSeconds: normalizeResumeThreshold(value) }), shuffled: false, repeatMode: 'off',
+  play: async (track, startAt, refreshing = false, checkpointAt, originPlayback = false, expired) => {
     track = withTrackTitle(track)
     if (accountResetting) return
-    const visibilityEpoch=accountEpoch()
+    if (!isMobile && desktopSleep.check()) return
+    const visibilityEpoch=accountEpoch(), sleepRevision = sleepPauseRevision
     if(!useContentVisibility.getState().session) await ensureVisibility()
-    if (accountResetting || visibilityEpoch!==accountEpoch()) return
+    if (accountResetting || visibilityEpoch!==accountEpoch() || sleepRevision !== sleepPauseRevision) return
+    const offlineRequest = playRequest
+    if (useOfflinePlayback.getState().offline) {
+      await waitForOfflineLibrary()
+      if (visibilityEpoch !== accountEpoch() || offlineRequest !== playRequest || sleepRevision !== sleepPauseRevision) return
+      const local = offlineEntries(track).find(part => entryAllowed(part, queueTrackOrigins(get(), track), useContentVisibility.getState().rules))
+      if (!local) return
+      track = local
+    }
     if (!originPlayback && !refreshing) set(state=>({queueOrigins:{...state.queueOrigins,[track.id]:['']}}))
-    const eligible = (candidate:Track) => entryAllowed(candidate,get().queueOrigins?.[candidate.id] ?? [''],useContentVisibility.getState().rules)
+    const eligible = (candidate:Track) => entryAllowed(candidate, queueTrackOrigins(get(), candidate), useContentVisibility.getState().rules)
     if (!refreshing && !eligible(track)) { await get().next(); return }
     const previous = get()
+    if (!isMobile && previous.sleep.expired) desktopSleep.dismiss()
+    if (!isMobile && !refreshing && startAt === undefined && checkpointAt === undefined && unloadedDesktopSeek?.trackId === track.id) {
+      startAt = unloadedDesktopSeek.seconds
+    }
+    unloadedDesktopSeek = undefined
     if (!refreshing && startAt === undefined && checkpointAt === undefined && track.id === previous.current?.id && loadedTrackId === track.id && previous.status !== 'error') { await ensurePlaying(); return }
-    if (!refreshing) { recoveryAttempted = false; controlScope.invalidate() }
+    if (!refreshing) { recoveryAttempted = false; controlScope.invalidate(); ++logicalPlaybackVersion }
     const request = ++playRequest, qualityIntent = sourceSwitchRequest, seekRevision = desktopSeekRevision
     requestedStartAt = startAt
     pendingDesktopUpgrade = undefined
@@ -267,8 +345,14 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     initialPositionPending = false
     if (!isMobile) positionScope = playbackPositionScope()
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
+    if (!refreshing) playbackTrace = undefined
+    const trace = diagnosticTrace(track, previous.queueSource)
+    trace.update({ source: undefined, codec: undefined, requestedQuality: undefined, actualQuality: undefined })
+    trace.emit('resolve', 'started')
     set({ current: track, status: 'resolving', progressSeconds: 0, durationSeconds: track.durationSeconds, error: null, queueFeedback: undefined })
     if (!inDesktopShell) { set({ status: 'playing' }); return }
+    let stage: 'audio-source' | 'audio-start' = 'audio-source'
+    let recordingTrack = false
     try {
       if (track.resolveParts) {
         if (isMobile && previous.current) await controlMobileAudio('pause').catch(() => undefined)
@@ -280,26 +364,39 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
           const queueBase = replaceSeasonEntry(get().queueBase ?? get().queue,track.id,parts)
           const visible = parts.filter(part=>entryAllowed(part,origins,useContentVisibility.getState().rules))
           set({queueOrigins,queueBase,queue:replaceSeasonEntry(get().queue,track.id,visible,true)})
-          if (!visible.length) { await get().next(); return }
+          if (!visible.length) { trace.emit('resolve', 'skipped'); await get().next(); return }
           track = visible[0]
+          trace.update(trackDiagnosticDetails(track, previous.queueSource))
+          if (playbackTrace?.trace === trace) playbackTrace.id = track.id
           set({ current: track, durationSeconds: track.durationSeconds })
         } else if (track.source.cid <= 0) {
           throw new Error('无法读取合集中的这个视频')
         }
       }
+      trace.emit('resolve', 'succeeded')
+      recordingTrack = true
+      trace.emit('track-record', 'started')
       const [recordedTrack, , resumeAt] = await Promise.all([
         recordPlayedTrack(track),
         isMobile ? prepareMobileAudio(track) : Promise.resolve(),
         startAt ?? checkpointAt ?? positionWrite.then(() => readPlaybackPosition(track.id)),
       ])
       if (request !== playRequest) return
+      recordingTrack = false
+      trace.emit('track-record', 'succeeded')
+      trace.emit('source', 'started')
       const storedTrack = { ...track, ...recordedTrack }
       const queue = get().queue.some((item) => item.id === storedTrack.id) ? get().queue.map((item) => item.id === storedTrack.id ? storedTrack : item) : [...get().queue, storedTrack]
       let resumePolicy = startAt === undefined ? automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, isCollectionPlayback(track, get().queue, get().queueSource)) : undefined
       let position = Number.isFinite(resumeAt) ? Math.max(0, resumeAt) : 0
-      set({ current: storedTrack, queue, queueBase:uniqueTracks([...(get().queueBase??queue).map(item=>item.id===storedTrack.id?storedTrack:item),storedTrack]), durationSeconds: storedTrack.durationSeconds, progressSeconds: desktopSeekRevision !== seekRevision ? get().progressSeconds : 0 })
+      const base = get().queueBase ?? queue
+      const offline = useOfflinePlayback.getState().offline
+      const representedByVideo = offline && base.some(item => isOfflineVideoRow(item) && item.source.bvid === storedTrack.source.bvid)
+      const updatedBase = base.map(item => item.id === storedTrack.id && !(offline && isOfflineVideoRow(item)) ? storedTrack : item)
+      const queueBase = uniqueTracks(representedByVideo ? updatedBase : [...updatedBase, storedTrack])
+      set({ current: storedTrack, queue, queueBase, durationSeconds: storedTrack.durationSeconds, progressSeconds: desktopSeekRevision !== seekRevision ? get().progressSeconds : 0 })
       const [plan] = await Promise.all([
-        getTrackPlaybackPlan(storedTrack, refreshing || previous.status === 'error'),
+        getTrackPlaybackPlan(storedTrack, refreshing || previous.status === 'error', false, useOfflinePlayback.getState().offline),
         isMobile ? ensureNativeReady().then(async () => {
           if (!isMobile || request !== playRequest) return
           const state = get()
@@ -312,10 +409,14 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (resumePolicy) resumePolicy = automaticResumePolicy(get().resumeThresholdSeconds, storedTrack.durationSeconds, resumePolicy.collection)
       if (desktopSeekRevision !== seekRevision) { position = get().progressSeconds; resumePolicy = undefined }
       loadedCollectionRef = get().queueSource?.collectionRef
+      stage = 'audio-start'
+      trace.update({ source: plan.source, codec: plan.codec, requestedQuality: plan.requestedQuality, actualQuality: plan.actualQuality })
+      trace.emit('source', 'succeeded')
+      trace.emit('start', 'started')
       if (isMobile) {
         loadedTrackId = storedTrack.id
         initialPositionPending = position > 0
-        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy, plan.loudnessGainDb)
+        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy, plan.loudnessGainDb, trace.operation)
         return
       }
       const element = playerAudio()
@@ -331,30 +432,71 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       await element.play()
     } catch (error) {
       if (request !== playRequest) return
+      const issue = playbackIssue(stage, error, '暂时无法播放这首歌，请重试')
+      if (recordingTrack) trace.emit('track-record', 'failed', { code: issue.code })
+      if (isExpiredPlaybackSource(error)) {
+        trace.emit('source', 'skipped', { code: 'source_expired' })
+        const rejected = new Set(expired)
+        rejected.add(track.id)
+        rejected.add(track.source.bvid)
+        const { queue, shuffled, repeatMode, queueBase } = get()
+        const remaining = queue.filter(item => !rejected.has(item.id) && !rejected.has(item.source.bvid))
+        const order = queueEntryOrder(queueBase ?? queue)
+        const id = shuffled
+          ? shuffleDeck.target(shuffleItems(remaining), track.id, 1)
+          : orderedQueueTarget(order, remaining.map(item => item.id), track.id, 1, repeatMode !== 'off')
+        const next = remaining.find(item => item.id === id)
+        if (next) {
+          if (shuffled) set({ shuffleState: shuffleDeck.snapshot() })
+          await get().play(next, undefined, false, undefined, true, rejected)
+          return
+        }
+        if (isMobile) await controlMobileAudio('pause').catch(() => undefined)
+        if (request === playRequest) set({ status: 'error', error: playbackIssue('audio-source', error, 'B 站视频已失效') })
+        return
+      }
+      if (useOfflinePlayback.getState().offline && typeof error === 'object' && error !== null &&
+          'code' in error && error.code === 'offline_unavailable') {
+        useOfflinePlayback.setState(state => ({
+          library: state.library ? indexOfflineTracks([...state.library.byId.values()].filter(item => item.id !== track.id)) : null,
+        }))
+        await get().next(true)
+        return
+      }
       if (isMobile) {
         const action = get().sleep.deadline ? 'pause' : 'stop'
         await controlMobileAudio(action).catch(() => undefined)
         if (request !== playRequest) return
       }
-      if (!recoverPlayback(error)) set({ status: 'error', error: commandErrorMessage(error, '暂时无法播放这首歌，请重试') })
+      if (!recoverPlayback(error)) set({ status: 'error', error: issue })
     }
   },
   playFromList: async (tracks, trackId, queueSource, startAt, resumeCheckpoint = false) => {
     if (accountResetting) return
-    const visibilityEpoch=accountEpoch()
+    if (!isMobile && desktopSleep.check()) return
+    const visibilityEpoch=accountEpoch(), sleepRevision = sleepPauseRevision
     if(!useContentVisibility.getState().session) await ensureVisibility()
-    if (accountResetting || visibilityEpoch!==accountEpoch()) return
+    if (accountResetting || visibilityEpoch!==accountEpoch() || sleepRevision !== sleepPauseRevision) return
+    const offlineIntent = queueIntent
+    if (useOfflinePlayback.getState().offline) {
+      await waitForOfflineLibrary()
+      if (visibilityEpoch !== accountEpoch() || sleepRevision !== sleepPauseRevision || offlineIntent !== queueIntent) return
+    }
     const queueBase = uniqueTracks(tracks)
-    if(!queueBase.some(t=>t.id===trackId))return
     const origins = (track:Track) => listVisibilityOrigins(track, queueSource)
     const queueOrigins = Object.fromEntries(queueBase.map(track=>[track.id,origins(track)]))
-    const queue = queueBase.filter(track=>entryAllowed(track,origins(track),useContentVisibility.getState().rules))
-    const choice = visibleCheckpoint(queueBase,trackId,track=>entryAllowed(track,origins(track),useContentVisibility.getState().rules))
-    const selected = choice.track
+    const rules = useContentVisibility.getState().rules
+    const queue = projectQueue(queueBase, queueOrigins, rules)
+    const allowed = (track: Track) => offlineEntries(track).filter(part => canQueueTrack(part) && entryAllowed(part, origins(track), rules))
+    const exactLocal = useOfflinePlayback.getState().offline ? queue.find(track => track.id === trackId) : undefined
+    const entry = queueBase.find(track => track.id === trackId)
+    if (!entry && !exactLocal) return
+    const choice = entry && visibleCheckpoint(queueBase, trackId, track => allowed(track).length > 0).track
+    const selected = exactLocal ?? (choice && allowed(choice)[0])
     if (!selected) return
     // A rule can arrive between preparing a resume command and replacing the queue.
     // The replacement song must never inherit the hidden checkpoint's timestamp.
-    if (!choice.same) { startAt=0; resumeCheckpoint=false }
+    if (selected.id !== trackId) { startAt=0; resumeCheckpoint=false }
     ++queueIntent
     const { current, status, queue: oldQueue, queueSource: oldSource } = get()
     const keepPlaying = selected.id === current?.id && status !== 'error' && (loadedTrackId === current.id || status === 'resolving')
@@ -376,7 +518,14 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     }
   },
   playAll: async (tracks) => { if (tracks[0]) await get().playFromList(tracks, tracks[0].id) },
-  enqueue: (tracks) => { ++queueIntent; set(state=>({queue:uniqueTracks([...state.queue,...tracks]),queueBase:uniqueTracks([...(state.queueBase??state.queue),...tracks]),queueOrigins:{...state.queueOrigins,...Object.fromEntries(tracks.map(t=>[t.id,['']]))}})) },
+  enqueue: (tracks) => {
+    ++queueIntent
+    set(state => {
+      const queueBase = uniqueTracks([...(state.queueBase ?? state.queue), ...tracks])
+      const queueOrigins = {...state.queueOrigins, ...Object.fromEntries(tracks.map(track => [track.id, ['']]))}
+      return { queue: projectQueue(queueBase, queueOrigins, useContentVisibility.getState().rules), queueBase, queueOrigins }
+    })
+  },
   removeFromQueue: (id) => get().removeQueueRows([id]),
   removeQueueRows: (ids) => {
     ++queueIntent
@@ -385,15 +534,24 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   },
   moveQueueRows: (ids, direction, byVideo) => {
     ++queueIntent
-    set(state=>{const queue=moveQueueTracks(state.queue,ids,direction,byVideo);return {queue,queueBase:reorderVisibleBase(state.queueBase??state.queue,queue)}})
+    set(state=>{const queue=moveQueueTracks(state.queue,ids,direction,byVideo);return {queue,queueBase:reorderVisibleBase(state,queue)}})
+  },
+  reorderQueueRows: (sourceIds, targetIds, position, scope) => {
+    const state = get()
+    const queue = reorderQueueTracks(state.queue, sourceIds, targetIds, position, scope, state.queueSource?.kind)
+    if (queue === state.queue) return
+    ++queueIntent
+    set({ queue, queueBase: reorderVisibleBase(state, queue) })
   },
   clearQueue: () => { ++queueIntent; switchCollectionContext(); set({ queue: [], queueBase:[],queueOrigins:{},queueReversed: false, queueSource: undefined }) },
   reverseQueue: () => { ++queueIntent; set(state=>({queue:[...state.queue].reverse(),queueBase:[...(state.queueBase??state.queue)].reverse(),queueReversed:!state.queueReversed})) },
-  moveInQueue: (id, direction) => { ++queueIntent; set(state => { const next = [...state.queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next,queueBase:reorderVisibleBase(state.queueBase??state.queue,next) } }) },
+  moveInQueue: (id, direction) => { ++queueIntent; set(state => { const next = [...state.queue]; const index = next.findIndex((track) => track.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= next.length) return {}; [next[index], next[target]] = [next[target], next[index]]; return { queue: next,queueBase:reorderVisibleBase(state,next) } }) },
   toggle: async () => {
+    if (!isMobile && desktopSleep.check()) return
     const { current, status } = get(); if (!current) return
+    if (!isMobile && (status === 'paused' || status === 'error')) desktopSleep.dismiss()
     const valid = controlScope.begin('transport')
-    const failed = (error: unknown) => { if (valid()) set({ error: commandErrorMessage(error, '无法控制播放，请重试') }) }
+    const failed = (error: unknown) => { if (valid()) set({ error: playbackIssue('audio-control', error, '无法控制播放，请重试') }) }
     // A newly opened player reads the same database checkpoint as selecting a
     // song. Only recovery of an interrupted attempt uses the live position.
     const resumeAt = () => status === 'error' ? initialPositionPending || loadedTrackId !== current.id ? requestedStartAt : Math.max(0, get().progressSeconds) : undefined
@@ -408,6 +566,10 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       }
       if (loadedTrackId === current.id && status !== 'error') {
         const pausing = status === 'playing' || status === 'buffering'
+        if (isAndroid && !pausing) {
+          await resumeAndroidPlayback(current, valid, initialPositionPending ? requestedStartAt : get().progressSeconds)
+          return
+        }
         set({ status: pausing ? 'paused' : 'playing' })
         try {
           await controlMobileAudio(pausing ? 'pause' : 'resume')
@@ -417,7 +579,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
           if (!valid()) return
           const snapshot = await snapshotMobileAudio().catch(() => null)
           if (!valid()) return
-          set({ status: snapshot?.id === current.id ? snapshot.status as PlaybackStatus : status, error: commandErrorMessage(error, '无法控制播放，请重试') })
+          set({ status: snapshot?.id === current.id ? snapshot.status as PlaybackStatus : status, error: playbackIssue('audio-control', error, '无法控制播放，请重试') })
         }
         return
       }
@@ -426,27 +588,34 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (!nativeState.id || nativeState.stopped) loadedTrackId = null
       if (nativeState.id === current.id && !nativeState.stopped && status !== 'error') {
         const pausing = nativeState.status === 'playing' || nativeState.status === 'buffering'
+        if (isAndroid && !pausing) {
+          await resumeAndroidPlayback(current, valid, nativeState.position)
+          return
+        }
         set({ status: pausing ? 'paused' : 'playing' })
         await controlMobileAudio(pausing ? 'pause' : 'resume').catch(failed)
+      } else if (isAndroid && androidDetachedPosition?.request === playRequest && androidDetachedPosition.trackId === current.id) {
+        await get().play(current, androidDetachedPosition.seconds, false, undefined, true)
       } else await get().play(current, resumeAt())
       return
     }
     const element = playerAudio()
     if (status === 'resolving') { ++playRequest; loadedTrackId = null; initialPositionPending = false; element.pause(); set({ status: 'paused' }); return }
     if (status === 'playing' || status === 'buffering') element.pause()
-    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => { if (valid()) set({ status: 'error', error: '恢复播放失败' }) })
+    else if (loadedTrackId === current.id && element.src && status !== 'error') await element.play().catch(() => { if (valid()) set({ status: 'error', error: playbackIssue('audio-control', null, '恢复播放失败') }) })
     else await get().play(current, resumeAt())
   },
   toggleQueue: () => set(({ queueOpen }) => ({ queueOpen: !queueOpen })),
   next: async (fromEnded = false) => {
     if (accountResetting) return
+    if (!isMobile && (desktopSleep.check() || fromEnded && get().sleep.expired)) return
     if (isMobile && nativeAutonomousQueue && !fromEnded) { await nativeTransport('next'); return }
     const { current, queue, shuffled, repeatMode } = get()
     if (fromEnded) { savePosition(current, 0, 0); loadedTrackId = null }
     if (fromEnded && repeatMode === 'one' && current && queue.some(t=>t.id===current.id)) { await get().play(current, 0,false,undefined,true); return }
     if (!queue.length) { set({ status:'paused' }); return }
     if (fromEnded && !shuffled && repeatMode === 'off' && current?.id === queue[queue.length-1]?.id) { set({ status:'paused' }); return }
-    const id = shuffled ? shuffleDeck.target(shuffleItems(queue), current?.id ?? '', 1) : orderedQueueTarget((get().queueBase??queue).map(t=>t.id),queue.map(t=>t.id),current?.id??'',1,!fromEnded || repeatMode==='all')
+    const id = shuffled ? shuffleDeck.target(shuffleItems(queue), current?.id ?? '', 1) : orderedQueueTarget(queueEntryOrder(get().queueBase??queue),queue.map(t=>t.id),current?.id??'',1,!fromEnded || repeatMode==='all')
     const track = queue.find(item => item.id === id)
     if (shuffled) set({ shuffleState:shuffleDeck.snapshot() })
     if (track) await get().play(track, fromEnded && track.id === current?.id ? 0 : undefined,false,undefined,true)
@@ -456,16 +625,24 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     if (accountResetting) return
     if (isMobile && nativeAutonomousQueue) { await nativeTransport('previous'); return }
     const { current, queue, progressSeconds, shuffled } = get()
-    if (progressSeconds > 4) { get().seek(0); return }
+    if (progressSeconds > 4 && (isMobile || !queue.length)) { get().seek(0); return }
     if (!queue.length) return
-    const id = shuffled ? shuffleDeck.target(shuffleItems(queue),current?.id ?? '',-1) : orderedQueueTarget((get().queueBase??queue).map(t=>t.id),queue.map(t=>t.id),current?.id??'',-1,true)
+    const id = shuffled ? shuffleDeck.target(shuffleItems(queue),current?.id ?? '',-1) : orderedQueueTarget(queueEntryOrder(get().queueBase??queue),queue.map(t=>t.id),current?.id??'',-1,true)
     if (shuffled) set({ shuffleState:shuffleDeck.snapshot() })
     const track = queue.find(item => item.id === id)
+    if (progressSeconds > 4 && (!track || track.id === current?.id)) { get().seek(0); return }
     if (track) await get().play(track,undefined,false,undefined,true)
   },
   seek: (seconds) => {
     const valid = controlScope.begin('seek')
-    desktopSeekRevision+=1; const target = Math.max(0, Math.min(seconds, get().durationSeconds || seconds)); if (isMobile) void controlMobileAudio('seek', target).catch(error => { if (valid()) nativeError(error) }); else if (audio && loadedTrackId === get().current?.id) audio.currentTime = target; set({ progressSeconds: target }) },
+    const state = get()
+    desktopSeekRevision += 1
+    const target = Math.max(0, Math.min(seconds, state.durationSeconds || seconds))
+    if (isMobile) void controlMobileAudio('seek', target).catch(error => { if (valid()) nativeError(error) })
+    else if (audio && loadedTrackId === state.current?.id) audio.currentTime = target
+    else if (state.current && state.status !== 'resolving') unloadedDesktopSeek = { trackId: state.current.id, seconds: target }
+    set({ progressSeconds: target })
+  },
   setVolume: (volume) => { const valid = controlScope.begin('volume'); const normalized = Math.max(0, Math.min(1, volume)); if (isMobile) void controlMobileAudio('volume', normalized).catch(error => { if (valid()) nativeError(error) }); else { playerAudio(); set({ volume: normalized }); applyDesktopOutput(); return }; set({ volume: normalized }) },
   setRate: async rate => {
     if (!playbackRates.some(option => option === rate) || rate === get().rate) return
@@ -476,7 +653,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (isMobile && loadedTrackId) await controlMobileAudio('rate', rate)
       else if (audio) audio.playbackRate = rate
     } catch {
-      if (valid()) set({ rate: previous, error: '当前无法调整播放速度，请重试' })
+      if (valid()) set({ rate: previous, error: playbackIssue('audio-control', null, '当前无法调整播放速度，请重试') })
     }
   },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
@@ -488,6 +665,12 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   }),
 }), {
   name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage),
+  version: 2,
+  migrate: (persisted, version) => {
+    const saved = persisted as PlayerState
+    const oldDefault = isAndroid ? version < 1 : isMobile && version < 2
+    return oldDefault && saved.volume === .7 ? { ...saved, volume: 1 } : saved
+  },
   merge: (persisted, initial) => {
     const saved = persisted as Partial<PlayerState> & { autoResume?: boolean;queueOrder?:string[];hiddenQueueTracks?:Track[] }
     shuffleDeck = new ShuffleDeck(Math.random, saved.shuffleState)
@@ -509,9 +692,47 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
   partialize: ({ queueBase,queueOrigins,shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => {
     urgentSnapshot = queue !== snapshotQueue || current?.id !== snapshotCurrent
     snapshotQueue = queue; snapshotCurrent = current?.id
-    return { ...packQueueBase(queue,queueBase??queue),queueOrigins,shuffleState:isMobile ? undefined : shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }
+    const base = queueBase ?? queue
+    const storedQueue = useOfflinePlayback.getState().offline ? queueForOfflineSnapshot(queue, base) : queue
+    return { ...packQueueBase(storedQueue,base),queueOrigins,shuffleState:isMobile ? undefined : shuffleState, current, queue: storedQueue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }
   },
 }))
+
+const desktopSleep = createDesktopSleepTimer(
+  () => usePlayerStore.getState().sleep,
+  sleep => usePlayerStore.setState({ sleep }),
+  () => {
+    ++sleepPauseRevision
+    ++playRequest
+    pendingDesktopUpgrade = undefined
+    const state = usePlayerStore.getState()
+    if (state.status === 'resolving' || initialPositionPending) {
+      loadedTrackId = null
+      initialPositionPending = false
+    }
+    if (state.status === 'playing' || state.status === 'buffering' || state.status === 'resolving') {
+      controlScope.invalidate()
+      audio?.pause()
+      usePlayerStore.setState({ status: 'paused' })
+    }
+  },
+)
+
+if (!isMobile) {
+  window.addEventListener('focus', () => desktopSleep.check())
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => desktopSleep.check())
+}
+export async function controlDesktopSleep(action: 'sleepStart' | 'sleepCancel' | 'sleepDismiss' | 'sleepRepeat', seconds = 0) {
+  if (action === 'sleepCancel') desktopSleep.cancel()
+  else if (action === 'sleepDismiss') desktopSleep.dismiss()
+  else if (action === 'sleepStart') desktopSleep.start(seconds)
+  else {
+    const state = usePlayerStore.getState()
+    if (!state.sleep.expired || !state.sleep.duration) return
+    desktopSleep.start(state.sleep.duration)
+    if (state.current && state.status === 'paused') await state.toggle()
+  }
+}
 
 function flushPosition(notify = false) {
   const state = usePlayerStore.getState()
@@ -529,6 +750,19 @@ usePlayerStore.subscribe((state, previous) => {
   if ((!isMobile || !nativeAutonomousQueue) && state.shuffled && (state.queue !== previous.queue || state.current?.id !== previous.current?.id || !previous.shuffled)) {
     shuffleDeck.observe(shuffleItems(state.queue),state.current?.id ?? '')
     usePlayerStore.setState({ shuffleState:shuffleDeck.snapshot() })
+  }
+  if (inDesktopShell && state.current && (state.status !== previous.status || state.error !== previous.error)) {
+    const trace = diagnosticTrace(state.current, state.queueSource)
+    if (state.error && state.error !== previous.error) {
+      state.error.diagnostic = { ...trace.context, operation: trace.operation }
+      trace.emit(playbackDiagnosticStep(state.error), 'failed', { code: state.error.code, initialCode: state.error.initialCode })
+      if (recoveryAttempted) trace.emit('recovery', 'failed', { code: state.error.code, initialCode: state.error.initialCode })
+    } else if (state.status === 'buffering' && previous.status === 'playing') {
+      trace.emit('buffer', 'started')
+    } else if (state.status === 'playing' && previous.status !== 'playing') {
+      trace.emit(previous.status === 'buffering' ? 'buffer' : 'start', 'succeeded')
+      if (recoveryAttempted && previous.status !== 'paused') trace.emit('recovery', 'succeeded')
+    }
   }
   if (isMobile) return
   if (state.status === 'paused' && previous.status !== 'paused' && state.current?.id === previous.current?.id) flushPosition(true)
@@ -548,14 +782,18 @@ async function nativeTransport(action:'next'|'previous') {
     if(valid()) await controlMobileAudio(action)
   } catch(error) { if(valid()) nativeError(error) }
 }
-function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: commandErrorMessage(error, '播放器暂时不可用，请重试') }) }
+function nativeError(error: unknown) { usePlayerStore.setState({ status: 'error', error: playbackIssue('audio-control', error, '播放器暂时不可用，请重试') }) }
 let nativeHistorySession: string | undefined
 let nativeSession: string | undefined
+let nativeFailureKey: string | undefined
+let nativeLyricsScope: { id: string; session: string } | undefined
+export const nativeLyricPlaybackSession = (id: string) => nativeLyricsScope?.id === id ? nativeLyricsScope.session : undefined
 let floatingStyleRevision=0
 function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & IOSAudioState) {
   if (accountResetting) return
   nativeAutonomousQueue = state.capabilities?.autonomousQueue ?? state.autonomousQueue ?? false
-  const session = state.engineInstanceId && state.sessionId ? `${state.engineInstanceId}:${state.sessionId}` : undefined
+  const session = state.id && state.engineInstanceId && state.sessionId ? `${state.engineInstanceId}:${state.sessionId}` : undefined
+  if (!state.action) nativeLyricsScope = session && state.id ? { id: state.id, session } : undefined
   if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
   if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
@@ -591,18 +829,36 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
     }
   }
   if (state.action && state.id && state.id !== usePlayerStore.getState().current?.id) return
-  if (state.action === 'resume') { void usePlayerStore.getState().toggle(); return }
+  if (state.action === 'resume') {
+    const player = usePlayerStore.getState()
+    if (!isAndroid || player.status === 'paused' || player.status === 'error') void player.toggle()
+    return
+  }
   if (nativeAutonomousQueue && ['next','previous','ended'].includes(state.action ?? '')) return
   if (state.action === 'next') { void usePlayerStore.getState().next(); return }
   if (state.action === 'previous') { void usePlayerStore.getState().previous(); return }
   if (state.action === 'ended' && state.autonomousQueue) return
   if (state.action === 'ended') { void usePlayerStore.getState().next(true); return }
-  if (!state.id) { loadedTrackId = null; if (usePlayerStore.getState().status !== 'resolving') usePlayerStore.setState({ status: 'paused' }); return }
-  if (state.id !== usePlayerStore.getState().current?.id) return
+  if (!state.id) {
+    const player = usePlayerStore.getState()
+    if (isAndroid && state.stopped && player.current && loadedTrackId === player.current.id && !initialPositionPending && player.status !== 'error') {
+      androidDetachedPosition = { request: playRequest, trackId: player.current.id, seconds: player.progressSeconds }
+    }
+    nativeFailureKey = undefined
+    loadedTrackId = null
+    if (player.status !== 'resolving') usePlayerStore.setState({ status: 'paused' })
+    return
+  }
+  const current = usePlayerStore.getState().current
+  if (state.id !== current?.id) return
+  if (state.diagnosticId && playbackTrace?.trace.operation !== state.diagnosticId && (!state.stopped || state.status === 'error')) {
+    playbackTrace = { id: current.id, trace: startDiagnosticTrace('playback', trackDiagnosticDetails(current, usePlayerStore.getState().queueSource), state.diagnosticId), firstData: false }
+  }
   if (state.status === 'playing') initialPositionPending = false
   if (state.status === 'paused' && usePlayerStore.getState().status === 'resolving') ++playRequest
   loadedTrackId = state.stopped ? null : state.id
-  if (state.status === 'error' && state.error && !state.recoveryAttempted && !document.hidden && recoverPlayback(state.error)) return
+  if (isAndroid && loadedTrackId) androidDetachedPosition = undefined
+  if (state.status === 'error' && state.error && !state.recoveryAttempted && !document.hidden && recoverPlayback({ code: state.errorCode, message: state.error })) return
   if (!state.stopped && state.status === 'paused' && usePlayerStore.getState().status !== 'paused') {
     window.dispatchEvent(new Event('bilimusic-data-changed'))
   }
@@ -610,8 +866,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
     nativeHistorySession = session ?? state.id
     window.dispatchEvent(new Event('bilimusic-recent-changed'))
   }
+  let error: PlaybackIssue | null | undefined = null
+  if (state.error) {
+    const key = JSON.stringify([accountEpoch(), session, state.id, state.sourceRevision, state.errorCode, state.initialErrorCode, state.error])
+    error = key === nativeFailureKey ? undefined : playbackIssue('audio-playback', state.error, '音频流加载失败，请重试', state.errorCode, state.initialErrorCode)
+    nativeFailureKey = key
+  } else nativeFailureKey = undefined
   usePlayerStore.setState({ status: state.stopped && state.status === 'buffering' ? 'resolving' : state.status || 'paused', progressSeconds: state.position || 0,
-    ...(state.duration ? { durationSeconds: state.duration } : {}), error: state.error ? commandErrorMessage(state.error, '音频流加载失败，请重试') : null })
+    ...(state.duration ? { durationSeconds: state.duration } : {}), ...(error === undefined ? {} : { error }) })
 }
 let nativeReady: Promise<void> | undefined
 function ensureNativeReady() {
@@ -661,14 +923,67 @@ if (isMobile) window.setInterval(() => {
 }, 250)
 
 const nativeQueueWriter = isOHOS ? syncOHOSQueue : isIOS ? syncIOSQueue : syncAndroidQueue
-const syncNativeQueue: typeof nativeQueueWriter = (tracks,mode,shuffled,threshold,source) => nativeQueueWriter(tracks,mode,shuffled,threshold,{...source,kind:source?.kind??'video',title:source?.title??'',entryOrigins:usePlayerStore.getState().queueOrigins,entryOrder:(usePlayerStore.getState().queueBase??tracks).map(t=>t.id)})
-function reorderVisibleBase(base:Track[],queue:Track[]) { const ids=new Set(queue.map(t=>t.id));let i=0;return base.map(track=>ids.has(track.id)?queue[i++]:track) }
-function reprojectVisibility() {
+function queueTrackOrigins(state: PlayerState, track: Track): VisibilityOrigin[] {
+  if (state.queueOrigins?.[track.id]) return state.queueOrigins[track.id]
+  if (useOfflinePlayback.getState().offline) {
+    const parent = state.queueBase?.find(entry => isOfflineVideoRow(entry) && entry.source.bvid === track.source.bvid)
+    if (parent) return state.queueOrigins?.[parent.id] ?? ['']
+  }
+  return ['']
+}
+const queueEntryOrder = (base: Track[]) => [...new Set(base.flatMap(track => [track.id, ...offlineEntries(track).map(part => part.id)]))]
+const canQueueTrack = (track: Track) => !track.sourceExpired || useOfflinePlayback.getState().offline
+function visibleQueueParts(track: Track, origins: PlayerState['queueOrigins'], rules: ReturnType<typeof useContentVisibility.getState>['rules']) {
+  return offlineEntries(track).filter(part => canQueueTrack(part) && entryAllowed(part, origins?.[track.id] ?? [''], rules))
+}
+function projectQueue(base: Track[], origins: PlayerState['queueOrigins'], rules: ReturnType<typeof useContentVisibility.getState>['rules']) {
+  return uniqueTracks(base.flatMap(track => visibleQueueParts(track, origins, rules)))
+}
+const syncNativeQueue: typeof nativeQueueWriter = (tracks,mode,shuffled,threshold,source) => {
+  const state = usePlayerStore.getState()
+  const base = state.queueBase ?? tracks
+  const entryOrigins = { ...state.queueOrigins }
+  for (const track of base) for (const part of offlineEntries(track)) {
+    entryOrigins[part.id] ??= entryOrigins[track.id] ?? ['']
+  }
+  return nativeQueueWriter(tracks,mode,shuffled,threshold,{...source,kind:source?.kind??'video',title:source?.title??'',entryOrigins,entryOrder:queueEntryOrder(base),offlineOnly:useOfflinePlayback.getState().offline})
+}
+function reorderVisibleBase(state: PlayerState, queue: Track[]) {
+  const base = state.queueBase ?? state.queue
+  const owners = new Map<string, Track>()
+  const rules = useContentVisibility.getState().rules
+  // Offline parts can come from a single unresolved base row. Its first
+  // occurrence determines its position in the projection, and its original
+  // row must remain available for a later online expansion.
+  for (const track of base) {
+    for (const part of visibleQueueParts(track, state.queueOrigins, rules)) {
+      if (!owners.has(part.id)) owners.set(part.id, track)
+    }
+  }
+  const ordered = new Set(queue.flatMap(track => {
+    const owner = owners.get(track.id)
+    return owner ? [owner] : []
+  }))
+  const visibleSlots = ordered.values()
+  return base.map(track => ordered.has(track) ? visibleSlots.next().value! : track)
+}
+function queueForOfflineSnapshot(queue: Track[], base: Track[]) {
+  const baseById = new Map(base.map(track => [track.id, track]))
+  return queue.flatMap(track => {
+    const original = baseById.get(track.id)
+    // A downloaded first part may have the same ID as its unresolved video.
+    return original ? [isOfflineVideoRow(original) ? original : track] : []
+  })
+}
+function reprojectVisibility(offlineChanged = false) {
   const state = usePlayerStore.getState(), rules = useContentVisibility.getState().rules
   const base = state.queueBase ?? state.queue
-  const queue = base.filter(track=>entryAllowed(track,state.queueOrigins?.[track.id]??[''],rules))
-  if (queue.length!==state.queue.length || queue.some((track,i)=>track.id!==state.queue[i]?.id)) usePlayerStore.setState({queue})
+  const queue = projectQueue(base, state.queueOrigins, rules)
+  if (offlineChanged || queue.length!==state.queue.length || queue.some((track,i)=>track.id!==state.queue[i]?.id)) usePlayerStore.setState({queue})
 }
+useOfflinePlayback.subscribe((state, previous) => {
+  if (state.offline !== previous.offline || state.library !== previous.library) reprojectVisibility(state.offline !== previous.offline)
+})
 useContentVisibility.subscribe((state,previous)=>{if(state.rules!==previous.rules && state.session) reprojectVisibility()})
 if (isMobile) usePlayerStore.subscribe((state, previous) => {
   if (state.queue !== previous.queue || state.repeatMode !== previous.repeatMode || state.shuffled !== previous.shuffled || state.resumeThresholdSeconds !== previous.resumeThresholdSeconds || state.queueSource !== previous.queueSource) {
@@ -687,6 +1002,28 @@ if (isMobile) { nativeQueuePending = ensureNativeReady().then(() => {
   return syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
 });void nativeQueuePending.catch(error => console.warn('BiliMusic: initial queue update failed', error)) }
 
+// Start once per app launch, after the system player reports its existing session.
+export const launchPlaybackPreference = 'bilimusic-play-on-launch'
+let launchPlaybackChecked = false
+export async function startPlaybackOnLaunch() {
+  if (!inDesktopShell || launchPlaybackChecked) return
+  launchPlaybackChecked = true
+  if (localStorage.getItem(launchPlaybackPreference) !== 'true') return
+  const epoch = accountEpoch(), request = playRequest, intent = queueIntent
+  await Promise.all([ensureVisibility(), ensureNativeReady(), waitForOfflineLibrary()])
+  if (epoch !== accountEpoch() || request !== playRequest || intent !== queueIntent || accountResetting) return
+  const state = usePlayerStore.getState()
+  if (!state.current || state.status !== 'paused' || state.sleep.expired || state.sleep.deadline) return
+  const queue = state.queueBase ?? state.queue
+  const currentId = state.current.id
+  if (loadedTrackId === currentId) await ensurePlaying()
+  else if (queue.some(track => track.id === currentId)) {
+    await state.playFromList(queue, currentId, state.queueSource)
+  } else if (!queue.length) {
+    await state.play(state.current, undefined, false, undefined, true)
+  }
+}
+
 // Resolve first; leave the current audio playing if a new quality is unavailable.
 export async function reloadCurrentAudioSource() {
   const switchRequest=++sourceSwitchRequest
@@ -695,11 +1032,24 @@ export async function reloadCurrentAudioSource() {
   if (!track || loadedTrackId!==track.id) return
   const request=playRequest,seekRevision=desktopSeekRevision
   const valid=()=>request===playRequest&&seekRevision===desktopSeekRevision&&switchRequest===sourceSwitchRequest&&usePlayerStore.getState().current?.id===track.id
-  const plan=await getTrackPlaybackPlan(track,true,true)
-  const url=plan.url
-  if(!valid())return
-  if(isMobile){const state=usePlayerStore.getState();await playMobileAudio(track,url,playbackClock(),state.volume,state.status==='playing'||state.status==='buffering',loadedCollectionRef,state.rate,true,undefined,undefined,plan.loudnessGainDb);return}
-  await switchDesktopSource(url,valid,plan.loudnessGainDb)
+  const trace = startDiagnosticTrace('playback', trackDiagnosticDetails(track, usePlayerStore.getState().queueSource))
+  trace.emit('quality-switch', 'started')
+  try {
+    const plan = await getTrackPlaybackPlan(track, true, true, useOfflinePlayback.getState().offline)
+    trace.update({ source: plan.source, codec: plan.codec, requestedQuality: plan.requestedQuality, actualQuality: plan.actualQuality })
+    if (!valid()) { trace.emit('quality-switch', 'cancelled'); return }
+    if (isMobile) {
+      const state = usePlayerStore.getState()
+      await playMobileAudio(track, plan.url, playbackClock(), state.volume, state.status === 'playing' || state.status === 'buffering', loadedCollectionRef, state.rate, true, undefined, undefined, plan.loudnessGainDb)
+    } else {
+      await switchDesktopSource(plan.url, valid, plan.loudnessGainDb)
+    }
+    trace.emit('quality-switch', valid() ? 'succeeded' : 'cancelled')
+  } catch (error) {
+    const issue = playbackIssue('audio-source', error, '')
+    trace.emit('quality-switch', valid() ? 'failed' : 'cancelled', { code: issue.code })
+    throw error
+  }
 }
 
 function maybeUpgradeDesktop() {
@@ -715,12 +1065,17 @@ async function switchDesktopSource(url:string, valid:()=>boolean, gainDb = track
   const candidate=await prepareAudioSource(url,playbackClock,valid,usePlayerStore.getState().rate)
   try{
     if(!valid())return
-    const state=usePlayerStore.getState(),playing=state.status==='playing'||state.status==='buffering'
-    candidate.playbackRate=state.rate
-    if(playing)await candidate.play()
-    if(!valid())return
-    // A user's pause during preparation always wins over the captured state.
-    const latest=usePlayerStore.getState();if(latest.status!=='playing'&&latest.status!=='buffering')candidate.pause()
+    const shouldPlay=()=>['playing','buffering'].includes(usePlayerStore.getState().status)
+    const deadline=performance.now()+5000
+    do {
+      candidate.playbackRate=usePlayerStore.getState().rate
+      if(shouldPlay() && candidate.paused)await candidate.play()
+      if(!valid())return
+      await alignAudioSource(candidate,playbackClock,valid,deadline)
+      if(!valid())return
+      if(!shouldPlay())candidate.pause()
+    } while(shouldPlay() && candidate.paused && performance.now()<deadline)
+    if(shouldPlay() && candidate.paused)throw new Error('新音源暂时无法播放，已保留原音质')
     const previous=audio;bindAudioEvents(candidate);audio=candidate
     previous?.pause();previous?.removeAttribute('src');previous?.load()
     trackGainDb=safeGainDb(gainDb);applyDesktopOutput();candidate.muted=false

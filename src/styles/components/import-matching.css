@@ -46,6 +46,12 @@
 }
 
 .import-completion-copy .import-completion-message{color:var(--coral);font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.import-completion-actions>.import-completion-remove{background:transparent;color:var(--muted)}
+.import-completion-actions>.import-completion-remove:is(:hover,:focus-visible):enabled{color:var(--coral);background:color-mix(in srgb,var(--coral) 10%,transparent)}
+@media(max-width:360px){
+ .import-completion-actions>.import-completion-remove{min-width:34px}
+ .import-completion-remove>span{display:none}
+}
 
 :root .dialog-backdrop.collection-dialog-layer:has(>.import-match-dialog){z-index:350}
 .import-match-notice{flex-shrink:0;margin:2px 0 10px;font-size:12px;line-height:1.6;color:var(--cyan)}

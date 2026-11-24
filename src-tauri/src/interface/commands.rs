@@ -1,14 +1,16 @@
 use crate::domain::track::SourceIdentity;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
+pub(super) use crate::infrastructure::providers::bilibili::valid_bvid;
 use crate::infrastructure::providers::bilibili::{
     AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
-    FavoritePage, PlaybackSource, QrLogin, QrLoginStatus, SearchPage, VideoPart, VideoParts,
-    VideoSource,
+    FavoritePage, PlaybackSource, ProviderError, QrLogin, QrLoginStatus, RequestPriority, SearchPage,
+    SubscribedSeasonPage, VideoPart, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
 use crate::infrastructure::repositories::auth::AuthRepository;
+use crate::infrastructure::repositories::collections::{self, Collection};
 use crate::infrastructure::repositories::downloads::{DownloadRecord, DownloadRepository};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
@@ -16,6 +18,7 @@ use crate::infrastructure::repositories::library::{
 use crate::infrastructure::repositories::lyrics::{
     LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
+use crate::infrastructure::repositories::loudness::LoudnessRepository;
 use crate::infrastructure::repositories::playlists::{
     FAVORITES_PLAYLIST_ID, PlaylistRecord, PlaylistRepository,
 };
@@ -46,7 +49,10 @@ pub fn account_session(database: State<'_, Database>) -> Result<String, CommandE
     let c = database.0.lock().map_err(CommandError::database)?;
     crate::infrastructure::database::account_session(&c).map_err(CommandError::database)
 }
-fn check_account_session(c: &rusqlite::Connection, expected: &str) -> Result<(), CommandError> {
+pub(super) fn check_account_session(
+    c: &rusqlite::Connection,
+    expected: &str,
+) -> Result<(), CommandError> {
     if crate::infrastructure::database::account_session(c).map_err(CommandError::database)?
         != expected
     {
@@ -220,7 +226,7 @@ pub async fn bili_search_suggestions(
     provider
         .search_suggestions(&keyword)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -235,14 +241,20 @@ pub async fn bili_search(
     if keyword.is_empty() {
         return Err(CommandError::validation("请输入搜索关键词"));
     }
+    let session = database.0.lock().ok()
+        .and_then(|connection| crate::infrastructure::database::account_session(&connection).ok());
     let result = provider
         .search(keyword, page.unwrap_or(1), page_size.unwrap_or(20))
-        .await
-        .map_err(CommandError::provider)?;
-    if let Ok(connection) = database.0.lock() {
-        let _ = SearchHistoryRepository::record(&connection, keyword);
+        .await;
+    if let Some(session) = session
+        && let Ok(connection) = database.0.lock()
+    {
+        check_account_session(&connection, &session)?;
+        if result.is_ok() {
+            let _ = SearchHistoryRepository::record(&connection, keyword);
+        }
     }
-    Ok(result)
+    result.map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -405,6 +417,9 @@ pub async fn bili_video_parts(
     provider: State<'_, BilibiliProvider>,
     database: State<'_, Database>,
     bvid: String,
+    background: Option<bool>,
+    resume: Option<bool>,
+    refresh: Option<bool>,
 ) -> Result<VideoParts, CommandError> {
     if !valid_bvid(&bvid) {
         return Err(CommandError::validation("无效的 BV 号"));
@@ -415,9 +430,16 @@ pub async fn bili_video_parts(
         .ok()
         .and_then(|c| crate::infrastructure::database::account_session(&c).ok());
     let detail = provider
-        .video_parts(&bvid)
+        .video_parts_request(&bvid, video_request_priority(background, resume), refresh.unwrap_or(false))
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(|error| match error {
+            // A not-found result from the authoritative details endpoint can
+            // be skipped here without labeling playurl failures as expired.
+            ProviderError::Api { code: -404, .. } => CommandError::new(
+                "source_unavailable", "B 站视频暂不可用", false,
+            ),
+            error => CommandError::audio_source(error),
+        })?;
     if let Ok(connection) = database.0.lock() {
         if session.is_some()
             && crate::infrastructure::database::account_session(&connection).ok() == session
@@ -429,18 +451,30 @@ pub async fn bili_video_parts(
     Ok(detail)
 }
 
+fn video_request_priority(background: Option<bool>, resume: Option<bool>) -> RequestPriority {
+    if resume.unwrap_or(false) {
+        RequestPriority::Resume
+    } else if background.unwrap_or(false) {
+        RequestPriority::Background
+    } else {
+        RequestPriority::Foreground
+    }
+}
+
 #[tauri::command]
 pub async fn bili_video_pagelist(
     provider: State<'_, BilibiliProvider>,
     bvid: String,
+    background: Option<bool>,
+    resume: Option<bool>,
 ) -> Result<Vec<VideoPart>, CommandError> {
     if !valid_bvid(&bvid) {
         return Err(CommandError::validation("无效的 BV 号"));
     }
     provider
-        .video_pagelist(&bvid)
+        .video_pagelist_with_priority(&bvid, video_request_priority(background, resume))
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::audio_source)
 }
 
 #[tauri::command]
@@ -464,7 +498,7 @@ pub async fn bili_playback_source(
     let mut source = provider
         .playback_source_with_quality(&bvid, cid, quality.audio_id)
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     source.audio_url = media_proxy
         .register_audio(
             &format!("bilibili:{bvid}:{cid}"),
@@ -497,9 +531,9 @@ pub async fn bili_warm_playback(
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
     let (source, initial) = provider
-        .playback_startup_sources(&bvid, cid, quality.audio_id)
+        .playback_startup_sources_with_priority(&bvid, cid, quality.audio_id, RequestPriority::Background)
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     let (quality, source) = initial
         .map(|s| (s.quality_id, s))
         .unwrap_or((quality.audio_id, source));
@@ -521,12 +555,14 @@ pub async fn bili_warm_playback(
 
 #[tauri::command]
 pub async fn bili_video_source(
+    app: tauri::AppHandle,
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     media_proxy: State<'_, MediaProxy>,
     bvid: String,
     cid: i64,
     refresh: Option<bool>,
+    compatible: Option<bool>,
 ) -> Result<VideoSource, CommandError> {
     if !valid_bvid(&bvid) || cid <= 0 {
         return Err(CommandError::validation("无效的视频源标识"));
@@ -542,9 +578,17 @@ pub async fn bili_video_source(
         provider.invalidate_playback(&bvid, cid).await;
     }
     let mut source = provider
-        .video_source_with_quality(&bvid, cid, quality.video_height)
+        .video_source_with_quality(
+            &bvid,
+            cid,
+            quality.video_height,
+            compatible.unwrap_or(false)
+                || (cfg!(target_os = "android")
+                    && app.config().identifier == "app.bilimusic.large"
+                    && quality.video_height == 0),
+        )
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     media_proxy
         .ensure_running()
         .await
@@ -568,7 +612,7 @@ pub async fn bili_danmaku(
     if cid <= 0 {
         return Err(CommandError::validation("无效的弹幕标识"));
     }
-    provider.danmaku(cid).await.map_err(CommandError::provider)
+    provider.danmaku(cid).await.map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -578,7 +622,7 @@ pub async fn bili_qr_login_generate(
     provider
         .qr_login_generate()
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -596,13 +640,13 @@ pub async fn bili_qr_login_poll(
     let status = provider
         .qr_login_poll(&key)
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     if let Some(cookie) = &status.cookie_header {
         sync.interrupt();
         let profile = provider
             .account_profile()
             .await
-            .map_err(CommandError::provider)?;
+            .map_err(CommandError::bilibili)?;
         let uid = profile
             .user_id
             .filter(|_| profile.logged_in)
@@ -621,7 +665,7 @@ pub async fn bili_account_profile(
     provider
         .account_profile()
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -631,7 +675,31 @@ pub async fn bili_favorite_folders(
     provider
         .favorite_folders()
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
+}
+
+#[tauri::command]
+pub async fn bili_subscribed_seasons(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    page: u32,
+) -> Result<SubscribedSeasonPage, CommandError> {
+    if page == 0 {
+        return Err(CommandError::validation("无效的订阅合集页码"));
+    }
+    let cookie = {
+        let c = database.0.lock().map_err(CommandError::database)?;
+        check_account_session(&c, &expected_account_session)?;
+        AuthRepository::get_cookie(&c, "bilibili")
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("请先登录 B 站账号"))?
+    };
+    let provider = BilibiliProvider::new().map_err(CommandError::provider)?;
+    provider.set_session_cookie(Some(cookie)).await;
+    let result = provider.subscribed_seasons(page).await;
+    let c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    result.map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -646,7 +714,7 @@ pub async fn bili_favorite_videos(
     provider
         .favorite_videos(folder_id, page)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -675,7 +743,7 @@ pub async fn bili_comment_emotes(
     provider
         .comment_emotes()
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -690,7 +758,7 @@ pub async fn bili_comments(
     provider
         .comments(aid, next.unwrap_or(0))
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -706,7 +774,22 @@ pub async fn bili_comment_replies(
     provider
         .comment_replies(aid, root, page.unwrap_or(1))
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
+}
+
+#[tauri::command]
+pub async fn bili_comment_reply_page(
+    provider: State<'_, BilibiliProvider>,
+    aid: i64,
+    root: String,
+    page: u32,
+) -> Result<CommentPage, CommandError> {
+    let root = root.parse::<i64>().ok().filter(|root| *root > 0)
+        .ok_or_else(|| CommandError::validation("无效的评论标识"))?;
+    if aid <= 0 || page == 0 {
+        return Err(CommandError::validation("无效的评论分页"));
+    }
+    provider.comment_reply_page(aid, root, page).await.map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -722,7 +805,7 @@ pub async fn bili_comment_like(
     provider
         .comment_like(aid, reply_id, liked)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -740,7 +823,7 @@ pub async fn bili_comment_reply(
     provider
         .comment_reply(aid, message, root, parent)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -755,9 +838,9 @@ pub async fn lyrics_search(
     if title.is_empty() {
         return Err(CommandError::validation("歌曲名不能为空"));
     }
-    // v4 refreshes QQ candidates cached before the complete QRC parsing fix.
+    // Refresh entries from the three-candidate search.
     let key = serde_json::to_string(&(
-        "multi-source-v4",
+        "multi-source-v5",
         title.to_lowercase(),
         artist.as_deref().unwrap_or("").trim().to_lowercase(),
     ))
@@ -772,7 +855,12 @@ pub async fn lyrics_search(
             .and_then(|(json, fresh)| {
                 serde_json::from_str::<Vec<LyricCandidate>>(&json)
                     .ok()
-                    .map(|candidates| (candidates, fresh))
+                    .map(|mut candidates| {
+                        for candidate in &mut candidates {
+                            candidate.normalize_domestic_timing();
+                        }
+                        (candidates, fresh)
+                    })
             })
     };
     if !force_refresh.unwrap_or(false) {
@@ -932,6 +1020,25 @@ pub fn lyrics_save(
 }
 
 #[tauri::command]
+pub fn lyrics_save_with_metadata(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    track_id: String,
+    expected_version: String,
+    lyrics: SaveLyricsInput,
+    metadata: MetadataPatch,
+) -> Result<(StoredLyrics, TrackRecord), CommandError> {
+    let c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    if super::batch_matching::pair_version(&c, &track_id)? != expected_version {
+        return Err(CommandError::validation(
+            "这首歌的歌词或资料刚刚更新，请重新选择",
+        ));
+    }
+    super::batch_matching::save_manual_pair(&c, &track_id, metadata, &lyrics)
+}
+
+#[tauri::command]
 pub fn lyrics_set_bias(
     database: State<'_, Database>,
     expected_account_session: String,
@@ -977,15 +1084,37 @@ pub struct PlaybackPlan {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrade_url: Option<String>,
     pub loudness_gain_db: f64,
+    pub source: crate::infrastructure::diagnostics::Source,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_quality: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_quality: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
 }
 impl PlaybackPlan {
-    fn direct(url: String, loudness_gain_db: f64) -> Self {
+    fn direct(
+        url: String,
+        loudness_gain_db: f64,
+        source: crate::infrastructure::diagnostics::Source,
+    ) -> Self {
         Self {
             url,
             upgrade_url: None,
             loudness_gain_db,
+            source,
+            requested_quality: None,
+            actual_quality: None,
+            codec: None,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlaybackStartup {
+    Selected,
+    Progressive,
+    Compatible,
 }
 
 #[tauri::command]
@@ -1004,6 +1133,7 @@ pub async fn track_playback_url(
         track_id,
         refresh,
         prefer_online,
+        PlaybackStartup::Selected,
         false,
     )
     .await
@@ -1018,7 +1148,10 @@ pub async fn track_playback_plan(
     track_id: String,
     refresh: Option<bool>,
     prefer_online: Option<bool>,
+    offline_only: Option<bool>,
 ) -> Result<PlaybackPlan, CommandError> {
+    let offline_only = offline_only.unwrap_or(false);
+    let prefer_online = prefer_online.filter(|_| !offline_only);
     playback_plan(
         database,
         provider,
@@ -1026,7 +1159,31 @@ pub async fn track_playback_plan(
         track_id,
         refresh,
         prefer_online,
-        !prefer_online.unwrap_or(false),
+        if prefer_online == Some(true) {
+            PlaybackStartup::Selected
+        } else {
+            PlaybackStartup::Progressive
+        },
+        offline_only,
+    )
+    .await
+}
+
+pub(crate) async fn compatible_playback_plan(
+    database: State<'_, Database>,
+    provider: State<'_, BilibiliProvider>,
+    media_proxy: State<'_, MediaProxy>,
+    track_id: String,
+) -> Result<PlaybackPlan, CommandError> {
+    playback_plan(
+        database,
+        provider,
+        media_proxy,
+        track_id,
+        Some(true),
+        Some(true),
+        PlaybackStartup::Compatible,
+        false,
     )
     .await
 }
@@ -1038,12 +1195,14 @@ async fn playback_plan(
     track_id: String,
     refresh: Option<bool>,
     prefer_online: Option<bool>,
-    progressive: bool,
+    startup: PlaybackStartup,
+    offline_only: bool,
 ) -> Result<PlaybackPlan, CommandError> {
+    use crate::infrastructure::diagnostics::Source;
     media_proxy
         .ensure_running()
         .await
-        .map_err(|_| CommandError::provider("本机音频服务恢复失败，请稍后重试"))?;
+        .map_err(|_| CommandError::new("proxy_unavailable", "本机音频服务恢复失败，请稍后重试", true))?;
     let (track, paths, mut loudness_gain_db, account_session) = {
         let connection = database
             .0
@@ -1051,22 +1210,18 @@ async fn playback_plan(
             .map_err(|_| CommandError::database("数据库正忙"))?;
         let track = LibraryRepository::get(&connection, &track_id)
             .map_err(CommandError::database)?
-            .ok_or_else(|| CommandError::validation("歌曲不存在"))?;
+            .ok_or_else(|| CommandError::new("track_missing", "歌曲不存在", false))?;
         let mut statement = connection.prepare("SELECT target_path FROM downloads WHERE track_id=?1 AND status='completed' ORDER BY updated_at DESC").map_err(CommandError::database)?;
         let paths = statement
             .query_map([&track_id], |row| row.get::<_, String>(0))
             .map_err(CommandError::database)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(CommandError::database)?;
-        let gain = crate::infrastructure::repositories::loudness::LoudnessRepository::get(
-            &connection,
-            &track.bvid,
-            track.cid,
-        )
-        .ok()
-        .flatten()
-        .map(|d| d.gain_db())
-        .unwrap_or(0.0);
+        let gain = LoudnessRepository::get(&connection, &track.bvid, track.cid)
+            .ok()
+            .flatten()
+            .map(|d| d.gain_db())
+            .unwrap_or(0.0);
         let account_session = crate::infrastructure::database::account_session(&connection)
             .map_err(CommandError::database)?;
         (track, paths, gain, account_session)
@@ -1083,6 +1238,7 @@ async fn playback_plan(
             return Ok(PlaybackPlan::direct(
                 media_proxy.register_local(path).await,
                 loudness_gain_db,
+                Source::LocalDownload,
             ));
         }
     }
@@ -1093,6 +1249,23 @@ async fn playback_plan(
             .map_err(|_| CommandError::database("数据库正忙"))?;
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
+    if !prefer_online.unwrap_or(false) {
+        if let Some(url) = media_proxy
+            .complete_cached_audio(&track_id, quality.audio_id)
+            .await
+        {
+            return Ok(PlaybackPlan::direct(
+                media_proxy
+                    .platform_cached_url(url, track.duration_seconds)
+                    .await,
+                loudness_gain_db,
+                Source::Cache,
+            ));
+        }
+    }
+    if offline_only {
+        return Err(CommandError::new("offline_unavailable", "此歌曲尚未保存在本机", false));
+    }
     if refresh.unwrap_or(false) {
         media_proxy
             .refresh_connections()
@@ -1100,38 +1273,26 @@ async fn playback_plan(
             .map_err(CommandError::provider)?;
         provider.invalidate_playback(&track.bvid, track.cid).await;
     }
-    if !refresh.unwrap_or(false) {
-        let cached = if progressive {
-            media_proxy
-                .complete_cached_audio(&track_id, quality.audio_id)
+    let sources = match startup {
+        PlaybackStartup::Progressive => {
+            provider
+                .playback_startup_sources(&track.bvid, track.cid, quality.audio_id)
                 .await
-        } else {
-            media_proxy.cached_audio(&track_id, quality.audio_id).await
-        };
-        if let Some(url) = cached {
-            return Ok(PlaybackPlan::direct(
-                media_proxy
-                    .platform_cached_url(url, track.duration_seconds)
-                    .await,
-                loudness_gain_db,
-            ));
         }
-    }
-    let sources = if progressive {
-        provider
-            .playback_startup_sources(&track.bvid, track.cid, quality.audio_id)
-            .await
-    } else {
-        provider
+        PlaybackStartup::Selected => provider
             .playback_source_with_quality(&track.bvid, track.cid, quality.audio_id)
             .await
-            .map(|source| (source, None))
+            .map(|source| (source, None)),
+        PlaybackStartup::Compatible => provider
+            .compatible_audio_source(&track.bvid, track.cid)
+            .await
+            .map(|source| (source, None)),
     };
     let (source, initial) = match sources {
         Ok(source) => source,
         Err(error) => {
             if prefer_online.unwrap_or(false) {
-                return Err(CommandError::provider(error));
+                return Err(CommandError::audio_source(error));
             }
             if let Some(url) = media_proxy.cached_audio(&track_id, quality.audio_id).await {
                 return Ok(PlaybackPlan::direct(
@@ -1139,28 +1300,33 @@ async fn playback_plan(
                         .platform_cached_url(url, track.duration_seconds)
                         .await,
                     loudness_gain_db,
+                    Source::Cache,
                 ));
             }
-            return Err(CommandError::provider(error));
+            return Err(CommandError::audio_source(error));
         }
     };
     if let Some(descriptor) = provider.cached_loudness(&track.bvid, track.cid).await {
         loudness_gain_db = descriptor.gain_db();
         if let Ok(connection) = database.0.lock() {
-            if crate::infrastructure::database::account_session(&connection)
-                .ok()
-                .as_deref()
-                == Some(&account_session)
-            {
-                let _ = crate::infrastructure::repositories::loudness::LoudnessRepository::save(
-                    &connection,
-                    &descriptor,
-                );
-            }
+            let _ = LoudnessRepository::save_for_session(&connection, &account_session, &descriptor);
         }
     }
-    let target_bandwidth = source.bandwidth;
+    let target_quality = source.quality_id;
     let target_codecs = source.codecs.clone();
+    if startup == PlaybackStartup::Compatible {
+        // The decoder might have rejected the cached bytes of this same rendition.
+        let url = media_proxy
+            .register_stream(source.audio_url, source.backup_urls, source.mime_type)
+            .await;
+        return Ok(PlaybackPlan {
+            requested_quality: Some(quality.audio_id),
+            actual_quality: Some(target_quality),
+            codec: Some(target_codecs),
+            ..PlaybackPlan::direct(url, loudness_gain_db, Source::Online)
+        });
+    }
+    let target_bandwidth = source.bandwidth;
     let target = media_proxy
         .register_audio(&track_id, &track.bvid, track.cid, quality.audio_id, source)
         .await;
@@ -1169,6 +1335,7 @@ async fn playback_plan(
             .platform_upgrade_url(target, track.duration_seconds, &target_codecs)
             .await;
         let target = media_proxy.guard_upgrade(&target, target_bandwidth).await;
+        let initial_quality = initial.quality_id;
         let initial_codecs = initial.codecs.clone();
         let url = media_proxy
             .register_audio(
@@ -1183,15 +1350,22 @@ async fn playback_plan(
             .platform_audio_url(url, track.duration_seconds, &initial_codecs)
             .await;
         Ok(PlaybackPlan {
-            url,
             upgrade_url: Some(target),
-            loudness_gain_db,
+            requested_quality: Some(quality.audio_id),
+            actual_quality: Some(initial_quality),
+            codec: Some(initial_codecs),
+            ..PlaybackPlan::direct(url, loudness_gain_db, Source::Online)
         })
     } else {
         let target = media_proxy
             .platform_audio_url(target, track.duration_seconds, &target_codecs)
             .await;
-        Ok(PlaybackPlan::direct(target, loudness_gain_db))
+        Ok(PlaybackPlan {
+            requested_quality: Some(quality.audio_id),
+            actual_quality: Some(target_quality),
+            codec: Some(target_codecs),
+            ..PlaybackPlan::direct(target, loudness_gain_db, Source::Online)
+        })
     }
 }
 
@@ -1315,6 +1489,25 @@ pub async fn download_track(
     audio_id: Option<u32>,
     export_format: Option<String>,
 ) -> Result<bool, CommandError> {
+    use crate::infrastructure::diagnostics::{Area, Outcome, Step, Trace};
+    let (expected_profile, expected_session) = {
+        let connection = database
+            .0
+            .lock()
+            .map_err(|_| CommandError::database("数据库正忙"))?;
+        (
+            crate::interface::media::profile(&database),
+            crate::infrastructure::database::account_session(&connection)
+                .map_err(CommandError::database)?,
+        )
+    };
+    let mut trace = Trace::for_profile(&app, expected_profile.clone(), Area::Download);
+    trace.event.bvid = Some(bvid.clone());
+    trace.event.cid = u64::try_from(cid).ok();
+    trace.event.requested_quality = audio_id;
+    let mut stage = Step::Destination;
+    trace.emit(stage, Outcome::Started, None);
+    let operation = async {
     if !valid_bvid(&bvid) || cid <= 0 || track_id != format!("bilibili:{bvid}:{cid}") {
         return Err(CommandError::validation("无效的下载歌曲标识"));
     }
@@ -1338,8 +1531,6 @@ pub async fn download_track(
             return Err(CommandError::validation("移动端下载仅写入应用私有目录"));
         }
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
-    let _ = app;
     #[cfg(target_os = "android")]
     if !tauri_plugin_android_player::download_destination(&app, "status")
         .await
@@ -1350,7 +1541,7 @@ pub async fn download_track(
     {
         return Err(CommandError::validation("请先选择或重新授权下载目录"));
     }
-    let expected_profile = crate::interface::media::profile(&database);
+
     let requested_audio = audio_id.unwrap_or(0);
     if requested_audio > 40000 {
         return Err(CommandError::validation("不支持的下载音质"));
@@ -1392,15 +1583,21 @@ pub async fn download_track(
             return Err(CommandError::validation("这首歌曲正在下载中"));
         }
     }
+    trace.emit(stage, Outcome::Succeeded, None);
+    stage = Step::Source;
+    trace.emit(stage, Outcome::Started, None);
     let source = provider
         .playback_source_with_quality(&bvid, cid, requested_audio)
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     if requested_audio != 0 && source.quality_id != requested_audio {
         return Err(CommandError::validation(
             "当前视频或账号无法获取所选音质，请重新选择",
         ));
     }
+    let loudness = provider.cached_loudness(&bvid, cid).await;
+    trace.event.actual_quality = Some(source.quality_id);
+    trace.event.codec = Some(source.codecs.clone());
     let lossless = source.codecs.eq_ignore_ascii_case("flac");
     if export_format == "flac" && !lossless {
         return Err(CommandError::validation(
@@ -1451,6 +1648,9 @@ pub async fn download_track(
         )
         .map_err(CommandError::database)?;
     }
+    trace.emit(stage, Outcome::Succeeded, None);
+    stage = Step::Transfer;
+    trace.emit(stage, Outcome::Started, None);
     let result: Result<i64, Box<dyn std::error::Error + Send + Sync>> = async {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(600))
@@ -1463,6 +1663,7 @@ pub async fn download_track(
             crate::infrastructure::media_proxy::fetch_upstream(&client, &urls, None)
                 .await
                 .map_err(std::io::Error::other)?;
+        trace.event.http = Some(response.status().as_u16());
         let total = response.content_length().map(|value| value as i64);
         if let Ok(connection) = database.0.lock() {
             let _ = DownloadRepository::progress(&connection, &download_id, 0, total);
@@ -1486,7 +1687,11 @@ pub async fn download_track(
         }
         file.flush().await?;
         drop(file);
+        trace.event.bytes = Some(received as u64);
         if extract_flac {
+            trace.emit(stage, Outcome::Succeeded, None);
+            stage = Step::Convert;
+            trace.emit(stage, Outcome::Started, None);
             let input = temporary.clone();
             let output = converted.clone();
             received = tokio::task::spawn_blocking(move || {
@@ -1499,21 +1704,36 @@ pub async fn download_track(
             tokio::fs::rename(&temporary, &target).await?;
         }
         #[cfg(target_os = "android")]
-        tauri_plugin_android_player::save_download(&app, &target)
-            .await
-            .map_err(std::io::Error::other)?;
+        {
+            trace.emit(stage, Outcome::Succeeded, None);
+            stage = Step::Export;
+            trace.emit(stage, Outcome::Started, None);
+            tauri_plugin_android_player::save_download(&app, &target)
+                .await
+                .map_err(std::io::Error::other)?;
+        }
         Ok(received)
     }
     .await;
     match result {
         Ok(received) => {
+            trace.emit(stage, Outcome::Succeeded, None);
+            stage = Step::Database;
+            trace.emit(stage, Outcome::Started, None);
             let connection = database
                 .0
                 .lock()
                 .map_err(|_| CommandError::database("数据库正忙"))?;
             DownloadRepository::complete(&connection, &download_id, received)
-                .map(|_| true)
-                .map_err(CommandError::database)
+                .map_err(CommandError::database)?;
+            if let Some(descriptor) = loudness.as_ref() {
+                let _ = LoudnessRepository::save_for_session(
+                    &connection,
+                    &expected_session,
+                    descriptor,
+                );
+            }
+            Ok(true)
         }
         Err(error) => {
             let _ = tokio::fs::remove_file(&temporary).await;
@@ -1524,6 +1744,23 @@ pub async fn download_track(
             Err(CommandError::provider(format!("下载失败: {error}")))
         }
     }
+    }.await;
+    match &operation {
+        Ok(true) => trace.emit(stage, Outcome::Succeeded, None),
+        Ok(false) => trace.emit(stage, Outcome::Skipped, None),
+        Err(error) => trace.emit(
+            stage,
+            Outcome::Failed,
+            Some(match (stage, error.code) {
+                (Step::Destination, "invalid_input") => "permission_denied",
+                (Step::Convert, _) => "convert_failed",
+                (Step::Export, _) => "export_failed",
+                (Step::Transfer, _) => "transfer_failed",
+                (_, code) => code,
+            }),
+        ),
+    }
+    operation
 }
 
 // Preserve the source container. Bilibili Hi-Res is usually FLAC inside MP4:
@@ -1565,14 +1802,7 @@ fn safe_filename(title: &str) -> String {
     }
 }
 
-pub(super) fn valid_bvid(value: &str) -> bool {
-    value.len() >= 10
-        && value.len() <= 16
-        && value.starts_with("BV")
-        && value.chars().all(|char| char.is_ascii_alphanumeric())
-}
-
-fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
+pub(crate) fn validate_track(track: &TrackInput) -> Result<(), CommandError> {
     let expected_id = SourceIdentity {
         provider: "bilibili".into(),
         bvid: track.bvid.clone(),
@@ -1631,15 +1861,24 @@ pub async fn app_check_update(
 
 #[tauri::command]
 pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), CommandError> {
+    open_external_page(&app, crate::infrastructure::updates::DOWNLOAD_PAGE).await
+}
+
+#[tauri::command]
+pub async fn bili_open_verification_page(app: tauri::AppHandle) -> Result<(), CommandError> {
+    open_external_page(&app, "https://www.bilibili.com/").await
+}
+
+async fn open_external_page(app: &tauri::AppHandle, url: &'static str) -> Result<(), CommandError> {
     #[cfg(target_env = "ohos")]
-    return tauri_plugin_ohos_player::open_url(&app, crate::infrastructure::updates::DOWNLOAD_PAGE)
+    return tauri_plugin_ohos_player::open_url(app, url)
         .await
         .map_err(CommandError::provider);
     #[cfg(not(target_env = "ohos"))]
     {
         use tauri_plugin_opener::OpenerExt;
         app.opener()
-            .open_url(crate::infrastructure::updates::DOWNLOAD_PAGE, None::<&str>)
+            .open_url(url, None::<&str>)
             .map_err(CommandError::provider)
     }
 }
@@ -1652,14 +1891,29 @@ pub fn collections_list(
     crate::infrastructure::repositories::collections::list(&c).map_err(|e| e.to_string())
 }
 #[tauri::command]
+pub fn collections_import_seasons(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    items: Vec<Collection>,
+) -> Result<usize, CommandError> {
+    let mut c = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&c, &expected_account_session)?;
+    collections::import_seasons(&mut c, &items).map_err(CommandError::database)
+}
+#[tauri::command]
 pub fn collections_change(
     database: State<'_, Database>,
     action: String,
     id: Option<String>,
     name: Option<String>,
     item: Option<crate::infrastructure::repositories::collections::Collection>,
+    expected_account_session: Option<String>,
 ) -> Result<(), String> {
     let mut c = database.0.lock().map_err(|_| "数据库正忙")?;
+    if action == "cache" {
+        let expected = expected_account_session.as_deref().ok_or("账号已切换，请重试")?;
+        check_account_session(&c, expected).map_err(|error| error.message)?;
+    }
     crate::infrastructure::repositories::collections::change(
         &mut c,
         &action,

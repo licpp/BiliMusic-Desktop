@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { accountEpoch } from '../services/accountScope'
 import { getVideoParts } from '../services/desktopApi'
-import { getSeason, parseSeasonReference } from '../services/mediaSources'
-import type { Collection } from '../services/collections'
+import { getSeason, getSeasonCover, parseSeasonReference } from '../services/mediaSources'
+import { cacheCollectionMetadata, type Collection } from '../services/collections'
 
 let pending: Promise<unknown> = Promise.resolve()
 // Metadata is a local cache, intentionally absent from the synchronized membership record.
@@ -18,12 +18,14 @@ export function loadCollectionMetadata(item: Collection, epoch: number): Promise
         metadata = { title: profile.data.card.name, coverUrl: profile.data.card.face, uploaderName: profile.data.card.name }
       } else {
         const reference = parseSeasonReference(item.bvid)
-        const detail = reference ? (await getSeason(reference.mid, reference.seasonId)).summary : await getVideoParts(item.bvid)
+        const detail = reference && item.title && item.title !== item.bvid
+          ? { ...item, coverUrl: (await getSeasonCover(reference)) || item.coverUrl }
+          : reference ? (await getSeason(reference.mid, reference.seasonId)).summary : await getVideoParts(item.bvid)
         metadata = { title: detail.title, coverUrl: detail.coverUrl, uploaderName: detail.uploaderName }
       }
       if (epoch !== accountEpoch()) throw Error('账号已切换')
       const value = { ...item, ...metadata }
-      await invoke('collections_change', { action: 'cache', item: value })
+      await cacheCollectionMetadata(value, undefined, epoch)
       return value
     } finally { await new Promise(resolve => setTimeout(resolve, 300)) }
   })

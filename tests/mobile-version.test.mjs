@@ -5,6 +5,18 @@ import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {pathToFileURL} from 'node:url'
+
+// Historical release fixtures always use the first platform build.
+process.env.BILIMUSIC_BUILD_NUMBER = '1'
+test('0.4.0 uses stable platform build numbers and preserves native upgrade order',()=>{
+ const previous=mobileVersion('0.3.7',1), basic=mobileVersion('0.4.0',1)
+ const patch=mobileVersion('0.4.0',2), next=mobileVersion('0.4.1',1)
+ assert.deepEqual([previous,basic,patch,next].map(info=>info.androidVersionCode),[30700,40000,40001,40100])
+ assert.deepEqual([previous,basic,patch,next].map(info=>info.iosBundleVersion),['3.7.99','1004.0.50','1004.0.51','1004.1.50'])
+ assert.equal(mobileVersion('0.4.0',50).iosBundleVersion,'1004.0.99')
+ assert.throws(()=>mobileVersion('0.4.0',51))
+ assert.throws(()=>mobileVersion('0.4.0-preview',2))
+})
 test('preview upgrades stable 0.3.5 and stays below stable 0.3.6 on Android and iOS',()=>{
  const previous=mobileVersion('0.3.5'),preview=mobileVersion('0.3.6-preview'),stable=mobileVersion('0.3.6')
  assert.equal(previous.androidVersionCode,30500)

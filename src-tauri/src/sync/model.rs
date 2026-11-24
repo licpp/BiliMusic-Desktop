@@ -4,6 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_BYTES: usize = 3 * 1024 * 1024;
 pub const HISTORY_LIMIT: usize = 200;
+pub(super) const COLLECTION_PROGRESS_LIMIT: usize = 2000;
+pub const MISSING_TRACK: &str = "同步记录缺少歌曲";
+
+fn has_progress_parent(reference: &str, contains: impl Fn(&str) -> bool) -> bool {
+    contains(reference)
+        || crate::infrastructure::repositories::collections::season_creator_reference(reference)
+            .is_some_and(|creator| contains(&creator))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -69,6 +78,19 @@ impl Snapshot {
         {
             record.fields.remove("resume");
         }
+    }
+    pub(super) fn omit_followed_season_progress(&mut self) {
+        let direct = self.collection_references();
+        self.records.retain(|_, r| {
+            r.kind != "collectionProgress" || direct.contains(text(r, "reference"))
+        });
+    }
+    fn collection_references(&self) -> BTreeSet<String> {
+        self.records
+            .values()
+            .filter(|r| r.kind == "collection")
+            .map(|r| text(r, "bvid").to_owned())
+            .collect()
     }
     pub fn use_legacy_cloud_format(&mut self) {
         self.records
@@ -138,15 +160,36 @@ impl Snapshot {
         self.records.retain(|_, r| {
             r.kind != "item" || lists.contains(&format!("playlist:{}", text(r, "playlistId")))
         });
-        let collections: BTreeSet<_> = self
-            .records
-            .values()
-            .filter(|r| r.kind == "collection")
-            .map(|r| text(r, "bvid").to_owned())
-            .collect();
+        let collections = self.collection_references();
         self.records.retain(|_, r| {
-            r.kind != "collectionProgress" || collections.contains(text(r, "reference"))
+            r.kind != "collectionProgress"
+                || has_progress_parent(text(r, "reference"), |key| collections.contains(key))
         });
+        // Keep the established snapshot budget. Direct collection checkpoints
+        // retain priority, and followed-only checkpoints use the remainder.
+        let mut checkpoints: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "collectionProgress")
+            .map(|(key, r)| {
+                (
+                    key,
+                    collections.contains(text(r, "reference")),
+                    parse_checkpoint(text(r, "checkpoint")).map_or(0, |checkpoint| checkpoint.0),
+                )
+            })
+            .collect();
+        if checkpoints.len() > COLLECTION_PROGRESS_LIMIT {
+            checkpoints.sort_unstable_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)).then(a.0.cmp(b.0)));
+            let excess: Vec<_> = checkpoints
+                .into_iter()
+                .skip(COLLECTION_PROGRESS_LIMIT)
+                .map(|(key, _, _)| key.clone())
+                .collect();
+            for key in excess {
+                self.records.remove(&key);
+            }
+        }
         let referenced: BTreeSet<_> = self
             .records
             .values()
@@ -156,6 +199,39 @@ impl Snapshot {
         self.records.retain(|_, r| {
             !matches!(r.kind.as_str(), "track" | "lyric") || referenced.contains(text(r, "id"))
         });
+    }
+    /// Song identity is encoded in every live membership or history reference.
+    /// Restore only identity. No title, user edits or existence of a membership
+    /// can be inferred from a song ID.
+    pub fn restore_missing_tracks(&mut self) -> BTreeSet<String> {
+        let missing: BTreeSet<_> = self
+            .records
+            .values()
+            .filter(|r| matches!(r.kind.as_str(), "favorite" | "item" | "history"))
+            .map(|r| text(r, "trackId").to_owned())
+            .filter(|id| !self.records.contains_key(&format!("track:{id}")))
+            .collect();
+        let mut restored = BTreeSet::new();
+        for id in missing {
+            let Some((bvid, cid)) = track_identity(&id) else {
+                continue;
+            };
+            let key = format!("track:{id}");
+            self.records.insert(
+                key.clone(),
+                Record {
+                    kind: "track".into(),
+                    fields: [
+                        ("id".into(), Value::from(id.as_str())),
+                        ("bvid".into(), Value::from(bvid)),
+                        ("cid".into(), Value::from(cid)),
+                    ]
+                    .into(),
+                },
+            );
+            restored.insert(key);
+        }
+        restored
     }
     pub fn validate(&self, uid: &str) -> Result<(), String> {
         if self.schema != 1
@@ -234,10 +310,7 @@ impl Snapshot {
                 "view" => key == &format!("view:{id}") && matches!(id, "favorites" | "saved"),
                 "track" => {
                     key == &format!("track:{id}")
-                        && id == format!("bilibili:{}:{}", text(r, "bvid"), number(r, "cid"))
-                        && text(r, "bvid").starts_with("BV")
-                        && text(r, "bvid").bytes().all(|c| c.is_ascii_alphanumeric())
-                        && number(r, "cid") > 0
+                        && track_identity(id) == Some((text(r, "bvid"), number(r, "cid")))
                 }
                 "linkedFolder" => {
                     let folder_id = number(r, "folderId");
@@ -277,10 +350,11 @@ impl Snapshot {
                 "collectionProgress" => {
                     let reference = text(r, "reference");
                     key == &format!("collectionProgress:{reference}")
-                        && self
-                            .records
-                            .get(&format!("collection:{reference}"))
-                            .is_some_and(|r| r.kind == "collection")
+                        && has_progress_parent(reference, |parent| {
+                            self.records
+                                .get(&format!("collection:{parent}"))
+                                .is_some_and(|r| r.kind == "collection")
+                        })
                         && parse_checkpoint(text(r, "checkpoint")).is_some_and(|(_, bvid, _, _)| {
                             reference.starts_with("season:")
                                 || reference.starts_with("up:")
@@ -316,9 +390,12 @@ impl Snapshot {
                 return Err(format!("同步记录身份无效（{}）", r.kind));
             }
             if matches!(r.kind.as_str(), "favorite" | "history" | "item")
-                && !self.records.contains_key(&format!("track:{track}"))
+                && !self
+                    .records
+                    .get(&format!("track:{track}"))
+                    .is_some_and(|r| r.kind == "track")
             {
-                return Err("同步记录缺少歌曲".into());
+                return Err(MISSING_TRACK.into());
             }
             for name in ["coverUrl", "overrideCover"] {
                 if let Some(value) = r.fields.get(name).and_then(Value::as_str) {
@@ -332,7 +409,7 @@ impl Snapshot {
             ("collectionFolder", 100),
             ("linkedFolder", 500),
             ("collection", 2000),
-            ("collectionProgress", 2000),
+            ("collectionProgress", COLLECTION_PROGRESS_LIMIT),
             ("view", 2),
             ("playlist", 500),
             ("track", 5000),
@@ -345,6 +422,15 @@ impl Snapshot {
         }
         Ok(())
     }
+}
+pub fn track_identity(id: &str) -> Option<(&str, i64)> {
+    let (bvid, cid) = id.strip_prefix("bilibili:")?.split_once(':')?;
+    let value: i64 = cid.parse().ok()?;
+    (bvid.starts_with("BV")
+        && bvid.bytes().all(|c| c.is_ascii_alphanumeric())
+        && value > 0
+        && value.to_string() == cid)
+        .then_some((bvid, value))
 }
 fn valid_playlist_id(id: &str) -> bool {
     // Imported playlists retain this identity when matching is resumed or reviewed.

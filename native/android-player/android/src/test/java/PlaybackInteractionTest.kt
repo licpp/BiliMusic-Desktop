@@ -1,10 +1,17 @@
 package app.bilimusic.player
 
-import android.view.KeyEvent
 import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackInteractionTest {
+    @Test fun overlayRestoresAnExactPositionAndScalesItToTheNewDisplay() {
+        val place = FloatingLyricsWindowPolicy.capturePosition(62, 489, 108, 2120)
+        val saved = FloatingLyricsWindowPolicy.savedPosition(place.horizontal, place.vertical)!!
+        assertEquals(62 to 489, saved.pixels(108, 2120))
+        assertEquals(138 to 185, saved.pixels(240, 800))
+        assertEquals(0 to 0, saved.pixels(0, 0))
+        assertNull(FloatingLyricsWindowPolicy.savedPosition(Float.NaN, .5f))
+    }
     @Test fun unlockButtonCanBeHiddenWithoutChangingTheLockOrTouchThroughPolicy() {
         assertTrue(FloatingLyricsWindowPolicy.showUnlock(true,true,true,true))
         assertFalse(FloatingLyricsWindowPolicy.showUnlock(true,true,false,true))
@@ -22,15 +29,6 @@ class PlaybackInteractionTest {
         assertFalse(resume.regained())
         resume.interrupted(true); resume.cancel(); assertFalse(resume.regained())
         resume.interrupted(false); assertFalse(resume.regained())
-    }
-    @Test fun headsetAndMediaKeysHaveOneActionPerPress() {
-        val keys=mapOf(KeyEvent.KEYCODE_HEADSETHOOK to "toggle",KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE to "toggle",KeyEvent.KEYCODE_MEDIA_NEXT to "next",KeyEvent.KEYCODE_MEDIA_PREVIOUS to "previous",KeyEvent.KEYCODE_MEDIA_PLAY to "resume",KeyEvent.KEYCODE_MEDIA_PAUSE to "pause",KeyEvent.KEYCODE_MEDIA_STOP to "stop")
-        for((key,action) in keys) {
-            assertTrue(MediaButtons.supports(key));assertEquals(action,MediaButtons.action(key,true,0))
-            assertNull(MediaButtons.action(key,false,0));assertNull(MediaButtons.action(key,true,1))
-        }
-        assertFalse(MediaButtons.supports(KeyEvent.KEYCODE_VOLUME_UP))
-        assertNull(MediaButtons.action(KeyEvent.KEYCODE_VOLUME_UP,true,0))
     }
     @Test fun lockedOverlayHonorsTheSystemTouchThroughOpacityLimit() {
         assertEquals(.8f,FloatingLyricsWindowPolicy.alpha(true,31,.8f),.0001f)

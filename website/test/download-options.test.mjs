@@ -37,3 +37,12 @@ test('32-bit large-screen APK stays in Android with a distinct architecture labe
   assert.equal(downloadVariant(items[6]),'iPhone / iPad');
   assert.equal(downloadVariant(items[7]),'未签名 HAP');
 });
+
+test('a universal car APK renders one variant while older separate downloads keep both', () => {
+  const universal = { ...item('android-large', 'ARM64 / ARMv7', 'car.apk'), sha256: 'car-digest' };
+  const legacy = { ...universal, id: 'android-large-armv7' };
+  assert.deepEqual(groupDownloads([items[4], legacy, universal])[0].items, [items[4], universal]);
+  assert.equal(downloadVariant(universal), '车机 / TV · 32 / 64 位');
+  const other = { ...legacy, file: 'old-armv7.apk', sha256: 'old-digest' };
+  assert.deepEqual(groupDownloads([universal, other])[0].items, [universal, other]);
+});

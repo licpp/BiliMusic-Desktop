@@ -4,15 +4,23 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
+import android.app.Activity
+import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager.LayoutParams
 import android.widget.LinearLayout
 import java.io.File
+import java.time.Duration
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -64,21 +72,72 @@ class FloatingLyricsRendererTest {
         tools.visibility=View.VISIBLE;arrange(rows)
         assertEquals(y,second.top);assertEquals(height,rows.height)
     }
-    @Test fun translucentUnlockButtonHasSmallVisibleBoundsAndUsableTapTarget() {
+    @Test fun unlockButtonHasTransparentIdleBackgroundAndUsableTapTarget() {
         var clicks=0
-        val button=FloatingLyricsUnlockButton(context){clicks++}
+        val button=FloatingLyricsUnlockButton(context, { _, _ -> }){clicks++}
         val density=context.resources.displayMetrics.density
         val size=(44*density).toInt()
         button.measure(View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(size,View.MeasureSpec.EXACTLY))
         button.layout(0,0,size,size)
         val bitmap=pixels(button)
         assertEquals(0,Color.alpha(bitmap.getPixel(0,0)))
-        assertTrue(Color.alpha(bitmap.getPixel(size/2,(12*density).toInt())) in 1..200)
+        assertTrue(visiblePixels(bitmap,0,size)>0)
+        fun backgroundPixels()=Bitmap.createBitmap(size,size,Bitmap.Config.ARGB_8888).also {
+            button.background.draw(Canvas(it))
+        }
+        assertEquals(0,visiblePixels(backgroundPixels(),0,size))
+        button.isPressed=true
+        assertTrue(Color.alpha(backgroundPixels().getPixel(size/2,size/2)) in 1..110)
+        button.isPressed=false
         assertEquals((44*density).toInt(),button.width)
         assertEquals("解锁悬浮歌词",button.contentDescription.toString())
         button.performClick();assertEquals(1,clicks)
         val path=File("build/reports/lyric-previews/android-lyrics-unlock.png");path.parentFile.mkdirs()
         path.outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}
+    }
+    @Test fun unlockButtonHidesOnIdleAndOutsideTouchesOnlyRevealIt() {
+        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = controller.get()
+        val changes = mutableListOf<Boolean>()
+        var unlocks = 0
+        val button = FloatingLyricsUnlockButton(activity, { _, revealed -> changes += revealed }) { unlocks++ }
+        activity.setContentView(button)
+        val clock = shadowOf(Looper.getMainLooper())
+        fun touch(action: Int) {
+            val now = SystemClock.uptimeMillis()
+            val event = MotionEvent.obtain(now, now, action, 0f, 0f, 0)
+            button.dispatchTouchEvent(event)
+            event.recycle()
+        }
+
+        clock.idleFor(Duration.ofMillis(3_999))
+        assertTrue(changes.isEmpty())
+        clock.idleFor(Duration.ofMillis(1))
+        assertEquals(listOf(false), changes)
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, button.importantForAccessibility)
+        touch(MotionEvent.ACTION_OUTSIDE)
+        clock.idleFor(Duration.ofSeconds(3))
+        touch(MotionEvent.ACTION_OUTSIDE)
+        clock.idleFor(Duration.ofSeconds(3))
+        assertEquals(listOf(false, true), changes)
+        assertEquals(0, unlocks)
+
+        touch(MotionEvent.ACTION_DOWN)
+        clock.idleFor(Duration.ofSeconds(5))
+        assertEquals(listOf(false, true), changes)
+        touch(MotionEvent.ACTION_CANCEL)
+        controller.pause().stop().destroy()
+        clock.idleFor(Duration.ofSeconds(5))
+        assertEquals(listOf(false, true), changes)
+    }
+
+    @Test fun hiddenUnlockWindowObservesTouchesWithoutTakingThem() {
+        val shown = FloatingLyricsWindowPolicy.unlockFlags(true)
+        val hidden = FloatingLyricsWindowPolicy.unlockFlags(false)
+        assertTrue(shown and LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH != 0)
+        assertTrue(shown and LayoutParams.FLAG_NOT_TOUCH_MODAL != 0)
+        assertEquals(0, shown and LayoutParams.FLAG_NOT_TOUCHABLE)
+        assertEquals(shown or LayoutParams.FLAG_NOT_TOUCHABLE, hidden)
     }
     @Test fun renderActualRowsAndToolbarInBothBackgrounds() {
         val actions=mutableListOf<FloatingLyricsToolbar.Action>()
@@ -93,5 +152,12 @@ class FloatingLyricsRendererTest {
             toolbar.getChildAt(2).performClick()
             assertEquals(FloatingLyricsToolbar.Action.LOCK,actions.last())
         }
+    }
+    @Test fun centeredRowsBorrowWidthBeforeScrolling() {
+        assertEquals(112f, centeredLyricOffset(0, 400f, 80f), 0f)
+        assertEquals(208f, centeredLyricOffset(1, 400f, 80f), 0f)
+        assertEquals(0f, centeredLyricOffset(0, 400f, 260f), 0f)
+        assertEquals(140f, centeredLyricOffset(1, 400f, 260f), 0f)
+        assertEquals(0f, centeredLyricOffset(1, 400f, 450f), 0f)
     }
 }

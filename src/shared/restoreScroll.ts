@@ -11,6 +11,7 @@ export function restoreScroll(host: HTMLElement, top: number) {
   for (const child of host.children) observer.observe(child)
   for (const name of ['pointerdown','touchstart','wheel','keydown']) host.addEventListener(name, stop, {passive:true})
   const timeout = setTimeout(stop, 2000)
+  apply()
   // A second frame also follows row-location effects in child components.
   frame = requestAnimationFrame(() => { apply(); frame = requestAnimationFrame(apply) })
   return stop

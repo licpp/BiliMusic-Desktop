@@ -4,6 +4,17 @@ import { firstSongQuery } from './songIdentity'
 import { importedPresentation, sourceTrack } from './importedPresentation'
 
 export type SourceTitleContext = { videoTitle: string; partTitle: string; partCount: number; chapterContext?: boolean; season?: SeasonSummary }
+export function withoutLegacyCatalog(context: SourceTitleContext) {
+  const season = context.season
+  // Older queues used synthetic seasons for linked folders and creator uploads.
+  if (season && (
+    (season.uploaderId === 0 && !season.uploaderName && !season.coverUrl)
+    || (season.id === season.uploaderId && season.title === season.uploaderName)
+  )) {
+    return { ...context, season: undefined, chapterContext: false }
+  }
+  return context
+}
 const genericPart = (value: string) => /^(?:p\s*\d+|part\s*\d+|正片|视频|默认|默认标题)$/i.test(value.normalize('NFKC'))
 const identity = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
 const trimSeparator = (value: string) => value.replace(/^[\s:：|丨/·,，—–\-\]】)）]+/, '').trim()
@@ -34,6 +45,7 @@ export function sourceTitle(videoTitle: string, partTitle: string, partCount: nu
 }
 
 export function contentTitle(context: SourceTitleContext) {
+  context = withoutLegacyCatalog(context)
   const title = sourceTitle(context.videoTitle, context.partTitle, context.partCount, Boolean(context.season || context.chapterContext), context.season?.title)
   // Music presentation wrappers have explicit evidence. Arbitrary book / film
   // quotes must not become a song name or silently select one song in a medley.
@@ -46,6 +58,10 @@ export function contentTitle(context: SourceTitleContext) {
 
 export function withTrackTitle(track: Track): Track {
   track = sourceTrack(track)
+  if (track.sourceTitleContext) {
+    const context = withoutLegacyCatalog(track.sourceTitleContext)
+    if (context !== track.sourceTitleContext) track = { ...track, sourceTitleContext: context, chapterContext: false }
+  }
   if (track.titleOverridden) return track.displayTitle === track.title ? track : { ...track, displayTitle: track.title }
   const title = track.sourceTitleContext ? contentTitle(track.sourceTitleContext) : track.displayTitle || track.title
   return importedPresentation(title === track.title && title === track.displayTitle ? track : { ...track, title, displayTitle: title })

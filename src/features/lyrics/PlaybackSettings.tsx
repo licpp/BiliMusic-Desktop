@@ -60,19 +60,11 @@ export function PlaybackSettings({ track, kind, onChanged }: {
   const touchOptions = [
     { value: '0', label: automatic },
     ...(choices ?? []).map(choice => ({ value: String(choice.id), label: choice.label })),
-    ...(missing ? [{ value: String(selected), label: '已记住偏好' }] : []),
+    ...(missing ? [{ value: String(selected), label: isMobile ? '已记住偏好' : audio ? '已记住偏好 · 本曲使用可用音质' : '已记住偏好 · 本片自动适配' }] : []),
   ]
   return <div className="playback-quality-settings" data-kind={kind}>
-    {isMobile ? <TouchOptions icon={audio ? <Headphones size={18}/> : <Monitor size={18}/>} label={audio ? '音质' : '清晰度'} selected={String(selected)} options={touchOptions}
-      disabled={busy || !preferences.data || !choices} onChange={value => void change(Number(value))}/> : <label>
-      {audio ? '音质' : '清晰度'}
-      <select aria-label={audio ? '音频质量' : '视频清晰度'} disabled={busy || !preferences.data || !choices}
-        value={selected} onChange={event => void change(Number(event.target.value))}>
-        <option value={0}>{audio ? '自动 · 最高 AAC 音质' : '自动 · 优先流畅'}</option>
-        {choices?.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
-        {missing && <option value={selected}>{audio ? '已记住偏好 · 本曲使用可用音质' : '已记住偏好 · 本片自动适配'}</option>}
-      </select>
-    </label>}
+    <TouchOptions icon={audio ? <Headphones size={17}/> : <Monitor size={17}/>} label={audio ? '音质' : '清晰度'} selected={String(selected)} options={touchOptions}
+      disabled={busy || !preferences.data || !choices} onChange={value => void change(Number(value))}/>
     {(error || queryError) && <p role="alert">{error || commandErrorMessage(queryError)}{queryError && <button type="button" aria-label={`${audio ? '音质' : '画质'}加载失败，重新加载`} onClick={() => { void options.refetch(); void preferences.refetch() }}>重新加载</button>}</p>}
     {busy && <small role="status">{audio ? '正在准备新音质，继续播放当前音源…' : '正在切换…'}</small>}
   </div>

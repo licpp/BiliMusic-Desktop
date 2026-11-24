@@ -50,6 +50,23 @@ test('A to B to A rejects a failed transport from the first A', async () => {
  assert.equal(store.getState().error,null)
 })
 
+test('repeated native snapshots preserve the first diagnostic and allow dismissal until a new failure', async () => {
+  fixture.control = async () => {}
+  await store.getState().play(a)
+  const failed = { id: a.id, engineInstanceId: 'harmony', sessionId: 'failed-a', sourceRevision: 1,
+    status: 'error', recoveryAttempted: true, error: '音频加载失败', errorCode: 'ohos_media:5400106' }
+  fixture.receive(failed)
+  const issue = store.getState().error
+  assert.equal(issue.code, failed.errorCode)
+  fixture.receive({ ...failed, sequence: 2 })
+  assert.strictEqual(store.getState().error, issue)
+  store.setState({ error: null })
+  fixture.receive({ ...failed, sequence: 3 })
+  assert.equal(store.getState().error, null)
+  fixture.receive({ ...failed, sourceRevision: 2 })
+  assert.equal(store.getState().error.code, failed.errorCode)
+})
+
 test('new pause supersedes pending resume without progress or queue updates cancelling controls', async () => {
  fixture.control=async()=>{}
  await store.getState().play(b)

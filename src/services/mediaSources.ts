@@ -5,8 +5,9 @@ import type { Track } from '../domain/track'
 import { rememberVideoPages } from './videoPages'
 import { toTrack } from './collectionTrack'
 import { accountEpoch } from './accountScope'
-import type { BiliVideoPart, BiliVideoParts } from '../domain/bilibili'
+import type { FavoriteVideo } from '../domain/bilibili'
 import type { LyricLine } from '../domain/lyrics'
+import type { SubtitleChoice } from '../domain/subtitleLanguage'
 import type { Collection } from './collections'
 export type QualityPreferences = { audioId:number; videoHeight:number }
 export type MediaOptions = { audio:{id:number;label:string}[]; video:{id:number;label:string}[] }
@@ -20,6 +21,9 @@ export function seasonCollection(season: SeasonSummary): Collection {
   }
 }
 export function parseSeasonReference(reference:string) { const match=/^season:(\d+):(\d+)$/.exec(reference);return match ? {mid:Number(match[1]),seasonId:Number(match[2])} : null }
+export const usableSeasonCover = (cover?: string) => Boolean(cover?.trim() && !cover.includes('viedeo_material_default'))
+export const getSeasonCover = (reference: NonNullable<ReturnType<typeof parseSeasonReference>>) =>
+  invoke<string>('bili_season_cover', reference)
 export async function getSeason(mid: number, seasonId: number, refresh = false) {
   const epoch = accountEpoch()
   const season = await invoke<Season>('bili_season', { mid, seasonId, refresh })
@@ -30,7 +34,7 @@ export async function getSeason(mid: number, seasonId: number, refresh = false) 
 }
 
 export {videoDetailFromTrack,seasonVideoRow} from '../domain/videoMetadata'
-import {videoDetailFromTrack,seasonVideoRow} from '../domain/videoMetadata'
+import { catalogVideoTrack, videoDetailFromTrack, seasonVideoRow } from '../domain/videoMetadata'
 
 export function seasonTracks(season: Season): Track[] {
   let extra = 8000 - season.tracks.length
@@ -43,14 +47,24 @@ export function seasonTracks(season: Season): Track[] {
     return video.parts.map(part => toTrack(detail, part))
   })
 }
-export const getSubtitles = (bvid:string,cid:number) => invoke<{language:string;label:string;ai:boolean}[]>('bili_subtitles',{bvid,cid})
+export const getSubtitles = (bvid:string,cid:number) => invoke<SubtitleChoice[]>('bili_subtitles',{bvid,cid})
 export const getSubtitleLines = (bvid: string, cid: number, language: string) =>
   invoke<LyricLine[]>('bili_subtitle_lines', { bvid, cid, language })
 export const getMediaOptions = (bvid:string,cid:number) => invoke<MediaOptions>('bili_media_options',{bvid,cid})
 export const getMediaPreferences = () => invoke<QualityPreferences>('media_preferences')
 export const setMediaPreferences = (value:Partial<QualityPreferences>) => invoke<QualityPreferences>('media_set_preferences',value)
 
-export function creatorVideoRow(video: { bvid:string; aid:number; title:string; pic:string; length?:string; duration?:number; play?:number; created?:number; pubdate?:number }): SeasonVideo {
+export function creatorVideoRow(video: { bvid:string; aid:number; title:string; pic:string; length?:string; duration?:number; play?:number; created?:number; pubdate?:number }, mid: number, name: string): Track {
   const duration = video.length?.split(':').reduce((seconds,part)=>seconds*60 + Number(part),0)
-  return {publishedAt:video.pubdate || video.created,bvid:video.bvid,aid:video.aid,cid:0,title:video.title,coverUrl:video.pic,durationSeconds:Number.isFinite(duration) ? duration! : video.duration || 0,playCount:typeof video.play === 'number' && Number.isFinite(video.play) ? video.play : undefined}
+  return catalogVideoTrack({publishedAt:video.pubdate || video.created,bvid:video.bvid,aid:video.aid,cid:0,title:video.title,coverUrl:video.pic,durationSeconds:Number.isFinite(duration) ? duration! : video.duration || 0,playCount:typeof video.play === 'number' && Number.isFinite(video.play) ? video.play : undefined}, mid, name)
+}
+
+export const favoriteVideoExpired = (video: FavoriteVideo) =>
+  Boolean((video.attr ?? 0) & 8) || video.title.trim() === '已失效视频'
+
+export function favoriteVideoTrack(video: FavoriteVideo): Track {
+  return { ...catalogVideoTrack({
+    bvid: video.bvid, aid: video.aid || 0, cid: 0, title: video.title, coverUrl: video.cover,
+    durationSeconds: video.duration || 0, publishedAt: video.pubtime, playCount: video.cnt_info?.play,
+  }), sourceExpired: favoriteVideoExpired(video) || undefined }
 }

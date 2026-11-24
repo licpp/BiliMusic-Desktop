@@ -92,3 +92,9 @@ export function lyricScrollPosition(line: LyricLine, timeMs: number, nextTimeMs:
   const progress=to-from>1e-6?(lyricScrollProgress(line,timeMs,end)-from)/(to-from):(timeMs-startAt)/(endAt-startAt)
   return Math.max(0,Math.min(1,progress))
 }
+/** Place each row near the midpoint, keeping a gap between the two rows' anchors. */
+export function centeredLyricOffset(slot: number, width: number, textWidth: number) {
+  const gap = Math.min(8, width * 0.02)
+  const start = width / 2 + (slot === 0 ? -textWidth - gap : gap)
+  return Math.max(0, Math.min(start, width - textWidth))
+}

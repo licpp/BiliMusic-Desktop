@@ -12,9 +12,11 @@ struct OutputGain {
         guard version.isFinite, version >= revision else { return false }
         enabled = value; revision = version; return true
     }
-    mutating func plan(_ db: Double) { gainDb = db.isFinite ? min(0,max(-80,db)) : 0 }
+    mutating func plan(_ db: Double) { gainDb = db.isFinite ? min(6,max(-80,db)) : 0 }
     func current(_ now: Double) -> Double { from + (target-from) * min(1,max(0,(now-began)/300)) }
     mutating func transition(_ now: Double, smooth: Bool) { let next = enabled ? gainDb : 0; from = smooth ? current(now) : next; target = next; began = now }
     func active(_ now: Double) -> Bool { now < began+300 && from != target }
-    func level(_ volume: Float, _ now: Double) -> Float { min(1,max(0,volume)) * Float(pow(10,current(now)/20)) }
+    func level(_ volume: Float, _ now: Double) -> Float {
+        min(1, min(1, max(0, volume)) * Float(pow(10, current(now) / 20)))
+    }
 }

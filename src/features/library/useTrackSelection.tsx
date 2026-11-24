@@ -1,11 +1,13 @@
 import { BatchMatchButton } from './BatchMatchButton'
+import { LinkedMatchButton } from './LinkedMatchControls'
 import { accountEpoch } from '../../services/accountScope'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, EyeOff, FolderPlus, ListPlus } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { useDownloadBatch } from '../downloads/downloadBatch'
 import { chooseDownload } from '../downloads/downloadRequest'
+import { downloadSelectionMessage, prepareDownloadSelection } from '../downloads/downloadSelection'
 import { usePlayerStore } from '../player/playerStore'
 import { chooseTrackPlaylist } from './trackActionStore'
 
@@ -22,15 +24,21 @@ export function useTrackSelection(tracks: Track[]) {
   const exit = () => { setSelecting(false); setIds(new Set()) }
   return {
     selecting, ids, selected, toggle, exit,
+    forget: (removed: string[]) => {
+      const exclude = new Set(removed)
+      setIds(existing => new Set([...existing].filter(id => !tracks.some(track => track.id === id && exclude.has(track.source.bvid)))))
+    },
     enter: () => setSelecting(true),
     all: () => setIds(selected.length === tracks.length ? new Set() : new Set(tracks.map(track => track.id))),
   }
 }
 
-export function BatchTrackActions({ selection, total, onRemove, onHide, allowAutoMatch = false }: {
+export function BatchTrackActions({ selection, total, onRemove, onHide, downloadScope, allowAutoMatch = false, linkedFolderId }: {
   selection: ReturnType<typeof useTrackSelection>
   total: number
   allowAutoMatch?: boolean
+  linkedFolderId?: number
+  downloadScope?: string
   onHide?: (tracks: Track[]) => Promise<void>
   onRemove?: (tracks: Track[]) => Promise<void>
 }) {
@@ -39,6 +47,24 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, allowAut
   const [message, setMessage] = useState('')
   const [removing, setRemoving] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const alive = useRef(false)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const download = async () => {
+    const epoch = accountEpoch()
+    const current = () => alive.current && accountEpoch() === epoch
+    setRemoving(true)
+    setMessage('')
+    try {
+      const result = await prepareDownloadSelection(selected, downloadScope, current)
+      if (!result || !current()) return
+      chooseDownload(result.tracks)
+      setMessage(downloadSelectionMessage(result.failed, result.tracks.length))
+    } catch (cause) {
+      if (current()) setMessage(commandErrorMessage(cause))
+    } finally {
+      if (current()) setRemoving(false)
+    }
+  }
   return <>
     <div className="collection-actions batch-actions">
       <button onClick={all} disabled={removing}>{selected.length === total ? '取消全选' : '全选'}</button>
@@ -52,12 +78,8 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, allowAut
         } catch(cause) { setMessage(commandErrorMessage(cause)) }
         finally { setRemoving(false) }
       }}><FolderPlus size={16}/>加入歌单</button>
-      {selected.some(track => track.source.provider === 'bilibili') && <button disabled={downloading || removing} onClick={async () => {
-        try {
-          chooseDownload(selected)
-        } catch (cause) { setMessage(commandErrorMessage(cause)) }
-      }}><Download size={16}/>下载所选</button>}
-      {allowAutoMatch && <BatchMatchButton tracks={selected}/>}
+      {selected.some(track => track.source.provider === 'bilibili') && <button disabled={downloading || removing} onClick={() => void download()}><Download size={16}/>下载所选</button>}
+      {linkedFolderId ? <LinkedMatchButton folderId={linkedFolderId} tracks={selected}/> : allowAutoMatch && <BatchMatchButton tracks={selected}/>}
       {onHide && <button disabled={!selected.length || removing} onClick={async()=>{setRemoving(true);try{await onHide(selected)}catch(e){setMessage(commandErrorMessage(e))}finally{setRemoving(false)}}}><EyeOff size={16}/>隐藏所选</button>}
       {onRemove && <button disabled={!selected.length || removing} onClick={() => setConfirmRemove(true)}>移除所选</button>}
       <button onClick={exit} disabled={removing}>完成</button>

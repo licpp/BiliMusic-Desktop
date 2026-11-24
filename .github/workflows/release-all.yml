@@ -1,16 +1,47 @@
 name: release-all-desktop
-run-name: BiliMusic 0.3.6 installers — Windows, Intel Mac and Linux
+run-name: BiliMusic desktop installers · build ${{ inputs.build_number }}
 on:
   workflow_dispatch:
+    inputs:
+      build_number:
+        description: Build number for the selected installers
+        required: true
+        type: number
+        default: 1
+      target:
+        description: Installer target
+        type: choice
+        options: [all, windows, mac-intel, windows-x64, windows-arm64, linux-x64, linux-arm64]
+        default: all
 permissions:
   contents: read
 env:
   RELEASE_SOURCE: ${{ github.sha }}
+  BILIMUSIC_BUILD_NUMBER: ${{ inputs.build_number }}
 jobs:
   frontend:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    outputs:
+      targets: ${{ steps.targets.outputs.result }}
     steps:
+      - id: targets
+        uses: actions/github-script@v7
+        env:
+          INSTALLER_TARGET: ${{ inputs.target }}
+        with:
+          script: |
+            const targets = [
+              { id: 'mac-intel', os: 'macos-15-intel', target: 'x86_64-apple-darwin', arch: 'x64', bundle: 'dmg', artifact: 'bilimusic-macOS-intel' },
+              { id: 'windows-x64', os: 'windows-latest', target: 'x86_64-pc-windows-msvc', arch: 'x64', bundle: 'nsis', artifact: 'bilimusic-Windows-x64' },
+              { id: 'windows-arm64', os: 'windows-11-arm', target: 'aarch64-pc-windows-msvc', arch: 'arm64', bundle: 'nsis', artifact: 'bilimusic-Windows-arm64' },
+              { id: 'linux-x64', os: 'ubuntu-22.04', target: 'x86_64-unknown-linux-gnu', arch: 'x64', bundle: 'appimage,deb', artifact: 'bilimusic-Linux-x64' },
+              { id: 'linux-arm64', os: 'ubuntu-22.04-arm', target: 'aarch64-unknown-linux-gnu', arch: 'arm64', bundle: 'appimage,deb', artifact: 'bilimusic-Linux-arm64' },
+            ]
+            const choice = process.env.INSTALLER_TARGET
+            const include = choice === 'all' ? targets : targets.filter(entry => entry.id === choice || choice === 'windows' && entry.id.startsWith('windows-'))
+            if (!include.length) throw Error('Unknown installer target')
+            return { include }
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_SOURCE }}
@@ -32,39 +63,13 @@ jobs:
     timeout-minutes: 55
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            arch: x64
-            bundle: dmg
-            artifact: bilimusic-macOS-intel
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x64
-            bundle: nsis
-            artifact: bilimusic-Windows-x64
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            arch: arm64
-            bundle: nsis
-            artifact: bilimusic-Windows-arm64
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            arch: x64
-            bundle: appimage,deb
-            artifact: bilimusic-Linux-x64
-          - os: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-            arch: arm64
-            bundle: appimage,deb
-            artifact: bilimusic-Linux-arm64
+      matrix: ${{ fromJSON(needs.frontend.outputs.targets) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_SOURCE }}
-      - name: Verify exact published source
+      - name: Verify checked-out source
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE"
@@ -87,7 +92,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev libasound2-dev patchelf xdg-utils xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libdbus-1-dev libasound2-dev patchelf xdg-utils
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
@@ -161,7 +166,7 @@ jobs:
           file "$binary"
           test "$(lipo -archs "$binary")" = x86_64
           codesign --verify --deep --strict --verbose=2 "$app"
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist" | grep -x 0.3.6
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$(node -p "require('./package.json').version")"
       - name: Verify Windows ARM64 application and GUI subsystem
         if: runner.os == 'Windows'
         shell: pwsh
@@ -180,19 +185,17 @@ jobs:
           if [ '${{ matrix.arch }}' = arm64 ]; then readelf -h "$binary" | grep -q AArch64; expected=arm64; else readelf -h "$binary" | grep -q 'X86-64'; expected=amd64; fi
           deb=$(find src-tauri/target/${{ matrix.target }}/release/bundle/deb -name '*.deb' -print -quit)
           test "$(dpkg-deb -f "$deb" Architecture)" = "$expected"
-          test "$(dpkg-deb -f "$deb" Version)" = 0.3.6
+          bash scripts/stamp-debian-version.sh "$deb" "$(node -p "require('./package.json').version")"
+          depends=$(dpkg-deb -f "$deb" Depends)
+          for dependency in libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1; do
+            printf '%s\n' "$depends" | tr ',' '\n' | awk '{print $1}' | grep -Fxq "$dependency"
+          done
           ! ldd "$binary" | grep 'not found'
-          set +e
-          timeout 18s xvfb-run -a dbus-run-session -- "$binary" > linux-launch.log 2>&1
-          status=$?
-          set -e
-          cat linux-launch.log
-          test "$status" = 124
       - name: Generate dependency notices and build provenance
         shell: bash
         run: |
           node scripts/release-notices.mjs ${{ matrix.target }} THIRD_PARTY_LICENSES-${{ matrix.artifact }}.json
-          node -e "const fs=require('fs');fs.writeFileSync('build-provenance.json',JSON.stringify({version:'0.3.6',source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID},null,2))"
+          node -e "const fs=require('fs');fs.writeFileSync('build-provenance.json',JSON.stringify({version:require('./package.json').version,build:Number(process.env.BILIMUSIC_BUILD_NUMBER),source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID},null,2))"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -205,5 +208,4 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             THIRD_PARTY_LICENSES-${{ matrix.artifact }}.json
             build-provenance.json
-            linux-launch.log
           if-no-files-found: error

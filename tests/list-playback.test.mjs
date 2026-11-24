@@ -30,3 +30,13 @@ test('a hidden whole BV checkpoint skips its lazy expansion without a network re
  const result=await prepareListPlayback([first,second],{bvid:'BV123',cid:2,positionMs:60000},async()=>{throw Error('must not request a hidden BV')},()=>true,t=>t.source.bvid!=='BV123')
  assert.equal(result.trackId,second.id);assert.equal(result.startAt,0)
 })
+test('offline resume chooses the saved checkpoint part without replacing the source BV', async () => {
+ const group=row(0,true), saved=row(2), entries=[group]
+ const result=await prepareListPlayback(entries,{bvid:'BV123',cid:2,positionMs:42000},async()=>{throw Error('offline resume must not resolve remotely')},()=>true,()=>true,()=>[row(1),saved])
+ assert.deepEqual(result,{queue:entries,trackId:saved.id,sourceTrackId:group.id,startAt:42})
+})
+test('offline resume skips an unsaved BV in source order without transferring its position', async () => {
+ const group=row(0,true), next={...row(5),id:'bilibili:BVNEXT:5',source:{provider:'bilibili',bvid:'BVNEXT',cid:5}}
+ const result=await prepareListPlayback([group,next],{bvid:'BV123',cid:2,positionMs:42000},async()=>{throw Error('offline resume must not resolve remotely')},()=>true,()=>true,t=>t===next?[t]:[])
+ assert.deepEqual(result,{queue:[group,next],trackId:next.id,sourceTrackId:next.id,startAt:0})
+})

@@ -53,6 +53,6 @@ try {
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   const source = run('git', ['-C', root, 'rev-parse', 'HEAD'])
   await writeFile(join(output, 'SHA256SUMS.txt'), `${sha256}  ${filename}\n`)
-  await writeFile(join(output, 'build-info.json'), JSON.stringify({ version, nativeVersion: plist.CFBundleShortVersionString, buildNumber: plist.CFBundleVersion, bundleId: plist.CFBundleIdentifier, source, signed: false, platform: 'iOS', architecture: arch, minimumSystemVersion: plist.MinimumOSVersion, bytes: bytes.length, sha256 }, null, 2) + '\n')
+  await writeFile(join(output, 'build-info.json'), JSON.stringify({ version, build: expected.build, nativeVersion: plist.CFBundleShortVersionString, buildNumber: plist.CFBundleVersion, bundleId: plist.CFBundleIdentifier, source, signed: false, platform: 'iOS', architecture: arch, minimumSystemVersion: plist.MinimumOSVersion, bytes: bytes.length, sha256 }, null, 2) + '\n')
   console.log(JSON.stringify({ path, bytes: bytes.length, sha256, source }))
 } finally { await rm(temp, { recursive: true, force: true }) }

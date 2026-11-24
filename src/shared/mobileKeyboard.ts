@@ -30,7 +30,7 @@ export function installMobileKeyboard(options: { scrollContainers?: string; topI
       schedule()
     }
     if (!input || !visible.keyboardOpen) return
-    const container = input.closest<HTMLElement>(options.scrollContainers || '.mobile-page-content,.stage-scroll,.import-body,.comments-scroll,.comment-compose,.collection-dialog,.lyric-chooser')
+    const container = input.closest<HTMLElement>(options.scrollContainers || '.mobile-page-content,.stage-scroll,.import-body,.comments-scroll,.comment-compose,.comments-panel,.collection-dialog,.lyric-chooser')
     const hiddenBy = input.getBoundingClientRect().bottom - (visible.top + visible.height - 16)
     // The active form owns scrolling. Never scroll body or restore an old
     // position over a user's scroll after closing the keyboard.

@@ -43,6 +43,34 @@ pub fn close_main(window: &tauri::Window) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn set_corner_radius(window: &tauri::WebviewWindow, radius: Option<f64>) -> tauri::Result<()> {
+    use objc2::{
+        class, msg_send,
+        runtime::{AnyObject, Bool},
+    };
+    window.set_background_color(radius.map(|_| tauri::window::Color(0, 0, 0, 0)))?;
+    window.with_webview(move |webview| unsafe {
+        let native = webview.ns_window() as *mut AnyObject;
+        let rounded = radius.is_some();
+        let color: *mut AnyObject = if rounded {
+            msg_send![class!(NSColor), clearColor]
+        } else {
+            msg_send![class!(NSColor), windowBackgroundColor]
+        };
+        let _: () = msg_send![native, setOpaque: Bool::new(!rounded)];
+        let _: () = msg_send![native, setBackgroundColor: color];
+        let view: *mut AnyObject = msg_send![native, contentView];
+        let _: () = msg_send![view, setWantsLayer: Bool::YES];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if !layer.is_null() {
+            let _: () = msg_send![layer, setCornerRadius: radius.unwrap_or_default()];
+            let _: () = msg_send![layer, setMasksToBounds: Bool::new(rounded)];
+        }
+        let _: () = msg_send![native, invalidateShadow];
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

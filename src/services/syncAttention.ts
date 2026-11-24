@@ -1,18 +1,24 @@
 import { create } from 'zustand'
 import type { SyncOutcome } from './sync'
+import { describeSyncIssue, type SyncIssue } from './syncIssues'
 
 // Account-scoped, without credentials or persisted copies of cloud content.
-type Attention = { library: string; statistics: string; outcome: SyncOutcome | null; reveal: number }
-export const useSyncAttention = create<Attention>(() => ({ library: '', statistics: '', outcome: null, reveal: 0 }))
+type Attention = { library: string; statistics: string; libraryIssue: SyncIssue | null; statisticsIssue: SyncIssue | null; outcome: SyncOutcome | null; reveal: number }
+export const useSyncAttention = create<Attention>(() => ({ library: '', statistics: '', libraryIssue: null, statisticsIssue: null, outcome: null, reveal: 0 }))
 export function reportSyncOutcome(outcome: SyncOutcome, preview = false) {
+  if (outcome.skipped) return
   useSyncAttention.setState({ outcome: outcome.conflicts.length || preview ? outcome : null,
-    library: outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改待确认` : preview ? '请完成首次同步' : '' })
+    libraryIssue: null,
+    library: outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改待确认` : preview ? '请完成首次同步' : outcome.importError || outcome.visibilityError || outcome.chaptersError ? '部分资料待同步' : '' })
 }
-export function reportSyncError(domain: 'library' | 'statistics', failed: boolean) {
+export function reportSyncError(domain: 'library' | 'statistics', failed: boolean, error?: unknown) {
   const state = useSyncAttention.getState()
-  // An independent statistics success must not erase library conflicts.
-  if (domain === 'library' && state.outcome?.conflicts.length) return
-  useSyncAttention.setState({ [domain]: failed ? domain === 'library' ? '同步未完成，点此查看并重试' : '听歌统计同步未完成，点此重试' : '' })
+  const issue = failed ? describeSyncIssue(error) : null
+  if (domain === 'library') useSyncAttention.setState({
+    library: state.outcome?.conflicts.length ? state.library : issue ? '同步待处理' : '',
+    libraryIssue: issue,
+  })
+  else useSyncAttention.setState({ statistics: issue ? '听歌统计待同步' : '', statisticsIssue: issue })
 }
-export function clearSyncAttention() { useSyncAttention.setState({ library: '', statistics: '', outcome: null }) }
+export function clearSyncAttention() { useSyncAttention.setState({ library: '', statistics: '', libraryIssue: null, statisticsIssue: null, outcome: null }) }
 export function revealSync() { useSyncAttention.setState(state => ({ reveal: state.reveal + 1 })) }

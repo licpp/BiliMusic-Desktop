@@ -7,8 +7,25 @@
     "frontendDist": "../dist-large-screen"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "BiliMusic", "width": 1280, "height": 720, "minWidth": 0, "minHeight": 0, "useHttpsScheme": true }],
-    "security": { "csp": "default-src 'self'; img-src 'self' asset: https: data:; media-src 'self' asset: https: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:*" }
+    "windows": [
+      {
+        "label": "main",
+        "title": "BiliMusic",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 0,
+        "minHeight": 0,
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https: data:; media-src 'self' asset: https: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:*"
+    }
   },
-  "bundle": { "android": { "minSdkVersion": 26, "versionCode": 30600 } }
+  "bundle": {
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 40400
+    }
+  }
 }

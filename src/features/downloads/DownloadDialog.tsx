@@ -7,7 +7,7 @@ import { accountEpoch } from '../../services/accountScope'
 import { getMediaOptions } from '../../services/mediaSources'
 import { commandErrorMessage,getVideoParts } from '../../services/desktopApi'
 import { startDownloadBatch,useDownloadBatch } from './downloadBatch'
-import { useDownloadRequest,type DownloadOptions } from './downloadRequest'
+import { useDownloadRequest } from './downloadRequest'
 import { isAndroid } from '../../services/platform'
 import { androidDownloadDestination, androidDownloadDestinationKey } from '../../services/androidDownloads'
 import { AndroidDownloadDestinationField } from './AndroidDownloadDestination'
@@ -36,9 +36,16 @@ function DownloadDialog({request}:{request:NonNullable<ReturnType<typeof useDown
   <div className="download-option-field"><span><Headphones size={18}/>下载音质</span><div className="download-quality-options" role="radiogroup" aria-label="下载音质">
    {[{id:0,label:'自动 · 最高 AAC 音质'},...choices].map(choice=><label key={choice.id} data-selected={options.audioId===choice.id}><input type="radio" name="download-audio-quality" value={choice.id} checked={options.audioId===choice.id} disabled={busy} onChange={()=>setOptions(value=>({...value,audioId:choice.id,exportFormat:choice.id!==30251&&value.exportFormat==='flac'?'auto':value.exportFormat}))}/><span>{choice.label}</span></label>)}
   </div></div>
-  <label className="download-option-field"><span><FileAudio size={18}/>保存格式</span><select aria-label="下载保存格式" disabled={busy} value={options.exportFormat} onChange={event=>setOptions(value=>({...value,exportFormat:event.target.value as DownloadOptions['exportFormat'],audioId:event.target.value==='flac'?30251:value.audioId}))}>
-   <option value="auto">智能格式：无损 FLAC / AAC M4A</option><option value="flac" disabled={options.audioId!==0&&options.audioId!==30251||single&&!!quality.data&&!choices.some(choice=>choice.id===30251)}>FLAC（需无损音源）</option><option value="original">保留原始封装</option>
-  </select></label>
+  <div className="download-option-field"><span><FileAudio size={18}/>保存格式</span><div className="download-format-options" role="radiogroup" aria-label="下载保存格式">
+   {([
+    { value: 'auto' as const, label: '智能格式', detail: 'FLAC / M4A' },
+    { value: 'flac' as const, label: 'FLAC 无损', detail: '需无损音源', disabled: options.audioId!==0&&options.audioId!==30251||single&&!!quality.data&&!choices.some(choice=>choice.id===30251) },
+    { value: 'original' as const, label: '原始封装', detail: '保持源格式' },
+   ]).map(item => <button type="button" role="radio" key={item.value} aria-checked={options.exportFormat===item.value} disabled={busy||item.disabled}
+    onClick={()=>setOptions(value=>({...value,exportFormat:item.value,audioId:item.value==='flac'?30251:value.audioId}))}>
+    <strong>{item.label}</strong><small>{item.detail}</small>
+   </button>)}
+  </div></div>
   <p className="download-format-hint">{options.exportFormat==='original'?'按音源原本的封装保存。':options.exportFormat==='flac'?'无损提取 FLAC 音轨，保留原始采样率和位深。':'Hi-Res 保存为真正的 .flac，AAC 保存为 .m4a。'}</p>
   {isAndroid&&<AndroidDownloadDestinationField disabled={busy}/>}
   {single&&quality.isPending&&<p role="status" className="batch-message"><LoaderCircle size={15} className="spin"/>正在读取本曲可用音质…</p>}

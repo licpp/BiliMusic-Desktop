@@ -1,9 +1,13 @@
-//! Content-level metadata and the shared, attenuation-only playback policy.
+//! Content-level metadata and the shared playback loudness policy.
 use serde::{Deserialize, Serialize};
 
 pub const DESCRIPTOR_VERSION: u32 = 1;
-pub const TARGET_LUFS: f64 = -18.0;
-pub const PEAK_CEILING_DBTP: f64 = -1.5;
+pub const TARGET_LUFS: f64 = -19.0;
+pub const PEAK_CEILING_DBTP: f64 = -1.0;
+const MAX_BOOST_DB: f64 = 6.0;
+// Bilibili reports a content-level peak; measured cross-rendition AAC delta is up to +0.6 dB.
+// Keep boosted peaks at <= -2.0 dBTP predicted (<= -1.4 dBTP actual) for zero inter-sample clipping.
+const BOOST_CEILING_DBTP: f64 = -2.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,14 +44,22 @@ impl LoudnessDescriptor {
             && self.integrated_lufs.is_finite()
             && (-70.0..=0.0).contains(&self.integrated_lufs)
     }
-    /// No amplification: ordinary system volume is not a digital gain processor.
+    /// Positive compensation uses only available player volume headroom.
     pub fn gain_db(&self) -> f64 {
+        let target_gain = TARGET_LUFS - self.integrated_lufs;
         let peak = self
             .true_peak_dbtp
             .filter(|v| v.is_finite() && (-120.0..=20.0).contains(v));
-        (TARGET_LUFS - self.integrated_lufs)
-            .min(peak.map(|v| PEAK_CEILING_DBTP - v).unwrap_or(0.0))
-            .min(0.0)
+        let Some(peak) = peak else {
+            return target_gain.min(0.0);
+        };
+        if target_gain <= 0.0 {
+            return target_gain.min(PEAK_CEILING_DBTP - peak);
+        }
+        // Quiet tracks are never attenuated below 0 dB; boost only within verified peak headroom.
+        target_gain
+            .min(MAX_BOOST_DB)
+            .min((BOOST_CEILING_DBTP - peak).max(0.0))
     }
 }
 

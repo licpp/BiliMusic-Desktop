@@ -135,6 +135,68 @@ impl PlaybackCache {
             params![variant.key, variant.total, variant.total.div_ceil(CHUNK_SIZE)], |r| r.get::<_,bool>(0),
         ).ok()).unwrap_or(false)
     }
+    /// Use a complete preferred representation, or another complete AAC
+    /// representation. A newer partial variant must not shadow an older full one.
+    pub fn find_complete(&self, track_id: &str, quality: u32) -> Option<Variant> {
+        if !self.enabled() {
+            return None;
+        }
+        let c = self.connection.lock().ok()?;
+        let mut query = c
+            .prepare(
+                "SELECT key,bvid,cid,quality,fingerprint,mime,total FROM variants
+             WHERE track_id=?1 AND total>0
+               AND (lower(fingerprint) NOT LIKE '%|flac|%' OR (?2!=0 AND quality=?2))
+               AND total=(SELECT COALESCE(SUM(bytes),0) FROM chunks WHERE variant=variants.key)
+               AND (total-1)/?3+1=(SELECT COUNT(*) FROM chunks WHERE variant=variants.key)
+             ORDER BY (quality=?2) DESC,accessed DESC,key",
+            )
+            .ok()?;
+        query
+            .query_map(params![track_id, quality, CHUNK_SIZE], |r| {
+                Ok(Variant {
+                    key: r.get(0)?,
+                    track_id: track_id.into(),
+                    bvid: r.get(1)?,
+                    cid: r.get(2)?,
+                    quality: r.get(3)?,
+                    fingerprint: r.get(4)?,
+                    mime: r.get(5)?,
+                    total: r.get(6)?,
+                })
+            })
+            .ok()?
+            .filter_map(Result::ok)
+            .find(|variant| {
+                (0..variant.total.div_ceil(CHUNK_SIZE)).all(|idx| {
+                    let bytes = CHUNK_SIZE.min(variant.total - idx * CHUNK_SIZE);
+                    std::fs::metadata(self.path(&variant.key, idx))
+                        .is_ok_and(|m| m.is_file() && m.len() == bytes)
+                })
+            })
+    }
+    pub fn complete_track_ids(&self, quality: u32) -> Vec<String> {
+        if !self.enabled() {
+            return Vec::new();
+        }
+        let ids = (|| {
+            let connection = self.connection.lock().ok()?;
+            let mut query = connection
+                .prepare("SELECT DISTINCT track_id FROM variants WHERE total>0")
+                .ok()?;
+            Some(
+                query
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .ok()?
+                    .filter_map(Result::ok)
+                    .collect::<Vec<_>>(),
+            )
+        })()
+        .unwrap_or_default();
+        ids.into_iter()
+            .filter(|id| self.find_complete(id, quality).is_some())
+            .collect()
+    }
     pub fn read(&self, key: &str, index: u64) -> Option<Vec<u8>> {
         let c = self.connection.lock().ok()?;
         let expected: u64 = c
@@ -259,7 +321,7 @@ impl PlaybackCache {
                 r.get(0)
             })
             .map_err(|_| "无法读取缓存索引")?;
-        let complete=c.query_row("SELECT COUNT(*) FROM variants WHERE total>0 AND total=(SELECT COALESCE(SUM(bytes),0) FROM chunks WHERE variant=variants.key)",[],|r|r.get(0)).map_err(|_|"无法读取缓存索引")?;
+        let complete=c.query_row("SELECT COUNT(DISTINCT track_id) FROM variants WHERE total>0 AND total=(SELECT COALESCE(SUM(bytes),0) FROM chunks WHERE variant=variants.key) AND (total-1)/?1+1=(SELECT COUNT(*) FROM chunks WHERE variant=variants.key)",[CHUNK_SIZE],|r|r.get(0)).map_err(|_|"无法读取缓存索引")?;
         Ok(CacheStatus {
             limit_bytes: self.limit.load(Ordering::Relaxed),
             used_bytes: used,
@@ -353,6 +415,37 @@ mod tests {
         assert_eq!(cache.find(&aac.track_id, 30251).unwrap().key, explicit.key);
         cache.write(&aac, 8, 0, &[7; 8], 0).unwrap();
         assert_eq!(cache.find(&aac.track_id, 0).unwrap().key, aac.key);
+        drop(cache);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn offline_ignores_newer_partial_representations_and_missing_files_after_restart() {
+        let (root, cache, full) = fixture();
+        let partial = Variant {
+            key: "partial".into(),
+            quality: 30280,
+            ..full.clone()
+        };
+        cache.write(&full, 9, 0, &[9; 9], 0).unwrap();
+        cache
+            .write(
+                &partial,
+                CHUNK_SIZE + 1,
+                0,
+                &vec![1; CHUNK_SIZE as usize],
+                0,
+            )
+            .unwrap();
+        drop(cache);
+        let cache = PlaybackCache::open(root.join("media"), root.join("config.json")).unwrap();
+        assert_eq!(
+            cache.find_complete(&full.track_id, 30280).unwrap().key,
+            full.key
+        );
+        assert_eq!(cache.complete_track_ids(30280), vec![full.track_id.clone()]);
+        std::fs::remove_file(cache.path(&full.key, 0)).unwrap();
+        assert!(cache.complete_track_ids(30280).is_empty());
+        assert!(cache.find_complete(&full.track_id, 30280).is_none());
         drop(cache);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -10,7 +10,7 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
 };
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 type Seconds = BTreeMap<String, f64>;
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -364,6 +364,9 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
             days.values().sum()
         };
         let count = tracks.len();
+        if period == "total" {
+            result["preferences"] = preferences(c, &tracks, &names)?;
+        }
         let mut top: Vec<_> = tracks.into_iter().collect();
         top.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         let top:Vec<Value>=top.into_iter().take(50).map(|(id,seconds)|{
@@ -395,6 +398,275 @@ pub fn query(c: &Connection, directory: &std::path::Path, uid: &str) -> Result<V
     }).transpose()?.unwrap_or((0,0));
     result["sync"] = json!({"uid":uid,"provider":selected.as_ref().map(|cfg|&cfg.provider),"paused":meta(c,"account_sync_paused")?.as_deref()==Some("1"),"enabled":selected.is_some() && meta(c,"account_sync_paused")?.as_deref()!=Some("1"),"lastSuccess":if current_target {meta(c,"last_success")?} else {None},"error":if current_target {meta(c,"error")?} else {None},"uploadedBytes":traffic.0,"downloadedBytes":traffic.1,"pending":c.query_row("SELECT COUNT(*) FROM listening_buckets WHERE owned=1 AND dirty=1",[],|r|r.get::<_,i64>(0)).map_err(err)?});
     Ok(result)
+}
+
+fn tag_key(label: &str) -> (String, &str) {
+    let label = label.trim();
+    let lower = label.to_lowercase();
+    match lower.as_str() {
+        "原创曲" | "原创歌曲" => ("原创歌曲".into(), "原创歌曲"),
+        "翻彈" | "翻弹" => ("翻弹".into(), "翻弹"),
+        "ost" | "soundtrack" | "原聲帶" | "原声带" | "原声配乐" => ("原声配乐".into(), "原声配乐"),
+        "vocaloid" => ("vocaloid".into(), "VOCALOID"),
+        _ => (lower, label),
+    }
+}
+
+pub(crate) async fn hydrate_tags(
+    database: &Database,
+    provider: &crate::infrastructure::providers::bilibili::BilibiliProvider,
+) -> Result<usize, String> {
+    use crate::infrastructure::{database::account_session, providers::bilibili::valid_bvid};
+    static HYDRATING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let Ok(_running) = HYDRATING.try_lock() else { return Ok(0) };
+    let (session, candidates) = {
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        let session = account_session(&c).map_err(err)?;
+        let items = buckets(&c)?;
+        let mut scores = Seconds::new();
+        for (id, seconds) in items.into_iter().flat_map(|bucket| bucket.tracks) {
+            let Some(bvid) = id.strip_prefix("bilibili:").and_then(|id| id.split_once(':')).map(|(bvid, _)| bvid) else { continue };
+            if valid_bvid(bvid) && seconds > 0.0 {
+                *scores.entry(bvid.into()).or_default() += seconds;
+            }
+        }
+        let mut checked = c.prepare("SELECT substr(key,11) FROM sync_info WHERE key LIKE 'bili-tags:%'
+            AND (COALESCE(json_extract(value,'$.checked'),0)>unixepoch()-2592000
+                OR COALESCE(json_extract(value,'$.attempted'),0)>unixepoch()-1800)").map_err(err)?;
+        let checked = checked.query_map([], |r| r.get::<_, String>(0)).map_err(err)?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>().map_err(err)?;
+        let mut candidates: Vec<_> = scores.into_iter().filter(|(bvid,_)| !checked.contains(bvid)).collect();
+        candidates.sort_by(|a,b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        (session, candidates)
+    };
+    let mut changed = 0;
+    for (bvid, _) in candidates.into_iter().take(5) {
+        {
+            let c = database.0.lock().map_err(|_| "数据库正忙")?;
+            if account_session(&c).map_err(err)? != session {
+                return Ok(0);
+            }
+        }
+        let result = tokio::time::timeout(std::time::Duration::from_secs(4), provider.video_tags(&bvid)).await;
+        if matches!(&result, Ok(Err(error)) if error.is_request_restricted()) {
+            break;
+        }
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        if account_session(&c).map_err(err)? != session { return Ok(0); }
+        let tags = result.ok().and_then(Result::ok).map(|tags| {
+            let mut seen = std::collections::HashSet::new();
+            tags.iter().map(|label| tag_key(label))
+                .filter(|(key,label)| !key.is_empty() && label.chars().count() <= 40 && seen.insert(key.clone()))
+                .take(20).map(|(_,label)| label.to_owned()).collect::<Vec<_>>()
+        });
+        let mut cached = c.query_row("SELECT value FROM sync_info WHERE key=?1", [format!("bili-tags:{bvid}")], |r| r.get::<_, String>(0))
+            .optional().map_err(err)?.and_then(|value| serde_json::from_str::<Value>(&value).ok()).unwrap_or_else(|| json!({}));
+        let succeeded = tags.is_some();
+        if let Some(tags) = tags {
+            let next = json!(tags);
+            if cached.get("tags") != Some(&next) { changed += 1; }
+            cached["tags"] = next;
+        }
+        c.execute("INSERT INTO sync_info(key,value) VALUES(?1,json_set(?2,?3,unixepoch()))
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![format!("bili-tags:{bvid}"),cached.to_string(),if succeeded { "$.checked" } else { "$.attempted" }]).map_err(err)?;
+        if !succeeded { break; }
+    }
+    Ok(changed)
+}
+
+fn preferences(
+    c: &Connection,
+    tracks: &Seconds,
+    names: &BTreeMap<String, (String, String)>,
+) -> Result<Value, String> {
+    let mut q = c
+        .prepare(
+            "SELECT COALESCE(NULLIF(m.artist,''),NULLIF(t.artist,''),''),s.uploader_id,
+                COALESCE(s.uploader_name,''),s.source_title,t.title
+         FROM tracks t JOIN source_items s ON s.id=t.source_item_id
+         LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE t.id=?1",
+        )
+        .map_err(err)?;
+    let mut tag_query = c.prepare("SELECT substr(key,11),json_extract(value,'$.tags') FROM sync_info
+        WHERE key LIKE 'bili-tags:%' AND json_type(value,'$.tags')='array'").map_err(err)?;
+    let tags = tag_query.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?
+        .filter_map(|row| row.ok().and_then(|(bvid,value)| serde_json::from_str::<Vec<String>>(&value).ok().map(|tags| (bvid,tags))))
+        .collect::<BTreeMap<_,_>>();
+    let mut artists = BTreeMap::<String, (String, f64)>::new();
+    let mut uploaders = BTreeMap::<String, (String, f64)>::new();
+    let mut themes = BTreeMap::<String, (String, f64)>::new();
+    let add = |group: &mut BTreeMap<String, (String, f64)>, key: String, label: &str, seconds| {
+        group.entry(key).or_insert_with(|| (label.into(), 0.0)).1 += seconds;
+    };
+    let (mut artist_seconds, mut uploader_seconds, mut theme_seconds) = (0.0, 0.0, 0.0);
+    for (track, &seconds) in tracks {
+        if seconds <= 0.0 {
+            continue;
+        }
+        let local = q
+            .query_row([track], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .optional()
+            .map_err(err)?;
+        let fallback = names.get(track);
+        let (local_artist, uid, uploader, source, title) = local.unwrap_or_else(|| {
+            (
+                String::new(),
+                None,
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        });
+        let artist = if local_artist.is_empty() {
+            fallback.map(|v| v.1.as_str()).unwrap_or_default()
+        } else {
+            &local_artist
+        };
+        let artist = artist.trim();
+        if !artist.is_empty() && artist != uploader && artist != "未知歌手" && artist != "歌手未知"
+        {
+            artist_seconds += seconds;
+            add(&mut artists, artist.to_lowercase(), artist, seconds);
+        }
+        if !uploader.trim().is_empty() {
+            uploader_seconds += seconds;
+            let key = uid
+                .filter(|id| *id > 0)
+                .map(|id| format!("id:{id}"))
+                .unwrap_or_else(|| format!("name:{}", uploader.trim().to_lowercase()));
+            add(&mut uploaders, key, uploader.trim(), seconds);
+        }
+        let bvid = track.strip_prefix("bilibili:").and_then(|id| id.split_once(':')).map(|(bvid, _)| bvid);
+        if let Some(labels) = bvid.and_then(|bvid| tags.get(bvid)).filter(|labels| !labels.is_empty()) {
+            theme_seconds += seconds;
+            let mut seen = std::collections::HashSet::new();
+            for label in labels {
+                let (key, label) = tag_key(label);
+                if !key.is_empty() && seen.insert(key.clone()) {
+                    add(&mut themes, key, label, seconds);
+                }
+            }
+            continue;
+        }
+        let caption = if !source.is_empty() {
+            source
+        } else if !title.is_empty() {
+            title
+        } else {
+            fallback.map(|v| v.0.clone()).unwrap_or_default()
+        };
+        let caption = caption.to_lowercase();
+        // Explicit title cues only. No inferred genre from a singer's identity.
+        let mut has_theme = false;
+        for (label, cues) in [
+            (
+                "现场演出",
+                &["现场版", "演唱会", "音乐节", "(live)", "live session"][..],
+            ),
+            (
+                "翻唱",
+                &["翻唱", "翻彈", "翻弹", "(cover)", "歌ってみた"][..],
+            ),
+            (
+                "原声配乐",
+                &["原声带", "原声配乐", "电影配乐", "soundtrack", "原聲帶"][..],
+            ),
+            (
+                "古典",
+                &["古典音乐", "古典音樂", "交响曲", "交響曲", "协奏曲"][..],
+            ),
+            ("爵士", &["爵士", "jazz"][..]),
+            ("摇滚", &["摇滚", "搖滾", "rock concert"][..]),
+            (
+                "白噪音与环境声",
+                &["白噪音", "环境音", "環境音", "ambient sound"][..],
+            ),
+            (
+                "历史与人文",
+                &["讲历史", "中国通史", "中國通史", "历史解说"][..],
+            ),
+        ] {
+            if cues.iter().any(|cue| caption.contains(cue)) {
+                has_theme = true;
+                add(&mut themes, label.into(), label, seconds);
+            }
+        }
+        if has_theme {
+            theme_seconds += seconds;
+        }
+    }
+    let rank = |group: BTreeMap<String, (String, f64)>| {
+        let mut items = group.into_iter().collect::<Vec<_>>();
+        items.sort_by(|a, b| b.1.1.total_cmp(&a.1.1).then(a.0.cmp(&b.0)));
+        items
+            .into_iter()
+            .take(12)
+            .map(|(id, (label, seconds))| json!({"id":id,"label":label,"seconds":seconds}))
+            .collect::<Vec<_>>()
+    };
+    Ok(json!({
+        "artists":rank(artists),"uploaders":rank(uploaders),"themes":rank(themes),
+        "artistSeconds":artist_seconds,"uploaderSeconds":uploader_seconds,"themeSeconds":theme_seconds
+    }))
+}
+#[cfg(test)]
+#[test]
+fn preferences_include_tracks_outside_the_top_fifty_and_keep_artist_and_uploader_separate() {
+    let c = Connection::open_in_memory().unwrap();
+    crate::infrastructure::migrations::migrate(&c).unwrap();
+    let mut tracks = Seconds::new();
+    let names = BTreeMap::new();
+    for i in 0..60 {
+        let id = format!("bilibili:BV1:{i}");
+        let artist = if i < 50 {
+            format!("歌手 {i}")
+        } else {
+            "累计歌手".into()
+        };
+        c.execute("INSERT INTO source_items(id,provider,bvid,cid,uploader_id,uploader_name,source_title) VALUES(?1,'bilibili','BV1',?2,42,'投稿人','翻唱现场版')",params![id,i]).unwrap();
+        c.execute(
+            "INSERT INTO tracks(id,source_item_id,title,artist) VALUES(?1,?1,'曲名',?2)",
+            params![id, artist],
+        )
+        .unwrap();
+        tracks.insert(id, if i < 50 { 10.0 } else { 8.0 });
+    }
+    let report = preferences(&c, &tracks, &names).unwrap();
+    assert_eq!(report["artists"][0]["label"], "累计歌手");
+    assert_eq!(report["artists"][0]["seconds"], 80.0);
+    assert_eq!(report["uploaders"][0]["seconds"], 580.0);
+    assert_eq!(report["themeSeconds"], 580.0);
+    assert_eq!(report["themes"].as_array().unwrap().len(), 2);
+}
+
+#[cfg(test)]
+#[test]
+fn video_tags_merge_aliases_and_are_weighted_across_parts() {
+    let c = Connection::open_in_memory().unwrap();
+    crate::infrastructure::migrations::migrate(&c).unwrap();
+    c.execute("INSERT INTO sync_info VALUES(?1,?2)", params![
+        "bili-tags:BV17J411z74y",
+        json!({"tags": ["原创曲", "原创歌曲", "VOCALOID", "电子音乐"]}).to_string(),
+    ]).unwrap();
+    let tracks = Seconds::from([
+        ("bilibili:BV17J411z74y:1".into(), 50.0),
+        ("bilibili:BV17J411z74y:2".into(), 70.0),
+    ]);
+    let report = preferences(&c, &tracks, &BTreeMap::new()).unwrap();
+    assert_eq!(report["themeSeconds"], 120.0);
+    let tags = report["themes"].as_array().unwrap();
+    assert_eq!(tags.len(), 3);
+    assert!(tags.iter().all(|tag| tag["seconds"] == 120.0));
+    assert!(tags.iter().any(|tag| tag["label"] == "原创歌曲"));
 }
 pub(super) fn meta(c: &Connection, key: &str) -> Result<Option<String>, String> {
     c.query_row(
@@ -604,12 +876,13 @@ pub async fn listening_sync(
         return Ok(false);
     }
     super::background::run(
+        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>().map(|state| state.inner().clone()),
         &database,
         &state,
         super::scheduler::Domain::Statistics,
         automatic.unwrap_or(false),
-        listening_sync_inner(app, database.clone(), state.clone()),
-        |_| (false, false),
+        Box::pin(listening_sync_inner(app.clone(), database.clone(), state.clone())),
+        |_| (false, false, false),
     )
     .await
     .map(|result| result.unwrap_or(false))

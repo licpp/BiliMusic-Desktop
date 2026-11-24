@@ -12,22 +12,25 @@ const output = await build({
       export const deviceInfo = { sdkApiVersion: 26 };
       export const hilog = { info() {}, error() {}, warn() {} };
       export const http = globalThis.ohosTest.http;
+      export const connection = { hasDefaultNetSync: () => globalThis.ohosTest.networkOnline() };
       export const image = globalThis.ohosTest.image;
       export const rcp = globalThis.ohosTest.rcp;
       export const media = globalThis.ohosTest.media;
-      export const audio = { InterruptType:{INTERRUPT_TYPE_BEGIN:1,INTERRUPT_TYPE_END:2},InterruptHint:{INTERRUPT_HINT_NONE:0,INTERRUPT_HINT_RESUME:1,INTERRUPT_HINT_PAUSE:2,INTERRUPT_HINT_STOP:3,INTERRUPT_HINT_DUCK:4,INTERRUPT_HINT_UNDUCK:5} };
+      export const audio = globalThis.ohosTest.audio;
       export const avSession = globalThis.ohosTest.avSession;
       export const backgroundTaskManager = globalThis.ohosTest.background;
       export const asset = globalThis.ohosTest.asset;
       export const preferences = {getPreferencesSync:()=>({getSync:()=>false,putSync(){},flush:async()=>{}})};
       export const fileIo = { readTextSync: () => globalThis.ohosTest.scope };
       export const util = globalThis.ohosTest.util;
+      export const window = { AvoidAreaType: { TYPE_SYSTEM: 0, TYPE_CUTOUT: 1, TYPE_NAVIGATION_INDICATOR: 4 } };
     ` }))
   } }],
 })
 
 function setup() {
   const events = [], samples = [], replies = [], background = [], secrets = new Map(), metadata = [], pixels = [], artworkRequests = [], uploads = []
+  const mediaControls = new Map(), sessionActivation = []
   let player
   class FakePlayer {
     constructor() { this.callbacks = {}; this.currentTime = 0; this.duration = 180_000; this.state = 'idle' }
@@ -40,7 +43,7 @@ function setup() {
     async play() { this.emit('playing') }
     async pause() { this.emit('paused') }
     async release() { this.emit('released') }
-    seek(ms) { this.currentTime = ms; for(const cb of this.callbacks.seekDone ?? []) cb() }
+    seek(ms) { this.currentTime = ms; for(const cb of this.callbacks.seekDone ?? []) cb(ms) }
     setSpeed(value) { this.speed = value }
     setVolume(value) { this.volume = value }
   }
@@ -51,9 +54,19 @@ function setup() {
   const missing = () => Object.assign(new Error('missing'), { code: 24000002 })
   const h = globalThis.ohosTest = {
     scope: '123',
+    networkOnline: () => true,
     native: { bilimusicOhosCancelResolve() {}, bilimusicOhosResolve(request,payload) { h.resolveRequests.push({request,payload:JSON.parse(payload)}) }, tauriOhosPluginResponse: (id, ok, payload) => replies.push({ id, ok, value: JSON.parse(payload) }), bilimusicOhosState: s => events.push(JSON.parse(s)), bilimusicOhosListening: s => samples.push(JSON.parse(s)) },
-    media: { createAVPlayer: async () => (player = new FakePlayer()) },
-    avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2 }, createAVSession: async () => ({ on() {}, async activate() {}, async setAVMetadata(value) { if(Object.hasOwn(value,"mediaImage") && value.mediaImage === undefined)throw {code:401,message:"mediaImage property value type invalid"};metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
+    media: { SeekMode: { SEEK_CLOSEST: 2 }, createAVPlayer: async () => (player = new FakePlayer()) },
+    audio: {
+      InterruptForceType: { INTERRUPT_FORCE: 0, INTERRUPT_SHARE: 1 },
+      InterruptType: { INTERRUPT_TYPE_BEGIN: 1, INTERRUPT_TYPE_END: 2 },
+      InterruptHint: { INTERRUPT_HINT_NONE: 0, INTERRUPT_HINT_RESUME: 1, INTERRUPT_HINT_PAUSE: 2, INTERRUPT_HINT_STOP: 3, INTERRUPT_HINT_DUCK: 4, INTERRUPT_HINT_UNDUCK: 5 },
+      StreamUsage: { STREAM_USAGE_MUSIC: 1 },
+      DeviceType: { SPEAKER: 2, BLUETOOTH_SCO: 7, BLUETOOTH_A2DP: 8 },
+      getAudioManager: () => ({ getRoutingManager: () => ({ getPreferredOutputDeviceForRendererInfoSync: () => h.preferredDevices }) }),
+    },
+    preferredDevices: [{ deviceType: 2 }],
+    avSession: { isDesktopLyricSupported: async () => true, PlaybackState: { PLAYBACK_STATE_PLAY: 1, PLAYBACK_STATE_PAUSE: 2, PLAYBACK_STATE_STOP: 6 }, createAVSession: async () => ({ on(event, callback) { mediaControls.set(event, callback) }, async activate() { sessionActivation.push(true) }, async deactivate() { sessionActivation.push(false) }, async setAVMetadata(value) { if(Object.hasOwn(value,"mediaImage") && value.mediaImage === undefined)throw {code:401,message:"mediaImage property value type invalid"};metadata.push(value) }, async setAVPlaybackState() {}, async enableDesktopLyric(value) { h.desktopLyrics=value }, async setDesktopLyricVisible(value) { h.desktopLyricVisible=value }, async setDesktopLyricState(value) { h.desktopLyricState=value }, async destroy() {} }) },
     background: { BackgroundMode: { AUDIO_PLAYBACK: 2 }, async startBackgroundRunning() { background.push('start') }, async stopBackgroundRunning() { background.push('stop') } },
     asset: { Tag: tags, Accessibility: { DEVICE_FIRST_UNLOCKED: 1 }, ReturnType: { ALL: 1 }, ErrorCode: { NOT_FOUND: 24000002 },
       async update(q, attrs) { if (!secrets.has(key(q))) throw missing(); secrets.set(key(q), attrs.get(tags.SECRET)) },
@@ -89,7 +102,7 @@ function setup() {
     for (let i = 0; i < 8 && !replies.some(r => r.id === current); i++) await new Promise(setImmediate)
     return replies.find(r => r.id === current)
   }
-  return { plugin, command, events, samples, replies, background, secrets, metadata, pixels, artworkRequests, uploads, mock: h, get player() { return player } }
+  return { plugin, command, events, samples, replies, background, secrets, metadata, pixels, artworkRequests, uploads, mediaControls, sessionActivation, mock: h, get player() { return player } }
 }
 
 test('Harmony player prepares real native transport, preserves position/rate, and stops its background task on pause', async () => {
@@ -236,6 +249,37 @@ test('Harmony notification lyrics follow the native clock automatically, preserv
   } finally { await h.plugin.destroy() }
 })
 
+test('Bluetooth and speaker metadata both follow the system title lyrics setting', async () => {
+  const h = setup()
+  const devices = h.mock.audio.DeviceType
+  h.mock.preferredDevices = [{ deviceType: devices.BLUETOOTH_A2DP }]
+  try {
+    await h.command('play', { id: 'song', title: '歌曲', artist: '歌手', album: '专辑', url: 'http://127.0.0.1:1234/media' })
+    await h.command('lyrics', { data: JSON.stringify({ action: 'update', id: 'song', lrc: '[00:00]当前歌词',
+      lines: [{ timeMs: 0, text: '当前歌词' }] }) })
+    assert.equal(h.metadata.at(-1).title, '歌曲')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'system-title', enabled: true }) })
+    const bluetoothMetadata = h.metadata.at(-1)
+    assert.equal(bluetoothMetadata.title, '当前歌词')
+    assert.equal(bluetoothMetadata.artist, '歌手')
+    assert.equal(bluetoothMetadata.album, '专辑')
+    assert.equal(bluetoothMetadata.singleLyricText, '当前歌词')
+    const routeChanged = h.player.callbacks.audioOutputDeviceChangeWithInfo[0]
+    routeChanged({ devices: [{ deviceType: devices.SPEAKER }] })
+    await h.plugin.metadataTasks
+    assert.equal(h.metadata.at(-1).title, '当前歌词')
+    routeChanged({ devices: [{ deviceType: devices.BLUETOOTH_A2DP }] })
+    await h.plugin.metadataTasks
+    assert.equal(h.metadata.at(-1).title, '当前歌词')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'system-title', enabled: false }) })
+    assert.equal(h.metadata.at(-1).title, '歌曲')
+    assert.equal(h.metadata.at(-1).artist, '歌手')
+    routeChanged({ devices: [{ deviceType: devices.SPEAKER }] })
+    await h.plugin.metadataTasks
+    assert.equal(h.metadata.at(-1).title, '歌曲')
+  } finally { await h.plugin.destroy() }
+})
+
 test('a queued lyric refresh cannot erase artwork decoded while an older metadata task was pending',async()=>{
  const h=setup();let reply,release
  h.mock.artworkReply=()=>new Promise(resolve=>{reply=resolve})
@@ -318,6 +362,30 @@ test('quality preparation keeps the original transport playing and a pause durin
   assert.ok(h.replies.some(reply=>reply.id===970&&reply.ok))
  }finally{release?.();await h.plugin.destroy()}
 })
+test('quality handoff rechecks the original clock after a slow seek', async () => {
+  const h = setup()
+  try {
+    await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/original' })
+    const original = h.player
+    original.currentTime = 20_000
+    const create = h.mock.media.createAVPlayer
+    const positions = []
+    h.mock.media.createAVPlayer = async () => {
+      const candidate = await create()
+      const seek = candidate.seek.bind(candidate)
+      candidate.seek = (position, mode) => {
+        assert.equal(mode, 2)
+        positions.push(position)
+        if (positions.length === 1) original.currentTime = 23_000
+        seek(position)
+      }
+      return candidate
+    }
+    assert.equal((await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/new', seamless: true })).ok, true)
+    assert.deepEqual(positions, [20_000, 23_000])
+    assert.equal(h.player.currentTime, 23_000)
+  } finally { await h.plugin.destroy() }
+})
 test('a failed quality candidate leaves the original transport and clock intact',async()=>{
  const h=setup()
  try{
@@ -348,12 +416,14 @@ test('quality handoff restores the original player when the prepared candidate c
 
 test('Harmony focus interruptions resume once, preserve buffering intent, and yield to manual pause or stop', async () => {
   const h=setup()
-  const interrupt=(hint,eventType=1,player=h.player)=>{for(const cb of player.callbacks.audioInterrupt??[])cb({hintType:hint,eventType,forceType:0})}
+  const interrupt=(hint,eventType=1,player=h.player,forceType=0)=>{for(const cb of player.callbacks.audioInterrupt??[])cb({hintType:hint,eventType,forceType})}
   const settle=async()=>{await h.plugin.tasks;await new Promise(setImmediate)}
   try {
     await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media',position:42,volume:.5})
-    interrupt(4);assert.equal(h.player.volume,.1);assert.equal(h.plugin.status,'playing')
+    interrupt(4);assert.equal(h.player.volume,.5,'system duck must not also apply app attenuation')
     interrupt(5,2);assert.equal(h.player.volume,.5)
+    interrupt(4,1,h.player,1);assert.equal(h.player.volume,.1);assert.equal(h.plugin.status,'playing')
+    interrupt(5,2,h.player,1);assert.equal(h.player.volume,.5)
     interrupt(2);interrupt(2);await settle();assert.equal(h.plugin.status,'paused')
     interrupt(1,2);await settle();assert.equal(h.plugin.status,'playing');assert.equal(h.player.currentTime,42000)
     await h.command('control',{action:'pause'});interrupt(1,2);await settle();assert.equal(h.plugin.status,'paused')
@@ -413,6 +483,121 @@ const nativeTracks = ['A','B','C'].map((id,i)=>({id,title:id,durationSeconds:180
 const mirror = (tracks=nativeTracks,repeatMode='off',version=1,extra={})=>({tracks,repeatMode,version,shuffled:false,accountSession:'opaque-account',owner:'webview',...extra})
 const drain = async()=>{for(let i=0;i<12;i++)await new Promise(setImmediate)}
 async function answer(h,request,track){await h.command('resolved',{request,data:JSON.stringify({track,url:'http://127.0.0.1:1234/'+track.id,position:0})});await drain()}
+
+test('Harmony forwards both native AVPlayer and background resolver error codes', async () => {
+  const h = setup()
+  try {
+    const [first, second] = nativeTracks
+    assert.equal((await h.command('queue', mirror([first, second]))).ok, true)
+    await h.command('play', { id: first.id, url: 'http://127.0.0.1:1234/media' })
+    h.player.callbacks.error[0]({ code: 5400106, message: 'https://example.invalid/signed?token=test' })
+    const failed = (await h.command('snapshot')).value
+    assert.equal(failed.status, 'error')
+    assert.equal(failed.errorCode, 'ohos_media:5400106')
+    assert.doesNotMatch(failed.error, /token|https:/)
+
+    h.mediaControls.get('playNext')()
+    await drain()
+    const { request } = h.mock.resolveRequests.at(-1)
+    await h.command('resolved', { request, data: JSON.stringify({ error: '无法读取当前播放账号', errorCode: 'profile_unavailable' }) })
+    await drain()
+    const background = (await h.command('snapshot')).value
+    assert.equal(background.id, second.id)
+    assert.equal(background.errorCode, 'profile_unavailable')
+  } finally { await h.plugin.destroy() }
+})
+
+test('Harmony AVSession next and previous switch tracks in the native queue and refresh media metadata', async () => {
+  const h = setup()
+  const [first, second, third] = nativeTracks.map(track => ({ ...track, album: '专辑' }))
+  try {
+    await h.command('queue', mirror([first, second, third]))
+    await h.command('play', { ...second, coverUrl: 'https://i0.hdslb.com/art.jpg', url: 'http://127.0.0.1:1234/B' })
+    await h.plugin.artworkReady
+    assert.equal(h.metadata.at(-1).previousAssetId, first.id)
+    assert.equal(h.metadata.at(-1).nextAssetId, third.id)
+    h.player.currentTime = 10_000
+    await h.command('control', { action: 'previous' })
+    assert.equal(h.player.currentTime, 0)
+    assert.equal(h.mock.resolveRequests.length, 0)
+    h.player.currentTime = 10_000
+    h.mediaControls.get('playPrevious')()
+    await drain()
+    const previous = h.mock.resolveRequests.at(-1)
+    assert.equal(previous.payload.track.id, first.id)
+    assert.equal(h.metadata.at(-1).assetId, first.id)
+    assert.equal(h.metadata.at(-1).mediaImage, undefined)
+    await answer(h, previous.request, first)
+    assert.equal(h.events.at(-1).status, 'playing')
+    assert.equal(h.metadata.at(-1).album, '专辑')
+    h.mediaControls.get('playNext')()
+    await drain()
+    const next = h.mock.resolveRequests.at(-1)
+    assert.equal(next.payload.track.id, second.id)
+    await answer(h, next.request, second)
+    assert.equal(h.events.at(-1).id, second.id)
+    assert.equal(h.events.at(-1).status, 'playing')
+  } finally { await h.plugin.destroy() }
+})
+
+test('Harmony media keys require a distinct target and can select the only remaining track after filtering', async () => {
+  for (const event of ['playPrevious', 'playNext']) {
+    const h = setup()
+    const [first, second] = nativeTracks
+    try {
+      await h.command('queue', mirror([first]))
+      await h.command('play', { ...first, url: 'http://127.0.0.1:1234/A' })
+      h.player.currentTime = 10_000
+      h.mediaControls.get(event)()
+      await drain()
+      assert.equal(h.player.currentTime, 10_000)
+      assert.equal(h.player.state, 'playing')
+      assert.equal(h.mock.resolveRequests.length, 0)
+      await h.command('queue', mirror([], 'off', 2))
+      h.mediaControls.get(event)()
+      await drain()
+      assert.equal(h.player.state, 'playing')
+      assert.equal(h.mock.resolveRequests.length, 0)
+      await h.command('queue', mirror([second], 'off', 3))
+      h.mediaControls.get(event)()
+      await drain()
+      const remaining = h.mock.resolveRequests.at(-1)
+      assert.equal(remaining.payload.track.id, second.id)
+      await answer(h, remaining.request, second)
+      assert.equal(h.events.at(-1).id, second.id)
+    } finally { await h.plugin.destroy() }
+  }
+})
+
+test('rapid Harmony media-key commands ignore stale resolutions and stop deactivates the finished card', async () => {
+  const h = setup()
+  const [first, second, third] = nativeTracks
+  try {
+    await h.command('queue', mirror())
+    await h.command('play', { ...second, url: 'http://127.0.0.1:1234/B' })
+    h.mediaControls.get('playNext')()
+    await drain()
+    const old = h.mock.resolveRequests.at(-1)
+    assert.equal(old.payload.track.id, third.id)
+    h.mediaControls.get('playPrevious')()
+    await drain()
+    const current = h.mock.resolveRequests.at(-1)
+    assert.equal(current.payload.track.id, second.id)
+    await answer(h, old.request, third)
+    assert.equal(h.metadata.at(-1).assetId, second.id)
+    await answer(h, current.request, second)
+    assert.equal(h.events.at(-1).status, 'playing')
+    await h.command('control', { action: 'stop' })
+    await drain()
+    assert.deepEqual(h.sessionActivation, [true, false])
+    h.mediaControls.get('playPrevious')()
+    await drain()
+    assert.equal(h.mock.resolveRequests.length, 2)
+    await h.command('play', { ...first, url: 'http://127.0.0.1:1234/A' })
+    assert.deepEqual(h.sessionActivation, [true, false, true])
+    assert.equal(h.metadata.at(-1).assetId, first.id)
+  } finally { await h.plugin.destroy() }
+})
 
 test('Harmony native queue advances A -> B -> C with no frontend consumer and stops at queue end',async()=>{
  const h=setup()
@@ -521,6 +706,34 @@ test('Harmony background transition replaces notification lyrics from shared nat
  }finally{await h.plugin.destroy()}
 })
 
+test('Harmony background subtitles use the selected language and arrive after audio starts', async () => {
+  const h = setup()
+  try {
+    await h.command('queue', mirror())
+    await h.command('play', { ...nativeTracks[0], url: 'http://127.0.0.1:1234/A' })
+    await h.command('lyrics', { data: JSON.stringify({ action: 'subtitle-preference', enabled: true, language: 'ai-en' }) })
+    h.player.emit('completed')
+    await drain()
+    const next = h.mock.resolveRequests.at(-1)
+    assert.equal(next.payload.subtitleLanguage, 'ai-en')
+    assert.equal(next.payload.subtitles, true)
+    await answer(h, next.request, nativeTracks[1])
+    assert.equal(h.player.state, 'playing')
+    const caption = { kind: 'lyrics', id: nativeTracks[1].id, subtitleRevision: next.payload.subtitleRevision,
+      timeline: { subtitles: true, biasMs: 0, rawText: '[00:00.000]Background caption', lines: [{ timeMs: 0, endTimeMs: 1000, text: 'Background caption' }] } }
+    await h.command('resolved', { request: next.request, data: JSON.stringify(caption) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, 'Background caption')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'update', id: nativeTracks[1].id, lines: [] }) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, 'Background caption')
+    await h.command('lyrics', { data: JSON.stringify({ action: 'subtitle-preference', enabled: false, language: 'ai-en' }) })
+    await h.command('resolved', { request: next.request, data: JSON.stringify(caption) })
+    await drain()
+    assert.equal(h.metadata.at(-1).artist, '')
+  } finally { await h.plugin.destroy() }
+})
+
 
 test('Harmony optional system-title lyrics preserve card artwork and restore song title when disabled or in subtitle gaps',async()=>{
  const h=setup()
@@ -538,18 +751,32 @@ test('Harmony optional system-title lyrics preserve card artwork and restore son
 })
 
 
+test('Harmony starts at unity without an explicit app volume', async () => {
+  const h=setup()
+  try {
+    assert.equal((await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media'})).ok,true)
+    assert.equal(h.player.volume,1)
+  } finally { await h.plugin.destroy() }
+})
+
 test('Harmony applies shared gains before playback and preserves them through duck, volume, source and background queue changes', async () => {
   const h=setup(),near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`)
   try {
     await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media',volume:.8,loudnessGainDb:-6,loudnessEnabled:true,loudnessRevision:2})
     near(h.player.volume,.8*Math.pow(10,-6/20))
-    for(const cb of h.player.callbacks.audioInterrupt??[])cb({hintType:4,eventType:1})
+    const old = h.player
+    const event=(player,hintType,eventType,forceType=1)=>player.callbacks.audioInterrupt[0]({hintType,eventType,forceType})
+    event(old,4,1)
     near(h.player.volume,.8*Math.pow(10,-6/20)*.2)
     await h.command('control',{action:'volume',value:.6})
     near(h.player.volume,.6*Math.pow(10,-6/20)*.2)
-    for(const cb of h.player.callbacks.audioInterrupt??[])cb({hintType:5,eventType:2})
+    event(old,5,1) // A start event must not prematurely undo the duck.
+    near(h.player.volume,.6*Math.pow(10,-6/20)*.2)
+    event(old,5,2)
     near(h.player.volume,.6*Math.pow(10,-6/20))
+    event(old,4,1)
     await h.command('play',{id:'song',url:'http://127.0.0.1:1234/quality',seamless:true,loudnessGainDb:-9,loudnessEnabled:true,loudnessRevision:2})
+    event(old,4,1)
     near(h.player.volume,.6*Math.pow(10,-9/20))
     await h.command('control',{action:'loudness',value:0,settingsRevision:3})
     await new Promise(resolve=>setTimeout(resolve,340))
@@ -559,4 +786,97 @@ test('Harmony applies shared gains before playback and preserves them through du
     await h.command('play',{id:'next',url:'http://127.0.0.1:1234/next',volume:.6,loudnessGainDb:0,loudnessEnabled:true,loudnessRevision:4})
     near(h.player.volume,.6)
   } finally {await h.plugin.destroy()}
+})
+
+test('Harmony starts with transparent system bars and measures offset cutouts and gesture space', async () => {
+  const h = setup(), backgrounds = [], bars = [], layouts = []
+  let fullScreen = false
+  let bounds = { width: 1280, height: 2832 }
+  const empty = { left: 0, top: 0, width: 0, height: 0 }
+  const area = (edges, visible = true) => ({
+    visible, topRect: empty, rightRect: empty, bottomRect: empty, leftRect: empty, ...edges,
+  })
+  const areas = new Map([
+    [0, area({ topRect: { ...empty, height: 136 } })],
+    [1, area({ topRect: { ...empty, top: 38, height: 84 } }, false)],
+    [4, area({ bottomRect: { ...empty, top: 2734, height: 98 } })],
+  ])
+  try {
+    await h.command('control',{action:'theme',value:1})
+    await h.plugin.setWindow({
+      async setWindowLayoutFullScreen(value) { layouts.push(value); fullScreen = value },
+      setWindowBackgroundColor(value) { backgrounds.push(value) },
+      async setWindowSystemBarProperties(value) { bars.push(value) },
+      getWindowProperties() { return { isLayoutFullScreen: fullScreen, windowRect: bounds } },
+      getWindowAvoidArea(type) { return areas.get(type) },
+      getUIContext() { return { px2vp: pixels => pixels / 3.5 } },
+    })
+    const initial = await h.command('control',{action:'windowInsets'})
+    assert.deepEqual(initial.value, { active:true, top:136/3.5, right:0, bottom:28, left:0 })
+
+    await h.command('control',{action:'theme',value:0})
+    bounds = { width: 2832, height: 1280 }
+    areas.set(1, area({ leftRect: { ...empty, left: 38, width: 84 } }, false))
+    areas.set(4, area({ bottomRect: { ...empty, top: 1182, height: 98 } }))
+    const rotate = await h.command('control',{action:'windowInsets'})
+    assert.deepEqual(rotate.value, { active:true, top:136/3.5, right:0, bottom:28, left:122/3.5 })
+
+    fullScreen = false // The OS can switch the window into floating mode.
+    assert.deepEqual((await h.command('control',{action:'windowInsets'})).value,
+      { active:false, top:0, right:0, bottom:0, left:0 })
+    await h.command('control',{action:'theme',value:0})
+    assert.deepEqual(layouts, [true])
+    assert.deepEqual(backgrounds, ['#F4F6FA','#071019','#071019'])
+    assert.deepEqual(bars,[
+      { statusBarColor:'#00000000',navigationBarColor:'#00000000',statusBarContentColor:'#203044',navigationBarContentColor:'#203044' },
+      { statusBarColor:'#00000000',navigationBarColor:'#00000000',statusBarContentColor:'#FFFFFF',navigationBarContentColor:'#FFFFFF' },
+      { statusBarColor:'#071019',navigationBarColor:'#071019',statusBarContentColor:'#FFFFFF',navigationBarContentColor:'#FFFFFF' },
+    ])
+  } finally { await h.plugin.destroy() }
+})
+
+test('Harmony starts prepared audio while the system media card is still pending', async () => {
+  const h = setup()
+  let finish = () => {}
+  const create = h.mock.avSession.createAVSession
+  h.mock.avSession.createAVSession = async () => {
+    const session=await create()
+    session.setAVMetadata=()=>new Promise(resolve=>{finish=resolve})
+    return session
+  }
+  try {
+    const result=await Promise.race([
+      h.command('play',{id:'song',url:'http://127.0.0.1:1234/media'}),
+      new Promise(resolve=>setTimeout(resolve,100,null)),
+    ])
+    assert.equal(result?.ok,true)
+    assert.equal(h.player.state,'playing')
+    assert.equal((await h.command('lyrics',{data:JSON.stringify({action:'update',id:'song',lines:[]})})).ok,true)
+    await h.command('control',{action:'pause'})
+    assert.equal(h.player.state,'paused')
+  } finally { finish(); await h.plugin.destroy() }
+})
+
+test('Harmony coalesces playback-state updates while AVSession is slow', async () => {
+  const h = setup(), updates = []
+  let finish = () => {}
+  const create = h.mock.avSession.createAVSession
+  h.mock.avSession.createAVSession = async () => {
+    const session=await create()
+    session.setAVPlaybackState=value=>{
+      updates.push(value)
+      return updates.length===1 ? new Promise(resolve=>{finish=resolve}) : Promise.resolve()
+    }
+    return session
+  }
+  try {
+    await h.command('play',{id:'song',url:'http://127.0.0.1:1234/media'})
+    await h.command('control',{action:'seek',value:20})
+    await h.command('control',{action:'pause'})
+    assert.equal(updates.length,1)
+    finish(); await new Promise(setImmediate)
+    assert.equal(updates.length,2)
+    assert.equal(updates[1].state,h.mock.avSession.PlaybackState.PLAYBACK_STATE_PAUSE)
+    assert.equal(updates[1].position.elapsedTime,20_000)
+  } finally { finish(); await h.plugin.destroy() }
 })

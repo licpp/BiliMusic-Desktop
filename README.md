@@ -40,7 +40,7 @@
 
 [iOS 自签安装](https://bilimusic.cn/ios.html) · [鸿蒙签名与安装](https://bilimusic.cn/harmony.html)
 
-**0.3.6 已发布**：新增可选响度均衡、合集分类与内容隐藏，改进歌单匹配、歌词与长音视频播放。[查看完整更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.3.6)。
+**0.4.4 已发布。** 新增播放章节，支持关联收藏夹批量匹配、合集续播和队列拖动。[查看更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.4)。
 
 ## 功能
 

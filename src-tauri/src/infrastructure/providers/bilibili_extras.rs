@@ -38,6 +38,7 @@ pub struct SeasonTrack {
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleChoice {
     pub language: String,
+    pub language_key: String,
     pub label: String,
     pub ai: bool,
 }
@@ -47,6 +48,13 @@ pub struct SubtitleLine {
     pub time_ms: u64,
     pub end_time_ms: u64,
     pub text: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoChapter {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub title: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +76,41 @@ fn number(value: &Value, key: &str) -> i64 {
 }
 pub(super) type PageEntry = Arc<tokio::sync::OnceCell<(Instant, Vec<VideoPart>)>>;
 const CATALOG_TTL: Duration = Duration::from_secs(300);
+pub(super) type PlayerMetadataEntry = Arc<tokio::sync::OnceCell<(Instant, Arc<Value>)>>;
+const PLAYER_METADATA_TTL: Duration = Duration::from_secs(120);
+const PLAYER_METADATA_CACHE_LIMIT: usize = 64;
+
+fn parse_video_chapters(data: &Value) -> Result<Vec<VideoChapter>, ProviderError> {
+    let rows = match data.get("view_points") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(rows)) => rows,
+        Some(_) => return Err(ProviderError::UnexpectedResponse),
+    };
+    let mut chapters: Vec<_> = rows
+        .iter()
+        .filter_map(|row| {
+            let milliseconds = |key| {
+                let seconds = row[key].as_f64()?;
+                let ms = (seconds * 1000.0).round();
+                (seconds >= 0.0 && ms < (1_u64 << 53) as f64).then_some(ms as u64)
+            };
+            let start_ms = milliseconds("from")?;
+            let end_ms = milliseconds("to")?;
+            let title = row["content"].as_str()?.trim();
+            (end_ms > start_ms && !title.is_empty()).then(|| VideoChapter {
+                start_ms,
+                end_ms,
+                title: title.to_owned(),
+            })
+        })
+        .collect();
+    if chapters.is_empty() && !rows.is_empty() {
+        return Err(ProviderError::UnexpectedResponse);
+    }
+    chapters.sort_by_key(|chapter| chapter.start_ms);
+    chapters.dedup_by_key(|chapter| chapter.start_ms);
+    Ok(chapters)
+}
 
 pub(super) fn normalize_pages(
     mut pages: Vec<PageData>,
@@ -254,6 +297,25 @@ fn paged_season_tracks(mut archives: Vec<Value>, raw: Option<&Value>) -> (Vec<Se
     (tracks, unavailable)
 }
 
+pub(super) fn usable_season_cover(cover: &str) -> bool {
+    !cover.trim().is_empty() && !cover.contains("viedeo_material_default")
+}
+
+pub(super) fn first_archive_cover(archives: &Value) -> Option<&str> {
+    archives.as_array()?.iter()
+        .filter_map(|archive| archive["pic"].as_str())
+        .find(|cover| usable_season_cover(cover))
+}
+
+fn season_cover(mut summary: SeasonSummary, tracks: &[SeasonTrack]) -> SeasonSummary {
+    if !usable_season_cover(&summary.cover_url)
+        && let Some(track) = tracks.iter().find(|track| usable_season_cover(&track.cover_url))
+    {
+        summary.cover_url = track.cover_url.clone();
+    }
+    summary
+}
+
 pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) -> Option<Season> {
     let total = raw["ep_count"]
         .as_u64()
@@ -275,7 +337,7 @@ pub(super) fn complete_season(raw: &Value, summary: &SeasonSummary, seed: &str) 
         return None;
     }
     Some(Season {
-        summary: summary.clone(),
+        summary: season_cover(summary.clone(), &tracks),
         sections: season_sections(raw, &tracks),
         tracks,
         unavailable: 0,
@@ -304,6 +366,57 @@ fn parse_subtitle_lines(value: &Value) -> Vec<SubtitleLine> {
     }
     lines.sort_by_key(|s| s.time_ms);
     lines
+}
+
+fn subtitle_language_key(language: &str) -> String {
+    let tag = language.trim().to_ascii_lowercase();
+    let tag = tag.strip_prefix("ai-").unwrap_or(&tag);
+    let primary = if tag == "chi-yue" {
+        "yue"
+    } else {
+        tag.split(['-', '_']).next().unwrap_or_default()
+    };
+    match primary {
+        "cn" | "cmn" | "zho" | "chi" => "zh",
+        "eng" => "en",
+        "jp" | "jpn" => "ja",
+        "kr" | "kor" => "ko",
+        "iw" => "he",
+        "in" => "id",
+        other => other,
+    }
+    .to_string()
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos", test))]
+fn preferred_subtitle_entry<'a>(data: &'a Value, preferred: Option<&str>) -> Option<&'a Value> {
+    let preferred_key = preferred.map(subtitle_language_key);
+    let preferred_ai = preferred.is_some_and(|tag| tag.starts_with("ai-"));
+    data["subtitle"]["subtitles"]
+        .as_array()?
+        .iter()
+        .filter_map(|entry| {
+            let language = entry["lan"]
+                .as_str()
+                .filter(|language| !language.is_empty())?;
+            Some((entry, language))
+        })
+        .min_by_key(|(_, language)| {
+            let ai = language.starts_with("ai-");
+            if preferred == Some(*language) {
+                0
+            } else if preferred_key
+                .as_ref()
+                .is_some_and(|key| !key.is_empty() && *key == subtitle_language_key(language))
+            {
+                if ai == preferred_ai { 1 } else { 2 }
+            } else if ai {
+                3
+            } else {
+                4
+            }
+        })
+        .map(|(entry, _)| entry)
 }
 
 impl BilibiliProvider {
@@ -361,6 +474,10 @@ impl BilibiliProvider {
     }
 
     pub async fn video_pagelist(&self, bvid: &str) -> Result<Vec<VideoPart>, ProviderError> {
+        self.video_pagelist_with_priority(bvid, RequestPriority::Foreground).await
+    }
+
+    pub async fn video_pagelist_with_priority(&self, bvid: &str, priority: RequestPriority) -> Result<Vec<VideoPart>, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         // A complete season already contains the same CID list.
         let embedded =
@@ -405,11 +522,7 @@ impl BilibiliProvider {
         };
         let result = entry
             .get_or_try_init(|| async {
-                let _permit = self
-                    .page_slots
-                    .acquire()
-                    .await
-                    .expect("page semaphore remains open");
+                let _permit = self.foreground_catalog_slot(priority).await;
                 if self.catalog_epoch.load(Ordering::Relaxed) != epoch {
                     return Err(ProviderError::Api {
                         code: -1,
@@ -420,13 +533,24 @@ impl BilibiliProvider {
                 url.query_pairs_mut().append_pair("bvid", bvid);
                 let rows = tokio::time::timeout(
                     Duration::from_secs(5),
-                    self.get_data::<Vec<PageData>>(url),
+                    self.get_data_with_priority::<Vec<PageData>>(url, priority),
                 )
                 .await
                 .map_err(|_| ProviderError::Api {
                     code: -1,
                     message: "获取分 P 超时".into(),
-                })??;
+                })?;
+                let rows = match rows {
+                    Err(error @ ProviderError::Api { code: -404, .. }) => {
+                        match tokio::time::timeout(Duration::from_secs(3), self.video_detail_with_priority(bvid, priority)).await {
+                            Ok(Err(confirmed @ ProviderError::Api { code: 62002, .. })) => return Err(confirmed),
+                            Ok(Err(restricted)) if restricted.is_request_restricted() => return Err(restricted),
+                            Ok(Ok(detail)) => detail.pages,
+                            _ => return Err(error),
+                        }
+                    }
+                    result => result?,
+                };
                 let pages = normalize_pages(rows, "", "");
                 if pages.is_empty() {
                     return Err(ProviderError::Api {
@@ -452,6 +576,30 @@ impl BilibiliProvider {
         }
     }
 
+    fn season_page_url(&self, mid: i64, id: i64, page: u32, size: &str) -> Url {
+        let mut url = self.api_url("/x/polymer/web-space/seasons_archives_list");
+        url.query_pairs_mut()
+            .append_pair("mid", &mid.to_string())
+            .append_pair("season_id", &id.to_string())
+            .append_pair("page_num", &page.to_string())
+            .append_pair("page_size", size)
+            .append_pair("sort_reverse", "false");
+        url
+    }
+
+    pub async fn season_preview_cover(&self, mid: i64, id: i64) -> Result<String, ProviderError> {
+        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
+        if let Some((time, season)) = self.seasons.read().await.get(&(epoch, mid, id))
+            && time.elapsed() < CATALOG_TTL
+        {
+            return Ok(season.summary.cover_url.clone());
+        }
+        let first: Value = self.get_data_with_priority(self.season_page_url(mid, id, 1, "12"), RequestPriority::Background).await?;
+        let cover = first["meta"]["cover"].as_str().filter(|cover| usable_season_cover(cover))
+            .or_else(|| first_archive_cover(&first["archives"]));
+        Ok(cover.map(normalize_url).unwrap_or_default())
+    }
+
     pub async fn season(&self, mid: i64, id: i64, refresh: bool) -> Result<Season, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         if !refresh {
@@ -461,16 +609,7 @@ impl BilibiliProvider {
                 }
             }
         }
-        let page_url = |page: u32| {
-            let mut url = self.api_url("/x/polymer/web-space/seasons_archives_list");
-            url.query_pairs_mut()
-                .append_pair("mid", &mid.to_string())
-                .append_pair("season_id", &id.to_string())
-                .append_pair("page_num", &page.to_string())
-                .append_pair("page_size", "100")
-                .append_pair("sort_reverse", "false");
-            url
-        };
+        let page_url = |page| self.season_page_url(mid, id, page, "100");
         let first: Value = self.get_data(page_url(1)).await?;
         let total = first["page"]["total"].as_u64().unwrap_or(0);
         if total > 2000 {
@@ -521,13 +660,8 @@ impl BilibiliProvider {
             archives.extend(data["archives"].as_array().into_iter().flatten().cloned());
         }
         let (tracks, unavailable) = paged_season_tracks(archives, matching.then_some(raw));
-        if summary.cover_url.is_empty() || summary.cover_url.contains("viedeo_material_default") {
-            if let Some(first) = tracks.first() {
-                summary.cover_url = first.cover_url.clone();
-            }
-        }
         let season = Season {
-            summary,
+            summary: season_cover(summary, &tracks),
             sections: if matching {
                 season_sections(raw, &tracks)
             } else {
@@ -540,27 +674,88 @@ impl BilibiliProvider {
         Ok(season)
     }
 
-    async fn subtitle_data(&self, bvid: &str, cid: i64) -> Result<Value, ProviderError> {
-        let mut url = self.api_url("/x/player/wbi/v2");
-        url.query_pairs_mut()
-            .append_pair("bvid", bvid)
-            .append_pair("cid", &cid.to_string());
-        self.get_data(url).await
+    async fn player_metadata(&self, bvid: &str, cid: i64) -> Result<Arc<Value>, ProviderError> {
+        let epoch = self.catalog_epoch.load(Ordering::Relaxed);
+        let key = (epoch, bvid.to_owned(), cid);
+        let entry = {
+            let mut cache = self.player_metadata.write().await;
+            self.check_request_epoch(epoch)?;
+            if cache
+                .get(&key)
+                .and_then(|entry| entry.get())
+                .is_some_and(|(at, _)| at.elapsed() >= PLAYER_METADATA_TTL)
+            {
+                cache.remove(&key);
+            }
+            if cache.len() >= PLAYER_METADATA_CACHE_LIMIT && !cache.contains_key(&key) {
+                let oldest = cache
+                    .iter()
+                    .filter_map(|(key, entry)| entry.get().map(|(at, _)| (key, *at)))
+                    .min_by_key(|(_, at)| *at)
+                    .map(|(key, _)| key.clone());
+                if let Some(oldest) = oldest {
+                    cache.remove(&oldest);
+                }
+            }
+            cache.entry(key.clone()).or_default().clone()
+        };
+        let result = entry
+            .get_or_try_init(|| async {
+                self.check_request_epoch(epoch)?;
+                let mut url = self.api_url("/x/player/wbi/v2");
+                url.query_pairs_mut()
+                    .append_pair("bvid", bvid)
+                    .append_pair("cid", &cid.to_string());
+                let data: Value = self.get_data(url).await?;
+                self.check_request_epoch(epoch)?;
+                if !data.is_object() {
+                    return Err(ProviderError::UnexpectedResponse);
+                }
+                Ok((Instant::now(), Arc::new(data)))
+            })
+            .await;
+        self.check_request_epoch(epoch)?;
+        match result {
+            Ok((_, data)) => Ok(data.clone()),
+            Err(error) => {
+                let mut cache = self.player_metadata.write().await;
+                if cache
+                    .get(&key)
+                    .is_some_and(|cached| Arc::ptr_eq(cached, &entry))
+                    && Arc::strong_count(&entry) == 2
+                {
+                    cache.remove(&key);
+                }
+                self.check_request_epoch(epoch)?;
+                Err(error)
+            }
+        }
+    }
+    pub async fn video_chapters(
+        &self,
+        bvid: &str,
+        cid: i64,
+    ) -> Result<Vec<VideoChapter>, ProviderError> {
+        parse_video_chapters(self.player_metadata(bvid, cid).await?.as_ref())
     }
     pub async fn subtitles(
         &self,
         bvid: &str,
         cid: i64,
     ) -> Result<Vec<SubtitleChoice>, ProviderError> {
-        let data = self.subtitle_data(bvid, cid).await?;
+        let data = self.player_metadata(bvid, cid).await?;
         Ok(data["subtitle"]["subtitles"]
             .as_array()
             .into_iter()
             .flatten()
-            .map(|s| SubtitleChoice {
-                language: text(s, "lan"),
-                label: text(s, "lan_doc"),
-                ai: text(s, "lan").starts_with("ai-"),
+            .map(|s| {
+                let language = text(s, "lan");
+                SubtitleChoice {
+                    language_key: subtitle_language_key(&language),
+                    ai: language.starts_with("ai-"),
+                    label: text(s, "lan_doc"),
+                    language,
+                }
             })
             .collect())
     }
@@ -570,7 +765,7 @@ impl BilibiliProvider {
         cid: i64,
         language: &str,
     ) -> Result<Vec<SubtitleLine>, ProviderError> {
-        let data = self.subtitle_data(bvid, cid).await?;
+        let data = self.player_metadata(bvid, cid).await?;
         let entry = data["subtitle"]["subtitles"]
             .as_array()
             .into_iter()
@@ -580,6 +775,25 @@ impl BilibiliProvider {
                 code: -1,
                 message: "当前字幕不可用，请刷新字幕列表".into(),
             })?;
+        self.subtitle_entry_lines(entry).await
+    }
+    #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
+    pub async fn preferred_subtitle_lines(
+        &self,
+        bvid: &str,
+        cid: i64,
+        language: Option<&str>,
+    ) -> Result<Vec<SubtitleLine>, ProviderError> {
+        let data = self.player_metadata(bvid, cid).await?;
+        match preferred_subtitle_entry(&data, language) {
+            Some(entry) => self.subtitle_entry_lines(entry).await,
+            None => Ok(vec![]),
+        }
+    }
+    async fn subtitle_entry_lines(
+        &self,
+        entry: &Value,
+    ) -> Result<Vec<SubtitleLine>, ProviderError> {
         let url = Url::parse(&normalize_url(&text(entry, "subtitle_url"))).map_err(|_| {
             ProviderError::Api {
                 code: -1,
@@ -644,6 +858,27 @@ impl BilibiliProvider {
 mod catalog_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn uses_the_first_available_episode_cover_when_the_collection_has_none() {
+        let archives = json!([
+            {"pic":"//i0.hdslb.com/viedeo_material_default.jpg"},
+            {"pic":"//i0.hdslb.com/first.jpg"},
+            {"pic":"//i0.hdslb.com/second.jpg"}
+        ]);
+        assert_eq!(first_archive_cover(&archives), Some("//i0.hdslb.com/first.jpg"));
+        let tracks = archives.as_array().unwrap().iter().map(|archive| season_member(archive, None)).collect::<Vec<_>>();
+        let summary = SeasonSummary {
+            id: 1,
+            uploader_id: 2,
+            title: "合集".into(),
+            cover_url: String::new(),
+            uploader_name: String::new(),
+        };
+        assert_eq!(season_cover(summary.clone(), &tracks).cover_url, "https://i0.hdslb.com/first.jpg");
+        let explicit = SeasonSummary { cover_url: "https://i0.hdslb.com/custom.jpg".into(), ..summary };
+        assert_eq!(season_cover(explicit, &tracks).cover_url, "https://i0.hdslb.com/custom.jpg");
+    }
 
     #[test]
     fn sections_preserve_uploader_order_in_both_complete_and_paged_catalogs() {
@@ -769,8 +1004,108 @@ mod catalog_tests {
 }
 
 #[cfg(test)]
+mod chapter_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn player_chapters_keep_official_boundaries_and_order() {
+        let data = json!({"view_points":[
+            {"from":600.25,"to":720.501,"content":" 处理器 "},
+            {"from":0,"to":530,"content":"引言"},
+            {"from":600.25,"to":700,"content":"重复"},
+            {"from":-1,"to":0,"content":"提前"},
+            {"from":1,"to":1,"content":"空区间"},
+            {"from":3,"to":4,"content":"  "},
+            {"from":5,"to":1e80,"content":"不安全的数值"}
+        ]});
+        assert_eq!(
+            serde_json::to_value(parse_video_chapters(&data).unwrap()).unwrap(),
+            json!([
+                {"startMs":0,"endMs":530000,"title":"引言"},
+                {"startMs":600250,"endMs":720501,"title":"处理器"}
+            ])
+        );
+    }
+
+    #[test]
+    fn no_official_chapters_is_distinct_from_a_malformed_list() {
+        for empty in [json!({}), json!({"view_points":null}), json!({"view_points":[]})] {
+            assert!(parse_video_chapters(&empty).unwrap().is_empty());
+        }
+        for malformed in [
+            json!({"view_points":{}}),
+            json!({"view_points":[{"content":"缺少时间"}]}),
+        ] {
+            assert!(matches!(
+                parse_video_chapters(&malformed),
+                Err(ProviderError::UnexpectedResponse)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn chapters_and_subtitles_reuse_the_metadata_for_each_part_until_account_changes() {
+        let provider = BilibiliProvider::new().unwrap();
+        let bvid = "BV1qFuQz2EVx";
+        let metadata = |data| {
+            Arc::new(tokio::sync::OnceCell::new_with(Some((
+                Instant::now(),
+                Arc::new(data),
+            ))))
+        };
+        {
+            let mut player_metadata = provider.player_metadata.write().await;
+            player_metadata.insert((0, bvid.into(), 11), metadata(json!({
+                "view_points":[{"from":0,"to":30,"content":"第一段"}],
+                "subtitle":{"subtitles":[{"lan":"ai-zh","lan_doc":"中文"}]}
+            })));
+            player_metadata.insert((0, bvid.into(), 12), metadata(json!({"view_points":[]})));
+        }
+        let (chapters, subtitles) =
+            tokio::try_join!(provider.video_chapters(bvid, 11), provider.subtitles(bvid, 11))
+                .unwrap();
+        assert_eq!(chapters[0].title, "第一段");
+        assert_eq!(subtitles[0].language, "ai-zh");
+        assert!(provider.video_chapters(bvid, 12).await.unwrap().is_empty());
+
+        provider.set_session_cookie(None).await;
+        assert!(provider.player_metadata.read().await.is_empty());
+        assert!(matches!(
+            provider.check_request_epoch(0),
+            Err(ProviderError::AccountChanged)
+        ));
+    }
+}
+
+#[cfg(test)]
 mod subtitle_regression_tests {
     use super::*;
+    #[test]
+    fn background_default_matches_foreground_selection_policy() {
+        let choices = |entries| serde_json::json!({"subtitle": {"subtitles": entries}});
+        let both = choices(serde_json::json!([
+            {"lan":"zh-CN"}, {"lan":"ai-zh"}, {"lan":"en-US"}, {"lan":"ai-en-GB"}
+        ]));
+        let manual = choices(serde_json::json!([{"lan":""},{"lan":"en-US"}]));
+        assert_eq!(preferred_subtitle_entry(&both, None).unwrap()["lan"], "ai-zh");
+        assert_eq!(preferred_subtitle_entry(&manual, None).unwrap()["lan"], "en-US");
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("ai-en")).unwrap()["lan"],
+            "ai-en-GB"
+        );
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("en-AU")).unwrap()["lan"],
+            "en-US"
+        );
+        assert_eq!(
+            preferred_subtitle_entry(&both, Some("ai-ja")).unwrap()["lan"],
+            "ai-zh"
+        );
+        assert!(preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}])), None).is_none());
+        assert_eq!(subtitle_language_key("ai-cmn-Hans"), "zh");
+        assert_eq!(subtitle_language_key("AI-jpn"), "ja");
+    }
     #[test]
     fn subtitles_keep_late_cues_in_multi_day_recordings() {
         let body: Vec<Value> = (0..40_001).rev().map(|i| serde_json::json!({

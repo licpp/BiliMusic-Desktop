@@ -1,4 +1,5 @@
 use crate::domain::loudness::LoudnessDescriptor;
+use crate::infrastructure::database::account_session;
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub struct LoudnessRepository;
@@ -26,8 +27,14 @@ impl LoudnessRepository {
         }
         Ok(descriptor)
     }
-    pub fn save(c: &Connection, descriptor: &LoudnessDescriptor) -> rusqlite::Result<()> {
-        if !descriptor.valid_for(&descriptor.bvid, descriptor.cid) {
+    pub fn save_for_session(
+        c: &Connection,
+        expected_session: &str,
+        descriptor: &LoudnessDescriptor,
+    ) -> rusqlite::Result<()> {
+        if account_session(c)? != expected_session
+            || !descriptor.valid_for(&descriptor.bvid, descriptor.cid)
+        {
             return Ok(());
         }
         let json = serde_json::to_string(descriptor).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -43,6 +50,7 @@ mod tests {
     fn cache_is_optional_bounded_and_isolated_by_video_part() {
         let c = Connection::open_in_memory().unwrap();
         crate::infrastructure::migrations::migrate(&c).unwrap();
+        let session = account_session(&c).unwrap();
         assert!(LoudnessRepository::get(&c, "BVtest", 1).unwrap().is_none());
         for cid in 1..=2001 {
             let d = LoudnessDescriptor::from_volume(
@@ -51,7 +59,7 @@ mod tests {
                 &serde_json::json!({"measured_i":-12.0}),
             )
             .unwrap();
-            LoudnessRepository::save(&c, &d).unwrap();
+            LoudnessRepository::save_for_session(&c, &session, &d).unwrap();
         }
         assert_eq!(
             c.query_row("SELECT COUNT(*) FROM loudness_cache", [], |r| r
@@ -65,7 +73,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .gain_db(),
-            -6.0
+            -7.0
         );
         c.execute(
             "UPDATE loudness_cache SET descriptor_json='{}' WHERE cid=2001",
@@ -77,5 +85,32 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn completed_source_updates_only_its_original_account_session() {
+        let original = Connection::open_in_memory().unwrap();
+        let current = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&current).unwrap();
+        let descriptor = LoudnessDescriptor::from_volume(
+            "BVtest",
+            3,
+            &serde_json::json!({"measured_i": -12.0}),
+        )
+        .unwrap();
+        LoudnessRepository::save_for_session(
+            &current,
+            &account_session(&original).unwrap(),
+            &descriptor,
+        )
+        .unwrap();
+        assert!(LoudnessRepository::get(&current, "BVtest", 3).unwrap().is_none());
+        LoudnessRepository::save_for_session(
+            &current,
+            &account_session(&current).unwrap(),
+            &descriptor,
+        )
+        .unwrap();
+        assert!(LoudnessRepository::get(&current, "BVtest", 3).unwrap().is_some());
     }
 }

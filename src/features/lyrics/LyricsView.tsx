@@ -1,4 +1,11 @@
-import { SeekRange } from '../../shared/SeekRange'
+import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
+import { useVerticalDismiss } from '../../shared/useVerticalDismiss'
+import { usePanelReveal } from '../../shared/usePanelReveal'
+import { usePanelPresence } from '../../shared/usePanelPresence'
+import { ChapterSeekRange } from '../chapters/ChapterSeekRange'
+import { ChapterTrigger } from '../chapters/ChapterTrigger'
+import { ChapterDirectory } from '../chapters/ChapterDirectory'
+import type { PlaybackChapters } from '../chapters/usePlaybackChapters'
 import { ScrollingTrackTitle } from './ScrollingTrackTitle'
 import { knownArtist } from '../../domain/sourceTitle'
 import { useSourceTitleMetadata } from '../../shared/useSourceTitleMetadata'
@@ -10,7 +17,7 @@ import { useFloatingLyrics } from '../../services/floatingLyrics'
 import { WordLyric } from './WordLyric'
 import { touchDirection, type TouchDirection } from '../../shared/touchDirection'
 import { listen } from '@tauri-apps/api/event'
-import { useCompactLayout } from '../../shared/useCompactLayout'
+import { useCompactLayout, useTabletWidth } from '../../shared/useCompactLayout'
 import { SleepTimerEntry } from '../player/SleepTimer'
 import { SeasonBrowser } from '../collections/SeasonBrowser'
 import { seasonCollection } from '../../services/mediaSources'
@@ -26,9 +33,9 @@ import { rankLyricCandidates } from '../../services/musicMatchRanking'
 import { firstSongQuery } from '../../domain/songIdentity'
 import { useArtworkFit } from './useArtworkFit'
 import { AiSubtitleIcon } from './AiSubtitleIcon'
-import { createPortal } from 'react-dom'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Download, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play } from 'lucide-react'
+import { createPortal, flushSync } from 'react-dom'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { ArrowLeft, ChevronDown, Download, Gauge, Image, LoaderCircle, Maximize2, MessageCircle, Minimize2, Pencil, RefreshCw, SlidersHorizontal, TvMinimalPlay, FolderPlus, ChevronRight, ListVideo, Sparkles, Settings2, Captions, PictureInPicture2, Play, Pause } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Track } from '../../domain/track'
 import { MetadataDialog } from '../library/MetadataDialog'
@@ -37,14 +44,19 @@ import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { playbackClock, playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
-import { commandErrorMessage, getDanmaku, getVideoSource, getStoredLyrics, enrichStoredLyricLines, getVideoParts, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
+import { commandErrorMessage, getDanmaku, getStoredLyrics, enrichStoredLyricLines, getVideoParts, lyricMatchVersion, saveLyricsWithMetadata, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
+import { metadataForLyric } from '../../services/batchMatching'
 import type { LyricCandidate, LyricLine, StoredLyrics } from '../../domain/lyrics'
-import { candidateLines, lyricSupplementModes, nextLyricSupplement, parseLrc, type LyricSupplement } from '../../domain/lrc'
+import { candidateLines, hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, parseLrc, type LyricSupplement } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
 import { MobilePartsPage } from '../library/MobilePartsPage'
 import { CommentsPanel } from '../comments/CommentsPanel'
 import { DanmakuCanvas } from './DanmakuCanvas'
 import { SyncedVideo } from './SyncedVideo'
+import { getDiagnosticVideoSource, videoSourceIssue, type VideoDiagnosticTrace } from './videoDiagnostics'
+import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../player/PlaybackError'
+import type { PlaybackIssue } from '../player/playbackIssue'
+import { VideoStartup } from './VideoStartup'
 import { Heart } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { createBiasWriter, clampBias } from './biasWriter'
@@ -53,12 +65,23 @@ import { useAutoLyricAlignment } from './useAutoLyricAlignment'
 
 const danmakuDensityLabels = ['1/8', '1/4', '1/2', '全屏']
 
-type Props = { onMiniPlayer?: () => void; onOpenSleepTimer: () => void; onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
+type Props = { chapters: PlaybackChapters; open?: boolean; fullscreenRequested: boolean; setVideoFullscreen: (enabled: boolean) => void; inert?: boolean; motionSurface?: RefObject<HTMLElement | null>; onSwipeRelease?: (offset: number, dismissed: boolean) => void; onMiniPlayer?: () => void; onOpenSleepTimer: () => void; onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
 
-export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
+export function LyricsView({ open = true, chapters, fullscreenRequested, setVideoFullscreen, inert = false, motionSurface, onSwipeRelease, onMiniPlayer, onOpenSleepTimer, onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
   const compact = useCompactLayout()
-  const [dockActions, setDockActions] = useState<HTMLElement|null>(()=>document.getElementById('lyrics-dock-actions'))
-  useEffect(()=>{setDockActions(document.getElementById('lyrics-dock-actions'))},[])
+  const tablet = useTabletWidth() && isMobile
+  const dockLyrics = !isMobile || !compact || tablet
+  const dockActionsId = tablet && compact ? 'lyrics-tablet-dock-actions' : 'lyrics-dock-actions'
+  const panel = useRef<HTMLElement>(null)
+  usePanelReveal(panel, isMobile ? open : undefined)
+  const closeDrag = useVerticalDismiss(motionSurface ?? panel, open && isMobile, onClose, { settle: onSwipeRelease })
+  useEffect(() => {
+    if (open) panel.current?.querySelector<HTMLButtonElement>('.lyrics-close')?.focus({ preventScroll: true })
+  }, [open])
+  const [dockActions, setDockActions] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    setDockActions(document.getElementById(dockActionsId))
+  }, [dockActionsId, open])
   const queryClient = useQueryClient()
   const status = usePlayerStore(state => state.status)
   const duration = usePlayerStore(state => state.durationSeconds)
@@ -92,34 +115,45 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const scrollRef = useRef<HTMLDivElement>(null)
   const [mediaPreference, setMediaPreference] = useState<'cover' | 'video'>(() => localStorage.getItem('lyrics-media-mode') === 'video' ? 'video' : 'cover')
   const [videoFailed, setVideoFailed] = useState(false)
+  const [videoIssue, setVideoIssue] = useState<{ trackId: string; issue: PlaybackIssue }>()
   const mediaMode = current?.source.provider === 'bilibili' && !videoFailed ? mediaPreference : 'cover'
   const artworkFit = useArtworkFit(coverUrl, mediaMode === 'cover', compact)
-  const [videoSource, setVideoSource] = useState<{ trackId: string; url: string; revision: number } | null>(null)
+  const [videoSource, setVideoSource] = useState<{ trackId: string; url: string; codecs: string; revision: number; diagnostic: VideoDiagnosticTrace } | null>(null)
   const videoUrl = videoSource?.trackId === current?.id ? videoSource?.url || '' : ''
   const [readyVideoUrl, setReadyVideoUrl] = useState('')
   const videoCover = useRef<HTMLDivElement>(null)
+  const mediaFade = useRef<Animation | undefined>(undefined)
+  useLayoutEffect(() => () => {
+    mediaFade.current?.cancel()
+    mediaFade.current = undefined
+  }, [current?.id, open])
   const [controlsShown, setControlsShown] = useState(false)
   const [rateOpen, setRateOpen] = useState(false)
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false)
+  const [videoSeeking, setVideoSeeking] = useState(false)
   const [controlsTouched, setControlsTouched] = useState(0)
   const revealControls = useCallback(() => { setControlsShown(true); setControlsTouched(Date.now()) }, [])
   useEffect(() => {
-    if (!controlsShown || status !== 'playing' || videoSettingsOpen || rateOpen) return
+    if (!controlsShown || status !== 'playing' || videoSettingsOpen || rateOpen || videoSeeking || chapters.directoryOpen) return
     const timer = window.setTimeout(() => setControlsShown(false), 3000)
     return () => window.clearTimeout(timer)
-  }, [controlsShown, controlsTouched, status, videoSettingsOpen, rateOpen])
-  const [videoFullscreen, setVideoFullscreen] = useState(false)
-  useEffect(() => {
-    if (!isMobile) return
-    if (videoFullscreen) document.documentElement.dataset.videoFullscreen = 'true'
-    else delete document.documentElement.dataset.videoFullscreen
-    void controlMobileAudio('videoFullscreen', videoFullscreen ? 1 : 0).catch(() => undefined)
+  }, [controlsShown, controlsTouched, status, videoSettingsOpen, rateOpen, videoSeeking, chapters.directoryOpen])
+  const videoFullscreen = open && mediaMode === 'video' && fullscreenRequested
+  const swipeCover = isMobile && mediaMode === 'cover' && !videoFullscreen
+  const coverDrag = useVerticalDismiss<HTMLDivElement>(motionSurface ?? panel, swipeCover && open, onClose, { settle: onSwipeRelease })
+  useLayoutEffect(() => {
+    if (!isMobile || !videoFullscreen) return
+    const root = document.documentElement
+    root.dataset.videoFullscreen = 'true'
+    void controlMobileAudio('videoFullscreen', 1).catch(() => undefined)
+    return () => {
+      delete root.dataset.videoFullscreen
+      void controlMobileAudio('videoFullscreen', 0).catch(() => undefined)
+    }
   }, [videoFullscreen])
-  useEffect(() => () => {
-    if (!isMobile) return
-    delete document.documentElement.dataset.videoFullscreen
-    void controlMobileAudio('videoFullscreen', 0).catch(() => undefined)
-  }, [])
+  useEffect(() => {
+    if (!open || mediaMode !== 'video') setVideoFullscreen(false)
+  }, [open, mediaMode, setVideoFullscreen])
   const [danmakuVisible, setDanmakuVisible] = useState(() => localStorage.getItem('danmakuVisible') !== 'false')
   const [danmakuSize, setDanmakuSize] = useState(() => Number(localStorage.getItem('danmakuSize') || 1))
   const [danmakuOpacity, setDanmakuOpacity] = useState(() => Number(localStorage.getItem('danmakuOpacity') || .8))
@@ -128,8 +162,23 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     return Number.isInteger(value) && value >= 0 && value <= 3 ? value : 3
   })
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const commentsPresent = usePanelPresence(commentsOpen && open, 220)
+  const chaptersOpen = open && chapters.directoryOpen
+  const desktopChaptersPresent = usePanelPresence(!isMobile && chaptersOpen, 200)
   const closeComments = useCallback(() => setCommentsOpen(false), [])
   const openComments = useCallback(() => setCommentsOpen(true), [])
+  const toggleDockComments = (trigger: HTMLButtonElement) => {
+    if (commentsOpen) { closeComments(); return }
+    if (!isMobile && chapters.directoryOpen) {
+      trigger.focus({ preventScroll: true })
+      chapters.close()
+    }
+    openComments()
+  }
+  const toggleDesktopChapters = (trigger: HTMLElement) => {
+    if (!chapters.directoryOpen) closeComments()
+    chapters.toggle(trigger)
+  }
   const [biasOpen, setBiasOpen] = useState(false)
   const [browsingLyrics, setBrowsingLyrics] = useState(false)
   const [browseIndex, setBrowseIndex] = useState(-1)
@@ -178,18 +227,18 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     }
   }, [biasWriter])
   useEffect(() => () => { void biasWriter.flush() }, [current?.id, biasWriter])
+  useOverlayDismiss(panel, open && (biasOpen || videoFullscreen), () => {
+    if (biasOpen) { setBiasOpen(false); void biasWriter.flush() }
+    else setVideoFullscreen(false)
+  })
   useEffect(() => {
-    const back = (event: Event) => {
-      if (event.defaultPrevented || document.querySelector('[data-overflow-panel], .mobile-comments')) return
-      if (biasOpen) { event.preventDefault(); setBiasOpen(false); return }
-      if (chooserOpen || editing || rateOpen) return // The shared dialog handler closes these first.
-      if (commentsOpen) { event.preventDefault(); setCommentsOpen(false) }
-      else if (videoFullscreen) { event.preventDefault(); setVideoFullscreen(false) }
-    }
-    window.addEventListener('bilimusic-back', back, true)
-    return () => window.removeEventListener('bilimusic-back', back, true)
-  }, [chooserOpen, editing, rateOpen, commentsOpen, videoFullscreen, biasOpen])
+    if (open) return
+    setVideoFullscreen(false)
+    void biasWriter.flush()
+  }, [open, biasWriter])
   const lyricRequest = useRef(0)
+  const savingSelection = useRef(false)
+  const [savingLyrics, setSavingLyrics] = useState(false)
   const videoRequest = useRef(0)
   const [videoRetry, setVideoRetry] = useState(0)
   useEffect(() => {
@@ -215,6 +264,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   useEffect(() => {
     let cancelled = false
     const request = ++lyricRequest.current
+    instantCenter.current = true
     setStored(null); setBiasSaveError(false); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
     if (!current) return () => { cancelled = true }
     const load = async () => {
@@ -249,40 +299,46 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
 
   useEffect(() => {
     setSeasonOpen(false); setPartsOpen(false); setControlsShown(false); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false)
-    setVideoFailed(false); setLyricQuery(current ? firstSongQuery(current).title : ''); setLyricArtist(current ? firstSongQuery(current).artist : '')
+    setVideoFailed(false); setVideoIssue(undefined); setLyricQuery(current ? firstSongQuery(current).title : ''); setLyricArtist(current ? firstSongQuery(current).artist : '')
   }, [current?.id])
 
   useEffect(() => {
-    const request = ++videoRequest.current
-    if (!current || current.source.provider !== 'bilibili' || current.source.cid <= 0 || mediaPreference !== 'video') return
+    const request = ++videoRequest.current, epoch = accountEpoch()
+    if (!open || !current || current.source.provider !== 'bilibili' || current.source.cid <= 0 || mediaPreference !== 'video') return
     const existing = videoSource?.trackId === current.id ? videoSource : undefined
     if (existing?.revision === videoRetry) return
-    const pending = getVideoSource(current.source.bvid, current.source.cid).then(source => source.videoUrl)
-    void pending.then(url => {
-      if (request !== videoRequest.current) return
-      setVideoSource({ trackId: current.id, url, revision: videoRetry })
+    void getDiagnosticVideoSource(current.source.bvid, current.source.cid).then(source => {
+      if (request !== videoRequest.current || epoch !== accountEpoch()) return
+      setVideoIssue(undefined)
+      setVideoSource({ trackId: current.id, url: source.videoUrl, codecs: source.codecs, revision: videoRetry, diagnostic: source.diagnostic })
     }).catch(cause => {
-      if (request !== videoRequest.current) return
+      if (request !== videoRequest.current || epoch !== accountEpoch()) return
       if (!existing) setVideoFailed(true)
-      setError(`视频加载失败：${commandErrorMessage(cause)}`)
+      setVideoIssue({ trackId: current.id, issue: videoSourceIssue(cause) })
     })
     return () => { ++videoRequest.current }
-  }, [current?.id, mediaPreference, videoRetry])
+  }, [open, current?.id, mediaPreference, videoRetry])
 
-  const reloadVideo = useCallback(async () => {
+  const reloadVideo = useCallback(async (compatible: boolean) => {
     if (!current) return
     const request = ++videoRequest.current, epoch = accountEpoch()
-    const source = await getVideoSource(current.source.bvid, current.source.cid, true)
+    const source = await getDiagnosticVideoSource(current.source.bvid, current.source.cid, true, compatible, videoSource?.trackId === current.id ? videoSource.diagnostic : undefined)
     if (request !== videoRequest.current || epoch !== accountEpoch()) return
     setReadyVideoUrl('')
-    setVideoSource({ trackId: current.id, url: source.videoUrl, revision: videoRetry })
-  }, [current?.id, videoRetry])
+    setVideoSource({ trackId: current.id, url: source.videoUrl, codecs: source.codecs, revision: videoRetry, diagnostic: source.diagnostic })
+  }, [current?.id, videoRetry, videoSource?.diagnostic])
 
   const videoReady = Boolean(videoUrl && readyVideoUrl === videoUrl)
   useEffect(() => {
     if (isMobile && mediaMode === 'video' && videoReady) revealControls()
   }, [mediaMode, videoReady, videoFullscreen, revealControls])
-  const controlsHidden = isMobile && videoReady && status === 'playing' && !controlsShown && !videoSettingsOpen && !rateOpen
+  const mobileFullscreen = isMobile && videoFullscreen
+  const controlsHidden = isMobile && videoReady && (mobileFullscreen || status === 'playing') && !controlsShown && !videoSettingsOpen && !rateOpen
+  const toggleVideoControls = () => {
+    if (!mobileFullscreen) { revealControls(); return }
+    setControlsShown(shown => !shown)
+    setControlsTouched(Date.now())
+  }
   const cid = current?.source.cid || 0
   const danmaku = useQuery({
     queryKey: ['video-danmaku', cid],
@@ -296,12 +352,31 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
   const showVideo = () => {
     if (!current || current.source.provider !== 'bilibili') return
     const next = mediaMode === 'video' ? 'cover' : 'video'
-    setVideoFailed(false); setError(''); setVideoFullscreen(false)
-    // Retry without changing the remembered preference.
-    if (next === 'video' && mediaPreference === 'video') {
-      setVideoRetry(value => value + 1)
-    } else setMediaPreference(next)
-    localStorage.setItem('lyrics-media-mode', next)
+    const apply = () => {
+      setVideoFailed(false); setVideoIssue(undefined); setError(''); setVideoFullscreen(false)
+      // Retry without changing the remembered preference.
+      if (next === 'video' && mediaPreference === 'video') setVideoRetry(value => value + 1)
+      else setMediaPreference(next)
+      localStorage.setItem('lyrics-media-mode', next)
+    }
+    const frame = videoCover.current
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const opacity = frame ? getComputedStyle(frame).opacity : '1'
+    mediaFade.current?.cancel()
+    if (!frame?.animate || motion.matches || videoFullscreen) {
+      apply()
+      return
+    }
+    // Change the frame's size between the two fades so neither image stretches.
+    const exiting = frame.animate([{ opacity }, { opacity: 0 }], { duration: 90, easing: 'ease-out', fill: 'forwards' })
+    mediaFade.current = exiting
+    void exiting.finished.then(() => {
+      if (mediaFade.current !== exiting || !frame.isConnected) return
+      flushSync(apply)
+      exiting.cancel()
+      mediaFade.current = motion.matches ? undefined :
+        videoCover.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 175, easing: 'ease-out' })
+    }, () => {})
   }
   const changeVideoQuality = () => {
     setVideoFailed(false)
@@ -317,7 +392,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     return !value
   })
 
-  const syncedLyrics = useMemo(() => Boolean(stored && parseLrc(stored.rawText).length), [stored?.rawText])
+  const syncedLyrics = useMemo(() => hasTimedLyrics(stored?.rawText), [stored?.rawText])
   const autoAlignment = useAutoLyricAlignment({ track: current, stored, lines, enabled: biasOpen && syncedLyrics && !subtitles.lines,
     beforeAlign: () => biasWriter.flush(), onAligned: saved => {
       storedRef.current = saved; setStored(saved); setBiasSaveError(false); setBiasActivity(Date.now())
@@ -377,13 +452,13 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     return () => observer.disconnect()
   }, [current?.id])
   useEffect(() => {
-    if (browsingLyrics || timingPreview && hoveredLine !== null) return
+    if (!open || browsingLyrics || timingPreview && hoveredLine !== null) return
     const line = lineRefs.current[activeIndex]
     if (scrollRef.current && line) {
       centerLyric(scrollRef.current, line, instantCenter.current || biasOpen || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
       instantCenter.current = false
     }
-  }, [activeIndex, browsingLyrics, timingPreview, hoveredLine === null, biasMs, displayLines, supplementMode, foregroundRevision])
+  }, [open, activeIndex, browsingLyrics, timingPreview, hoveredLine === null, biasMs, displayLines, supplementMode, foregroundRevision])
 
   async function refreshCandidates() {
     if (!current) return
@@ -400,21 +475,35 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
 
   async function importManualLyrics() {
     if (!current || !manualText.trim()) return
-    const request = ++lyricRequest.current
     setLoading(false)
     const synced = parseLrc(manualText).length > 0
-    await selectCandidate({ provider: 'local', id: 0, trackName: current.title, artistName: current.artist || '', albumName: current.album || '', duration: current.durationSeconds, instrumental: false, syncedLyrics: synced ? manualText.trim() : undefined, plainLyrics: synced ? undefined : manualText.trim() }, true, request)
+    await selectCandidate({ provider: 'local', id: 0, trackName: current.title, artistName: current.artist || '', albumName: current.album || '', duration: current.durationSeconds, instrumental: false, syncedLyrics: synced ? manualText.trim() : undefined, plainLyrics: synced ? undefined : manualText.trim() }, true)
   }
 
-  async function selectCandidate(candidate: LyricCandidate, manual: boolean, request = lyricRequest.current) {
-    if (!current) return
+  async function selectCandidate(candidate: LyricCandidate, manual: boolean, updateMetadata = false) {
+    if (!current || savingSelection.current) return
+    const request = ++lyricRequest.current
+    const epoch = accountEpoch()
+    const valid = () => epoch === accountEpoch() && request === lyricRequest.current
     const parsed = candidateLines(candidate)
     if (!parsed.length) { setError('这个版本没有可显示的歌词'); return }
+    savingSelection.current = true; setSavingLyrics(true)
     try {
-      const saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
-      if (request !== lyricRequest.current) return
+      let saved
+      if (updateMetadata) {
+        const version = await lyricMatchVersion(current.id)
+        const metadata = await metadataForLyric(candidate)
+        if (!valid()) return
+        const pair = await saveLyricsWithMetadata(current.id, candidate, parsed, metadata, version)
+        if (epoch !== accountEpoch()) return
+        usePlayerStore.getState().updateTrack(pair.track)
+        void queryClient.invalidateQueries({ predicate: q => ['library', 'playlists', 'playlist-tracks', 'home-recent'].includes(String(q.queryKey[0])) })
+        saved = pair.stored
+      } else saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
+      if (!valid()) return
       setStored(saved); setLines(parsed); setChooserOpen(false); setError('')
-    } catch (cause) { if (request === lyricRequest.current) setError(commandErrorMessage(cause)) }
+    } catch (cause) { if (valid()) setError(commandErrorMessage(cause)) }
+    finally { savingSelection.current = false; setSavingLyrics(false) }
   }
 
   function adjustBias(delta: number) {
@@ -442,7 +531,7 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
     setBrowsingLyrics(false)
   }
 
-  if (!current) return <section className="lyrics-view"><button className="lyrics-close" onClick={onClose}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
+  if (!current) return <section ref={panel} className="lyrics-view" inert={!open || inert}><button type="button" className="lyrics-close" {...closeDrag}><ChevronDown /></button><div className="lyrics-empty"><h2>尚未播放</h2><p>选择歌曲后，这里会显示歌词。</p></div></section>
 
   const subtitleLabel = subtitles.lines && !subtitles.choice?.ai ? 'B 站字幕' : 'AI 字幕'
   const supplementControl = !subtitles.lines && supplementModes.length > 1 && <button type="button" className="lyrics-supplement-toggle" data-enabled={supplementMode !== 'off' || undefined}
@@ -455,64 +544,63 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
       {danmaku.error && danmakuVisible && <p className="inline-error">弹幕加载失败 <button type="button" onClick={() => void danmaku.refetch()}>重试</button></p>}
       <strong className="danmaku-settings-heading">弹幕</strong>
       <label>密度 <output>{danmakuDensityLabels[danmakuDensity]}</output>
-        <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity} onChange={event => {
+        <input aria-label="弹幕密度" aria-valuetext={danmakuDensityLabels[danmakuDensity]} type="range" min="0" max="3" step="1" value={danmakuDensity}
+          style={{ '--range-fill': `${danmakuDensity / 3 * 100}%` } as CSSProperties}
+          onChange={event => {
           const value = Number(event.target.value)
           setDanmakuDensity(value)
           localStorage.setItem('danmakuDensity', String(value))
         }}/>
         <span className="danmaku-density-ticks" aria-hidden="true">{danmakuDensityLabels.map(label => <span key={label}>{label}</span>)}</span>
       </label>
-      <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
-      <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
+      <label>字号 <output>{danmakuSize.toFixed(1)}×</output><input aria-label="弹幕字号" type="range" min="0.6" max="1.6" step="0.1" value={danmakuSize} style={{ '--range-fill': `${(danmakuSize - 0.6) / 1.0 * 100}%` } as CSSProperties} onChange={event => { const value = Number(event.target.value); setDanmakuSize(value); localStorage.setItem('danmakuSize', String(value)) }}/></label>
+      <label>透明度 <output>{Math.round(danmakuOpacity * 100)}%</output><input aria-label="弹幕透明度" type="range" min="0.2" max="1" step="0.1" value={danmakuOpacity} style={{ '--range-fill': `${(danmakuOpacity - 0.2) / 0.8 * 100}%` } as CSSProperties} onChange={event => { const value = Number(event.target.value); setDanmakuOpacity(value); localStorage.setItem('danmakuOpacity', String(value)) }}/></label>
     </div>
   </>
-  // A tablet keeps the wide player, while its controls still need touch targets.
-  // Anchor video controls to the actual frame rather than the reserved cover stage.
-  const frameVideoTools = isMobile && !compact && mediaMode === 'video'
-  const videoTools = <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`} data-controls-hidden={mediaMode === 'video' && controlsHidden || undefined} onPointerDown={revealControls}>
+  const danmakuToggle = <button type="button" className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
+  const videoMenu = <ActionMenu label="视频设置" icon={<Settings2 size={18}/>} panel floating={mobileFullscreen} onOpenChange={setVideoSettingsOpen}>
+    {close => <>{mobileFullscreen && <PlaybackRateEntry onOpen={() => { close(); revealControls(); setRateOpen(true) }}/>}{videoSettings}</>}
+  </ActionMenu>
+  const videoTools = mobileFullscreen ? <div className="video-fullscreen-toolbar" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
+    <button type="button" className="video-fullscreen-back" aria-label="退出全屏" onClick={() => setVideoFullscreen(false)}><ArrowLeft size={22}/></button>
+    {videoMenu}
+  </div> : <div className={`video-tools${mediaMode === 'video' ? ' video-tools-overlay' : ''}`} data-controls-hidden={mediaMode === 'video' && controlsHidden || undefined} onPointerDown={revealControls}>
     {current.source.provider === 'bilibili' && <button className="video-mode-toggle" aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} title={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={18} /> : <TvMinimalPlay size={18} />}</button>}
     {mediaMode === 'video' && <>
-      <button className="video-danmaku-toggle" onClick={toggleDanmaku} aria-label={danmakuVisible ? '关闭弹幕' : '显示弹幕'} aria-pressed={danmakuVisible}><span>弹</span>{!danmakuVisible && <i/>}</button>
-      <button onClick={() => setVideoFullscreen((value) => !value)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
-      <ActionMenu label="视频设置" icon={<Settings2 size={18}/>} panel floating={isMobile && videoFullscreen} onOpenChange={setVideoSettingsOpen}>
-        {close => <>{isMobile && videoFullscreen && <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>}{videoSettings}</>}
-      </ActionMenu>
+      {danmakuToggle}
+      <button onClick={() => setVideoFullscreen(!videoFullscreen)} aria-label="切换视频全屏">{videoFullscreen ? <Minimize2 /> : <Maximize2 />}</button>
+      {videoMenu}
     </>}
   </div>
 
   return (
-    <section className="lyrics-view">
-      {(!isMobile||!compact)&&dockActions&&createPortal(<>
-        {!isMobile && supplementControl}
-        {!isMobile && <FloatingLyricsToggle/>}
-        <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={()=>setCommentsOpen(value=>!value)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
+    <section ref={panel} className="lyrics-view" inert={!open || inert}>
+      {dockLyrics && dockActions && createPortal(<>
+        {supplementControl}
+        {!isIOS && !isOHOS && <FloatingLyricsToggle/>}
+        {(!isMobile || tablet) && <ChapterTrigger model={isMobile ? chapters : { ...chapters, toggle: toggleDesktopChapters }}/>}
+        <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={event => toggleDockComments(event.currentTarget)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
         {bvid&&<button type="button" className="lyrics-dock-ai" aria-label={subtitles.active?'关闭 AI / B站字幕':'开启 AI / B站字幕'} title={`${subtitleLabel} · ${subtitles.active?'已开启':subtitles.preferred?'歌词优先':'已关闭'}`} aria-pressed={subtitles.active} aria-busy={subtitles.busy} onClick={toggleSubtitles}><AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/></button>}
       </>,dockActions)}
       <header className="lyrics-topbar">
-        <button className="lyrics-close" onClick={onClose} aria-label="收起歌词"><ChevronDown /></button>
+        <button type="button" className="lyrics-close" {...closeDrag} aria-label="收起歌词"><ChevronDown /></button>
         <span>正在播放</span>
         <div className="lyrics-actions">
-          {isMobile && !isIOS && !isOHOS && !videoFullscreen && <FloatingLyricsToggle/>}
+          {isMobile && !dockLyrics && !isIOS && !isOHOS && !videoFullscreen && <FloatingLyricsToggle/>}
           {!isMobile&&onMiniPlayer&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" onClick={onMiniPlayer}><PictureInPicture2 size={19}/></button>}
-          {isMobile && !compact && supplementControl}
           {!(isMobile && videoFullscreen) && <ActionMenu label={compact ? "播放设置" : "歌词页面更多操作"} panel panelClassName={compact ? "mobile-playback-settings" : undefined} touchSheet={compact}>{(close) => <>
             {current.importedEntry?.trackId === current.id && <button type="button" role="menuitem" onClick={() => { close(); setReplacingVideo(current) }}><RefreshCw size={18}/><span>更换视频</span></button>}
             {compact && <>
               <PlaybackRateEntry onOpen={() => { close(); setRateOpen(true) }}/>
-              {isMobile && <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>}
               <PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>
             </>}
-            {compact && isMobile && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
+            <SleepTimerEntry onOpen={() => { close(); onOpenSleepTimer() }}/>
+            {compact && isMobile && !dockLyrics && bvid && <button className="lyrics-subtitle-menu-item" type="button" role="switch" aria-checked={subtitles.active} onClick={toggleSubtitles}>
               <AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/><span>{subtitleLabel}</span>{subtitles.preferred && !subtitles.active && <small>歌词优先</small>}<span className="playback-setting-switch" aria-hidden="true" data-enabled={subtitles.active}><i/></span>
             </button>}
-            {subtitles.active && subtitles.choices.length > 1 && (compact ? <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
-              options={subtitles.choices.map(choice => ({ value: choice.language, label: choice.label || choice.language }))}
-              onChange={subtitles.select}/> : <label className="lyrics-subtitle-language">
-              字幕版本
-              <select aria-label="字幕版本" value={subtitles.choice?.language} onChange={event => { subtitles.select(event.target.value); close() }}>
-                {subtitles.choices.map(choice => <option key={choice.language} value={choice.language}>{choice.label || choice.language} · {choice.ai ? 'AI' : 'B 站'}</option>)}
-              </select>
-            </label>)}
+            {subtitles.active && subtitles.choices.length > 1 && <TouchOptions icon={<Captions size={18}/>} label="字幕版本" selected={subtitles.choice?.language ?? ''}
+              options={subtitles.choices.map(choice => ({ value: choice.language, label: `${choice.label || choice.language}${compact ? '' : ` · ${choice.ai ? 'AI' : 'B 站'}`}` }))}
+              onChange={value => { subtitles.select(value); if (!compact) close() }}/>}
             {compact && <div className="touch-sheet-section">歌曲与歌词</div>}
             <div className={compact ? 'lyrics-song-actions lyrics-song-actions-grid' : 'lyrics-song-actions'}>
             {current.source.provider === 'bilibili' && <button role={isMobile ? undefined : 'menuitem'} type="button" onClick={() => { close(); chooseDownload([current]) }}><Download size={16}/>下载歌曲</button>}
@@ -534,11 +622,11 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className="lyrics-media" ref={artworkFit.stage}>
-        <div ref={videoCover} style={artworkFit.style} className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'}>{videoUrl && <SyncedVideo key={current?.id} onReload={reloadVideo} src={videoUrl} poster={coverUrl} active={mediaMode === 'video'} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <div className="video-startup"><Artwork src={coverUrl} /><div className="video-startup-status"><LoaderCircle size={16} className="spin" />正在解析视频线路…</div></div>}{danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={coverUrl} adaptAspect onAspectRatio={artworkFit.onRatio} />}{isMobile && mediaMode === 'video' && videoReady && <button type="button" className="video-reveal-controls" aria-label="显示视频控件" onClick={revealControls}/>}{frameVideoTools && videoTools}</div>
-        {!frameVideoTools && videoTools}
-        {videoFullscreen && isMobile && <div className="video-fullscreen-transport" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
-          <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? 'Ⅱ' : '▶'}</button>
-          <span>{formatDuration(progressSeconds)}</span><SeekRange aria-label="视频播放进度" duration={duration} trackKey={current.id} value={Math.min(progressSeconds, duration)} onPreview={seconds => { if (seconds !== undefined) revealControls() }} onSeek={seconds => { revealControls(); usePlayerStore.getState().seek(seconds) }}/><span>{formatDuration(duration)}</span>
+        <div ref={videoCover} style={artworkFit.style} className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'} data-swipe-cover={swipeCover || undefined} data-media-mode={mediaMode} {...(swipeCover ? coverDrag : {})} onClick={undefined}>{videoUrl && <SyncedVideo key={current?.id} onReload={reloadVideo} src={videoUrl} poster={coverUrl} track={current} codecs={videoSource?.codecs} diagnostic={videoSource?.diagnostic} active={mediaMode === 'video'} suspended={!open} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <VideoStartup key={current.id} poster={coverUrl} message={open ? "正在解析视频线路…" : undefined}/>}{open && danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={coverUrl} adaptAspect onAspectRatio={artworkFit.onRatio} />}{isMobile && mediaMode === 'video' && videoReady && <button type="button" className="video-reveal-controls" aria-label={mobileFullscreen && !controlsHidden ? '隐藏视频控件' : '显示视频控件'} onClick={toggleVideoControls}/>}</div>
+        {videoTools}
+        {mobileFullscreen && <div className="video-fullscreen-transport" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
+          <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? <Pause size={20} fill="currentColor"/> : <Play size={20} fill="currentColor"/>}</button>
+          <span>{formatDuration(progressSeconds, duration >= 3600)}</span><ChapterSeekRange aria-label="视频播放进度" duration={duration} trackKey={current.id} chapters={chapters.items} value={Math.min(progressSeconds, duration)} onPreview={seconds => { setVideoSeeking(seconds !== undefined); if (seconds !== undefined) revealControls() }} onSeek={seconds => { revealControls(); usePlayerStore.getState().seek(seconds) }}/>{chapters.items.length ? <ChapterTrigger model={chapters} variant="time"/> : <span>{formatDuration(duration)}</span>}{danmakuToggle}
         </div>}
         </div>
         <div className="lyrics-track-meta">
@@ -564,31 +652,41 @@ export function LyricsView({ onMiniPlayer, onOpenSleepTimer, onClose, onFavorite
           </div>
           {compact && <div className="lyrics-meta-actions">
             <button className={current.liked ? 'liked' : ''} aria-label={current.liked ? '取消喜欢' : '喜欢这首歌'} aria-pressed={Boolean(current.liked)} aria-busy={favoritePending} onClick={onFavorite}><Heart size={20} fill={current.liked ? 'currentColor' : 'none'} /></button>
-            {isMobile && compact && supplementControl}
+            {isMobile && !dockLyrics && supplementControl}
             {current.source.provider === 'bilibili' && <button aria-label={mediaMode === 'video' ? '显示封面' : '播放视频'} aria-pressed={mediaMode === 'video'} onClick={() => void showVideo()}>{mediaMode === 'video' ? <Image size={20}/> : <TvMinimalPlay size={20}/>}</button>}
-            <button aria-label="查看评论" disabled={!current.source.aid} onClick={openComments}><MessageCircle size={20}/></button>
+            {!dockLyrics && <button aria-label="查看评论" disabled={!current.source.aid} onClick={openComments}><MessageCircle size={20}/></button>}
           </div>}
         </div>
       </div>
-      <div ref={scrollRef} onWheel={browseLyrics} onPointerDown={event => { lyricTouch.current = { x: event.clientX, y: event.clientY, direction: 'pending' } }} onPointerMove={event => { const touch = lyricTouch.current; if (!touch) return; touch.direction = touchDirection(event.clientX, event.clientY, touch.x, touch.y, touch.direction); if (touch.direction === 'vertical') browseLyrics() }} onPointerUp={() => { lyricTouch.current = null }} onPointerCancel={() => { lyricTouch.current = null }} onScroll={updateBrowseLine} onPointerLeave={() => setHoveredLine(null)} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
+      <div ref={scrollRef} onWheel={browseLyrics} onPointerDown={event => { lyricTouch.current = { x: event.clientX, y: event.clientY, direction: 'pending' } }} onPointerMove={event => { const touch = lyricTouch.current; if (!touch) return; touch.direction = touchDirection(event.clientX, event.clientY, touch.x, touch.y, touch.direction); if (touch.direction === 'vertical') browseLyrics() }} onPointerUp={() => { lyricTouch.current = null }} onPointerCancel={() => { lyricTouch.current = null }} onScroll={open && browsingLyrics ? updateBrowseLine : undefined} onPointerLeave={() => setHoveredLine(null)} className={`lyrics-scroll${timingPreview ? ' lyrics-timing-preview' : ''}`} aria-live="polite">
         {loading && !displayLines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : displayLines.length ? displayLines.map((line, index) => (
-          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original"><WordLyric line={line} active={index === activeIndex} timeMs={progressSeconds * 1000 - biasMs} clock={lyricClock}/></span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
+          <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original"><WordLyric line={line} active={index === activeIndex} timeMs={progressSeconds * 1000 - biasMs} clock={open && status === 'playing' ? lyricClock : undefined}/></span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
+      {(isMobile ? chaptersOpen : desktopChaptersPresent) && <ChapterDirectory model={chapters} mobile={isMobile} open={chaptersOpen} fullscreen={videoFullscreen}/>}
       {biasOpen && !subtitles.lines && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
         onAutoAlign={() => void autoAlignment.run()} autoBusy={autoAlignment.busy} onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
-      {(floatingError || subtitles.message || autoAlignment.message || (error && displayLines.length > 0)) && <div className={`lyrics-toast${autoAlignment.message && !floatingError && !subtitles.message ? ' lyrics-alignment-toast' : ''}`} role={floatingError || autoAlignment.failed ? 'alert' : 'status'}>{floatingError || subtitles.message || autoAlignment.message || error}{floatingError && <button type="button" onClick={() => useFloatingLyrics.setState({error:''})}>知道了</button>}</div>}
-      {chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
+      {videoIssue?.trackId === current.id && <div className="lyrics-toast playback-issue-toast" role="alert">
+        <PlaybackErrorText issue={videoIssue.issue}/><div className="playback-issue-actions">
+          <button type="button" onClick={() => { setVideoFailed(false); setVideoIssue(undefined); setVideoRetry(value => value + 1) }}>重试</button>
+          <CopyPlaybackDiagnostics issue={videoIssue.issue} track={current}/>
+          <button type="button" onClick={() => setVideoIssue(undefined)}>关闭</button>
+        </div>
+      </div>}
+      {!videoIssue && (floatingError || subtitles.message || autoAlignment.message || (error && displayLines.length > 0)) && <div className={`lyrics-toast${autoAlignment.message && !floatingError && !subtitles.message ? ' lyrics-alignment-toast' : ''}`} role={floatingError || autoAlignment.failed ? 'alert' : 'status'}>{floatingError || subtitles.message || autoAlignment.message || error}{floatingError && <button type="button" onClick={() => useFloatingLyrics.setState({error:''})}>知道了</button>}</div>}
+      {open && chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
         loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
-        onSearch={refreshCandidates} onChoose={candidate => selectCandidate(candidate, true)} onClose={() => { setChooserOpen(false); setManualOpen(false) }}
+        saving={savingLyrics} onSearch={refreshCandidates} onChoose={(candidate, update) => selectCandidate(candidate, true, update)} onClose={() => { ++lyricRequest.current; setChooserOpen(false); setManualOpen(false) }}
         manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
-      {rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
-      {seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
-      {partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
-      {commentsOpen && current.source.aid && <CommentsPanel key={current.source.aid} aid={current.source.aid} onClose={closeComments} video={mediaMode === 'video' ? videoCover.current : null} />}
-      {editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
-      {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)}/>}
+      {open && rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
+      {open && seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
+      {open && partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
+      {commentsPresent && current.source.aid && <CommentsPanel open={commentsOpen && open} key={current.id} trackId={current.id} aid={current.source.aid} onClose={closeComments} chapters={chapters.canImport ? {
+        durationSeconds: chapters.duration, existingChapters: chapters.existingChapters, isCurrent: chapters.isCurrent, onSave: chapters.save,
+      } : undefined} video={mediaMode === 'video' ? videoCover.current : null} />}
+      {open && editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
+      {open && replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)}/>}
     </section>
   )
 }
@@ -600,10 +698,9 @@ function centerLyric(scroll: HTMLDivElement, line: HTMLParagraphElement, behavio
 function PlaybackRateControl() {
   const rate = usePlayerStore(state => state.rate)
   const setRate = usePlayerStore(state => state.setRate)
-  return <label className="lyrics-subtitle-language">
-    播放倍速
-    <select aria-label="播放倍速" value={rate} onChange={event => void setRate(Number(event.target.value))}>
-      {playbackRates.map(value => <option key={value} value={value}>{value}×</option>)}
-    </select>
-  </label>
+  return <div className="playback-rate-control">
+    <TouchOptions icon={<Gauge size={17}/>} label="播放倍速" selected={String(rate)}
+      options={playbackRates.map(value => ({ value: String(value), label: `${value}×` }))}
+      onChange={value => void setRate(Number(value))} layout="grid" />
+  </div>
 }

@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
 
-export function useLocateCurrentRow(root: RefObject<HTMLElement | null>, open: boolean, rowId?: string) {
+export function useLocateCurrentRow(root: RefObject<HTMLElement | null>, open: boolean, rowId?: string, keepLocation = false) {
   const located = useRef(false)
   useLayoutEffect(() => {
-    if (!open) { located.current = false; return }
+    if (!open) { if (!keepLocation) located.current = false; return }
     if (!rowId || located.current) return
     const frame = requestAnimationFrame(() => {
       const host = root.current
@@ -18,5 +18,5 @@ export function useLocateCurrentRow(root: RefObject<HTMLElement | null>, open: b
       located.current = true
     })
     return () => cancelAnimationFrame(frame)
-  }, [root, open, rowId])
+  }, [root, open, rowId, keepLocation])
 }

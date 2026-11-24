@@ -26,6 +26,7 @@ docker build -t bilimusic-site .
 docker run -d --name bilimusic-site --restart unless-stopped \
   --env-file /etc/bilimusic-site.env \
   -p 127.0.0.1:3180:3180 \
+  -v "$(pwd)/apk-downloads:/site/apk-downloads:ro" \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   --memory 192m --log-opt max-size=10m --log-opt max-file=3 \
   bilimusic-site
@@ -76,6 +77,8 @@ docker exec bilimusic-site node scripts/feedback.mjs status <反馈UUID> resolve
 正式安装包发布到 GitHub Releases 和 Gitee，支持 macOS Apple Silicon / Intel、Windows x64 / ARM64、Android 手机 / 平板及车机 / TV、需自行签名的 iOS IPA 与鸿蒙 HAP，以及 Linux x64 / ARM64 测试包。Gitee 单附件上限100MB，Android 使用精简的 Release APK，两个来源均可直接下载安装。用户选择平台及来源后打开声明；确认后 `POST /api/v1/download` 检查同源请求、当前声明版本和显式同意，再从服务端清单返回下载 URL。服务器只允许本项目的 GitHub / Gitee 发行版地址，不接受客户端指定跳转 URL，也不记录个人下载同意数据。
 
 更新版本时先在两处上传相同安装包与校验清单。许可和独立签名在 GitHub 逐份提供，在 Gitee 收录于可重现的 `RELEASE_DOCUMENTS.tar.xz`，避免重复文本耗尽仓库附件配额；安装器所需的内联签名仍在独立 `updater.json` 中。验证下载后更新 `releases.json` 并重启网站；镜像未完成时地址设为 null，界面显示准备中并禁用该来源。`releases.json` 是唯一下载配置，按钮及确认 API 共用，避免平台和地址错配。当前 macOS 使用临时签名但未 Apple 公证，Windows 未发布者签名，页面已说明架构、限制及 macOS 按应用单独允许打开的方法。直接文件 URL 仍可被转发，不能把网页勾选当作版权授权或访问控制。
+
+发布脚本在切换清单前将已验证的 APK 链接到站点的 `apk-downloads/` 目录。官网的 Gitee APK 入口使用该目录中的原始安装包并返回 `application/vnd.android.package-archive`，公共清单继续提供 GitHub 和 Gitee 的原始地址供客户端更新。部署需要让站点容器可以读取该目录。
 
 发布结束前，还必须将同一份 `website/releases.json` 同步到 GitHub 和 Gitee 仓库的 **main 分支**。应用内更新检查在官网请求失败或超过 5 秒时，会读取这两个分支上的备用清单；仅更新官网、Release 或发布分支会使旧客户端读到旧版本。只同步已正式发布并验证的安装包信息，本地验收包不进入更新清单。
 

@@ -1,3 +1,19 @@
+import { dispatchBack, isTopOverlay } from '../shared/overlayStack'
+import { useOverlayDismiss } from '../shared/useOverlayDismiss'
+import { swipeAxis, trackSwipeDirection } from '../shared/gestureRelease'
+import { useVerticalDismiss } from '../shared/useVerticalDismiss'
+import { usePanelPresence } from '../shared/usePanelPresence'
+import { usePanelReveal } from '../shared/usePanelReveal'
+import { useMobilePlayerSurface } from '../features/player/useMobilePlayerSurface'
+import { usePageMotion } from '../shared/pageMotion'
+import { ListSkeleton } from '../shared/ListSkeleton'
+import { afterListMotion } from '../shared/navigationListMotion'
+import { useListDataDuringNavigation, useListReveal } from '../shared/useListMotion'
+import { useListRows } from '../shared/useListRows'
+import { captureStagePreview, mountStagePreview } from './stageBackPreview'
+import { focusSearch } from '../shared/focusSearch'
+import { suppressBrowserContextMenu } from '../shared/nativeTextEditing'
+import { offlineUnavailable, useOfflinePlayback } from '../features/player/offlinePlayback'
 import { useUpdateStore } from '../services/updates'
 import { trackSubtitle } from '../domain/sourceTitle'
 import { accountQueryKey } from '../services/queryKeys'
@@ -11,8 +27,9 @@ import { createLinkedPlaylist } from '../services/desktopApi'
 import { PlaylistEntry } from '../features/library/PlaylistEntry'
 import { LinkedFolderView } from '../features/library/LinkedFolderView'
 import type { Collection } from '../services/collections'
-import { useCompactLayout } from '../shared/useCompactLayout'
+import { useCompactLayout, useTabletWidth } from '../shared/useCompactLayout'
 import { CollectionsView, CollectionDetail } from '../features/collections/CollectionsView'
+import type { CollectionResumeRequest } from '../features/collections/creatorContinuation'
 import { QueueList } from '../features/player/QueueList'
 import { SleepTimer } from '../features/player/SleepTimer'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
@@ -20,25 +37,27 @@ import { PlaylistsView } from '../features/library/PlaylistsView'
 import { MyView } from '../features/settings/MyView'
 import { hydrateVisibleTracks } from '../services/sync'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
-import { ImmersiveTitlebar } from '../shared/ImmersiveTitlebar'
-import { desktopFrame, setImmersiveWindow } from '../services/immersiveWindow'
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { setImmersiveWindow } from '../services/immersiveWindow'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useVisibilityRules } from '../services/contentVisibility'
-import { version as appVersion } from '../../package.json'
-import { listen } from '@tauri-apps/api/event'
+import { currentDisplayVersion } from '../shared/version'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   UserRound,
   X,
   ArrowLeft,
   ArrowDownUp,
+  Check,
   ChevronDown,
   ChevronRight,
   Download,
   Heart,
   Home,
   Library,
+  ListFilter,
   ListMusic,
+  ListPlus,
+  LoaderCircle,
   Trash2,
   Pause,
   Play,
@@ -52,7 +71,7 @@ import {
   Sun,
   Moon,
 } from 'lucide-react'
-import { usePlayerStore } from '../features/player/playerStore'
+import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/playerStore'
 import { playerShortcut, resolveShortcut, installMouseShortcuts, type ShortcutAction } from '../features/player/shortcuts'
 import { useShortcutStore } from '../services/shortcuts'
 import { listenGlobalShortcuts, syncGlobalShortcuts, showMainWindow } from '../services/globalShortcuts'
@@ -64,11 +83,13 @@ import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
 import { clearSearchHistory, commandErrorMessage, createPlaylist, getVideoParts, saveLibraryTrack, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { toTrack } from '../services/collectionTrack'
 import { accountEpoch } from '../services/accountScope'
 import { AccountControl } from '../features/account/AccountControl'
-import { ImportFavorites, ImportPlaylistButton } from '../features/library/ImportFavorites'
+import { ImportFavorites } from '../features/library/ImportFavorites'
 import { usePlaylistImport } from '../services/playlistImport'
+import { ActionMenu } from '../shared/ActionMenu'
 import type { Playlist } from '../domain/library'
 import { PlayingMark } from '../shared/PlayingMark'
 import { Artwork } from '../shared/Artwork'
@@ -78,6 +99,8 @@ import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/l
 import { showTrackMenu } from '../features/library/trackActionStore'
 import { isMobile } from '../services/platform'
 import { PlayerProgress } from '../features/player/PlayerProgress'
+import { usePlaybackChapters } from '../features/chapters/usePlaybackChapters'
+import { ChapterTrigger } from '../features/chapters/ChapterTrigger'
 import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
@@ -92,58 +115,86 @@ const navigation = [
   { label: '我的', icon: UserRound },
 ]
 
+function RetainedStagePage({ active, className = '', swipe, children }: {
+  active: boolean
+  className?: string
+  swipe?: boolean
+  children: ReactNode
+}) {
+  const visited = useRef(false)
+  useLayoutEffect(() => {
+    if (active) visited.current = true
+  }, [active])
+  return <div className={`stage-scroll ${className}`} hidden={!active} data-main-swipe={active && swipe || undefined}>
+    {(active || visited.current) && children}
+  </div>
+}
+
 export function App() {
   useVisibilityRules()
+  useEffect(() => { void startPlaybackOnLaunch().catch(() => undefined) }, [])
   useEffect(() => { document.getElementById('app-bootstrap')?.remove() }, [])
   const compact=useCompactLayout()
   const updateAvailable = useUpdateStore(state => state.result?.status === 'available')
   const syncAttention = useSyncAttention(state => state.library || state.statistics)
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
+  const searchInput = useRef<HTMLInputElement>(null)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
+  const [collectionResume,setCollectionResume]=useState<CollectionResumeRequest>()
   const [collectionSearch,setCollectionSearch]=useState('')
 
   const [hubSection,setHubSection]=useState<'playlists'|'collections'|'creators'>('playlists')
   const contentScroll=useRef<HTMLDivElement>(null)
-  const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean; search:string }[]>([])
-  const libraryReturn = useRef<{ nav: string; scroll: number } | null>(null)
+  const stageFrame = useRef<HTMLDivElement>(null)
+  const activeStageScroll = () => stageFrame.current?.querySelector<HTMLElement>(':scope > .stage-scroll:not([hidden])')
+  const previewHost = useRef<HTMLDivElement>(null)
+  const searchReturn = useRef<ReturnType<typeof captureStagePreview>>(undefined)
+  const stagePreview = () => isMobile ? captureStagePreview(stageFrame.current) : undefined
+  const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean; search:string; preview?: ReturnType<typeof captureStagePreview> }[]>([])
+  const libraryReturn = useRef<{ nav: string; preview?: ReturnType<typeof captureStagePreview> } | null>(null)
   const pendingCollectionScroll = useRef<number | undefined>(undefined)
   const cancelCollectionScroll = useRef<(() => void) | undefined>(undefined)
   const scrollCollection = (top: number) => { pendingCollectionScroll.current = top }
   useLayoutEffect(() => {
     const top = pendingCollectionScroll.current
-    if (top === undefined || !contentScroll.current) return
+    const scroller = top === undefined ? undefined : activeStageScroll()
+    if (top === undefined || !scroller) return
     pendingCollectionScroll.current = undefined
     cancelCollectionScroll.current?.()
-    cancelCollectionScroll.current = restoreScroll(contentScroll.current, top)
+    if (top === 0) scroller.scrollTop = 0
+    cancelCollectionScroll.current = top > 0 ? restoreScroll(scroller, top) : undefined
   })
   useEffect(() => () => cancelCollectionScroll.current?.(), [])
   const resetCollection = () => {
     collectionHistory.current = []
     setSelectedCollection(null)
+    setCollectionResume(undefined)
     setCollectionSearch('')
   }
-  const openCollection = (item: Collection, origin?: 'lyrics' | 'collection') => {
-    const scroll = contentScroll.current?.scrollTop || 0
+  const openCollection = (item: Collection, origin?: 'lyrics' | 'collection', resume?: CollectionResumeRequest) => {
+    const scroll = activeStageScroll()?.scrollTop || 0
     if (origin) {
-      collectionHistory.current.push({ item: selectedCollection, scroll, lyrics: origin === 'lyrics', search:collectionSearch })
+      collectionHistory.current.push({ item: selectedCollection, scroll, lyrics: origin === 'lyrics', search:collectionSearch, preview: stagePreview() })
     } else {
-      collectionHistory.current = [{ item: null, scroll: collectionHistory.current[0]?.scroll ?? scroll, lyrics: false, search:collectionSearch }]
+      collectionHistory.current = [{ item: null, scroll: collectionHistory.current[0]?.scroll ?? scroll, lyrics: false, search:collectionSearch, preview: collectionHistory.current[0]?.preview ?? stagePreview() }]
     }
     if (origin === 'lyrics') setLyricsOpen(false)
     setSelectedCollection(item)
+    setCollectionResume(resume)
     setCollectionSearch('')
     scrollCollection(0)
   }
   const closeCollection = () => {
     const origin = collectionHistory.current.pop()
     setSelectedCollection(origin?.item ?? null)
+    setCollectionResume(undefined)
     setCollectionSearch(origin?.search ?? '')
     if (origin?.lyrics && usePlayerStore.getState().current) setLyricsOpen(true)
     scrollCollection(origin?.scroll ?? 0)
   }
   useEffect(() => {
-    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setRematchPlaylist(undefined); setSleepTimerOpen(false); libraryReturn.current = null }
+    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setRematchPlaylist(undefined); setSleepTimerOpen(false); setLyricsOpen(false); libraryReturn.current = null; searchReturn.current = undefined }
     window.addEventListener('bilimusic-account-changing', clear)
     return () => window.removeEventListener('bilimusic-account-changing', clear)
   }, [])
@@ -155,25 +206,59 @@ export function App() {
   useEffect(() => { if (searchScroll.current) searchScroll.current.scrollTop = 0 }, [submittedQuery])
   const [lyricsOpen, setLyricsOpen] = useState(false)
   const [miniMode,setMiniMode]=useState(false)
+  const chapters = usePlaybackChapters(lyricsOpen && !miniMode)
+  const [fullscreenLayout, setFullscreenLayout] = useState<'compact' | 'wide' | null>(null)
+  // The native rotation can cross the layout breakpoint. Keep the same
+  // LyricsView and video element until full screen has been dismissed.
+  const compactPlayer = isMobile && (fullscreenLayout ? fullscreenLayout === 'compact' : compact)
+  const tabletPlayer = useTabletWidth() && isMobile
+  const setVideoFullscreen = useCallback((enabled: boolean) => {
+    setFullscreenLayout(enabled ? (compactPlayer ? 'compact' : 'wide') : null)
+  }, [compactPlayer])
+  useEffect(() => {
+    if (!lyricsOpen || miniMode) setFullscreenLayout(null)
+  }, [lyricsOpen, miniMode])
+  const mobilePlayer = useMobilePlayerSurface(compactPlayer, lyricsOpen && !miniMode, tabletPlayer)
+  const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, tabletPlayer ? 224 : isMobile ? 160 : 210)
+  const lyricsPresent = compactPlayer ? mobilePlayer.present : immersivePresent
+  const desktopLyrics = !isMobile && immersivePresent
+  const desktopLyricsSurface = useRef<HTMLDivElement>(null)
+  usePanelReveal(desktopLyricsSurface, lyricsOpen && !miniMode)
+  const lyricsTrigger = useRef<HTMLElement>(null)
+  const showLyrics = (trigger: HTMLElement, restoreFocus = true) => {
+    lyricsTrigger.current = restoreFocus ? trigger : null
+    setLyricsOpen(true)
+  }
+  useLayoutEffect(() => {
+    if (lyricsPresent) return
+    if (lyricsTrigger.current?.isConnected && !lyricsTrigger.current.closest('[inert]') &&
+      (document.activeElement === document.body || document.activeElement === null)) {
+      lyricsTrigger.current.focus({ preventScroll: true })
+    }
+    lyricsTrigger.current = null
+  }, [lyricsPresent])
   const [miniBusy,setMiniBusy]=useState(false)
   const [windowReady,setWindowReady]=useState(!miniPlayerSupported)
   const miniRestoreLyrics=useRef(false)
   const miniChanging=useRef(false)
   const [searchFocused, setSearchFocused] = useState(false)
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
+  const createDialog = useRef<HTMLDivElement>(null)
+  useOverlayDismiss(createDialog, creatingPlaylist, () => setCreatingPlaylist(false))
   const [playlistName, setPlaylistName] = useState('')
   const [createLinked, setCreateLinked] = useState(false)
   const [actionError, setActionError] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  const importJobState = usePlaylistImport(value => value.job?.state)
+  const importRunning = importJobState === 'matching' || importJobState === 'waiting' || importJobState === 'saving'
   const [rematchPlaylist,setRematchPlaylist]=useState<Playlist>()
   const [favoritePending, setFavoritePending] = useState(false)
   const favoriteDesired = useRef<boolean | undefined>(undefined)
   const favoriteRunning = useRef(false)
-  const dockGesture = useRef<{ startX: number; lastX: number; startedAt: number } | null>(null)
-  const dockSwipeTimers = useRef<number[]>([])
+  const dockGesture = useRef<{ id: number; startX: number; startY: number; startedAt: number; group: HTMLElement; axis?: ReturnType<typeof swipeAxis> } | null>(null)
   const suppressDockClick = useRef(false)
-  const [dockSwipeX, setDockSwipeX] = useState(0)
-  const [dockSwipePhase, setDockSwipePhase] = useState<'idle' | 'dragging' | 'commit-left' | 'commit-right' | 'enter-left' | 'enter-right'>('idle')
+  const dockSwitch = useRef<{ from: string; direction: number; expires: number } | undefined>(undefined)
+  const [dockSwipePhase, setDockSwipePhase] = useState<'idle' | 'dragging' | 'enter-left' | 'enter-right'>('idle')
   const theme = useThemeStore((state) => state.theme)
   const setTheme = useThemeStore((state) => state.setTheme)
   const queryClient = useQueryClient()
@@ -185,8 +270,11 @@ export function App() {
   const searchHistory = useQuery({ queryKey: accountQueryKey('search-history'), queryFn: listSearchHistory })
   const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(accountQueryKey('search-history'), []) })
   const playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists })
+  const offline = useOfflinePlayback()
   const homeTracks = useQuery({ queryKey: accountQueryKey('home-recent'), queryFn: listRecentTracks })
-  useEffect(() => { void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined) }, [homeTracks.data, queryClient])
+  useEffect(() => afterListMotion(() => {
+    void hydrateVisibleTracks(homeTracks.data, queryClient).catch(() => undefined)
+  }), [homeTracks.data, queryClient])
   const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
   const displayPreferences=useListPreferences()
   const allPlaylists = rankList(playlists.data || [FAVORITES_PLAYLIST],displayPreferences.data?.preferences||[],playlistEntity)
@@ -196,6 +284,27 @@ export function App() {
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined || activeCreatorFolder!==undefined
   const searchActive = activeNav === '搜索' && !selectedCollection
+  const homeActive = !selectedCollection && (activeNav === '此刻' || compact && activeNav === '收藏库')
+  const hubActive = !selectedCollection && !compact && activeNav === '收藏库'
+  const musicActive = !selectedCollection && activeNav === '音乐库'
+  const creatorsActive = !selectedCollection && activeNav === '关注'
+  const settingsActive = !selectedCollection && activeNav === '我的'
+  const detailActive = !!selectedCollection || libraryDetail
+  const pageAccount = accountEpoch()
+  const recentHomeTracks = useListDataDuringNavigation(homeTracks.data, 'home-recent')
+  const loadingRecentHome = homeTracks.isLoading || Boolean(homeTracks.data && !recentHomeTracks)
+  const recentHomeActive = homeActive && !compact
+  const recentHomeTable = useRef<HTMLDivElement>(null)
+  const recentHomeRows = useListRows(recentHomeTracks || [], 'home-recent', { active: recentHomeActive })
+  useListReveal(recentHomeTable, loadingRecentHome, Boolean(recentHomeTracks?.length), recentHomeActive)
+  const pageKey = selectedCollection ? `collection:${selectedCollection.bvid}` : searchActive ? `search:${submittedQuery}` : activeNav
+  const pageDepth = Number(libraryDetail) + Number(activeNav === '搜索' && Boolean(submittedQuery)) + (selectedCollection ? collectionHistory.current.length : 0)
+  const backPreview = selectedCollection ? collectionHistory.current.at(-1)?.preview :
+    libraryDetail ? libraryReturn.current?.preview : searchActive && submittedQuery ? searchReturn.current : undefined
+  useLayoutEffect(() => {
+    if (previewHost.current) mountStagePreview(previewHost.current, backPreview)
+  }, [backPreview])
+  usePageMotion(isMobile ? stageFrame : searchActive ? searchScroll : contentScroll, pageKey, pageDepth, isMobile, undefined, pageDepth > 0)
   const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '收藏库'))
   useEffect(resetCollection, [activeNav])
 
@@ -205,23 +314,22 @@ export function App() {
     if (nav === activeNav) return
     if (!libraryDetail) {
       const origin = activeNav === '搜索' ? (compact ? '此刻' : '收藏库') : activeNav
-      libraryReturn.current = { nav: origin, scroll: contentScroll.current?.scrollTop || 0 }
+      libraryReturn.current = { nav: origin, preview: stagePreview() }
     }
     setActiveNav(nav)
-    requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = 0 })
+    scrollCollection(0)
   }
   const closeLibraryPage = () => {
     const origin = libraryReturn.current
     libraryReturn.current = null
     setActiveNav(origin?.nav || (compact ? '此刻' : '收藏库'))
-    requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = origin?.scroll || 0 })
   }
   const openPlaylist = (id: string) => openLibraryPage(`playlist:${id}`)
   const openFolder = (id: string) => openLibraryPage(`collections:${id}`)
   const openCreatorFolder=(id:string)=>openLibraryPage(`creator-folder:${id}`)
   const playlistRemoved = (id: string) => { if (activeNav === `playlist:${id}`) closeLibraryPage() }
   const folderRemoved = (id: string) => { if (activeFolder === id) closeLibraryPage() }
-  const hub = <PlaylistsView playlists={allPlaylists} onOpen={openPlaylist} onRemoved={playlistRemoved}
+  const hub = <PlaylistsView playlists={allPlaylists} loading={playlists.isLoading} onOpen={openPlaylist} onRemoved={playlistRemoved}
     onCreate={() => setCreatingPlaylist(true)} onImport={() => setImportOpen(true)}
     onCollectionOpen={openCollection} onOpenFolder={openFolder} onOpenCreatorFolder={openCreatorFolder} section={hubSection} onSectionChange={setHubSection}/>
   const current = usePlayerStore((state) => state.current)
@@ -243,8 +351,28 @@ export function App() {
   }, [current?.id, current?.partCount, current?.resolveParts, queryClient])
   const status = usePlayerStore((state) => state.status)
   const queueOpen = usePlayerStore((state) => state.queueOpen)
+  const [queueSorting, setQueueSorting] = useState(false)
+  const queueSheet = isMobile && compact
+  const queuePresent = usePanelPresence(queueOpen, 220)
+  const queuePanel = useRef<HTMLElement>(null)
+  const queueTrigger = useRef<HTMLButtonElement>(null)
+  const closeQueue = () => usePlayerStore.setState({ queueOpen: false })
+  const queueDrag = useVerticalDismiss(queuePanel, queueOpen && queueSheet, closeQueue)
+  useOverlayDismiss(queuePanel, queueOpen && !miniMode, closeQueue)
+  useLayoutEffect(() => {
+    if (!queueOpen || !queueSheet || miniMode) return
+    const opener = document.activeElement
+    queuePanel.current?.querySelector('button')?.focus({ preventScroll: true })
+    return () => {
+      requestAnimationFrame(() => {
+        if (usePlayerStore.getState().queueOpen || document.activeElement !== document.body) return
+        const target = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : queueTrigger.current
+        if (!target?.closest('[inert]')) target?.focus({ preventScroll: true })
+      })
+    }
+  }, [queueOpen, queueSheet, miniMode])
   useEffect(() => {
-    if (!queueOpen || isMobile) return
+    if (!queueOpen || queueSheet || miniMode) return
     const outside = (event: PointerEvent) => {
       const target = event.target as Element | null
       if (event.button !== 0 || target?.closest('.queue-drawer, .queue-control, .player-dock, [aria-modal="true"], [role="menu"], .action-menu-panel, .track-context-menu')) return
@@ -252,8 +380,11 @@ export function App() {
     }
     document.addEventListener('pointerdown', outside)
     return () => document.removeEventListener('pointerdown', outside)
-  }, [queueOpen])
+  }, [queueOpen, queueSheet, miniMode])
   const queue = usePlayerStore((state) => state.queue)
+  useLayoutEffect(() => {
+    if (!queueOpen || queue.length < 2) setQueueSorting(false)
+  }, [queueOpen, queue.length])
   const queueSource = usePlayerStore(state => state.queueSource)
   const queueFeedback = usePlayerStore(state => state.queueFeedback)
   useEffect(() => {
@@ -288,7 +419,7 @@ export function App() {
     if(miniChanging.current||!windowReady)return
     miniChanging.current=true;setMiniBusy(true);setActionError('')
     try{
-      if(enabled){miniRestoreLyrics.current=lyricsOpen;await setImmersiveWindow(false)}
+      if(enabled)miniRestoreLyrics.current=lyricsOpen
       const active=await setMiniPlayerMode(enabled)
       setMiniMode(active)
       if(active)setLyricsOpen(false)
@@ -296,13 +427,21 @@ export function App() {
         setLyricsOpen(lyrics||(!queue&&miniRestoreLyrics.current))
         if(queue)usePlayerStore.setState({queueOpen:true})
       }
-    }catch(cause){setActionError(commandErrorMessage(cause));if(enabled)void setImmersiveWindow(lyricsOpen)}
+    }catch(cause){setActionError(commandErrorMessage(cause))}
     finally{miniChanging.current=false;setMiniBusy(false)}
   }
 
-  const openSearch = (value?: string) => {
+  const openSearch = (value?: string, keepInputFocus = false) => {
     resetCollection(); setActiveNav('搜索'); setLyricsOpen(false)
-    if (value !== undefined) { setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(false) }
+    if (value !== undefined) {
+      if (!value.trim()) searchReturn.current = undefined
+      else if (searchActive && !submittedQuery) searchReturn.current = stagePreview()
+      setQuery(value); setSubmittedQuery(value.trim()); setSearchFocused(keepInputFocus)
+    }
+  }
+  const openSearchInput = () => {
+    // iOS only shows the keyboard when focus happens within the original tap.
+    focusSearch(() => openSearch(), searchInput)
   }
   const runSearch = (value: string) => {
     const normalized = value.trim()
@@ -344,18 +483,11 @@ export function App() {
       setActionError(`收藏失败，已恢复原状态：${commandErrorMessage(error)}`)
     } finally { favoriteRunning.current = false; setFavoritePending(false) }
   }
-  useEffect(() => {
-    if (!inDesktopShell) return
-    let unlisten: undefined | (() => void)
-    let disposed = false
-    void listen('tray-play-pause', () => void usePlayerStore.getState().toggle()).then((dispose) => { if (disposed) dispose(); else unlisten = dispose })
-    return () => { disposed = true; unlisten?.() }
-  }, [])
   useEffect(connectMediaSession, [])
   useEffect(() => {
-    if(!windowReady||miniMode)return
-    void setImmersiveWindow(lyricsOpen).catch((error) => setActionError(commandErrorMessage(error)))
-  }, [lyricsOpen,miniMode,windowReady])
+    if (!isMobile || !windowReady || miniMode) return
+    void setImmersiveWindow(lyricsOpen, tabletPlayer).catch((error) => setActionError(commandErrorMessage(error)))
+  }, [lyricsOpen,miniMode,windowReady,tabletPlayer])
   useEffect(() => {
     const refreshRecent = () => {
       void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') })
@@ -364,49 +496,61 @@ export function App() {
     window.addEventListener('bilimusic-recent-changed', refreshRecent)
     return () => window.removeEventListener('bilimusic-recent-changed', refreshRecent)
   }, [queryClient])
-  useEffect(() => () => { dockSwipeTimers.current.forEach(window.clearTimeout) }, [])
+  useLayoutEffect(() => {
+    const pending = dockSwitch.current
+    if (!pending || current?.id === pending.from) return
+    dockSwitch.current = undefined
+    if (current && !dockGesture.current && performance.now() < pending.expires) {
+      setDockSwipePhase(pending.direction < 0 ? 'enter-left' : 'enter-right')
+    }
+  }, [current?.id])
 
-  const startDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isMobile || !current || (event.target as HTMLElement).closest('.dock-heart')) return
-    dockSwipeTimers.current.forEach(window.clearTimeout); dockSwipeTimers.current = []
-    dockGesture.current = { startX: event.clientX, lastX: event.clientX, startedAt: performance.now() }
-    setDockSwipeX(0); setDockSwipePhase('dragging')
+  const startDockSwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    suppressDockClick.current = false
+    const target = event.target as Element
+    const group = event.currentTarget.querySelector<HTMLDivElement>('.dock-track-group')
+    if (!isMobile || !current || dockGesture.current || !event.isPrimary || event.button !== 0 || event.pointerType === 'mouse' ||
+        !group || target.closest('button:not(.dock-track),input,[role="slider"]')) return
+    dockGesture.current = { id: event.pointerId, startX: event.clientX, startY: event.clientY, startedAt: event.timeStamp, group }
+    // Keep capture on the original target. Moving it to the wrapper emits
+    // lostpointercapture on the pressed button during the same gesture.
+    target.setPointerCapture(event.pointerId)
+    setDockSwipePhase('idle')
   }
-  const moveDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dockGesture.current) return
-    dockGesture.current.lastX = event.clientX
-    const distance = event.clientX - dockGesture.current.startX
-    if (Math.abs(distance) > 8 && !event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId)
-    setDockSwipeX(Math.max(-96, Math.min(96, distance * .82)))
-  }
-  const finishDockSwipe = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const moveDockSwipe = (event: ReactPointerEvent<HTMLElement>) => {
     const gesture = dockGesture.current
-    if (!gesture) return
+    if (gesture?.id !== event.pointerId) return
+    const dx = event.clientX - gesture.startX
+    const dy = event.clientY - gesture.startY
+    if (!gesture.axis) {
+      gesture.axis = swipeAxis(dx, dy)
+      if (!gesture.axis) return
+      if (gesture.axis === 'horizontal') setDockSwipePhase('dragging')
+    }
+    if (gesture.axis === 'horizontal') gesture.group.style.setProperty('--dock-drag-x', `${Math.max(-96, Math.min(96, dx * .82))}px`)
+  }
+  const settleDockSwipe = (event: ReactPointerEvent<HTMLElement>, commit: boolean) => {
+    const gesture = dockGesture.current
+    if (gesture?.id !== event.pointerId) return
     dockGesture.current = null
-    const distance = event.clientX - gesture.startX
-    const velocity = distance / Math.max(1, performance.now() - gesture.startedAt)
-    const direction = Math.abs(distance) >= 54 || (Math.abs(distance) >= 24 && Math.abs(velocity) >= .48) ? Math.sign(distance) : 0
-    if (!direction) { setDockSwipeX(0); setDockSwipePhase('idle'); return }
-    suppressDockClick.current = true
-    setDockSwipePhase(direction < 0 ? 'commit-left' : 'commit-right')
-    const switchTimer = window.setTimeout(() => {
-      if (direction < 0) void next(); else void previous()
-      setDockSwipeX(0)
-      setDockSwipePhase(direction < 0 ? 'enter-left' : 'enter-right')
-      const settleTimer = window.setTimeout(() => {
-        setDockSwipePhase('idle')
-        // iOS normally emits a click after pointerup, but it may suppress it after a
-        // sufficiently long drag. Do not let that suppress the user's next real tap.
-        suppressDockClick.current = false
-      }, 230)
-      dockSwipeTimers.current.push(settleTimer)
-    }, 145)
-    dockSwipeTimers.current.push(switchTimer)
+    gesture.group.style.removeProperty('--dock-drag-x')
+    const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY
+    const elapsed = event.timeStamp - gesture.startedAt
+    const axis = gesture.axis ?? swipeAxis(dx, dy)
+    suppressDockClick.current = Boolean(axis)
+    const direction = commit && axis === 'horizontal' ? trackSwipeDirection(dx, elapsed) : 0
+    setDockSwipePhase('idle')
+    if (direction && current) dockSwitch.current = { from: current.id, direction, expires: performance.now() + 1200 }
+    if (direction < 0) void next()
+    else if (direction > 0) void previous()
   }
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || (event.target as HTMLElement)?.closest('[data-shortcut-editor]')) return
-      if (event.key === 'Escape') { setLyricsOpen(false); setImportOpen(false); setSearchFocused(false); return }
+      if (event.key === 'Escape' || event.key === 'BrowserBack') {
+        if (dispatchBack()) event.preventDefault()
+        return
+      }
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
@@ -439,25 +583,17 @@ export function App() {
     const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings,state.globalEnabled))
     if (!isMobile) { const state=useShortcutStore.getState();syncGlobalShortcuts(state.bindings,state.globalEnabled) }
     window.addEventListener('keydown', handler)
-    const disableBrowserMenu = (event: MouseEvent) => event.preventDefault()
+    const disableBrowserMenu = (event: MouseEvent) => suppressBrowserContextMenu(event, isMobile)
     document.addEventListener('contextmenu', disableBrowserMenu)
     return () => { stopMouse();stopGlobal();stopSync();if(!isMobile)syncGlobalShortcuts(useShortcutStore.getState().bindings,false);window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
   }, [])
 
   useEffect(() => {
     const back = (event: Event) => {
-      if (event.defaultPrevented) return
-      // Close the foremost dialog first, preserving the screen beneath it.
-      const overlays = [...document.querySelectorAll<HTMLElement>('.dialog-backdrop, .lyric-chooser-backdrop, .playlist-import-backdrop')]
-      const overlay = document.querySelector<HTMLElement>('.playlist-picker-layer') || overlays.at(-1)
-      if (overlay) {
-        const close = overlay.querySelector<HTMLButtonElement>('header button[aria-label]:not(:disabled), header button:last-child:not(:disabled)')
-        if (close) { event.preventDefault(); close.click(); return }
-      }
-      if (document.querySelector('.track-context-menu')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return }
-      if (sleepTimerOpen) { event.preventDefault(); setSleepTimerOpen(false); return }
-      if (queueOpen) { event.preventDefault(); toggleQueue(); return }
-      if (lyricsOpen) { event.preventDefault(); const closeComments = document.querySelector<HTMLButtonElement>('.comments-panel > header > button'); if (closeComments) closeComments.click(); else setLyricsOpen(false); return }
+      if (event.defaultPrevented || miniMode) return
+      if (importOpen) { event.preventDefault(); setImportOpen(false); setRematchPlaylist(undefined); return }
+      if (lyricsOpen) { event.preventDefault(); setLyricsOpen(false); return }
+      if (searchFocused) { event.preventDefault(); searchInput.current?.blur(); setSearchFocused(false); return }
       if(selectedCollection){event.preventDefault();closeCollection();return}
       if (libraryDetail) { event.preventDefault(); closeLibraryPage(); return }
       if (activeNav === '搜索' && submittedQuery) { event.preventDefault(); openSearch(''); return }
@@ -465,13 +601,45 @@ export function App() {
     }
     window.addEventListener('bilimusic-back', back)
     return () => window.removeEventListener('bilimusic-back', back)
-  }, [lyricsOpen, queueOpen, sleepTimerOpen, libraryDetail, selectedCollection, compact, submittedQuery, activeNav, toggleQueue])
+  }, [lyricsOpen, importOpen, searchFocused, libraryDetail, selectedCollection, submittedQuery, activeNav, miniMode])
+
+  const browseInert = lyricsPresent
+  const renderLyrics = () => (
+      <LyricsView open={lyricsOpen} chapters={chapters} fullscreenRequested={fullscreenLayout !== null} setVideoFullscreen={setVideoFullscreen} motionSurface={compactPlayer ? mobilePlayer.ref : undefined} onSwipeRelease={compactPlayer ? mobilePlayer.releaseDismiss : undefined} inert={queueSheet && queueOpen} onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />
+  )
+  const renderDock = (expanded = false, immersiveDesktop = false) => {
+    const detailDock = expanded || immersiveDesktop || (isMobile && !compactPlayer && lyricsOpen)
+    const phoneChapters = detailDock && isMobile && !tabletPlayer && chapters.items.length > 0
+    return (
+    <footer className="player-dock" data-mini-dock={compactPlayer && !expanded || undefined}
+      data-tablet-lyrics-dock={expanded && tabletPlayer || undefined}
+      inert={queueSheet && queueOpen || (expanded || immersiveDesktop ? !lyricsOpen : (compactPlayer || !isMobile) && browseInert)}
+      {...(!expanded ? {
+        onPointerDown: startDockSwipe, onPointerMove: moveDockSwipe,
+        onPointerUp: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, true),
+        onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, false),
+        onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, false),
+      } : {})}>
+        {!expanded && <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} onAnimationEnd={event => { if (event.target === event.currentTarget) setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={event => { if (event.detail && suppressDockClick.current) { suppressDockClick.current = false; return } if (lyricsOpen) { setLyricsOpen(false); return } showLyrics(event.currentTarget, !compactPlayer || event.detail === 0) }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? '收起歌词' : '打开歌词'}><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span><span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>收起歌词</span></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>}
+        <div className="dock-center">
+          {queueFeedback && (!compactPlayer || expanded === lyricsOpen) && <div className="queue-switch-notice" key={queueFeedback.serial} role="status">
+            <ListMusic size={15}/><span>{queueFeedback.title ? `已切换到 ${queueFeedback.title}` : '已切换播放队列'}</span>
+          </div>}
+          <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button ref={(isMobile ? !compactPlayer || expanded === lyricsOpen : immersiveDesktop === desktopLyrics) ? queueTrigger : undefined} className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
+          <PlayerProgress chapters={detailDock ? chapters.items : undefined}
+            endControl={phoneChapters ? <ChapterTrigger model={chapters} variant="time"/> : undefined}/>
+        </div>
+        {!expanded && <div className="dock-tools">{(isMobile || immersiveDesktop) && <div id="lyrics-dock-actions" className="lyrics-dock-actions"/>}<Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>}
+        {expanded && tabletPlayer && <div id="lyrics-tablet-dock-actions" className="lyrics-dock-actions"/>}
+      </footer>
+    )
+  }
 
   return (
-    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${lyricsOpen ? `lyrics-immersive frame-${desktopFrame}` : ''}`}>
-      {lyricsOpen && <><LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" /><ImmersiveTitlebar onError={(error) => setActionError(commandErrorMessage(error))} /></>}
-      <aside className="rail" aria-label="主导航">
-        <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { setActiveNav('此刻') }}>
+    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${desktopLyrics ? 'desktop-lyrics-present' : immersivePresent && !compactPlayer ? 'lyrics-immersive frame-browser' : ''}`}>
+      {isMobile && immersivePresent && !compactPlayer && <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" open={lyricsOpen} />}
+      <aside inert={browseInert || queueSheet && queueOpen} className="rail" aria-label="主导航">
+        <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { resetCollection(); setActiveNav('此刻') }}>
           <Waves size={23} strokeWidth={2.5} />
         </button>
         <nav className="rail-nav">
@@ -479,7 +647,7 @@ export function App() {
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false); libraryReturn.current = null }}
+              onClick={() => { libraryReturn.current = null; if (label === '搜索') { openSearchInput(); return }; setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false) }}
               title={label}
               aria-label={label === '我的' ? `我的${syncAttention ? `，${syncAttention}` : updateAvailable ? '，有新版本' : ''}` : label}
               aria-current={navIsActive(label) ? 'page' : undefined}
@@ -490,14 +658,25 @@ export function App() {
         </nav>
       </aside>
 
-      <aside id="library-navigation" className="library-panel" aria-label="收藏库导航">
+      <aside inert={browseInert || queueSheet && queueOpen} id="library-navigation" className="library-panel" aria-label="收藏库导航">
         <header className="library-brand"><h1>BiliMusic</h1></header>
-        <section>
-          <div className="section-heading"><button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>歌单{playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button><div className="sidebar-heading-actions library-action-rail" hidden={!playlistsExpanded}>
-            {sidebarOrganizer.controls}
-            {!sidebarOrganizer.editing && <><button type="button" className="library-create-action" aria-label="新建歌单" title="新建歌单" onClick={() => setCreatingPlaylist(value => !value)}><Plus size={17}/></button>
-            <ImportPlaylistButton sidebar onClick={() => setImportOpen(true)}/></>}
-          </div></div>
+        <section className="sidebar-section">
+          <div className="section-heading">
+            <button className="sidebar-collapse" aria-expanded={playlistsExpanded} onClick={() => setPlaylistsExpanded(value => { localStorage.setItem('playlists-expanded', String(!value)); return !value })}>
+              {playlistsExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+              <span>歌单</span>
+              <small className="sidebar-count">{allPlaylists.length}</small>
+            </button>
+            <div className="sidebar-heading-actions library-action-rail" hidden={!playlistsExpanded}>
+              {sidebarOrganizer.editing ? sidebarOrganizer.controls : <>
+                {sidebarOrganizer.canEdit && <button type="button" className="sidebar-icon-btn" title="整理歌单" aria-label="整理歌单" onClick={sidebarOrganizer.start}><ListFilter size={15}/></button>}
+                <ActionMenu panelClassName="sidebar-add-menu" label={importRunning ? '查看导入进度' : '新建或导入歌单'} icon={importRunning ? <LoaderCircle size={15} className="spin"/> : <Plus size={16}/>}>{close => <>
+                  <button role="menuitem" onClick={() => { close(); setCreatingPlaylist(true) }}><Plus size={16}/><span><strong>新建歌单</strong><small>创建本地或同步 B 站收藏夹</small></span></button>
+                  <button role="menuitem" onClick={() => { close(); setImportOpen(true) }}><ListPlus size={16}/><span><strong>{importRunning ? '查看导入进度' : '导入歌单'}</strong><small>B 站收藏夹、在线歌单或本地</small></span></button>
+                </>}</ActionMenu>
+              </>}
+            </div>
+          </div>
 
           <div className="collection-list" hidden={!playlistsExpanded}>
             {sidebarOrganizer.editing ? sidebarOrganizer.editor : allPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
@@ -507,121 +686,173 @@ export function App() {
         <CollectionsView sidebar onOpenFolder={openFolder} onOpenLinked={openPlaylist}
           onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/>
         <CreatorsView followed sidebar onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={id=>{if(activeCreatorFolder===id)closeLibraryPage()}}/>
-        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {appVersion}</div>
+        <div className="library-footer"><Sparkles size={16} /> 独立音乐空间 · {currentDisplayVersion}</div>
       </aside>
       {!isMobile && <SidebarResizeHandle/>}
 
-      <main className="content-stage">
+      <main inert={browseInert || queueSheet && queueOpen} className="content-stage" data-stage-route={pageKey} data-edge-back={isMobile && backPreview ? '' : undefined}>
+        {isMobile && <div className="stage-back-preview" ref={previewHost} aria-hidden="true" inert/>}
+        <div ref={stageFrame} className="stage-route-frame" data-edge-track>
         <form className={`topbar ${searchActive ? 'searching' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
             {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
             <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
-          <div className="history-buttons"><button type="button" aria-label={libraryDetail || selectedCollection ? '返回上一页' : '返回主页'}
-            onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
+          <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && !(activeNav === '搜索' && submittedQuery) && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (activeNav === '搜索' && submittedQuery) ? '返回上一页' : '返回主页'}
+            onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : activeNav === '搜索' && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
           {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
-          <SearchField value={query} focused={searchFocused} history={searchHistory.data || []}
+          <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={searchHistory.data || []}
             onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => setSearchFocused(false)}
             onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
-            onSearch={runSearch} onClear={() => openSearch('')} onClearHistory={() => clearHistory.mutate()} /></>}
+            onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
 
-          {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={() => openSearch()}><Search size={20} /></button>}
+          {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
           <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
-        <div className="stage-scroll" ref={contentScroll} hidden={searchActive}>
-          {[...new Map([...collectionHistory.current.map(entry => entry.item), selectedCollection].filter((item): item is Collection => Boolean(item)).map(item => [item.bvid,item])).values()].map(item => <div key={item.bvid} hidden={item.bvid !== selectedCollection?.bvid}>
-            <CollectionDetail item={item} onBack={closeCollection} hideBack searchQuery={item.bvid === selectedCollection?.bvid ? collectionSearch : collectionHistory.current.find(entry => entry.item?.bvid === item.bvid)?.search} onOpenCollection={item => openCollection(item, 'collection')}/>
+        <div className="stage-scroll" ref={contentScroll} hidden={!detailActive}>
+          {[...new Map([...collectionHistory.current.map(entry => entry.item), selectedCollection].filter((item): item is Collection => Boolean(item)).map(item => [item.bvid,item])).values()].map(item => <div key={item.bvid} className="collection-route" hidden={item.bvid !== selectedCollection?.bvid}>
+            <CollectionDetail item={item} onBack={closeCollection} hideBack active={item.bvid === selectedCollection?.bvid}
+              resumeRequest={item.bvid === selectedCollection?.bvid ? collectionResume : undefined}
+              searchQuery={item.bvid === selectedCollection?.bvid ? collectionSearch : collectionHistory.current.find(entry => entry.item?.bvid === item.bvid)?.search}
+              onOpenCollection={(item, resume) => openCollection(item, 'collection', resume)}/>
           </div>)}
           <div hidden={Boolean(selectedCollection)}>
           {activeCreatorFolder!==undefined ? <CreatorsView key={activeCreatorFolder} followed folderId={activeCreatorFolder} onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={closeLibraryPage}/> : activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
           activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
-          activeNav === '收藏库' || libraryDetail ? hub :
-          activeNav === '关注' ? <CreatorsView followed onOpen={openCollection} onOpenFolder={openCreatorFolder}/> : activeNav === '音乐库' ? <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab}/> :
-          activeNav === '我的' ? <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/> : activeNav === '搜索' ? null : <>
+          libraryDetail && <ListSkeleton label="正在读取歌单" />}
+          </div>
+        </div>
+        <RetainedStagePage key={`home:${pageAccount}`} active={homeActive} swipe>
           <section className="hero">
+            {current?.coverUrl && <div className="hero-ambient" aria-hidden="true"><img src={current.coverUrl.replace(/^(?:http:)?\/\//, 'https://')} alt="" decoding="async" referrerPolicy="no-referrer" /></div>}
             <div className="hero-copy">
               <div className="hero-summary">
                 <span className="eyebrow coral">{current ? 'NOW PLAYING' : 'YOUR MUSIC SPACE'}</span>
                 <h2>{current?.title || '你的音乐，从这里开始'}</h2>
                 <p>{current ? `${trackSubtitle(current)}${current.album ? ` · ${current.album}` : ''}` : '搜索 B 站音乐，收藏喜欢的分 P，整理自己的歌单。'}</p>
               </div>
-              <button className="primary-action" onClick={() => { if (current) void toggle(); else if (homeTracks.data?.[0]) void usePlayerStore.getState().playFromList(homeTracks.data,homeTracks.data[0].id); else openSearch() }}>{status === 'playing' ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{current ? status === 'playing' ? '暂停播放' : '继续聆听' : homeTracks.data?.length ? '继续聆听' : '开始探索'}</button>
+              <button className="primary-action" onClick={() => { if (current) void toggle(); else if (homeTracks.data?.[0]) void usePlayerStore.getState().playFromList(homeTracks.data,homeTracks.data[0].id); else openSearchInput() }}>{status === 'playing' ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}{current ? status === 'playing' ? '暂停播放' : '继续聆听' : homeTracks.data?.length ? '继续聆听' : '开始探索'}</button>
             </div>
-            {current && <button className="hero-cover-button" onClick={() => setLyricsOpen(true)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} adaptAspect /></button>}
+            {current && <button className="hero-cover-button" onClick={event => showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} adaptAspect /></button>}
           </section>
 
           {compact ? hub : <><section className="quick-actions">
-            <button onClick={() => openSearch()}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
+            <button onClick={openSearchInput}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
             <button onClick={() => { openSearch('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
             <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
           </section>
 
           <section className="tracks-section">
             <header><div><span className="eyebrow">RECENTLY PLAYED</span><h3>最近听过的声音</h3></div><button onClick={() => { setLibraryTab('recent'); setActiveNav('音乐库') }}>查看全部 <ChevronRight size={16} /></button></header>
-            <div className="track-table" role="table">
+            {loadingRecentHome ? <ListSkeleton label="正在读取最近播放" /> : <div className="track-table" role="table" ref={recentHomeTable}>
               <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
-              {(homeTracks.data || []).map((track, index) => {
+              {recentHomeRows.rows.map((track, index) => {
                 const isCurrent = current?.id === track.id
                 return (
-                  <div className="track-row playing-row" data-current-row={isCurrent ? track.id : undefined} role="row" key={track.id} onContextMenu={(event) => showTrackMenu(event, track,undefined,homeTracks.data)}>
-                    <button className="row-play" onClick={() => usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-current={isCurrent ? 'true' : undefined} aria-label={`播放 ${track.title}`}>
+                  <div className="track-row playing-row" data-offline-unavailable={offlineUnavailable(track, offline) || undefined} data-current-row={isCurrent ? track.id : undefined} role="row" key={track.id} onDoubleClick={(event) => { if (offlineUnavailable(track, offline) || (event.target as Element).closest('button, a, input')) return; void usePlayerStore.getState().playFromList(homeTracks.data || [], track.id) }} onContextMenu={(event) => showTrackMenu(event, track,undefined,homeTracks.data)}>
+                    <button className="row-play" disabled={offlineUnavailable(track, offline)} onClick={() => usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-current={isCurrent ? 'true' : undefined} aria-label={`播放 ${track.title}`}>
                       {isCurrent ? <PlayingMark /> : <><span>{index + 1}</span><Play className="hover-play" size={15} fill="currentColor" /></>}
                     </button>
-                    <span className="track-title"><button className="home-cover-button" onClick={() => void usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" adaptAspect /></button><strong>{track.title}</strong></span>
+                    <span className="track-title"><button className="home-cover-button" disabled={offlineUnavailable(track, offline)} onClick={() => void usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" adaptAspect /></button><strong>{track.title}</strong></span>
                     <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
                     <div className="row-actions"><PlaylistButton track={track} /><TrackMenuButton track={track} tracks={homeTracks.data}/></div>
                   </div>
                 )
               })}
-              {homeTracks.data?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
-            </div>
+              {recentHomeRows.more && <div ref={recentHomeRows.tail} className="list-render-tail" aria-hidden="true"/>}
+              {recentHomeTracks?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
+            </div>}
           </section></>}
-          </>}
-          </div>
+        </RetainedStagePage>
+        {!compact && <RetainedStagePage key={`hub:${pageAccount}`} active={hubActive} swipe>{hub}</RetainedStagePage>}
+        <RetainedStagePage key={`music:${pageAccount}`} active={musicActive} className={isMobile ? 'library-stage-pager' : undefined}>
+          <MusicLibraryView tab={libraryTab} onTabChange={setLibraryTab} fill={isMobile} active={musicActive}/>
+        </RetainedStagePage>
+        <RetainedStagePage key={`creators:${pageAccount}`} active={creatorsActive}>
+          <CreatorsView followed onOpen={openCollection} onOpenFolder={openCreatorFolder}/>
+        </RetainedStagePage>
+        <div className="stage-scroll" hidden={!settingsActive}>
+          {settingsActive && <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }}/>}
+        </div>
         </div>
       </main>
 
-      {queueOpen && isMobile && <button className="queue-sheet-backdrop" aria-label="收起播放队列" onClick={toggleQueue} />}
-      <aside id="playback-queue" className={`queue-drawer${isMobile ? ' queue-sheet' : ''}`} aria-hidden={!queueOpen} inert={!queueOpen}>
+      {queueSheet && <div className="queue-sheet-backdrop" aria-hidden="true" onClick={queueOpen ? closeQueue : undefined} />}
+      <aside ref={queuePanel} id="playback-queue" role={queueSheet ? 'dialog' : undefined} aria-label="播放队列" aria-modal={queueSheet && queueOpen || undefined} className={`queue-drawer${queueSheet ? ' queue-sheet' : ''}`} aria-hidden={!queueOpen} inert={!queueOpen} onKeyDown={event => {
+        if (event.key !== 'Tab' || !queueSheet || !isTopOverlay(queuePanel.current)) return
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+        const next = event.shiftKey ? buttons.at(-1) : buttons[0]
+        if (document.activeElement !== (event.shiftKey ? buttons[0] : buttons.at(-1))) return
+        event.preventDefault()
+        next?.focus()
+      }}>
         {!isMobile && <QueueResizeHandle/>}
-        {isMobile && <button className="queue-sheet-handle" aria-label="收起播放队列" onClick={toggleQueue}><span /></button>}
-        <header><div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' ? queueSource.title : '接下来'}</h3></div><div className="queue-header-actions"><button disabled={queue.length < 2} onClick={reverseQueue} aria-pressed={queueReversed} aria-label={queueReversed ? '恢复原序' : '倒序播放'} title={queueReversed ? '恢复原序' : '倒序播放'}><ArrowDownUp size={16}/><span>{queueReversed ? '倒序' : '原序'}</span></button><button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button><button onClick={toggleQueue} aria-label="收起队列">{isMobile ? <ChevronDown size={20}/> : '×'}</button></div></header>
+        {queueSheet && <button type="button" className="queue-sheet-handle" aria-label="收起播放队列" {...queueDrag}><span /></button>}
+        <header>
+          <div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' ? queueSource.title : '接下来'}</h3></div>
+          <div className="queue-header-actions">
+            {queue.length > 1 && <button type="button" className="queue-organize" aria-pressed={queueSorting}
+              aria-label={queueSorting ? '完成整理' : '整理播放队列'} title={queueSorting ? '完成整理' : '整理播放队列'}
+              onClick={() => setQueueSorting(value => !value)}>{queueSorting ? <Check size={16}/> : <ListFilter size={16}/>}</button>}
+            {!queueSorting && <>
+              <button type="button" className="queue-reverse" disabled={queue.length < 2} onClick={reverseQueue} aria-pressed={queueReversed}
+                aria-label={queueReversed ? '恢复原序' : '倒序播放'} title={queueReversed ? '恢复原序' : '倒序播放'}><ArrowDownUp size={16}/></button>
+              <button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button>
+            </>}
+            <button onClick={toggleQueue} aria-label="收起队列">{queueSheet ? <ChevronDown size={20}/> : <X size={18}/>}</button>
+          </div>
+        </header>
         <div className="now-card">
           <Artwork src={current?.coverUrl} className="now-art" />
           <div className="now-meta"><div><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '选择一首歌开始'}</small></div><button className={current?.liked ? 'icon-action liked' : 'icon-action'} onClick={() => void toggleCurrentFavorite()} disabled={!current}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
         </div>
-        <QueueList open={queueOpen}/>
+        <QueueList open={queueOpen} visible={queuePresent} sorting={queueSorting} />
       </aside>
 
-      <footer className="player-dock">
-        <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} style={{ '--dock-swipe-x': `${dockSwipeX}px` } as CSSProperties} onPointerDown={startDockSwipe} onPointerMove={moveDockSwipe} onPointerUp={finishDockSwipe} onPointerCancel={() => { dockGesture.current = null; setDockSwipeX(0); setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={() => { if (suppressDockClick.current) { suppressDockClick.current = false; return }; setLyricsOpen(true) }} disabled={!current} aria-label="打开歌词"><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>
-        <div className="dock-center">
-          {queueFeedback && <div className="queue-switch-notice" key={queueFeedback.serial} role="status">
-            <ListMusic size={15}/><span>{queueFeedback.title ? `已切换到 ${queueFeedback.title}` : '已切换播放队列'}</span>
-          </div>}
-          <div className="dock-controls"><PlaybackModeButton /><button aria-label="上一首" onClick={previous}><SkipBack size={19} fill="currentColor" /></button><button aria-label={status === 'playing' || status === 'buffering' || status === 'resolving' ? '暂停' : '播放'} className="play-toggle" onClick={toggle}>{status === 'playing' || status === 'buffering' || status === 'resolving' ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><button aria-label="下一首" onClick={() => void next()}><SkipForward size={19} fill="currentColor" /></button><button className={queueOpen ? 'queue-control active' : 'queue-control'} aria-label="播放队列" aria-expanded={queueOpen} onClick={toggleQueue}><ListMusic size={18} /></button></div>
-          <PlayerProgress />
+      {renderDock()}
+      {desktopLyrics && <div ref={desktopLyricsSurface} className="desktop-lyrics-surface lyrics-immersive" inert={!lyricsOpen}>
+        <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" />
+        {renderLyrics()}
+        {renderDock(false, true)}
+      </div>}
+      {mobilePlayer.present && <div ref={mobilePlayer.ref} className="mobile-player-surface lyrics-immersive"
+        inert={!lyricsOpen || queueSheet && queueOpen}>
+        <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" />
+        {renderLyrics()}
+        {renderDock(true)}
+      </div>}
+      {(playbackError || actionError) && <div className="playback-error" role="alert">
+        {playbackError ? <PlaybackErrorText issue={playbackError}/> : <span>{actionError}</span>}
+        <div className="playback-issue-actions">
+          {playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}
+          {playbackError && <CopyPlaybackDiagnostics issue={playbackError} track={current}/>}
+          <button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button>
         </div>
-        <div className="dock-tools"><div id="lyrics-dock-actions" className="lyrics-dock-actions"/><Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
-      </footer>
-      {(playbackError || actionError) && <div className="playback-error" role="alert">{playbackError || actionError}{playbackError && status === 'error' && current && <button onClick={() => void toggle()}>重试</button>}<button onClick={() => { setActionError(''); usePlayerStore.setState({ error: null }) }}>关闭</button></div>}
-      {isMobile && <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>}
-      {lyricsOpen && <LyricsView onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />}
+      </div>}
+      <SleepTimer open={sleepTimerOpen} onClose={() => setSleepTimerOpen(false)}/>
+      {isMobile && immersivePresent && !compactPlayer && renderLyrics()}
       {importOpen && <ImportFavorites key={rematchPlaylist?.id||'import'} reviewPlaylist={rematchPlaylist} onImported={(id) => {
         setImportOpen(false)
         setRematchPlaylist(undefined)
         setHubSection('playlists')
-        libraryReturn.current = { nav: compact ? '此刻' : '收藏库', scroll: 0 }
+        libraryReturn.current = { nav: compact ? '此刻' : '收藏库' }
         setActiveNav(`playlist:${id}`)
-        requestAnimationFrame(() => { if (contentScroll.current) contentScroll.current.scrollTop = 0 })
+        scrollCollection(0)
+      }} onViewCollections={() => {
+        setImportOpen(false)
+        resetCollection()
+        libraryReturn.current = null
+        setHubSection('collections')
+        setActiveNav(compact ? '此刻' : '收藏库')
+        scrollCollection(0)
       }} onClose={() => {setImportOpen(false);setRematchPlaylist(undefined)}} />}
-      {creatingPlaylist && <div className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus aria-label="歌单名称" maxLength={createLinked ? 40 : 80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" /><label className="create-linked-option"><input type="checkbox" checked={createLinked} disabled={createList.isPending} onChange={event => setCreateLinked(event.target.checked)}/><span>与 B 站收藏夹同步<small>在 B 站账号下新建私密收藏夹</small></span></label>{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
+      {creatingPlaylist && <div ref={createDialog} className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus aria-label="歌单名称" maxLength={createLinked ? 40 : 80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" /><label className="create-linked-option"><input type="checkbox" checked={createLinked} disabled={createList.isPending} onChange={event => setCreateLinked(event.target.checked)}/><span>与 B 站收藏夹同步<small>在 B 站账号下新建私密收藏夹</small></span></label>{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
     </div>{miniMode&&<MiniPlayer busy={miniBusy} onRestore={(lyrics,queue)=>void changeMiniMode(false,lyrics,queue)} onFavorite={()=>void toggleCurrentFavorite()} favoritePending={favoritePending} onError={cause=>setActionError(commandErrorMessage(cause))}/>}
-    {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError}</span><button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
+    {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError?.message}</span>{playbackError && !actionError && <CopyPlaybackDiagnostics issue={playbackError} track={current}/>}<button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
   )
 }

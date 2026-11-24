@@ -23,15 +23,45 @@ npm run android:local -- build   # 首次自动生成工程，再构建 Release 
 npm run android:local -- test    # 原生播放器与界面组件单元测试
 ```
 
-大屏版共用同一套界面与播放器，按系统 ABI 分别构建，不把两套原生库塞进同一个 APK：
+大屏版默认构建一个包含 ARM64 和 ARMv7 的 APK，由 Android 选择设备支持的 ABI。排查特定设备时可以单独构建一个架构：
 
 ```sh
-npm run android:large-screen                  # ARM64，适用于 arm64-v8a 系统
-rustup target add armv7-linux-androideabi
-npm run android:large-screen -- --target armv7 # 32 位 ARM，适用于 armeabi-v7a 系统
+rustup target add aarch64-linux-android armv7-linux-androideabi
+npm run android:large-screen                  # ARM64 + ARMv7
+npm run android:large-screen -- --target armv7 # 单架构诊断包
 ```
 
-输出位于 `artifacts/BiliMusic-版本号-Android-LargeScreen/`，文件名分别包含 `arm64` 或 `armv7`。最低系统版本均为 Android 8.0；系统位数与 Android 版本分别判断，64 位处理器上的 32 位系统需使用 ARMv7 包。两个架构沿用相同应用 ID、版本号及发布签名，属于同一应用。构建完成不代表已经发布或经过车机／TV 真机验收。
+输出位于 `artifacts/BiliMusic-版本号-Android-LargeScreen/`，通用包文件名包含 `universal`。APK 的最低系统版本为 Android 8.0，界面的兼容基线为 Chromium 66 的 Android System WebView。官网显示一个通用下载项，发布清单保留 ARM64、ARMv7 两条更新记录，供旧版客户端覆盖更新。
+
+遇到首页可显示但切页空白时，用 `adb shell dumpsys webviewupdate` 检查实际启用的 WebView 版本，并用 `adb logcat -v brief -s chromium AndroidRuntime` 区分前端异常、渲染进程退出和原生崩溃。平台覆盖更新需要同一应用 ID 和发布签名。
+
+### 旧版车机回归
+
+Android 系统版本、系统 WebView 和应用 ABI 分别核验。本机有两套 Google SDK AOSP 回归镜像。
+
+| AVD | 系统 | 实际 WebView | 分辨率 |
+| --- | --- | --- | --- |
+| `BiliMusicCarLegacy28` | Android 9 | 66.0.3359.158 | 1280 × 800 |
+| `BiliMusicCarLegacy29` | Android 10 | 74.0.3729.185 | 1280 × 720 |
+
+两套镜像均为 `system-images;android-<API>;default;arm64-v8a`，只运行 ARM64。官网旧包在两套镜像上均停留在启动画面。兼容包在两套镜像上通过覆盖安装、原生数据库调用和页面切换。使用搜索框查找 `BV1v5wyzBESJ`，进入详情并播放，原生播放器进度均超过 1 秒。
+
+Android 9 镜像还复现了部分 B 站 AAC 音频播放进度停在 0 的问题。旧系统把分片 MP4 中的空编辑列表解释成了整首歌的填充数据。Android 8／9 车机在播放响应中将这种空编辑列表替换成同长度的填充块，原始缓存仍可按原字节范围读取。
+
+比亚迪 DiLink 4.0 涵盖多种固件。公开实车记录中，2023 款秦 PLUS DM-i 冠军版低配车机为 Android 9，2022 款汉 DM-i 的测试固件为 Android 10。排查具体车机时记录车型年款、车机固件完整版本号、实际 WebView 和 ABI。[秦 PLUS 实车记录](https://github.com/andersonlucasg3/dilink-auto-android/blob/develop/docs/setup.md) · [汉 DM-i 实车记录](https://github.com/kakamatong/DiPlay-Lynk/blob/main/docs/EXISTING_WIFI.md)
+
+```sh
+# 在仓库根目录启动已准备好的回归镜像。
+sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+ANDROID_AVD_HOME="$PWD/artifacts/android-car-compat/avd" \
+  "$sdk/emulator/emulator" -avd BiliMusicCarLegacy28 -port 5584 -no-snapshot-save
+# 另开终端执行
+"$sdk/platform-tools/adb" -s emulator-5584 shell getprop ro.product.cpu.abilist
+"$sdk/platform-tools/adb" -s emulator-5584 shell dumpsys webviewupdate
+"$sdk/platform-tools/adb" -s emulator-5584 install -r /path/to/signed-universal.apk
+```
+
+在报告支持 ARMv7 的环境中，用 `adb install --abi armeabi-v7a` 强制选择通用包内的 32 位库，再通过 `dumpsys package app.bilimusic.large` 核对 `primaryCpuAbi`。有条件时可用支持 ARMv7 转译的 Android 9 x86 模拟器补测；车机定制固件仍需用对应设备的 WebView 版本和日志定位。[Android 模拟器 ABI 说明](https://developer.android.com/studio/releases/emulator)
 
 默认 SDK 在 `~/Library/Android/sdk`，JDK 在 `~/Library/Java/JavaVirtualMachines/`。自定义位置可设置 `ANDROID_HOME`、`NDK_HOME`、`BILIMUSIC_ANDROID_JAVA_HOME`。本地 Release 包仍需签名；要覆盖官网版本，必须沿用原发布签名。
 

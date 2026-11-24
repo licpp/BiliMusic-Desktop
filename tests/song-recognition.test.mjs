@@ -7,7 +7,7 @@ const compiled = await build({
   bundle: true, write: false, platform: 'node', format: 'cjs',
   plugins: [{ name: 'ipc', setup(builder) {
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: 'core', namespace: 'mock' }))
-    builder.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: `export const isTauri=()=>true; export const invoke=(command,args)=>globalThis.songIpc(command,args);` }))
+    builder.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: `export const isTauri=()=>true; export const invoke=(command,args)=>globalThis.songIpc(command,args); export class Channel {}` }))
   } }],
 })
 const module = { exports: {} }

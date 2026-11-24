@@ -11,8 +11,9 @@ export function ListeningBars({bars,max,today,weekly}:{bars:ListeningBar[];max:n
     document.addEventListener('pointerdown',dismiss)
     return()=>document.removeEventListener('pointerdown',dismiss)
   },[])
-  return <>
-    <div className="listening-chart-scale"><span>{listeningDuration(max===1?0:max)}</span><span>0</span></div>
+  const peak = max === 1 ? 0 : max
+  return <div className="listening-chart-layout">
+    <div className="listening-chart-scale"><span>{listeningDuration(peak)}</span><span>{peak > 0 ? listeningDuration(Math.round(peak / 2)) : ''}</span><span>0</span></div>
     <div className="listening-chart-scroll listening-interactive-chart" ref={root} onPointerLeave={event=>{if(event.pointerType!=='touch')setSelected(null)}}>
       <div className="listening-chart" style={{'--bar-count':bars.length} as CSSProperties}>{bars.map((bar,i)=><div key={bar.key}
         role="button" tabIndex={0} className="listening-bar" data-selected={selected===bar.key||undefined} data-today={bar.key===today||undefined} data-future={bar.future||undefined}
@@ -25,9 +26,9 @@ export function ListeningBars({bars,max,today,weekly}:{bars:ListeningBar[];max:n
           if(next!==undefined){event.preventDefault();root.current?.querySelectorAll<HTMLElement>('.listening-bar')[Math.max(0,Math.min(bars.length-1,next))]?.focus()}
           else if(event.key===' '||event.key==='Enter'){event.preventDefault();setSelected(bar.key)}
         }}>
-        <span style={{height:`${bar.seconds>0?Math.max(3,bar.seconds/max*100):2}%`}}/><small>{weekly||i===0||(i+1)%5===0||i===bars.length-1?bar.label:''}</small>
+        <span style={{height:`${bar.seconds>0?Math.max(4,bar.seconds/max*100):2}%`}}/><small>{weekly||i===0||(i+1)%5===0||i===bars.length-1?bar.label:''}</small>
       </div>)}</div>
       {current&&<div id={tooltip} role="tooltip" className="listening-bar-tooltip" style={{left:`clamp(72px,${(index+.5)/bars.length*100}%,calc(100% - 72px))`}}><strong>{current.key.replaceAll('-',' / ')}</strong><span>{current.future?'尚未到来':current.seconds?`聆听 ${listeningDuration(current.seconds)}`:'暂无聆听'}</span></div>}
     </div>
-  </>
+  </div>
 }

@@ -8,6 +8,7 @@ import { policy } from './policy.mjs';
 import { HttpError, validateFeedback } from './validation.mjs';
 import { updaterManifest, validateUpdateDownload } from './updater.mjs';
 import { releases, resolveDownload } from './releases.mjs';
+import { apkDownloadPath, apkDownloadPrefix, serveApk } from './apk-downloads.mjs';
 import { initializeDownloadStats, recordDownload, getDownloadStats } from './downloads.mjs';
 
 const port = Number(process.env.PORT || 3180);
@@ -30,7 +31,22 @@ async function housekeeping() {
 }
 await housekeeping();
 const cleanup = setInterval(() => housekeeping().catch(() => console.error('Feedback cleanup failed')), 3600000); cleanup.unref();
-const mime = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.png':'image/png', '.svg':'image/svg+xml', '.ico':'image/x-icon' };
+const mime = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+};
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('X-Frame-Options','DENY');
@@ -103,14 +119,35 @@ const server = http.createServer(async (req, res) => {
       return json(201, { id, message:'反馈已收到，谢谢你帮助 BiliMusic 变得更好。' });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, '不支持此操作。');
+    if (path.startsWith(apkDownloadPrefix)) {
+      return await serveApk(req, res, releases.platforms.find(platform => apkDownloadPath(platform) === path));
+    }
+    const parsedUrl = new URL(req.url, 'http://localhost');
     const relative = path === '/' ? 'index.html' : decodeURIComponent(path).replace(/^\/+/, '');
     const file = resolve(root, relative);
     if (!file.startsWith(root + sep) || relative.split('/').some(x => x.startsWith('.'))) throw new HttpError(404, '页面不存在。');
     let info; try { info = await stat(file); } catch { throw new HttpError(404, '页面不存在。'); }
     if (!info.isFile()) throw new HttpError(404, '页面不存在。');
-    res.writeHead(200, { 'Content-Type':mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    const ext = extname(file).toLowerCase();
+    const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
+    const isHtml = ext === '.html';
+    const isAsset = relative.startsWith('assets/') || Boolean(parsedUrl.searchParams.get('v'));
+    const cacheControl = isHtml ? 'no-cache' : isAsset ? 'public, max-age=86400, stale-while-revalidate=604800' : 'public, max-age=3600';
+    const headers = {
+      'Content-Type': mime[ext] || 'application/octet-stream',
+      'Cache-Control': cacheControl,
+      'ETag': etag,
+      'Last-Modified': info.mtime.toUTCString(),
+    };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    res.writeHead(200, headers);
     res.end(req.method === 'HEAD' ? undefined : await readFile(file));
   } catch (error) {
+    if (res.destroyed) return;
     if (!(error instanceof HttpError)) console.error('Request failed:', error.code || error.name);
     if (!res.headersSent) json(error.status || 503, { message: error instanceof HttpError ? error.message : '服务暂时不可用，请稍后重试。' });
     else res.end();

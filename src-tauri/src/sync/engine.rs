@@ -24,7 +24,10 @@ use std::{
 type Docs = BTreeMap<Domain, Document>;
 #[cfg(test)]
 tokio::task_local! { pub(super) static BEFORE_PROJECT: Box<dyn Fn(&Database)>; }
-fn check_current(c: &Connection, cfg: &Config, expected: &View) -> Result<(), String> {
+fn check_current(c: &Connection, cfg: &Config, expected: &View, session: &str) -> Result<(), String> {
+    if crate::infrastructure::database::account_session(c).map_err(err)? != session {
+        return Err("同步账号会话已变更".into());
+    }
     if projection::capture(c, &cfg.uid, cfg.history)? != *expected {
         return Err("同步期间本机资料已变化，已保留最新修改，请重试".into());
     }
@@ -59,6 +62,7 @@ fn save_menu(
     current: &View,
     docs: &Docs,
     conflicts: &[Conflict],
+    causal: bool,
 ) -> Result<(), String> {
     let mut options = BTreeMap::new();
     for conflict in conflicts {
@@ -74,12 +78,20 @@ fn save_menu(
             "__present" => Cell::Value(current.snapshot.records.contains_key(&conflict.key).into()),
             _ => current.facts.get(&key).cloned().unwrap_or(Cell::Missing),
         };
-        let mut cells = vec![local.clone()];
+        let can_restore_parent = !causal || conflict.field != "__parent"
+            || conflict.local.as_str().is_some_and(|parent| {
+                parent_recoverable(&docs[&Domain::Library], current, parent)
+            });
+        let mut cells = Vec::new();
+        if can_restore_parent {
+            cells.push((local.clone(), "本机".to_owned()));
+        }
         let register = docs[&Domain::Library].registers.get(&key);
         if let Some(reg) = register {
             for candidate in &reg.values {
-                if !cells.contains(&candidate.cell) {
-                    cells.push(candidate.cell.clone());
+                if !cells.iter().any(|(cell, _)| cell == &candidate.cell) {
+                    let label = format!("云端 {}", cells.len());
+                    cells.push((candidate.cell.clone(), label));
                 }
             }
         }
@@ -88,8 +100,8 @@ fn save_menu(
             // register itself only contains false. Recovery is still a real choice.
             for present in [true, false] {
                 let cell = Cell::Value(present.into());
-                if !cells.contains(&cell) {
-                    cells.push(cell);
+                if !cells.iter().any(|(existing, _)| existing == &cell) {
+                    cells.push((cell, "云端".into()));
                 }
             }
         }
@@ -98,22 +110,14 @@ fn save_menu(
         } else {
             Cell::Value(conflict.remote.clone())
         };
-        if register.is_none() && !cells.contains(&remote) {
-            cells.push(remote);
+        if register.is_none() && !cells.iter().any(|(cell, _)| cell == &remote) {
+            cells.push((remote, "云端".into()));
         }
         options.insert(
             key,
             cells
                 .into_iter()
-                .enumerate()
-                .map(|(i, cell)| CandidateOption {
-                    cell,
-                    label: if i == 0 {
-                        "本机".into()
-                    } else {
-                        format!("云端 {i}")
-                    },
-                })
+                .map(|(cell, label)| CandidateOption { cell, label })
                 .collect(),
         );
     }
@@ -443,7 +447,12 @@ async fn read_anchor(net: &Client<'_>, g: &Genesis) -> Result<Snapshot, String> 
         true,
     )
 }
-fn fingerprint(state: &Runtime, current: &View, remote: &Docs) -> Result<String, String> {
+fn fingerprint(
+    state: &Runtime,
+    current: &View,
+    remote: &Docs,
+    session: &str,
+) -> Result<String, String> {
     Ok(causal::hash(
         &serde_json::to_vec(&(
             &state.genesis,
@@ -451,6 +460,7 @@ fn fingerprint(state: &Runtime, current: &View, remote: &Docs) -> Result<String,
             &state.old_base,
             current,
             remote,
+            session,
         ))
         .map_err(err)?,
     ))
@@ -531,6 +541,29 @@ fn relation_conflicts(doc: &Document) -> Result<Vec<Conflict>, String> {
     }
     Ok(conflicts)
 }
+fn recovery_record(doc: &Document, current: &View, entity: &str) -> Option<super::model::Record> {
+    current.snapshot.records.get(entity).cloned().or_else(|| {
+        doc.registers
+            .get(&causal::key(entity, "__record"))?
+            .values
+            .iter()
+            .find_map(|v| match &v.cell {
+                Cell::Value(value) => serde_json::from_value(value.clone()).ok(),
+                Cell::Missing => None,
+            })
+    })
+}
+fn parent_recoverable(doc: &Document, current: &View, entity: &str) -> bool {
+    doc.registers
+        .get(&causal::key(entity, "name"))
+        .and_then(|r| r.values.first())
+        .is_some_and(|v| match &v.cell {
+            Cell::Value(value) => value.as_str().is_some_and(|s| !s.trim().is_empty()),
+            Cell::Missing => false,
+        })
+        || recovery_record(doc, current, entity)
+            .is_some_and(|record| !super::model::text(&record, "name").trim().is_empty())
+}
 fn resolve(
     doc: &Document,
     current: &View,
@@ -574,8 +607,11 @@ fn resolve(
         if keep {
             let parent = c.local.as_str().ok_or("恢复引用无效")?;
             let present = causal::key(parent, "__present");
-            if !doc.registers.contains_key(&present) {
+            if !parent_recoverable(doc, current, parent) {
                 return Err("缺少父记录恢复材料，请保留云端删除或从备份恢复".into());
+            }
+            if changes.get(&present) == Some(&Cell::Value(false.into())) {
+                return Err("恢复成员时，请同时保留它所属的歌单或文件夹".into());
             }
             changes.insert(present, Cell::Value(true.into()));
         } else {
@@ -590,19 +626,7 @@ fn resolve(
         })
         .collect();
     for entity in restored {
-        let recovery = current.snapshot.records.get(&entity).cloned().or_else(|| {
-            doc.registers
-                .get(&causal::key(&entity, "__record"))?
-                .values
-                .iter()
-                .find_map(|v| {
-                    if let Cell::Value(value) = &v.cell {
-                        serde_json::from_value::<super::model::Record>(value.clone()).ok()
-                    } else {
-                        None
-                    }
-                })
-        });
+        let recovery = recovery_record(doc, current, &entity);
         if let Some(record) = recovery {
             for (field, value) in record.fields {
                 let key = causal::key(&entity, &field);
@@ -645,11 +669,20 @@ fn capture_edits(
     let current = projection::capture(c, &cfg.uid, cfg.history)?;
     let import_mirrors =
         crate::infrastructure::repositories::imported_entries::MirrorCapture::new(c, target)?;
+    let mut progress_changes = if cfg.history {
+        projection::delta(&state.observed.facts, &current.facts, Domain::Progress)?
+    } else {
+        Facts::new()
+    };
     for d in LIBRARY_DOMAINS {
         if d == Domain::Progress && !cfg.history {
             continue;
         }
-        let mut changes = projection::delta(&state.observed.facts, &current.facts, d)?;
+        let mut changes = if d == Domain::Progress {
+            std::mem::take(&mut progress_changes)
+        } else {
+            projection::delta(&state.observed.facts, &current.facts, d)?
+        };
         changes.retain(|key, value| {
             let Ok((entity, field)) = serde_json::from_str::<(String, String)>(key) else {
                 return true;
@@ -702,6 +735,45 @@ fn capture_edits(
             }
             true
         });
+        if d == Domain::Library {
+            // An imported mirror may suppress its own track facts. An actual
+            // like, playlist addition, or play still needs that identity.
+            let refs: BTreeSet<_> = changes
+                .iter()
+                .chain(&progress_changes)
+                .filter(|(_, cell)| **cell == Cell::Value(true.into()))
+                .filter_map(|(key, _)| {
+                    let (entity, field) = serde_json::from_str::<(String, String)>(key).ok()?;
+                    if field != "__present" {
+                        return None;
+                    }
+                    let row = current.snapshot.records.get(&entity)?;
+                    let id = super::model::text(row, "trackId");
+                    (!id.is_empty()).then(|| format!("track:{id}"))
+                })
+                .collect();
+            for entity in refs {
+                let present = causal::key(&entity, "__present");
+                let known = state
+                    .contexts
+                    .get(&d)
+                    .and_then(|context| context.get(&present))
+                    .is_some_and(|register| {
+                        !register.values.is_empty()
+                            && register.values.iter().all(|v| v.cell == Cell::Value(true.into()))
+                    });
+                if changes.contains_key(&present) || known {
+                    continue;
+                }
+                changes.insert(present, Cell::Value(true.into()));
+                for field in ["id", "bvid", "cid"] {
+                    let key = causal::key(&entity, field);
+                    if let Some(value) = current.facts.get(&key) {
+                        changes.insert(key, value.clone());
+                    }
+                }
+            }
+        }
         enqueue(c, target, d, lease, changes, state.contexts.get(&d))?;
         // Only locally assigned fields advance the displayed context before a successful receive.
         if let Some(batch) = outbox::pending(c, target, d)?.last() {
@@ -804,6 +876,9 @@ fn outcome(view: &View, conflicts: Vec<Conflict>, changed: bool) -> Outcome {
     Outcome {
         skipped: false,
         conflicts,
+        visibility_error: None,
+        import_error: None,
+        chapters_error: None,
         records: view.snapshot.records.len(),
         bytes: serde_json::to_vec(view).map_or(0, |v| v.len()),
         changed,
@@ -984,9 +1059,14 @@ pub async fn sync(
         put(c, &target, "heads", &remote_heads)?;
         tx.commit().map_err(err)
     })?;
-    let current = with(db, cfg, |c| projection::capture(c, &cfg.uid, cfg.history))?;
+    let (current, session) = with(db, cfg, |c| {
+        Ok((
+            projection::capture(c, &cfg.uid, cfg.history)?,
+            crate::infrastructure::database::account_session(c).map_err(err)?,
+        ))
+    })?;
     let mut all = with(db, cfg, |c| overlays(c, &target))?;
-    let mut proof = fingerprint(&state, &current, &all)?;
+    let mut proof = fingerprint(&state, &current, &all, &session)?;
     let envelope = resolution
         .filter(|s| !matches!(*s, "local" | "remote"))
         .map(serde_json::from_str::<Selected>)
@@ -1004,7 +1084,7 @@ pub async fn sync(
             selected(c, &target, &proof, envelope.as_ref(), &conflicts)
         })?;
         with(db, cfg, |c| {
-            save_menu(c, &target, &proof, &current, &all, &conflicts)
+            save_menu(c, &target, &proof, &current, &all, &conflicts, true)
         })?;
         if preview || (choice.is_none() && selections.is_none()) {
             return Ok(outcome(&current, conflicts, false));
@@ -1017,12 +1097,17 @@ pub async fn sync(
         )?;
         with(db, cfg, |c| {
             let tx = c.unchecked_transaction().map_err(err)?;
-            check_current(c, cfg, &current)?;
+            check_current(c, cfg, &current, &session)?;
             enqueue(c, &target, Domain::Library, &mut lease, changes, None)?;
+            let docs = overlays(c, &target)?;
+            if !relation_conflicts(&docs[&Domain::Library])?.is_empty() {
+                return Err("恢复成员时，请同时保留它所属的歌单或文件夹".into());
+            }
+            projection::snapshot(&docs[&Domain::Library], &docs[&Domain::Progress], cfg.history)?;
             tx.commit().map_err(err)
         })?;
         all = with(db, cfg, |c| overlays(c, &target))?;
-        proof = fingerprint(&state, &current, &all)?;
+        proof = fingerprint(&state, &current, &all, &session)?;
     }
     if !state.joined {
         let snapshot =
@@ -1035,7 +1120,12 @@ pub async fn sync(
                 b.compact(false);
             }
         }
-        let deleted = existence(&all[&Domain::Library])?;
+        let mut deleted = existence(&all[&Domain::Library])?;
+        // A legacy track tombstone can coexist with a live reference. The
+        // derived identity in the snapshot does not undo that causal fact.
+        deleted.retain(|entity| {
+            !entity.starts_with("track:") || !snapshot.records.contains_key(entity)
+        });
         let p = upgrade_merge::prepare_automatic(
             &g.scope(Domain::Library),
             &anchor,
@@ -1064,7 +1154,7 @@ pub async fn sync(
             })?
         };
         with(db, cfg, |c| {
-            save_menu(c, &target, &proof, &current, &all, &conflicts)
+            save_menu(c, &target, &proof, &current, &all, &conflicts, false)
         })?;
         if preview || (!conflicts.is_empty() && join_choice.is_none() && selections.is_none()) {
             return Ok(outcome(&current, conflicts, false));
@@ -1132,7 +1222,7 @@ pub async fn sync(
         let changes = plan.changes()?;
         with(db, cfg, |c| {
             let tx = c.unchecked_transaction().map_err(err)?;
-            check_current(c, cfg, &current)?;
+            check_current(c, cfg, &current, &session)?;
             for d in LIBRARY_DOMAINS {
                 let filtered = changes
                     .iter()
@@ -1156,7 +1246,7 @@ pub async fn sync(
     let _ = BEFORE_PROJECT.try_with(|hook| hook(db));
     let after = with(db, cfg, |c| {
         let tx = c.unchecked_transaction().map_err(err)?;
-        check_current(c, cfg, &current)?;
+        check_current(c, cfg, &current, &session)?;
         let after = projection::apply(
             c,
             &all[&Domain::Library],
@@ -1179,59 +1269,48 @@ pub async fn sync(
     })?;
     net.parents().await?;
     publish(db, cfg, &target, &net, &mut state, &mut lease).await?;
-    let visibility_session = with(db, cfg, |c| {
-        crate::infrastructure::database::account_session(c).map_err(err)
-    })?;
-    let visibility_result = super::visibility::exchange(db, cfg, secret, lease.actor()).await;
-    let visibility_changed = with(db, cfg, |c| {
+    let check_area_session = |c: &Connection| {
         let active = super::config_from_connection(c)?.ok_or("同步连接已改变")?;
-        if crate::infrastructure::database::account_session(c).map_err(err)? != visibility_session {
-            return Err("同步账号会话已变更".into());
+        if crate::infrastructure::database::account_session(c).map_err(err)? != session {
+            return Err("同步账号会话已变更".to_string());
         }
         if active.provider != cfg.provider || active.url != cfg.url || active.uid != cfg.uid {
             return Err("同步连接已改变".into());
         }
-        match visibility_result {
-            Ok(changed) => {
-                c.execute("DELETE FROM visibility_runtime WHERE key='sync_error'", [])
-                    .map_err(err)?;
-                Ok(changed)
-            }
-            Err(error) => {
-                c.execute("INSERT INTO visibility_runtime VALUES('sync_error',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[error]).map_err(err)?;
-                Ok(false)
-            }
-        }
+        Ok(())
+    };
+    with(db, cfg, check_area_session)?;
+    let visibility_result = super::visibility::exchange(db, cfg, secret, lease.actor()).await;
+    let visibility_error = visibility_result.as_ref().err().cloned();
+    with(db, cfg, |c| {
+        check_area_session(c)?;
+        put(c, &target, "visibility-error", &visibility_error)
     })?;
     let import_result = super::import_entries::exchange(db, cfg, secret, lease.actor()).await;
-    let import_changed = with(db, cfg, |c| {
-        if crate::infrastructure::database::account_session(c).map_err(err)? != visibility_session {
-            return Err("同步账号会话已变更".into());
-        }
-        match import_result {
-            Ok(changed) => {
-                c.execute(
-                    "DELETE FROM imported_entry_runtime WHERE key='sync_error'",
-                    [],
-                )
-                .map_err(err)?;
-                Ok(changed)
-            }
-            Err(error) => {
-                c.execute("INSERT INTO imported_entry_runtime VALUES('sync_error',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&error]).map_err(err)?;
-                Err(format!("导入歌单同步失败：{error}"))
-            }
-        }
-    })?;
+    let import_error = import_result.as_ref().err().cloned();
+    let chapters_result =
+        super::chapters::exchange(db, cfg, secret, lease.actor(), &session, &after.snapshot).await;
+    let chapters_error = chapters_result.as_ref().err().cloned();
     with(db, cfg, |c| {
+        check_area_session(c)?;
+        let tx = c.unchecked_transaction().map_err(err)?;
+        put(c, &target, "import-error", &import_error)?;
+        put(c, &target, "chapters-error", &chapters_error)?;
         c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(err)?;
-        Ok(())
+        tx.commit().map_err(err)
     })?;
-    Ok(outcome(
+    let mut result = outcome(
         &after,
         vec![],
-        after != current || visibility_changed || import_changed,
-    ))
+        after != current
+            || visibility_result.unwrap_or(false)
+            || import_result.unwrap_or(false)
+            || chapters_result.unwrap_or(false),
+    );
+    result.visibility_error = visibility_error;
+    result.import_error = import_error;
+    result.chapters_error = chapters_error;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1753,6 +1832,112 @@ mod tests {
         server.abort();
     }
     #[tokio::test]
+    async fn a_new_play_publishes_identity_even_if_the_imported_mirror_is_filtered() {
+        const ID: &str = "bilibili:BVmirror:18";
+        let (mut cfg, secret, _, server) = super::super::test_dav::server().await;
+        cfg.history = true;
+        let a = device(&cfg);
+        run(&a, &cfg, &secret).await;
+        change(&a, &format!(
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES('{ID}','bilibili','BVmirror',18);
+             INSERT INTO tracks(id,source_item_id,title) VALUES('{ID}','{ID}','Source title');
+             INSERT INTO playlists(id,name) VALUES('{LIST}','Imported');
+             INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('{LIST}','{ID}',0);
+             INSERT INTO imported_entry_owned(playlist_id,track_id) VALUES('{LIST}','{ID}');
+             INSERT INTO play_history(track_id,played_at) VALUES('{ID}','2026-01-01 00:00:00');"
+        ));
+        run(&a, &cfg, &secret).await;
+        let b = device(&cfg);
+        assert!(run(&b, &cfg, &secret).await.conflicts.is_empty());
+        let target = target(&cfg, &secret);
+        with(&b, &cfg, |c| {
+            let library = projection::rows(&outbox::confirmed(c, &target, Domain::Library)?)?;
+            let progress = projection::rows(&outbox::confirmed(c, &target, Domain::Progress)?)?;
+            assert!(!library.contains_key(&format!("item:{LIST}|{ID}")));
+            assert_eq!(library[&format!("track:{ID}")]["cid"], 18);
+            assert!(progress.contains_key(&format!("history:{ID}")));
+            Ok(())
+        })
+        .unwrap();
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn missing_library_track_does_not_block_other_devices_or_erase_user_metadata() {
+        const ID: &str = "bilibili:BVmissing:18";
+        let (mut cfg, secret, _, server) = super::super::test_dav::server().await;
+        cfg.history = true;
+        let a = device(&cfg);
+        change(&a, &format!(
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES('{ID}','bilibili','BVmissing',18);
+             INSERT INTO tracks(id,source_item_id,title) VALUES('{ID}','{ID}','Source title');
+             INSERT INTO playlists(id,name) VALUES('{LIST}','Playlist');
+             INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('{LIST}','{ID}',4);
+             INSERT INTO favorites(track_id) VALUES('{ID}');
+             INSERT INTO play_history(track_id,played_at) VALUES('{ID}','2026-01-01 00:00:00');
+             INSERT INTO playback_positions(track_id,seconds,observed_at) VALUES('{ID}',20,200);
+             INSERT INTO metadata_overrides(track_id,title) VALUES('{ID}','Manual title');"
+        ));
+        run(&a, &cfg, &secret).await;
+
+        // Older writers could tombstone a track when it left their own view.
+        let target = target(&cfg, &secret);
+        let state: Runtime =
+            with(&a, &cfg, |c| get(c, &target, "runtime").map(Option::unwrap)).unwrap();
+        let mut actor = lease(&a, &target, &state).unwrap();
+        let present = causal::key(&format!("track:{ID}"), "__present");
+        with(&a, &cfg, |c| {
+            let tx = c.unchecked_transaction().map_err(err)?;
+            enqueue(
+                &tx,
+                &target,
+                Domain::Library,
+                &mut actor,
+                Facts::from([(present.clone(), Cell::Value(false.into()))]),
+                None,
+            )?;
+            tx.commit().map_err(err)
+        })
+        .unwrap();
+        assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
+        let title = a
+            .0
+            .lock()
+            .unwrap()
+            .query_row("SELECT title FROM metadata_overrides", [], |r| r.get::<_, String>(0))
+            .unwrap();
+        assert_eq!(title, "Manual title");
+
+        let b = device(&cfg);
+        assert!(run(&b, &cfg, &secret).await.conflicts.is_empty());
+        with(&b, &cfg, |c| {
+            let snapshot = storage::export(c, &cfg.uid, true)?;
+            assert!(snapshot.records.contains_key(&format!("favorite:{ID}")));
+            assert_eq!(snapshot.records[&format!("item:{LIST}|{ID}")].fields["position"], 4);
+            assert_eq!(snapshot.records[&format!("history:{ID}")].fields["resume"], "200:20000");
+            let doc = outbox::confirmed(c, &target, Domain::Library)?;
+            assert_eq!(doc.registers[&present].values[0].cell, Cell::Value(false.into()));
+            Ok(())
+        })
+        .unwrap();
+
+        change(&b, "DELETE FROM favorites");
+        assert!(run(&b, &cfg, &secret).await.conflicts.is_empty());
+        assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
+        assert!(
+            !storage::export(&a.0.lock().unwrap(), &cfg.uid, true)
+                .unwrap()
+                .records
+                .contains_key(&format!("favorite:{ID}"))
+        );
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+    #[tokio::test]
     async fn history_scope_toggle_is_not_a_remote_delete_and_corrupt_objects_never_replace_sql() {
         let (mut cfg, secret, store, server) = super::super::test_dav::server().await;
         cfg.history = true;
@@ -1809,6 +1994,92 @@ mod tests {
         for d in [a, b, cold] {
             std::fs::remove_dir_all(d.1).unwrap();
         }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn import_error_is_reported_separately_and_retry_preserves_core_sync() {
+        let (cfg, secret, _, server) = super::super::test_dav::server().await;
+        let a = device(&cfg);
+        let b = device(&cfg);
+        run(&a, &cfg, &secret).await;
+        run(&b, &cfg, &secret).await;
+        let target = target(&cfg, &secret);
+        with(&a, &cfg, |c| {
+            c.execute(
+                "INSERT INTO imported_entry_heads(target,actor,generation,hash) VALUES(?1,?2,1,?3)",
+                params![target, uuid::Uuid::new_v4().to_string(), "a".repeat(64)],
+            )
+            .map_err(err)?;
+            c.execute("INSERT INTO playlists(id,name) VALUES(?1,'core still syncs')", [LIST])
+                .map_err(err)?;
+            Ok(())
+        })
+        .unwrap();
+
+        let partial = run(&a, &cfg, &secret).await;
+        assert!(partial.conflicts.is_empty());
+        assert!(partial.import_error.as_deref().unwrap().contains("暂不可见"));
+        assert!(partial.visibility_error.is_none());
+        let last: String = with(&a, &cfg, |c| {
+            assert_eq!(super::super::sync_area_error(c, "import-error")?, partial.import_error);
+            c.query_row(
+                "SELECT value FROM sync_info WHERE key=?1",
+                [format!("last_success:{target}")],
+                |r| r.get(0),
+            )
+            .map_err(err)
+        })
+        .unwrap();
+        assert!(!last.is_empty());
+        run(&b, &cfg, &secret).await;
+        assert_eq!(value(&b, "name"), "core still syncs");
+
+        change(&a, "DELETE FROM imported_entry_heads");
+        assert!(run(&a, &cfg, &secret).await.import_error.is_none());
+        assert!(with(&a, &cfg, |c| super::super::sync_area_error(c, "import-error")).unwrap().is_none());
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn orphan_without_parent_data_offers_only_removal_and_can_resume_sync() {
+        let (cfg, secret, _, server) = super::super::test_dav::server().await;
+        let a = device(&cfg);
+        run(&a, &cfg, &secret).await;
+        let target = target(&cfg, &secret);
+        let row = format!("item:{LIST}|bilibili:BV123:1");
+        let state: Runtime =
+            with(&a, &cfg, |c| get(c, &target, "runtime").map(Option::unwrap)).unwrap();
+        let mut actor = lease(&a, &target, &state).unwrap();
+        with(&a, &cfg, |c| {
+            let tx = c.unchecked_transaction().map_err(err)?;
+            let changes = [
+                ("__present", Value::from(true)),
+                ("playlistId", Value::from(LIST)),
+                ("trackId", Value::from("bilibili:BV123:1")),
+                ("position", Value::from(0)),
+            ]
+            .into_iter()
+            .map(|(field, value)| (causal::key(&row, field), Cell::Value(value)))
+            .collect();
+            enqueue(&tx, &target, Domain::Library, &mut actor, changes, None)?;
+            tx.commit().map_err(err)
+        })
+        .unwrap();
+        assert_eq!(run(&a, &cfg, &secret).await.conflicts.len(), 1);
+        let menu = menu(&a, &cfg, &secret);
+        let key = causal::key(&row, "__parent");
+        assert_eq!(menu.options[&key].len(), 1);
+        assert_eq!(menu.options[&key][0].cell, Cell::Missing);
+        let selected = serde_json::to_string(&Selected {
+            token: menu.token,
+            choices: Facts::from([(key, Cell::Missing)]),
+        })
+        .unwrap();
+        assert!(sync(&a, &cfg, &secret, Some(&selected), false).await.unwrap().conflicts.is_empty());
+        assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
+        std::fs::remove_dir_all(a.1).unwrap();
         server.abort();
     }
     #[tokio::test]

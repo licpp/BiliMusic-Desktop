@@ -16,12 +16,13 @@ export function useArtworkFit(src: string | undefined, enabled: boolean, compact
   useLayoutEffect(() => {
     const element = stage.current
     if (!element) return
-    const update = () => {
-      const width = element.clientWidth, height = element.clientHeight
+    const update = (width: number, height: number) => {
       setSize(previous => Math.abs(previous.width-width)<.5&&Math.abs(previous.height-height)<.5 ? previous : {width,height})
     }
-    update()
-    const observer = new ResizeObserver(update)
+    const style = getComputedStyle(element)
+    update(element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom))
+    const observer = new ResizeObserver(([{ contentRect }]) => update(contentRect.width, contentRect.height))
     observer.observe(element)
     return () => observer.disconnect()
   }, [enabled, src])

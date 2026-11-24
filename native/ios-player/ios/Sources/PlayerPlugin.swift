@@ -1,5 +1,6 @@
 import AVFoundation
 import MediaPlayer
+import MetricKit
 import Security
 import SwiftRs
 import Tauri
@@ -8,15 +9,19 @@ import WebKit
 
 struct PlayArgs: Decodable {
     let url: String; let id: String; let position: Double?; let volume: Double?; let playing: Bool?; let rate: Double?; let collectionRef: String?; let seamless: Bool?
+    let track: QueueTrack?
     let loudnessGainDb: Double?; let loudnessEnabled: Bool?; let loudnessRevision: Double?
     let upgradeUrl: String?
     let automaticResume: AutomaticResumePolicy?
+    let diagnosticId: String?
 }
 struct ControlArgs: Decodable {
     let settingsRevision: Double?
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
+    let track: QueueTrack?
 }
 struct QueueArgs: Decodable {
+    let offlineOnly: Bool?
     let accountSession: String?; let version: Int64?; let owner: String?
     let entryOrigins: [String:[String]]?
     let entryOrder: [String]?
@@ -30,19 +35,42 @@ struct ExportArgs: Decodable { let path: String }
 struct ListenerArgs: Decodable { let event: String; let handler: Channel }
 struct RemoveListenerArgs: Decodable { let event: String; let channelId: UInt64 }
 struct ResolveRequest: Encodable {
+    let diagnosticId: String?
+    let initialErrorCode: String?
+    let offlineOnly: Bool
     let visibilityScopes: [String]
     let accountSession: String?
     let profile: String; let track: QueueTrack; let restart: Bool; let autoResume: Bool
     let resumeThresholdSeconds: Double; let collectionPlayback: Bool
     let refresh: Bool; let position: Double?
+    let subtitles: Bool; let subtitleLanguage: String; let subtitleRevision: Int
 }
 struct ResolvedTrack: Decodable {
     let skip: Bool?
     let loudnessGainDb: Double?
-    let url: String?; let track: QueueTrack?; let error: String?
+    let url: String?; let track: QueueTrack?; let error: String?; let errorCode: String?
     let upgradeUrl: String?
     let automaticResume: AutomaticResumePolicy?
     let position: Double?; let entryId: String?; let parts: [QueueTrack]?; let lyrics: NativeSavedLyrics?
+    let kind: String?; let id: String?; let timeline: NativeSavedLyrics?; let subtitleRevision: Int?; let accountSession: String?
+}
+
+@_silgen_name("bilimusic_ios_diagnostic_exit")
+private func diagnosticExit(_ kind: Int32, _ at: UInt64)
+
+@available(iOS 14.0, *)
+private final class PlaybackMetricSubscriber: NSObject, MXMetricManagerSubscriber {
+    static let shared = PlaybackMetricSubscriber()
+    static let registered: Void = { MXMetricManager.shared.add(shared) }()
+
+    func didReceive(_ payloads: [MXDiagnosticPayload]) {
+        for payload in payloads {
+            let timestamp = payload.timeStampEnd.timeIntervalSince1970 * 1000
+            guard timestamp.isFinite, timestamp > 0 else { continue }
+            if payload.crashDiagnostics?.isEmpty == false { diagnosticExit(1, UInt64(timestamp)) }
+            if payload.hangDiagnostics?.isEmpty == false { diagnosticExit(2, UInt64(timestamp)) }
+        }
+    }
 }
 
 @_silgen_name("bilimusic_ios_resolve")
@@ -84,7 +112,7 @@ class PlayerPlugin: Plugin {
     private var retiredQueueOwners = Set<String>()
     private var listeningSession = UUID().uuidString
     private var listeningSeconds: Double = 0
-    private var userVolume: Float = 0.7
+    private var userVolume: Float = 1
     private var outputGain = OutputGain()
     private var outputRamp: DispatchWorkItem?
     private func applyOutput(smooth: Bool = false) {
@@ -103,8 +131,13 @@ class PlayerPlugin: Plugin {
         tick()
     }
     private var player = AVPlayer()
+    private var standbyPlayer = AVPlayer()
+    private lazy var systemMedia = SystemMediaSession(players: [player, standbyPlayer])
+    private var carAudioRoute = false
     private var sourceCandidate: AVPlayer?
+    private var sourceSwitchRevision: UInt64 = 0
     private var sourceStatus: NSKeyValueObservation?
+    private var sourcePlayerStatus: NSKeyValueObservation?
     private var sourceTimeout: DispatchWorkItem?
     private var pendingUpgrade: URL?
     private var upgradeAfterPosition: Double = 0
@@ -112,6 +145,7 @@ class PlayerPlugin: Plugin {
     private var state = PlayerSnapshot()
     private var tracks: [QueueTrack] = []
     private var entryOrigins: [String:[String]] = [:]
+    private var offlineOnly = false
     private var entryOrder: [String] = []
     private var expandedEntries: [String: [QueueTrack]] = [:]
     private var collectionRef: String?
@@ -144,6 +178,9 @@ class PlayerPlugin: Plugin {
     private var notifications: [NSObjectProtocol] = []
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var interruptionTask: UIBackgroundTaskIdentifier = .invalid
+    private var interruptionTimer: DispatchSourceTimer?
+    private var interruptedByOtherMedia = false
     private let notificationLyrics = NotificationLyrics()
     private weak var webview: WKWebView?
     private let artworkCache = NSCache<NSString, UIImage>()
@@ -158,7 +195,9 @@ class PlayerPlugin: Plugin {
     private var lastNowPlayingLyric: String?
 
     override func load(webview: WKWebView) {
+        if #available(iOS 14.0, *) { _ = PlaybackMetricSubscriber.registered }
         self.webview = webview
+        applyWindowTheme(light: UserDefaults.standard.bool(forKey: "bilimusic-light-window"))
         activePlayer = self
         webview.scrollView.contentInsetAdjustmentBehavior = .never
         webview.scrollView.bounces = false
@@ -187,7 +226,11 @@ class PlayerPlugin: Plugin {
         })
         observeAudioInterruptions(center)
         notifications.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
-            if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause() }
+            guard let self else { return }
+            self.refreshAudioRoute()
+            if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self.pause() }
+            if self.desiredPlaying { self.systemMedia.activateIfEligible() }
+            self.nowPlaying()
         })
         notifications.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.returnedToForeground() })
         notifications.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -197,85 +240,148 @@ class PlayerPlugin: Plugin {
             self.accountListening(flush: true); self.savePosition(force: true)
         })
         notifications.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self, !self.desiredPlaying else { return }
-            self.mediaSourceInvalidated = true
-            mediaLifecycle(true)
-            NSLog("BiliMusic media lifecycle: paused in background, parking local listener")
+            self?.holdForInterruptionEnd()
+            self?.parkMediaIfIdle()
         })
         bindRemoteCommands()
     }
     deinit {
         outputRamp?.cancel()
         playbackWatchdog?.cancel()
+        interruptionTimer?.cancel()
         if let observer = timeObserver { player.removeTimeObserver(observer) }
         notifications.forEach { NotificationCenter.default.removeObserver($0) }
         remoteTargets.forEach { $0.0.removeTarget($0.1) }
     }
 
     private func observePlayer() {
-        timeStatus = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.refresh() }
+        timeStatus = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            DispatchQueue.main.async {
+                guard let self, self.player === player else { return }
+                if self.desiredPlaying && player.timeControlStatus == .playing { self.systemMedia.activateIfEligible() }
+                self.refresh()
+            }
         }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in self?.refresh() }
     }
     private func cancelSourceSwitch(_ message: String? = "音质切换已取消") {
-        sourceTimeout?.cancel();sourceTimeout=nil;sourceStatus=nil
-        sourceCandidate?.pause();sourceCandidate?.replaceCurrentItem(with:nil);sourceCandidate=nil
-        let reply=sourceReply;sourceReply=nil;reply?(message)
+        sourceSwitchRevision &+= 1
+        sourceTimeout?.cancel(); sourceTimeout=nil; sourceStatus=nil; sourcePlayerStatus=nil
+        let candidate = sourceCandidate, reply = sourceReply
+        sourceCandidate=nil; sourceReply=nil
+        candidate?.cancelPendingPrerolls()
+        candidate?.pause()
+        candidate?.replaceCurrentItem(with:nil)
+        reply?(message)
     }
     private func switchSource(_ url:URL, gainDb:Double? = nil, completion:@escaping (String?)->Void) {
         pendingUpgrade=nil
         cancelSourceSwitch()
-        let request=generation, id=state.id, original=player, seek=seekRevision
-        let candidate=AVPlayer(playerItem:AVPlayerItem(url:url));candidate.volume=0;candidate.isMuted=true;candidate.automaticallyWaitsToMinimizeStalling=true
-        candidate.currentItem?.preferredForwardBufferDuration=2
+        let request=generation, id=state.id, original=player, seek=seekRevision, sourceRevision=sourceSwitchRevision
+        let candidate=standbyPlayer
+        candidate.volume=0; candidate.isMuted=true; candidate.automaticallyWaitsToMinimizeStalling=true
+        let item=AVPlayerItem(url:url)
+        item.preferredForwardBufferDuration=2
+        candidate.replaceCurrentItem(with: item)
         sourceCandidate=candidate;sourceReply=completion
-        let timeout=DispatchWorkItem { [weak self,weak candidate] in guard let self,self.sourceCandidate===candidate else{return};self.cancelSourceSwitch("新音源准备超时，已保留原音质") }
+        let timeout=DispatchWorkItem { [weak self,weak candidate] in guard let self, self.sourceSwitchRevision == sourceRevision, self.sourceCandidate === candidate else { return };self.cancelSourceSwitch("新音源准备超时，已保留原音质") }
         sourceTimeout=timeout;DispatchQueue.main.asyncAfter(deadline:.now()+12,execute:timeout)
-        guard let item=candidate.currentItem else{cancelSourceSwitch("新音源无法播放");return}
-        sourceStatus=item.observe(\.status,options:[.initial,.new]) { [weak self,weak candidate] item,_ in
-            self?.onMain { [weak self,weak candidate] in
-                guard let self,let candidate,self.sourceCandidate===candidate else{return}
-                guard self.generation==request,self.state.id==id,self.player===original else{self.cancelSourceSwitch();return}
-                if item.status == .failed { self.cancelSourceSwitch("新音源无法播放，已保留原音质");return }
-                guard item.status == .readyToPlay else{return}
-                self.sourceStatus=nil
-                let position=original.currentTime().seconds.isFinite ? original.currentTime().seconds : self.state.position
-                candidate.seek(to:CMTime(seconds:max(0,position),preferredTimescale:600),toleranceBefore:.zero,toleranceAfter:.zero) { [weak self,weak candidate] ok in
-                    self?.onMain { [weak self,weak candidate] in
-                        guard let self,let candidate,self.sourceCandidate===candidate else{return}
-                        guard ok,self.generation==request,self.state.id==id,self.player===original else{self.cancelSourceSwitch();return}
-                        candidate.preroll(atRate:self.playbackRate) { [weak self,weak candidate] ready in
-                            self?.onMain { [weak self,weak candidate] in
-                                guard let self,let candidate,self.sourceCandidate===candidate else{return}
-                                guard ready,self.generation==request,self.seekRevision==seek,self.state.id==id,self.player===original else{self.cancelSourceSwitch("音质切换已取消，已保留原音质");return}
-                                let handoff = { [weak self,weak candidate] in
-                                    guard let self,let candidate,self.sourceCandidate===candidate else{return}
-                                    guard self.generation==request,self.seekRevision==seek,self.player===original else{self.cancelSourceSwitch();return}
-                                self.accountListening(flush:true);self.cancelPlaybackWatchdog()
-                                if let observer=self.timeObserver { original.removeTimeObserver(observer);self.timeObserver=nil }
-                                self.timeStatus=nil;self.itemStatus=nil
-                                original.pause();self.player=candidate
-                                self.generation+=1;self.state.revision=self.generation;self.seekPending=false;self.initialSeekPending=false;self.lastMediaPosition = -1;self.hasMediaAdvanced=false
-                                self.sourceTimeout?.cancel();self.sourceTimeout=nil;self.sourceCandidate=nil
-                                self.observePlayer();if let gainDb {self.outputGain.plan(gainDb)};self.applyOutput();candidate.isMuted=false
-                                let currentRequest=self.generation
-                                self.itemStatus=item.observe(\.status,options:[.new]) { [weak self] item,_ in self?.onMain { [weak self] in guard let self,self.generation==currentRequest else{return};if item.status == .failed{self.playbackFailed()} } }
-                                if self.desiredPlaying{candidate.rate=self.playbackRate;self.watchPlayback()}else{candidate.pause()}
-                                self.refresh();let reply=self.sourceReply;self.sourceReply=nil;reply?(nil)
+        var preparing = false
+        let prepare = { [weak self, weak candidate, weak item] in
+            // Initial KVO callbacks may be synchronous. Queue work until both
+            // observations have been retained and revalidate the source on main.
+            DispatchQueue.main.async {
+                guard let self, let candidate, let item, self.sourceSwitchRevision == sourceRevision, self.sourceCandidate === candidate else { return }
+                guard self.generation == request, self.state.id == id, self.player === original,
+                      self.seekRevision == seek else { self.cancelSourceSwitch(); return }
+                if item.status == .failed || candidate.status == .failed {
+                    self.cancelSourceSwitch("新音源无法播放，已保留原音质")
+                    return
+                }
+                guard !preparing, item.status == .readyToPlay, candidate.status == .readyToPlay else { return }
+                preparing = true
+                let currentPosition = original.currentTime().seconds
+                let position = currentPosition.isFinite ? currentPosition : self.state.position
+                candidate.seek(to: CMTime(seconds: max(0, position), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak candidate] ok in
+                    self?.onMain { [weak self, weak candidate] in
+                        guard let self, let candidate, self.sourceSwitchRevision == sourceRevision, self.sourceCandidate === candidate else { return }
+                        guard ok, self.generation == request, self.seekRevision == seek,
+                              self.player === original, candidate.status == .readyToPlay, candidate.rate == 0 else {
+                            self.cancelSourceSwitch("新音源准备失败，已保留原音质")
+                            return
+                        }
+                        candidate.preroll(atRate: self.playbackRate) { [weak self, weak candidate] ready in
+                            self?.onMain { [weak self, weak candidate] in
+                                guard let self, let candidate, self.sourceSwitchRevision == sourceRevision, self.sourceCandidate === candidate else { return }
+                                guard ready, self.generation == request, self.seekRevision == seek, self.player === original else {
+                                    self.cancelSourceSwitch("音质切换已取消，已保留原音质")
+                                    return
                                 }
-                                let position=original.currentTime()
-                                if abs(position.seconds-candidate.currentTime().seconds)>0.15 {
-                                    candidate.seek(to:position,toleranceBefore:CMTime(seconds:0.05,preferredTimescale:600),toleranceAfter:CMTime(seconds:0.05,preferredTimescale:600)) { [weak self] aligned in self?.onMain { if aligned {handoff()}else{self?.cancelSourceSwitch("新音源定位失败，已保留原音质")} } }
-                                } else { handoff() }
-
+                                guard candidate.status == .readyToPlay, let item = candidate.currentItem, item.status == .readyToPlay else {
+                                    self.cancelSourceSwitch("新音源不可用，已保留原音质")
+                                    return
+                                }
+                                func alignAndHandoff(_ aligned: Bool) {
+                                    guard self.sourceSwitchRevision == sourceRevision,
+                                          self.sourceCandidate === candidate else { return }
+                                    guard aligned, self.generation == request, self.seekRevision == seek,
+                                          self.player === original, candidate.status == .readyToPlay,
+                                          item.status == .readyToPlay else {
+                                        self.cancelSourceSwitch("新音源定位失败，已保留原音质")
+                                        return
+                                    }
+                                    let position = original.currentTime()
+                                    if position.seconds.isFinite,
+                                       abs(position.seconds - candidate.currentTime().seconds) > 0.25 {
+                                        candidate.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero) { ready in
+                                            self.onMain { alignAndHandoff(ready) }
+                                        }
+                                        return
+                                    }
+                                    self.handoffSource(item, from: candidate, gainDb: gainDb)
+                                }
+                                alignAndHandoff(true)
                             }
                         }
                     }
                 }
             }
         }
+        sourceStatus = item.observe(\.status, options:[.initial,.new]) { _,_ in prepare() }
+        sourcePlayerStatus = candidate.observe(\.status, options:[.initial,.new]) { _,_ in prepare() }
     }
+
+    private func handoffSource(_ item: AVPlayerItem, from candidate: AVPlayer, gainDb: Double?) {
+        accountListening(flush: true)
+        cancelPlaybackWatchdog()
+        let original=player
+        if let observer = timeObserver { original.removeTimeObserver(observer); timeObserver = nil }
+        timeStatus=nil; itemStatus=nil; sourceStatus=nil; sourcePlayerStatus=nil
+        sourceTimeout?.cancel(); sourceTimeout=nil; sourceCandidate=nil
+        let reply=sourceReply; sourceReply=nil
+        // The session binds both playback slots up front. Removing players from
+        // a manually published session can throw an iOS 27 MediaPlayer KVO
+        // exception, while an AVPlayerItem cannot be moved to another player.
+        original.pause()
+        original.replaceCurrentItem(with: nil)
+        player=candidate; standbyPlayer=original
+        generation+=1; state.revision=generation; seekPending=false
+        initialSeekPending=false; lastMediaPosition = -1; hasMediaAdvanced=false
+        let request = generation
+        observePlayer()
+        itemStatus = item.observe(\.status, options:[.new]) { [weak self] item,_ in
+            self?.onMain { [weak self] in
+                guard let self, self.generation == request, item === self.player.currentItem else { return }
+                if item.status == .failed { self.playbackFailed() }
+            }
+        }
+        if let gainDb { outputGain.plan(gainDb) }
+        applyOutput(); candidate.isMuted=false
+        if desiredPlaying { candidate.rate=playbackRate; watchPlayback() }
+        refresh(); nowPlaying()
+        reply?(nil)
+    }
+
     @objc public func play(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(PlayArgs.self)
         onMain { [self] in
@@ -285,6 +391,7 @@ class PlayerPlugin: Plugin {
             cancelSourceSwitch()
             accountListening(flush: true)
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
+            beginPlaybackDiagnostic(args.diagnosticId)
             savePosition(force: true)
             collectionRef = args.collectionRef
             cancelPlaybackWatchdog()
@@ -293,13 +400,19 @@ class PlayerPlugin: Plugin {
             playbackRate = Float(min(2, max(0.75, args.rate ?? 1)))
             generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation
             if shuffled { shuffleDeck.observe(shuffleItems(),args.id) }
-            state.id = args.id; state.track = tracks.first { $0.id == args.id }
+            let suppliedTrack = args.track?.id == args.id ? args.track : nil
+            let preparedTrack = state.track?.id == args.id ? state.track : nil
+            state.track = tracks.first { $0.id == args.id } ?? suppliedTrack ?? preparedTrack
             prepareArtwork(for: state.track)
             state.duration = state.track?.durationSeconds ?? 0
-            userVolume = Float(min(1, max(0, args.volume ?? 0.7)))
+            userVolume = Float(min(1, max(0, args.volume ?? 1)))
             outputGain.plan(args.loudnessGainDb ?? 0)
             do { try start(url, at: max(0, args.position ?? 0), autoplay: args.playing ?? true, upgrade:args.upgradeUrl.flatMap(localMediaURL), automaticResume:args.automaticResume); invoke.resolve() }
-            catch { fail("无法启动 iOS 音频：\(error.localizedDescription)"); invoke.reject(error.localizedDescription) }
+            catch {
+                let code = mediaErrorCode(error as NSError)
+                fail("无法启动音频，请重新播放", code: code)
+                invoke.reject("无法启动音频，请重新播放", code: code)
+            }
         }
     }
     @objc public func queue(_ invoke: Invoke) throws {
@@ -325,10 +438,12 @@ class PlayerPlugin: Plugin {
             repeatMode = args.repeatMode; shuffled = args.shuffled; autoResume = args.autoResume ?? true
             resumeThresholdSeconds = args.resumeThresholdSeconds ?? 0
             entryOrigins = args.entryOrigins ?? [:]
+            offlineOnly = args.offlineOnly ?? false
             entryOrder = (args.entryOrder ?? args.tracks.map(\.id)).flatMap { expandedEntries[$0]?.map(\.id) ?? [$0] }
             for (id,parts) in expandedEntries {for part in parts where entryOrigins[part.id]==nil {entryOrigins[part.id]=entryOrigins[id] ?? []}}
             collectionPlayback = args.collectionPlayback ?? false
-            if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; prepareArtwork(for: track); nowPlaying() }
+            if let track = tracks.first(where: { $0.id == state.id }) { state.track = track; prepareArtwork(for: track) }
+            nowPlaying()
             invoke.resolve()
         }
     }
@@ -337,7 +452,7 @@ class PlayerPlugin: Plugin {
         onMain { [self] in
             switch args.action {
             case "prepare":
-                pendingUpgrade=nil;cancelSourceSwitch();interruptionResume.cancel()
+                pendingUpgrade=nil;cancelSourceSwitch();cancelInterruptionResume()
                 playbackRecovery.prepare(policy: nil); recoveryResumePolicy = nil
                 cancelPlaybackWatchdog()
                 backgroundPlaybackWanted = false
@@ -345,12 +460,15 @@ class PlayerPlugin: Plugin {
                 savePosition(force: true)
                 accountListening(flush: true)
                 listeningSession = UUID().uuidString
-                guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号"); return }
+                guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号，请重新播放", code: "profile_unavailable"); return }
                 profile = String(cString: raw); freeProfile(raw)
                 generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; desiredPlaying = false; itemStatus = nil
                 player.pause(); player.replaceCurrentItem(with: nil)
                 endBackgroundTask()
-                state = PlayerSnapshot(id: args.id, status: "buffering", revision: generation); publish()
+                let track = args.track?.id == args.id ? args.track : nil
+                state = PlayerSnapshot(id: args.id, status: "buffering", duration: track?.durationSeconds ?? 0, track: track, revision: generation)
+                prepareArtwork(for: track)
+                publish()
             case "collection":
                 if state.id == args.id && collectionRef != args.collectionRef {
                     savePosition(force: true)
@@ -381,12 +499,11 @@ class PlayerPlugin: Plugin {
                     nowPlaying()
                 }
             case "loudness": if outputGain.configure((args.value ?? 0)>0,args.settingsRevision ?? 0) {applyOutput(smooth:true)}
-            case "volume": userVolume = Float(min(1, max(0, args.value ?? 0.7)));applyOutput()
+            case "volume": userVolume = Float(min(1, max(0, args.value ?? Double(userVolume))));applyOutput()
             case "theme":
                 let light = args.value == 1
-                webview?.window?.overrideUserInterfaceStyle = light ? .light : .dark
-                webview?.isOpaque = false
-                webview?.backgroundColor = light ? UIColor(white: 0.96, alpha: 1) : UIColor(red: 0.027, green: 0.063, blue: 0.098, alpha: 1)
+                UserDefaults.standard.set(light, forKey: "bilimusic-light-window")
+                applyWindowTheme(light: light)
             case "immersive": break
             case "videoFullscreen": setVideoFullscreen(args.value == 1)
             default: invoke.reject("不支持的播放操作"); return
@@ -394,6 +511,17 @@ class PlayerPlugin: Plugin {
             invoke.resolve()
         }
     }
+    private func applyWindowTheme(light: Bool) {
+        let color = light ? UIColor(red: 244/255, green: 246/255, blue: 250/255, alpha: 1)
+                          : UIColor(red: 7/255, green: 16/255, blue: 25/255, alpha: 1)
+        webview?.window?.overrideUserInterfaceStyle = light ? .light : .dark
+        webview?.window?.backgroundColor = color
+        webview?.isOpaque = false
+        webview?.backgroundColor = color
+        webview?.scrollView.backgroundColor = color
+        if #available(iOS 15.0, *) { webview?.underPageBackgroundColor = color }
+    }
+
     private func setVideoFullscreen(_ enabled: Bool) {
         guard let window = webview?.window, let scene = window.windowScene, let controller = window.rootViewController else { return }
         if enabled && fullscreenState != nil { return }
@@ -451,12 +579,13 @@ class PlayerPlugin: Plugin {
         let args = try invoke.parseArgs(LyricsArgs.self)
         guard args.data.utf8.count <= 48 * 1024 * 1024, let data=args.data.data(using:.utf8), let request=try? JSONDecoder().decode(NativeLyricsRequest.self,from:data) else { invoke.reject("歌词内容无效");return }
         onMain { [self] in
-            if request.action == "update" {
+            if request.action == "subtitle-preference" {
+                notificationLyrics.setSubtitlePreference(enabled: request.enabled == true, language: request.language ?? "")
+                nowPlaying()
+            } else if request.action == "update" {
                 notificationLyrics.update(request)
                 nowPlaying()
             }
-            // Notification lyrics follow playback automatically, including calls
-            // from an older frontend that still sends enable/configure actions.
             invoke.resolve(LyricsCapability())
         }
     }
@@ -476,6 +605,17 @@ class PlayerPlugin: Plugin {
     }
 
     // Rust-only; deliberately absent from the JavaScript command permissions.
+    @objc public func diagnostic_environment(_ invoke: Invoke) {
+        onMain {
+            let device = UIDevice.current
+            invoke.resolve([
+                "osName": device.userInterfaceIdiom == .pad ? "iPadOS" : "iOS",
+                "osVersion": device.systemVersion,
+                "deviceModel": device.model,
+            ])
+        }
+    }
+
     @objc public func secret(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SecretArgs.self)
         guard args.key.range(of: "^sync-[0-9]+-(cloud|webdav)$", options: .regularExpression) != nil else { invoke.reject("无效的凭据标识"); return }
@@ -508,6 +648,11 @@ class PlayerPlugin: Plugin {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default, options: [])
         try session.setActive(true)
+        refreshAudioRoute()
+    }
+    private func refreshAudioRoute() {
+        // Headphones and speakers also use generic Bluetooth ports.
+        carAudioRoute = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .carAudio }
     }
     private func start(_ url: URL, at position: Double = 0, autoplay: Bool = true, upgrade: URL? = nil, automaticResume: AutomaticResumePolicy? = nil) throws {
         playbackRecovery.prepare(policy: automaticResume)
@@ -518,7 +663,7 @@ class PlayerPlugin: Plugin {
         positionSavedAt = ProcessInfo.processInfo.systemUptime - 15
         accountListening(flush: true)
         try activate(); desiredPlaying = autoplay
-        state.error = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = 0; startPosition = position; initialSeekPending = position > 0
+        state.error = nil; state.errorCode = nil; state.stopped = false; state.status = autoplay ? "buffering" : "paused"; state.position = 0; startPosition = position; initialSeekPending = position > 0
         mediaSourceInvalidated = false
         NSLog("BiliMusic audio start: host=%@ port=%ld position=%.3f", url.host ?? "", url.port ?? 0, position)
         let item = AVPlayerItem(url: url); item.preferredForwardBufferDuration = 2
@@ -551,7 +696,7 @@ class PlayerPlugin: Plugin {
                     if duration.isFinite && duration > 0 { self.state.duration = duration }
                     let position: Double
                     do { position = try playbackStartPosition(self.startPosition, duration: duration, policy: automaticResume) }
-                    catch { self.fail(error.localizedDescription); return }
+                    catch { self.fail(error.localizedDescription, code: "duration_unavailable"); return }
                     self.playbackRecovery.chosePosition()
                     self.startPosition = 0; self.state.position = position
                     self.initialSeekPending = position > 0
@@ -610,17 +755,23 @@ class PlayerPlugin: Plugin {
         if pausedAt == nil { pausedAt = Date().timeIntervalSince1970 }
         savePosition(force: true)
         accountListening(flush: true)
-        if !interrupted { interruptionResume.cancel() }
+        if !interrupted { cancelInterruptionResume() }
         desiredPlaying = false
         if state.stopped { generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation }
         player.pause(); state.status = "paused"; endBackgroundTask(); publish()
-        if UIApplication.shared.applicationState == .background {
-            mediaSourceInvalidated = true
-            mediaLifecycle(true)
-        }
+        parkMediaIfIdle()
+    }
+    private func parkMediaIfIdle() {
+        // An interruption is not a user pause. Keep the prepared item and its
+        // local source usable for a resumption event while still backgrounded.
+        guard !desiredPlaying, UIApplication.shared.applicationState == .background,
+              interruptionResume.mayParkMedia else { return }
+        mediaSourceInvalidated = true
+        mediaLifecycle(true)
     }
     private func resume(audioSessionActive: Bool = false) {
         interruptionResume.cancel()
+        defer { endInterruptionTask() }
         if expireSleepIfNeeded() { return }
         if desiredPlaying && state.status == "buffering" && state.stopped { return }
         recoveryAttempted = false
@@ -661,8 +812,15 @@ class PlayerPlugin: Plugin {
         }
         // Recreate failed items natively so lock-screen playback recovers while
         // the WebView is suspended. One refresh is allowed per user attempt.
+        if diagnosticInitialError == nil {
+            diagnosticInitialError = player.currentItem?.error.map { mediaErrorCode($0 as NSError) } ?? "audio_stalled"
+        }
         if desiredPlaying && recoverCurrentPlayback() { return }
-        fail(player.currentItem?.status == .failed ? "音频加载失败，请重新播放" : "音频缓冲超时，请检查网络后重试")
+        if player.currentItem?.status == .failed {
+            fail("音频加载失败，请重新播放", code: player.currentItem?.error.map { mediaErrorCode($0 as NSError) } ?? "audio_prepare_failed")
+        } else {
+            fail("音频缓冲超时，请检查网络后重试", code: "audio_stalled")
+        }
     }
     private func cancelPlaybackWatchdog() {
         playbackWatchdog?.cancel()
@@ -727,24 +885,71 @@ class PlayerPlugin: Plugin {
         clearSleep()
         savePosition(force: true)
         accountListening(flush: true)
-        interruptionResume.cancel()
+        cancelInterruptionResume()
         playbackRecovery.prepare(policy: nil); recoveryResumePolicy = nil
         generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; desiredPlaying = false; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         shuffleDeck.reset()
         state = PlayerSnapshot(revision: generation); tracks = []; expandedEntries = [:]; endBackgroundTask()
         artworkTask?.cancel(); artworkTask = nil; artworkURL = nil; artwork = nil
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        systemMedia.info.nowPlayingInfo = nil
+        updateRemoteTrackCommands()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         publish()
     }
-    private func fail(_ message: String) {
+    private func mediaErrorCode(_ error: NSError) -> String {
+        var cause = error
+        for _ in 0..<4 {
+            if cause.domain == NSURLErrorDomain { break }
+            guard let underlying = cause.userInfo[NSUnderlyingErrorKey] as? NSError else { break }
+            cause = underlying
+        }
+        let domains = [NSURLErrorDomain, NSOSStatusErrorDomain, NSPOSIXErrorDomain, AVFoundationErrorDomain, "CoreMediaErrorDomain"]
+        let domain = domains.contains(cause.domain) ? cause.domain : "other"
+        return "ios_media:\(domain):\(cause.code)"
+    }
+    private var diagnosticOwner: String?
+    private var diagnosticAccount: String?
+    private var diagnosticStarted = ProcessInfo.processInfo.systemUptime
+    private var diagnosticPlaying = false
+    private var diagnosticPrepared = false
+    private var diagnosticInitialError: String?
+
+    private func beginPlaybackDiagnostic(_ id: String?) {
+        state.diagnosticId = id ?? UUID().uuidString
+        diagnosticOwner = profile
+        diagnosticAccount = queueSession
+        diagnosticStarted = ProcessInfo.processInfo.systemUptime
+        diagnosticPlaying = false
+        diagnosticPrepared = false
+        diagnosticInitialError = nil
+    }
+
+    private func playbackDiagnostic(_ step: String, _ outcome: String, code: String? = nil) {
+        guard let operation = state.diagnosticId, let owner = diagnosticOwner, let session = diagnosticAccount,
+              let track = state.track else { return }
+        var event: [String: Any] = [
+            "operation": operation, "area": "playback", "step": step, "outcome": outcome,
+            "engine": "av-player", "bvid": track.source.bvid, "cid": track.source.cid,
+            "elapsedMs": Int(max(0, ProcessInfo.processInfo.systemUptime - diagnosticStarted) * 1000),
+        ]
+        if let code { event["code"] = code }
+        if let diagnosticInitialError { event["initialCode"] = diagnosticInitialError }
+        let payload: [String: Any] = ["kind": "diagnostic", "profile": owner, "accountSession": session, "event": event]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        json.withCString { resolveTrack(0, $0) }
+    }
+
+    private func fail(_ message: String, code: String? = nil) {
         nativeResolutionPending = false
         pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         accountListening(flush: true)
-        interruptionResume.cancel()
-        desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; endBackgroundTask(); publish()
+        cancelInterruptionResume()
+        playbackDiagnostic(nativeResolutionPending ? "source" : (diagnosticPlaying ? "control" : "start"), "failed", code: code)
+        if recoveryAttempted && !diagnosticPlaying { playbackDiagnostic("recovery", "failed", code: code) }
+        desiredPlaying = false; player.pause(); state.status = "error"; state.error = message; state.errorCode = code; endBackgroundTask(); publish()
     }
     private func accountListening(flush: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -802,6 +1007,15 @@ class PlayerPlugin: Plugin {
         publish()
     }
     private func publish() {
+        if player.currentItem?.status == .readyToPlay && !diagnosticPrepared {
+            diagnosticPrepared = true
+            playbackDiagnostic("media-ready", "succeeded")
+        }
+        if state.status == "playing" && !diagnosticPlaying {
+            diagnosticPlaying = true
+            playbackDiagnostic("start", "succeeded")
+            if recoveryAttempted { playbackDiagnostic("recovery", "succeeded") }
+        }
         publishSequence += 1
         state.sequence = publishSequence
         state.engineInstanceId = engineInstanceId
@@ -824,9 +1038,12 @@ class PlayerPlugin: Plugin {
         // The SDK may register through its inherited camelCase fallback. Those
         // channels belong to Plugin, not to this class's compatibility registry.
         try? trigger("state", data: state)
-        if notificationLyrics.line(for:state.id,at:state.position) != lastNowPlayingLyric || state.id != lastNowPlayingID || state.status != lastNowPlayingStatus || abs(state.position - lastNowPlayingPosition) > 5 || ProcessInfo.processInfo.systemUptime - lastNowPlayingAt > 5 {
+        if currentNotificationLyric() != lastNowPlayingLyric || state.id != lastNowPlayingID || state.status != lastNowPlayingStatus || abs(state.position - lastNowPlayingPosition) > 5 || ProcessInfo.processInfo.systemUptime - lastNowPlayingAt > 5 {
             nowPlaying()
         }
+    }
+    private func currentNotificationLyric() -> String? {
+        notificationLyrics.line(for: state.id, at: state.position, carAudio: carAudioRoute)
     }
     private func nowPlaying() {
         guard !nowPlayingScheduled else { return }
@@ -838,19 +1055,26 @@ class PlayerPlugin: Plugin {
         }
     }
     private func writeNowPlaying() {
+        updateRemoteTrackCommands()
         guard let id = state.id else { return }
         lastNowPlayingAt = ProcessInfo.processInfo.systemUptime
         lastNowPlayingPosition = state.position
         lastNowPlayingStatus = state.status
         lastNowPlayingID = id
-        lastNowPlayingLyric = notificationLyrics.line(for:id,at:state.position)
+        lastNowPlayingLyric = currentNotificationLyric()
         let text = notificationMediaText(title: state.track?.title ?? "BiliMusic", artist: state.track?.artist ?? "歌手未知", lyric: lastNowPlayingLyric)
         var info: [String: Any] = [MPMediaItemPropertyTitle: text.title, MPMediaItemPropertyArtist: text.artist, MPNowPlayingInfoPropertyExternalContentIdentifier: id,
-                                  MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position, MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? Double(playbackRate) : 0.0]
+                                  MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue, MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position,
+                                  MPNowPlayingInfoPropertyPlaybackRate: state.status == "playing" ? Double(playbackRate) : 0.0,
+                                  MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0]
+        if let index = tracks.firstIndex(where: { $0.id == id }) {
+            info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = index
+            info[MPNowPlayingInfoPropertyPlaybackQueueCount] = tracks.count
+        }
         if state.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = state.duration }
         if let album = state.track?.album { info[MPMediaItemPropertyAlbumTitle] = album }
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        systemMedia.info.nowPlayingInfo = info
     }
     private func prepareArtwork(for track: QueueTrack?) {
         let value = track?.coverUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -876,9 +1100,9 @@ class PlayerPlugin: Plugin {
         nowPlaying()
     }
     private func shuffleItems() -> [ShuffleItem] { tracks.map { ShuffleItem(id:$0.id,artist:$0.artist ?? "",bvid:$0.source.bvid) } }
-    private func advance(_ direction: Int, ended: Bool = false) {
+    private func advance(_ direction: Int, ended: Bool = false, restartCurrent: Bool = true) {
         if expireSleepIfNeeded() { return }
-        if direction < 0 && state.position > 4 { seek(0); return }
+        if restartCurrent && direction < 0 && state.position > 4 { seek(0); return }
         guard !tracks.isEmpty else { pause(); return }
         let index = tracks.firstIndex { $0.id == state.id } ?? -1
         if ended { didFinishTrack = true; savePosition(force: true, completed: true) }
@@ -890,43 +1114,60 @@ class PlayerPlugin: Plugin {
         else if ended { pause() }
     }
     private func resolve(_ track: QueueTrack, restart: Bool = false, refresh: Bool = false, position: Double? = nil) {
+        cancelInterruptionResume()
         if !refresh { recoveryResumePolicy = nil; playbackRecovery.prepare(policy: nil) }
         pendingUpgrade=nil;cancelSourceSwitch()
         cancelPlaybackWatchdog()
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
-        if !refresh { listeningSession = UUID().uuidString }
+        if !refresh { listeningSession = UUID().uuidString; beginPlaybackDiagnostic(nil) }
+        else {
+            diagnosticPlaying = false
+            diagnosticPrepared = false
+            playbackDiagnostic("recovery", "started")
+        }
         generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; state.revision = generation; desiredPlaying = true; itemStatus = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         state.id = track.id; state.track = track; state.position = 0; state.duration = track.durationSeconds
         prepareArtwork(for: track)
-        state.error = nil; state.status = "buffering"; state.stopped = true
+        state.error = nil; state.errorCode = nil; state.status = "buffering"; state.stopped = true
         endBackgroundTask()
         let request = generation
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic next track") { [weak self] in
             guard let self, self.generation == request, self.desiredPlaying else { return }
-            self.fail("后台加载超时，请返回应用继续播放")
+            self.fail("后台加载超时，请返回应用继续播放", code: "source_timeout")
         }
         nativeResolutionPending = true
         publish()
         let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
-        guard let data = try? JSONEncoder().encode(ResolveRequest(visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position)),
-              let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息"); return }
+        guard let data = try? JSONEncoder().encode(ResolveRequest(diagnosticId: state.diagnosticId, initialErrorCode: diagnosticInitialError, offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
+              let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息", code: "invalid_input"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
     fileprivate func resolved(_ request: Int64, _ data: Data) {
-        guard request == generation, desiredPlaying else { return }
+        guard request == generation else { return }
+        guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else {
+            if nativeResolutionPending && desiredPlaying { fail("无法解析播放地址", code: "invalid_source") }
+            return
+        }
+        if result.kind == "lyrics" {
+            if !nativeResolutionPending, result.accountSession == queueSession, let id = result.id, id == state.id, let timeline = result.timeline {
+                notificationLyrics.seedBackground(timeline, id: id, revision: result.subtitleRevision)
+                nowPlaying()
+            }
+            return
+        }
+        guard nativeResolutionPending, desiredPlaying else { return }
         nativeResolutionPending = false
-        guard let result = try? JSONDecoder().decode(ResolvedTrack.self, from: data) else { fail("无法解析播放地址"); return }
         if result.skip == true, let id=result.entryId {
             let index=tracks.firstIndex(where:{$0.id==id}) ?? 0
             tracks.removeAll(where:{$0.id==id}); expandedEntries[id]=nil
             if tracks.isEmpty || index >= tracks.count && repeatMode != "all" { pause(); endBackgroundTask() } else { resolve(tracks[index >= tracks.count ? 0 : index]) }
             return
         }
-        if let error = result.error { fail(error); return }
-        guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址"); return }
+        if let error = result.error { fail(error, code: result.errorCode ?? "source_unavailable"); return }
+        guard let raw = result.url, let url = localMediaURL(raw) else { fail("无法解析播放地址", code: "invalid_source"); return }
         if let id = result.entryId, let parts = result.parts, !parts.isEmpty,
            let index = tracks.firstIndex(where: { $0.id == id && $0.resolveParts == true }) {
             for part in parts {entryOrigins[part.id]=entryOrigins[id] ?? []}
@@ -936,16 +1177,18 @@ class PlayerPlugin: Plugin {
         }
         if let track = result.track {
             state.id = track.id; state.track = track; state.duration = track.durationSeconds
-            notificationLyrics.update(NativeLyricsRequest(action:"update",id:track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,subtitles:false))
+            notificationLyrics.seed(NativeLyricsRequest(action:"update",id:track.id,lines:result.lyrics?.lines ?? [],biasMs:result.lyrics?.biasMs ?? 0,subtitles:false))
             prepareArtwork(for: track)
         }
         let policy = result.automaticResume ?? recoveryResumePolicy
         recoveryResumePolicy = nil
         outputGain.plan(result.loudnessGainDb ?? 0)
-        do { try start(url, at: result.position ?? 0, upgrade:result.upgradeUrl.flatMap(localMediaURL), automaticResume:policy) } catch { fail(error.localizedDescription) }
+        do { try start(url, at: result.position ?? 0, upgrade:result.upgradeUrl.flatMap(localMediaURL), automaticResume:policy) }
+        catch { fail("无法启动音频，请重新播放", code: mediaErrorCode(error as NSError)) }
     }
     private func returnedToForeground() {
         mediaLifecycle(false)
+        endInterruptionTask()
         reconcileAudioInterruptionOnReturn()
         let absence = backgroundedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
         let wasPlaying = backgroundPlaybackWanted
@@ -999,20 +1242,80 @@ class PlayerPlugin: Plugin {
     private func interrupted(_ note: Notification) {
         guard let value = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, let type = AVAudioSession.InterruptionType(rawValue: value) else { return }
         if type == .began {
-            beginAudioInterruption()
+            playbackDiagnostic("audio-focus", "succeeded", code: "transient_loss")
+            // A suspension notification is delivered after the app wakes.
+            // A real interruption already saved its resume intent.
+            let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0
+            if reason == AVAudioSession.InterruptionReason.appWasSuspended.rawValue {
+                if desiredPlaying && player.timeControlStatus != .playing { beginAudioInterruption(); reconcileAudioInterruptionOnReturn() }
+                return
+            }
+            beginAudioInterruption(otherMedia: reason == AVAudioSession.InterruptionReason.default.rawValue)
         } else {
             let options = AVAudioSession.InterruptionOptions(rawValue: note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            playbackDiagnostic("audio-focus", "succeeded", code: options.contains(.shouldResume) ? "gain" : "action_denied")
             finishAudioInterruption(allowed: options.contains(.shouldResume))
         }
     }
-    private func beginAudioInterruption() {
+    private func beginAudioInterruption(otherMedia: Bool = false) {
         NSLog("BiliMusic audio interruption: began playing=%d", desiredPlaying)
+        interruptedByOtherMedia = otherMedia
         interruptionResume.begin(wasPlaying: desiredPlaying)
+        holdForInterruptionEnd()
         pause(interrupted: true)
+    }
+    private func holdForInterruptionEnd() {
+        guard UIApplication.shared.applicationState != .active,
+              !interruptionResume.mayParkMedia, interruptionTask == .invalid else { return }
+        // Keep the process available for short interruptions using the system's
+        // bounded task allowance. The resume intent survives task expiration.
+        interruptionTask = UIApplication.shared.beginBackgroundTask(withName: "BiliMusic audio interruption") { [weak self] in
+            self?.endInterruptionTask()
+        }
+        guard interruptionTask != .invalid, interruptedByOtherMedia else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + .milliseconds(650), repeating: .milliseconds(650), leeway: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.interruptedByOtherMedia, !self.expireSleepIfNeeded() else { return }
+            let session = AVAudioSession.sharedInstance()
+            let otherAudio = session.isOtherAudioPlaying || session.secondaryAudioShouldBeSilencedHint
+            self.sampleCompetingAudio(isPlaying: otherAudio)
+        }
+        interruptionTimer = timer
+        timer.resume()
+    }
+    private func sampleCompetingAudio(isPlaying: Bool) {
+        if interruptionResume.competingAudioEnded(isPlaying: isPlaying) { reactivateInterruptedAudio() }
+    }
+    private func endInterruptionTask() {
+        interruptionTimer?.cancel()
+        interruptionTimer = nil
+        if interruptionTask != .invalid {
+            UIApplication.shared.endBackgroundTask(interruptionTask)
+            interruptionTask = .invalid
+        }
+    }
+    private func cancelInterruptionResume() {
+        interruptionResume.cancel()
+        endInterruptionTask()
     }
     private func finishAudioInterruption(allowed: Bool) {
         NSLog("BiliMusic audio interruption: ended resumeAllowed=%d", allowed)
-        if interruptionResume.finish(allowed: allowed) { resume() }
+        if allowed && !interruptionResume.mayParkMedia { reactivateInterruptedAudio() }
+        else {
+            cancelInterruptionResume()
+            parkMediaIfIdle()
+        }
+    }
+    private func reactivateInterruptedAudio() {
+        guard !interruptionResume.mayParkMedia, state.id != nil, !expireSleepIfNeeded() else { return }
+        do {
+            try activate()
+            if interruptionResume.finish(allowed: true) { resume(audioSessionActive: true) }
+        } catch {
+            // Keep the pending intent if the competing session still owns audio.
+            NSLog("BiliMusic audio interruption: activation deferred code=%ld", (error as NSError).code)
+        }
     }
     private func observeAudioInterruptions(_ center: NotificationCenter) {
         // Older Xcode SDKs retain the legacy path; runtime deployment stays iOS 15+.
@@ -1021,7 +1324,7 @@ class PlayerPlugin: Plugin {
             notifications.append(center.addObserver(forName: AVAudioSession.didBecomeInactiveNotification, object: nil, queue: .main) { [weak self] note in
                 guard let context = note.userInfo?[AVAudioSession.deactivationContextKey] as? AVAudioSession.DeactivationContext,
                       context.source == .system else { return }
-                self?.beginAudioInterruption()
+                self?.beginAudioInterruption(otherMedia: context.interruptionContext?.reason == .default)
             })
             notifications.append(center.addObserver(forName: AVAudioSession.resumptionRecommendationNotification, object: nil, queue: .main) { [weak self] note in
                 guard let context = note.userInfo?[AVAudioSession.resumptionContextKey] as? AVAudioSession.ResumptionContext else { return }
@@ -1033,8 +1336,9 @@ class PlayerPlugin: Plugin {
         notifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in self?.interrupted(note) })
     }
     private func bindRemoteCommands() {
-        UIApplication.shared.beginReceivingRemoteControlEvents()
-        let center = MPRemoteCommandCenter.shared()
+        guard remoteTargets.isEmpty else { return }
+        if #unavailable(iOS 16.0) { UIApplication.shared.beginReceivingRemoteControlEvents() }
+        let center = systemMedia.commands
         func bind(_ command: MPRemoteCommand, _ work: @escaping () -> Void) {
             command.isEnabled = true
             remoteTargets.append((command, command.addTarget { _ in DispatchQueue.main.async(execute: work); return .success }))
@@ -1042,13 +1346,30 @@ class PlayerPlugin: Plugin {
         bind(center.playCommand) { [weak self] in self?.resume() }
         bind(center.pauseCommand) { [weak self] in self?.pause() }
         bind(center.togglePlayPauseCommand) { [weak self] in guard let self = self else { return }; if self.desiredPlaying { self.pause() } else { self.resume() } }
-        bind(center.nextTrackCommand) { [weak self] in self?.advance(1) }
-        bind(center.previousTrackCommand) { [weak self] in self?.advance(-1) }
+        bind(center.nextTrackCommand) { [weak self] in self?.skipTrackFromSystem(1) }
+        bind(center.previousTrackCommand) { [weak self] in self?.skipTrackFromSystem(-1) }
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
         center.changePlaybackPositionCommand.isEnabled = true
         remoteTargets.append((center.changePlaybackPositionCommand, center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             DispatchQueue.main.async { self?.seek(event.positionTime) }; return .success
         }))
+        updateRemoteTrackCommands()
+    }
+    private var canSkipTrackFromSystem: Bool {
+        guard let id = state.id else { return false }
+        return tracks.count > 1 || (tracks.count == 1 && tracks[0].id != id)
+    }
+    private func skipTrackFromSystem(_ direction: Int) {
+        guard canSkipTrackFromSystem else { return }
+        advance(direction, restartCurrent: false)
+    }
+    private func updateRemoteTrackCommands() {
+        let enabled = canSkipTrackFromSystem
+        let center = systemMedia.commands
+        if center.nextTrackCommand.isEnabled != enabled { center.nextTrackCommand.isEnabled = enabled }
+        if center.previousTrackCommand.isEnabled != enabled { center.previousTrackCommand.isEnabled = enabled }
     }
 }
 @_cdecl("init_plugin_ios_player")

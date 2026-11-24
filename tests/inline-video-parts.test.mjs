@@ -6,7 +6,7 @@ import {renderToStaticMarkup} from 'react-dom/server'
 import {build} from 'esbuild'
 const {QueryClient,QueryClientProvider}=createRequire(import.meta.url)('@tanstack/react-query')
 const output=await build({stdin:{contents:`export {VideoPartsList} from './src/features/library/VideoPartsList';export {accountQueryKey} from './src/services/queryKeys';export {useContentVisibility} from './src/services/contentVisibility'`,resolveDir:process.cwd()},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime','@tanstack/react-query'],plugins:[{name:'list-boundaries',setup(b){
- const modules={visibility:`export const useVisibilityRules=()=>globalThis.inlineVisibilityRules||[];export const saveVisibility=async()=>{};export const useContentVisibility={setState:({rules})=>globalThis.inlineVisibilityRules=rules}`,playerStore:`export const usePlayerStore=selector=>selector({});usePlayerStore.getState=()=>({playFromList(){}})`,useLocateCurrentRow:'export function useLocateCurrentRow(){}',useVisibleVideoPages:'export const useVisibleVideoPages=()=>({ref:{current:null},pages:[]})',TrackMenuButton:'export const TrackMenuButton=()=>null',useTrackSelection:'export const useTrackSelection=()=>({selecting:globalThis.inlinePartsSelecting,ids:new Set(),enter(){},toggle(){}});export const BatchTrackActions=()=>null',platform:'export const isMobile=false'}
+ const modules={visibility:`export const useVisibilityRules=()=>globalThis.inlineVisibilityRules||[];export const saveVisibility=async()=>{};export const ensureVisibility=async()=>{};export const useContentVisibility={setState:({rules})=>globalThis.inlineVisibilityRules=rules}`,playerStore:`export const usePlayerStore=selector=>selector({});usePlayerStore.getState=()=>({playFromList(){}})`,useLocateCurrentRow:'export function useLocateCurrentRow(){}',useVisibleVideoPages:'export const useVisibleVideoPages=()=>({ref:{current:null},pages:[]})',TrackMenuButton:'export const TrackMenuButton=()=>null',useTrackSelection:'export const useTrackSelection=()=>({selecting:globalThis.inlinePartsSelecting,ids:new Set(),enter(){},toggle(){}});export const BatchTrackActions=()=>null',platform:'export const isMobile=false;export const isOHOS=false'}
  b.onResolve({filter:/\/(playerStore|useLocateCurrentRow|useVisibleVideoPages|TrackMenuButton|useTrackSelection|platform)$/},args=>({path:args.path.split('/').at(-1),namespace:'fixture'}))
  b.onResolve({filter:/services\/contentVisibility$/},()=>({path:'visibility',namespace:'fixture'}))
  b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:modules[args.path],loader:'js'}))
@@ -22,6 +22,22 @@ function render(props={}){
  client.setQueryData(accountQueryKey('collections'),{folders:[],items:props.saved||[]})
  return renderToStaticMarkup(createElement(QueryClientProvider,{client},createElement(VideoPartsList,{tracks,videoCollection:true,renderDetails:track=>createElement('aside',{'data-detail-for':track.source.bvid},`DETAIL_${track.source.bvid}`),...props})))
 }
+test('standalone video collections use the shared result row without inline parts indentation',()=>{
+ const row={...tracks[0],title:'FIRST_PART',videoTitle:'VIDEO_A',coverUrl:'/app-icon.png',publishedAt:1800000000,playCount:11110}
+ const html=render({tracks:[row]})
+ assert.match(html,/class="video-parts-list video-collection-list video-result-layout"/)
+ assert.match(html,/class="video-result-list"/)
+ assert.match(html,/class="video-result-play"[^>]*aria-label="播放 VIDEO_A"/)
+ assert.match(html,/class="video-result-duration">1:00/)
+ assert.match(html,/aria-label="1\.1万 次播放"/)
+ assert.match(html,/class="published-date"/)
+ assert.doesNotMatch(html,/class="(?:[^"]* )?parts-list(?: |")/)
+ assert.doesNotMatch(html,/FIRST_PART/)
+ assert.match(render({tracks:[row],selecting:true}),/aria-label="选择 VIDEO_A"/)
+ const parts=render({tracks:[row],videoCollection:false})
+ assert.match(parts,/class="video-parts-list parts-list"/)
+ assert.match(parts,/class="video-part-play"[^>]*aria-label="播放 FIRST_PART"/)
+})
 test('expanded parts render immediately after their own video, before the next result',()=>{
  const html=render()
  for(const [id,next] of [['A','B'],['B','C']]){

@@ -6,7 +6,7 @@ const compiled = await build({stdin:{contents:`export * from './src/domain/sourc
   b.onResolve({filter:/player\/playerStore$/},()=>({path:'store',namespace:'fixture'}))
   b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'fixture'}))
   b.onResolve({filter:/\/accountScope$/},()=>({path:'account',namespace:'fixture'}))
-  b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path==='ipc'?`export const isTauri=()=>true;export const invoke=(command,...args)=>command==='playlist_import_contexts'?Promise.resolve(globalThis.f.contexts||[]):globalThis.f.invoke(command,...args);`:path==='account'?`export const accountEpoch=()=>globalThis.f.epoch;`:`export const playbackIntent=()=>globalThis.f.intent;export const usePlayerStore={getState:()=>globalThis.f.state,setState:p=>Object.assign(globalThis.f.state,typeof p==='function'?p(globalThis.f.state):p)};`}))
+  b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path==='ipc'?`export const isTauri=()=>true;export const invoke=(command,...args)=>command==='playlist_import_contexts'?Promise.resolve(globalThis.f.contexts||[]):globalThis.f.invoke(command,...args);export class Channel {}`:path==='account'?`export const accountEpoch=()=>globalThis.f.epoch;`:`export const playbackIntent=()=>globalThis.f.intent;export const usePlayerStore={getState:()=>globalThis.f.state,setState:p=>Object.assign(globalThis.f.state,typeof p==='function'?p(globalThis.f.state):p)};`}))
 }}]})
 const m={exports:{}};new Function('require','module','exports',compiled.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports);const a=m.exports
 const id='bilibili:BV1GJ411x7h7:1', context={videoTitle:'毛不易《呓语》录屏',partTitle:'P1',partCount:1}

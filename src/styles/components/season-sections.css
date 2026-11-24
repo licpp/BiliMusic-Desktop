@@ -1,8 +1,10 @@
-.season-sections { display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;overflow-x:auto;padding:5px 3px 10px;margin:0 0 8px;scrollbar-width:thin;overscroll-behavior-x:contain; }
-.season-sections > button { flex:0 0 auto;max-width:min(75vw,320px);min-height:36px;padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer; }
+.season-sections { display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;overflow-x:auto;padding:5px 4px 10px;margin:0 0 8px;scrollbar-width:none;overscroll-behavior-x:contain;scroll-behavior:smooth; }
+.season-sections::-webkit-scrollbar { display:none; }
+.season-sections > button { flex:0 0 auto;max-width:min(75vw,320px);min-height:36px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:background 150ms ease,color 150ms ease,border-color 150ms ease,transform 130ms ease; }
 .season-sections > button:hover { background:var(--panel-raised);color:var(--ink); }
-.season-sections > button[aria-pressed="true"] { color:var(--cyan);border-color:transparent;background:color-mix(in srgb,var(--cyan) 12%,transparent); }
+.season-sections > button:active { transform:scale(.97); }
+.season-sections > button[aria-pressed="true"] { color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 32%,transparent);background:color-mix(in srgb,var(--cyan) 12%,transparent); }
 .season-sections > button:focus-visible { outline:2px solid var(--cyan);outline-offset:2px; }
-:root[data-layout="mobile"] .season-sections > button { min-height:40px;padding-inline:13px; }
+:root[data-layout="mobile"] .season-sections > button { min-height:40px;padding-inline:14px; }
 :root[data-layout="large"] .season-sections { gap:12px;margin-bottom:16px;padding:6px 6px 12px; }
 :root[data-layout="large"] .season-sections > button { min-height:48px;max-width:440px;padding:10px 22px;font-size:18px;border-radius:12px; }

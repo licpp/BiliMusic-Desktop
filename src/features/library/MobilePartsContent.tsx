@@ -6,6 +6,7 @@ import type { BiliVideoParts } from '../../domain/bilibili'
 import { Artwork } from '../../shared/Artwork'
 import { MobilePage } from '../../shared/MobilePage'
 import { PublishedDate } from '../../shared/PublishedDate'
+import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
 import { CollectionBookmark } from '../collections/CollectionBookmark'
 import type { QueueSource } from '../player/playerStore'
 import { VideoPartsList } from './VideoPartsList'
@@ -16,7 +17,7 @@ export function MobilePartsContent({ detail, onBack, locateCurrent = true, playb
   const needle = query.trim().toLocaleLowerCase()
   const visible = needle ? tracks.filter(track => track.title.toLocaleLowerCase().includes(needle)) : tracks
   return <MobilePage title={tracks.length > 1 ? '分 P 列表' : '视频详情'} onBack={onBack} className="mobile-parts-page">
-    <div className="mobile-parts-summary"><Artwork src={detail.coverUrl}/><div><h3>{detail.title}</h3><p>{detail.uploaderName}{tracks.length > 1 ? ` · ${tracks.length} 个分 P` : ''}</p><PublishedDate value={detail.publishedAt}/></div><CollectionBookmark item={detail}/></div>
+    <div className="mobile-parts-summary"><Artwork src={detail.coverUrl}/><div><h3>{detail.title}</h3><p>{detail.uploaderName}{tracks.length > 1 ? ` · ${tracks.length} 个分 P` : ''}</p><PublishedDate value={detail.publishedAt}/><VideoAccessBadge access={detail.access}/></div><CollectionBookmark item={detail}/></div>
     {showSeasonLink && detail.season&&<button className="mobile-row-action" onClick={()=>onOpenSeason?.()}><span>所属合集 · {detail.season.title}</span><span>›</span></button>}
     <label className="mobile-page-search"><Search size={18}/><input type="search" aria-label="搜索分 P" placeholder="搜索分 P" value={query} onChange={event => setQuery(event.target.value)}/></label>
     <VideoPartsList locateCurrent={locateCurrent} tracks={tracks} visibleTracks={visible} playbackTracks={playbackTracks} queueSource={queueSource ?? { kind: 'video', title: detail.title, collectionRef: detail.bvid }}/>
