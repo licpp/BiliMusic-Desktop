@@ -559,15 +559,37 @@ export function App() {
   }, [lyricsOpen, importOpen, searchFocused, libraryDetail, selectedCollection, submittedQuery, activeNav, miniMode])
 
   const browseInert = lyricsPresent
+  const wideTabletDock = tabletPlayer && !compactPlayer
   const renderLyrics = () => (
       <LyricsView open={lyricsOpen} chapters={chapters} fullscreenRequested={fullscreenLayout !== null} setVideoFullscreen={setVideoFullscreen} motionSurface={compactPlayer ? mobilePlayer.ref : undefined} onSwipeRelease={compactPlayer ? mobilePlayer.releaseDismiss : undefined} inert={queueSheet && queueOpen} onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />
   )
+  const renderDockTrack = (showCollapse: boolean, inactive = false) => (
+    <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} data-dock-track={showCollapse ? 'lyrics' : 'browse'}
+      inert={inactive} onAnimationEnd={event => { if (event.target === event.currentTarget) setDockSwipePhase('idle') }}
+      onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}>
+      <button className="dock-track" onClick={event => {
+        if (event.detail && suppressDockClick.current) { suppressDockClick.current = false; return }
+        if (lyricsOpen) setLyricsOpen(false)
+        else showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)
+      }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? '收起歌词' : '打开歌词'}>
+        {!(wideTabletDock && showCollapse) && <><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></>}
+        <span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>收起歌词</span></span>
+      </button>
+      <button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending}
+        aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)}
+        onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button>
+    </div>
+  )
   const renderDock = (expanded = false, immersiveDesktop = false) => {
     const detailDock = expanded || immersiveDesktop || (isMobile && !compactPlayer && lyricsOpen)
+    const browseDock = !expanded && !immersiveDesktop
     const phoneChapters = detailDock && isMobile && !tabletPlayer && chapters.items.length > 0
     return (
     <footer className="player-dock" data-mini-dock={compactPlayer && !expanded || undefined}
       data-tablet-lyrics-dock={expanded && tabletPlayer || undefined}
+      data-dock-crossfade={browseDock && (!isMobile || tabletPlayer) || undefined}
+      data-dock-lyrics-open={browseDock && lyricsOpen || undefined}
+      data-wide-tablet-dock={browseDock && wideTabletDock || undefined}
       inert={queueSheet && queueOpen || (expanded || immersiveDesktop ? !lyricsOpen : (compactPlayer || !isMobile) && browseInert)}
       {...(!expanded ? {
         onPointerDown: startDockSwipe, onPointerMove: moveDockSwipe,
@@ -575,7 +597,8 @@ export function App() {
         onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, false),
         onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => settleDockSwipe(event, false),
       } : {})}>
-        {!expanded && <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} onAnimationEnd={event => { if (event.target === event.currentTarget) setDockSwipePhase('idle') }} onContextMenu={(event) => { if (current) showTrackMenu(event, current) }}><button className="dock-track" onClick={event => { if (event.detail && suppressDockClick.current) { suppressDockClick.current = false; return } if (lyricsOpen) { setLyricsOpen(false); return } showLyrics(event.currentTarget, !compactPlayer || event.detail === 0) }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? '收起歌词' : '打开歌词'}><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span><span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>收起歌词</span></span></button><button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending} aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)} onClick={() => void toggleCurrentFavorite()}><Heart size={19} fill={current?.liked ? 'currentColor' : 'none'} /></button></div>}
+        {!expanded && renderDockTrack(immersiveDesktop, wideTabletDock && lyricsOpen)}
+        {browseDock && wideTabletDock && renderDockTrack(true, !lyricsOpen)}
         <div className="dock-center">
           {queueFeedback && (!compactPlayer || expanded === lyricsOpen) && <div className="queue-switch-notice" key={queueFeedback.serial} role="status">
             <ListMusic size={15}/><span>{queueFeedback.title ? `已切换到 ${queueFeedback.title}` : '已切换播放队列'}</span>
@@ -584,7 +607,7 @@ export function App() {
           <PlayerProgress chapters={detailDock ? chapters.items : undefined}
             endControl={phoneChapters ? <ChapterTrigger model={chapters} variant="time"/> : undefined}/>
         </div>
-        {!expanded && <div className="dock-tools">{(isMobile || immersiveDesktop) && <div id="lyrics-dock-actions" className="lyrics-dock-actions"/>}<Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>}
+        {!expanded && <div className="dock-tools">{(isMobile || immersiveDesktop) && <div id="lyrics-dock-actions" className="lyrics-dock-actions" inert={wideTabletDock && !lyricsOpen}/>}<Volume2 size={18} /><RangeControl aria-label="音量" min="0" max="1" step="0.01" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>}
         {expanded && tabletPlayer && <div id="lyrics-tablet-dock-actions" className="lyrics-dock-actions"/>}
       </footer>
     )

@@ -128,6 +128,14 @@ test('Android tablet browsing keeps its top inset during the lyrics fade',()=>{
  assert.ok(css.includes(`${shell} > .library-panel { padding-top: 22px; }`))
 })
 
+test('tablet dock shares one track slot and keeps its action fade target rendered',()=>{
+ const css=readFileSync(new URL('../src/styles/interaction-motion.css',import.meta.url),'utf8')
+ assert.match(css,/\[data-wide-tablet-dock\] > \.dock-track-group\s*\{\s*grid-area:1\/1/)
+ assert.match(css,/\[data-wide-tablet-dock\] \.lyrics-dock-actions:empty\s*\{\s*display:flex/)
+ assert.match(css,/\.player-dock\[data-dock-crossfade\]::before\s*\{[^}]*border-top:1px solid var\(--dock-divider\)/)
+ assert.match(css,/\[data-wide-tablet-dock\] \.lyrics-dock-actions\s*\{\s*transition:opacity/)
+})
+
 test('mobile chapter sheets use the resting comments height and respect the safe area',()=>{
  const chapters=readFileSync(new URL('../src/features/chapters/chapters.css',import.meta.url),'utf8')
  const comments=readFileSync(new URL('../src/styles/components/comments.css',import.meta.url),'utf8')

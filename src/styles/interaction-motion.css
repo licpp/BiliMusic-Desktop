@@ -25,9 +25,47 @@
 }
 .desktop-lyrics-surface[data-panel-open] { opacity:1;pointer-events:auto; }
 .desktop-lyrics-surface > .lyrics-view { opacity:1;transform:none;transition:none; }
+.player-dock[data-dock-crossfade] {
+  background:transparent;
+  border-top-color:transparent;
+  box-shadow:none;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.player-dock[data-dock-crossfade]::before {
+  content:'';
+  position:absolute;
+  inset:-1px 0 0;
+  z-index:-1;
+  pointer-events:none;
+  background:var(--dock-fill);
+  border-top:1px solid var(--dock-divider);
+  box-shadow:var(--dock-shadow);
+  -webkit-backdrop-filter:blur(18px);
+  backdrop-filter:blur(18px);
+}
+.player-dock[data-dock-crossfade][data-dock-lyrics-open]::before,
+.player-dock[data-mini-dock][data-dock-crossfade][data-dock-lyrics-open] [data-dock-track="browse"],
+[data-wide-tablet-dock]:not([data-dock-lyrics-open]) :is([data-dock-track="lyrics"],.lyrics-dock-actions) {
+  opacity:0;
+  pointer-events:none;
+}
+@media (min-width:961px) {
+  .player-dock[data-dock-crossfade][data-dock-lyrics-open] [data-dock-track="browse"] { opacity:0;pointer-events:none; }
+}
+[data-wide-tablet-dock] > .dock-track-group { grid-area:1/1; }
+/* Keep the portal's fade target rendered even before its buttons are mounted. */
+[data-wide-tablet-dock] .lyrics-dock-actions:empty { display:flex; }
 @media (prefers-reduced-motion:no-preference) {
   .desktop-lyrics-surface { will-change:opacity;transition:opacity 190ms ease-out; }
   .desktop-lyrics-surface[data-panel-open] { transition-duration:210ms; }
+  .player-dock[data-dock-crossfade]::before,
+  [data-wide-tablet-dock] .lyrics-dock-actions {
+    transition:opacity 200ms ease-out;
+  }
+  .player-dock[data-dock-crossfade] .dock-track-group.dock-swipe-idle {
+    transition:transform 190ms cubic-bezier(.2,.8,.2,1),opacity 200ms ease-out;
+  }
 }
 .collection-dialog-layer[data-closing] {
   opacity: 0;

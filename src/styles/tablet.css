@@ -453,7 +453,7 @@
     border-top: 1px solid transparent;
     backdrop-filter: none;
   }
-  :root[data-layout="mobile"] .app-shell.lyrics-immersive > .player-dock :is(.dock-track, .dock-heart) {
+  :root[data-layout="mobile"] [data-wide-tablet-dock] [data-dock-track="lyrics"] :is(.dock-track, .dock-heart) {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
