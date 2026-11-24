@@ -607,28 +607,37 @@ mod tests {
         let second = "season:42:74";
         let song = "bilibili:BV1tZuKzgENQ:7";
         assert!(!save_progress(&c, first, song, 12.0, 100).unwrap());
-        c.execute("INSERT INTO collections(bvid) VALUES('up:42')", []).unwrap();
+        c.execute("INSERT INTO collections(bvid) VALUES('up:42')", [])
+            .unwrap();
         assert!(save_progress(&c, first, song, 12.0, 100).unwrap());
         assert!(save_progress(&c, second, song, 25.0, 200).unwrap());
         assert!(save_progress(&c, "up:42", song, 55.0, 300).unwrap());
         assert_eq!(progress(&c, "up:42").unwrap().unwrap().collection_ref, None);
 
-        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [first]).unwrap();
+        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [first])
+            .unwrap();
         assert!(save_progress(&c, first, song, 65.0, 400).unwrap());
         assert!(!save_progress(&c, first, song, 18.0, 390).unwrap());
         assert_eq!(
-            progress(&c, "up:42").unwrap().unwrap().collection_ref.as_deref(),
+            progress(&c, "up:42")
+                .unwrap()
+                .unwrap()
+                .collection_ref
+                .as_deref(),
             Some(first)
         );
         assert_eq!(progress(&c, first).unwrap().unwrap().position_ms, 65_000);
         assert_eq!(progress(&c, second).unwrap().unwrap().position_ms, 25_000);
         assert!(progress(&c, "season:42:75").unwrap().is_none());
 
-        c.execute("DELETE FROM collections WHERE bvid=?1", [first]).unwrap();
+        c.execute("DELETE FROM collections WHERE bvid=?1", [first])
+            .unwrap();
         assert_eq!(prune_progress(&c).unwrap(), 0);
         assert_eq!(progress(&c, first).unwrap().unwrap().position_ms, 65_000);
-        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [second]).unwrap();
-        c.execute("DELETE FROM collections WHERE bvid='up:42'", []).unwrap();
+        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [second])
+            .unwrap();
+        c.execute("DELETE FROM collections WHERE bvid='up:42'", [])
+            .unwrap();
         assert_eq!(prune_progress(&c).unwrap(), 2);
         assert!(progress(&c, first).unwrap().is_none());
         assert_eq!(progress(&c, second).unwrap().unwrap().position_ms, 25_000);

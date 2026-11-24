@@ -1,5 +1,5 @@
-mod source_titles;
 pub mod chapters;
+mod source_titles;
 pub mod visibility;
 pub(crate) use source_titles::save as cache_source_titles;
 pub mod actor;
@@ -14,10 +14,10 @@ pub mod migration;
 pub mod model;
 pub mod outbox;
 mod projection;
-pub(crate) mod repair;
 pub mod protocol_v2;
 pub mod publication;
 mod recovery;
+pub(crate) mod repair;
 pub(crate) mod request_budget;
 mod scheduler;
 #[cfg(test)]
@@ -130,7 +130,9 @@ pub struct Outcome {
 }
 impl Outcome {
     fn has_extension_error(&self) -> bool {
-        self.import_error.is_some() || self.visibility_error.is_some() || self.chapters_error.is_some()
+        self.import_error.is_some()
+            || self.visibility_error.is_some()
+            || self.chapters_error.is_some()
     }
 }
 fn config(db: &Database) -> Result<Config, String> {
@@ -253,7 +255,9 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
         track_repair,
         last_success: last,
         records: snapshot.as_ref().map_or(0, |s| s.records.len()),
-        bytes: snapshot.as_ref().map_or(0, |s| serde_json::to_vec(s).unwrap().len()),
+        bytes: snapshot
+            .as_ref()
+            .map_or(0, |s| serde_json::to_vec(s).unwrap().len()),
     })
 }
 
@@ -467,7 +471,8 @@ pub async fn sync_now(
 ) -> Result<Outcome, String> {
     let auto = automatic.unwrap_or(false);
     background::run(
-        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>().map(|state| state.inner().clone()),
+        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>()
+            .map(|state| state.inner().clone()),
         &database,
         &state,
         scheduler::Domain::Library,

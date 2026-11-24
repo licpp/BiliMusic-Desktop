@@ -11,8 +11,8 @@ use audio::*;
 mod extras;
 #[path = "bilibili_requests.rs"]
 mod requests;
-pub(crate) use requests::{Priority as RequestPriority, initialize as initialize_requests};
 pub use extras::*;
+pub(crate) use requests::{Priority as RequestPriority, initialize as initialize_requests};
 use reqwest::{
     Client, Url,
     cookie::{CookieStore, Jar},
@@ -803,7 +803,8 @@ impl BilibiliProvider {
     }
 
     pub async fn favorite_folders(&self) -> Result<Vec<FavoriteFolder>, ProviderError> {
-        self.check_favorite_requests(RequestPriority::Foreground).await?;
+        self.check_favorite_requests(RequestPriority::Foreground)
+            .await?;
         let profile = self.account_profile().await?;
         let uid = profile.user_id.ok_or(ProviderError::NotAuthenticated)?;
         self.favorite_folders_for(uid).await
@@ -813,11 +814,14 @@ impl BilibiliProvider {
         &self,
         uid: i64,
     ) -> Result<Vec<FavoriteFolder>, ProviderError> {
-        self.favorite_folders_for_with_priority(uid, RequestPriority::Foreground).await
+        self.favorite_folders_for_with_priority(uid, RequestPriority::Foreground)
+            .await
     }
 
     pub async fn favorite_folders_for_with_priority(
-        &self, uid: i64, priority: RequestPriority,
+        &self,
+        uid: i64,
+        priority: RequestPriority,
     ) -> Result<Vec<FavoriteFolder>, ProviderError> {
         let mut url = self.api_url("/x/v3/fav/folder/created/list-all");
         url.query_pairs_mut()
@@ -830,7 +834,8 @@ impl BilibiliProvider {
         &self,
         page: u32,
     ) -> Result<SubscribedSeasonPage, ProviderError> {
-        self.check_favorite_requests(RequestPriority::Foreground).await?;
+        self.check_favorite_requests(RequestPriority::Foreground)
+            .await?;
         let uid = self
             .account_profile()
             .await?
@@ -843,7 +848,8 @@ impl BilibiliProvider {
             .append_pair("pn", &page.to_string())
             .append_pair("ps", "20")
             .append_pair("platform", "web");
-        let data: CollectedFoldersData = self.favorite_data(url, RequestPriority::Foreground).await?;
+        let data: CollectedFoldersData =
+            self.favorite_data(url, RequestPriority::Foreground).await?;
         Ok(data.into_season_page(page))
     }
 
@@ -852,11 +858,15 @@ impl BilibiliProvider {
         folder_id: i64,
         page: u32,
     ) -> Result<FavoritePage, ProviderError> {
-        self.favorite_videos_with_priority(folder_id, page, RequestPriority::Foreground).await
+        self.favorite_videos_with_priority(folder_id, page, RequestPriority::Foreground)
+            .await
     }
 
     pub async fn favorite_videos_with_priority(
-        &self, folder_id: i64, page: u32, priority: RequestPriority,
+        &self,
+        folder_id: i64,
+        page: u32,
+        priority: RequestPriority,
     ) -> Result<FavoritePage, ProviderError> {
         let mut url = self.api_url("/x/v3/fav/resource/list");
         url.query_pairs_mut()
@@ -868,9 +878,16 @@ impl BilibiliProvider {
         self.favorite_data(url, priority).await
     }
 
-    pub async fn check_favorite_requests(&self, priority: RequestPriority) -> Result<(), ProviderError> {
+    pub async fn check_favorite_requests(
+        &self,
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
         let (_, session) = self.request_session().await;
-        self.requests.check_read(requests::Stage::Favorites, session_uid(session.as_deref()), priority)
+        self.requests.check_read(
+            requests::Stage::Favorites,
+            session_uid(session.as_deref()),
+            priority,
+        )
     }
 
     pub async fn change_favorite_video(
@@ -1040,8 +1057,15 @@ impl BilibiliProvider {
             return Ok(vec![]);
         }
         let (epoch, session) = self.request_session().await;
-        let lease = self.requests.acquire(requests::Stage::Search,
-            session_uid(session.as_deref()), RequestPriority::Background, true).await?;
+        let lease = self
+            .requests
+            .acquire(
+                requests::Stage::Search,
+                session_uid(session.as_deref()),
+                RequestPriority::Background,
+                true,
+            )
+            .await?;
         self.check_request_epoch(epoch)?;
         let response = self
             .client
@@ -1058,11 +1082,20 @@ impl BilibiliProvider {
             .header(reqwest::header::REFERER, "https://search.bilibili.com/")
             .timeout(std::time::Duration::from_secs(3))
             .send()
-            .await.map_err(safe_network_error)?;
+            .await
+            .map_err(safe_network_error)?;
         let (status, headers, value) = response_json(response, &lease, false).await?;
-        let code = value["code"].as_i64().ok_or(ProviderError::UnexpectedResponse)?;
-        inspect_code(&lease, status, &headers, code, value.get("data"),
-            value["message"].as_str().unwrap_or_default().into())?;
+        let code = value["code"]
+            .as_i64()
+            .ok_or(ProviderError::UnexpectedResponse)?;
+        inspect_code(
+            &lease,
+            status,
+            &headers,
+            code,
+            value.get("data"),
+            value["message"].as_str().unwrap_or_default().into(),
+        )?;
         self.check_request_epoch(epoch)?;
         Ok(suggestion_words(&value))
     }
@@ -1174,7 +1207,8 @@ impl BilibiliProvider {
         }
         lease.validate()?;
         // Complete the ordinary website cookie handshake before the search API call.
-        let response = self.authenticated_get_with(&self.client, web_url, session)
+        let response = self
+            .authenticated_get_with(&self.client, web_url, session)
             .header(ACCEPT, "text/html")
             .send()
             .await
@@ -1188,20 +1222,35 @@ impl BilibiliProvider {
     }
 
     async fn search_response(&self, url: Url, web_url: Url) -> Result<SearchData, ProviderError> {
-        self.get_data_for(url, requests::Stage::Search, RequestPriority::Foreground, Some(web_url)).await
+        self.get_data_for(
+            url,
+            requests::Stage::Search,
+            RequestPriority::Foreground,
+            Some(web_url),
+        )
+        .await
     }
 
     async fn video_detail(&self, bvid: &str) -> Result<DetailData, ProviderError> {
-        self.video_detail_with_priority(bvid, RequestPriority::Foreground).await
+        self.video_detail_with_priority(bvid, RequestPriority::Foreground)
+            .await
     }
 
-    async fn video_detail_with_priority(&self, bvid: &str, priority: RequestPriority) -> Result<DetailData, ProviderError> {
+    async fn video_detail_with_priority(
+        &self,
+        bvid: &str,
+        priority: RequestPriority,
+    ) -> Result<DetailData, ProviderError> {
         let mut url = self.api_url("/x/web-interface/view");
         url.query_pairs_mut().append_pair("bvid", bvid);
         self.get_data_with_priority(url, priority).await
     }
 
-    async fn charge_info_with_priority(&self, detail: &DetailData, priority: RequestPriority) -> Option<ChargeInfo> {
+    async fn charge_info_with_priority(
+        &self,
+        detail: &DetailData,
+        priority: RequestPriority,
+    ) -> Option<ChargeInfo> {
         if !detail.access.is_upower_exclusive {
             return None;
         }
@@ -1209,39 +1258,60 @@ impl BilibiliProvider {
         url.query_pairs_mut()
             .append_pair("aid", &detail.aid.to_string())
             .append_pair("mid", &detail.owner.mid.to_string());
-        tokio::time::timeout(Duration::from_secs(2), self.get_data_with_priority(url, priority))
-            .await
-            .ok()?
-            .ok()
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            self.get_data_with_priority(url, priority),
+        )
+        .await
+        .ok()?
+        .ok()
     }
 
     pub async fn video_tags(&self, bvid: &str) -> Result<Vec<String>, ProviderError> {
         let mut url = self.api_url("/x/tag/archive/tags");
         url.query_pairs_mut().append_pair("bvid", bvid);
-        let rows: Vec<serde_json::Value> = self.get_data_with_priority(url, RequestPriority::Background).await?;
-        Ok(rows.into_iter().filter_map(|row| row["tag_name"].as_str().map(str::to_owned)).collect())
+        let rows: Vec<serde_json::Value> = self
+            .get_data_with_priority(url, RequestPriority::Background)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row["tag_name"].as_str().map(str::to_owned))
+            .collect())
     }
 
     pub async fn video_parts(&self, bvid: &str) -> Result<VideoParts, ProviderError> {
-        self.video_parts_with_priority(bvid, RequestPriority::Foreground).await
+        self.video_parts_with_priority(bvid, RequestPriority::Foreground)
+            .await
     }
 
-    pub async fn video_parts_with_priority(&self, bvid: &str, priority: RequestPriority) -> Result<VideoParts, ProviderError> {
+    pub async fn video_parts_with_priority(
+        &self,
+        bvid: &str,
+        priority: RequestPriority,
+    ) -> Result<VideoParts, ProviderError> {
         self.video_parts_request(bvid, priority, false).await
     }
 
-    pub async fn video_parts_request(&self, bvid: &str, priority: RequestPriority, refresh: bool) -> Result<VideoParts, ProviderError> {
+    pub async fn video_parts_request(
+        &self,
+        bvid: &str,
+        priority: RequestPriority,
+        refresh: bool,
+    ) -> Result<VideoParts, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         let key = (epoch, bvid.to_owned());
         let entry = {
             let mut details = self.details.write().await;
-            if details.get(&key).and_then(|entry| entry.get())
+            if details
+                .get(&key)
+                .and_then(|entry| entry.get())
                 .is_some_and(|(at, _)| refresh || at.elapsed() >= DETAIL_TTL)
             {
                 details.remove(&key);
             }
             if details.len() >= DETAIL_CACHE_LIMIT && !details.contains_key(&key) {
-                let oldest = details.iter()
+                let oldest = details
+                    .iter()
                     .filter_map(|(key, entry)| entry.get().map(|(at, _)| (key, *at)))
                     .min_by_key(|(_, at)| *at)
                     .map(|(key, _)| key.clone());
@@ -1251,12 +1321,14 @@ impl BilibiliProvider {
             }
             details.entry(key.clone()).or_default().clone()
         };
-        let result = entry.get_or_try_init(|| async {
-            let _slot = self.foreground_catalog_slot(priority).await;
-            self.check_request_epoch(epoch)?;
-            let detail = self.load_video_parts(bvid, epoch, priority).await?;
-            Ok((Instant::now(), detail))
-        }).await;
+        let result = entry
+            .get_or_try_init(|| async {
+                let _slot = self.foreground_catalog_slot(priority).await;
+                self.check_request_epoch(epoch)?;
+                let detail = self.load_video_parts(bvid, epoch, priority).await?;
+                Ok((Instant::now(), detail))
+            })
+            .await;
         match result {
             Ok((_, detail)) => {
                 self.check_request_epoch(epoch)?;
@@ -1264,7 +1336,9 @@ impl BilibiliProvider {
             }
             Err(error) => {
                 let mut details = self.details.write().await;
-                if details.get(&key).is_some_and(|saved| Arc::ptr_eq(saved, &entry))
+                if details
+                    .get(&key)
+                    .is_some_and(|saved| Arc::ptr_eq(saved, &entry))
                     && Arc::strong_count(&entry) == 2
                 {
                     details.remove(&key);
@@ -1274,15 +1348,28 @@ impl BilibiliProvider {
         }
     }
 
-    async fn foreground_catalog_slot(&self, priority: RequestPriority) -> Option<tokio::sync::SemaphorePermit<'_>> {
+    async fn foreground_catalog_slot(
+        &self,
+        priority: RequestPriority,
+    ) -> Option<tokio::sync::SemaphorePermit<'_>> {
         if priority == RequestPriority::Foreground {
-            Some(self.page_slots.acquire().await.expect("page semaphore remains open"))
+            Some(
+                self.page_slots
+                    .acquire()
+                    .await
+                    .expect("page semaphore remains open"),
+            )
         } else {
             None
         }
     }
 
-    async fn load_video_parts(&self, bvid: &str, epoch: u64, priority: RequestPriority) -> Result<VideoParts, ProviderError> {
+    async fn load_video_parts(
+        &self,
+        bvid: &str,
+        epoch: u64,
+        priority: RequestPriority,
+    ) -> Result<VideoParts, ProviderError> {
         let detail = self.video_detail_with_priority(bvid, priority).await?;
         let charge = self.charge_info_with_priority(&detail, priority).await;
         let fallback_cover = normalize_url(&detail.pic);
@@ -1342,13 +1429,25 @@ impl BilibiliProvider {
         cid: i64,
         audio_id: u32,
     ) -> Result<(PlaybackSource, Option<PlaybackSource>), ProviderError> {
-        self.playback_startup_sources_with_priority(bvid, cid, audio_id, RequestPriority::Foreground).await
+        self.playback_startup_sources_with_priority(
+            bvid,
+            cid,
+            audio_id,
+            RequestPriority::Foreground,
+        )
+        .await
     }
 
     pub async fn playback_startup_sources_with_priority(
-        &self, bvid: &str, cid: i64, audio_id: u32, priority: RequestPriority,
+        &self,
+        bvid: &str,
+        cid: i64,
+        audio_id: u32,
+        priority: RequestPriority,
     ) -> Result<(PlaybackSource, Option<PlaybackSource>), ProviderError> {
-        let dash = self.play_dash_with_priority(bvid, cid, false, priority).await?;
+        let dash = self
+            .play_dash_with_priority(bvid, cid, false, priority)
+            .await?;
         let target = select_audio(&dash, audio_id).ok_or(ProviderError::NoAudio)?;
         let initial = startup_audio(&dash, target)
             .cloned()
@@ -1454,7 +1553,9 @@ impl BilibiliProvider {
     }
 
     pub async fn warm_playback(&self, bvid: &str, cid: i64) -> Result<(), ProviderError> {
-        self.play_dash_with_priority(bvid, cid, false, RequestPriority::Background).await.map(|_| ())
+        self.play_dash_with_priority(bvid, cid, false, RequestPriority::Background)
+            .await
+            .map(|_| ())
     }
 
     async fn play_dash(
@@ -1463,11 +1564,16 @@ impl BilibiliProvider {
         cid: i64,
         expanded: bool,
     ) -> Result<Arc<DashData>, ProviderError> {
-        self.play_dash_with_priority(bvid, cid, expanded, RequestPriority::Foreground).await
+        self.play_dash_with_priority(bvid, cid, expanded, RequestPriority::Foreground)
+            .await
     }
 
     async fn play_dash_with_priority(
-        &self, bvid: &str, cid: i64, expanded: bool, priority: RequestPriority,
+        &self,
+        bvid: &str,
+        cid: i64,
+        expanded: bool,
+        priority: RequestPriority,
     ) -> Result<Arc<DashData>, ProviderError> {
         let entry = {
             let mut cache = self.dash_cache.write().await;
@@ -1530,10 +1636,18 @@ impl BilibiliProvider {
                     ..
                 },
             ) => {
-                return Err(self.restricted_playback(bvid, false, priority).await.unwrap_or(error));
+                return Err(self
+                    .restricted_playback(bvid, false, priority)
+                    .await
+                    .unwrap_or(error));
             }
             Err(error @ ProviderError::Api { code: -404, .. }) => {
-                return match tokio::time::timeout(Duration::from_secs(3), self.video_detail_with_priority(bvid, priority)).await {
+                return match tokio::time::timeout(
+                    Duration::from_secs(3),
+                    self.video_detail_with_priority(bvid, priority),
+                )
+                .await
+                {
                     Ok(Err(expired @ ProviderError::Api { code: 62002, .. })) => Err(expired),
                     _ => Err(error),
                 };
@@ -1551,9 +1665,17 @@ impl BilibiliProvider {
         play.into_dash(bvid, cid)
     }
 
-    async fn restricted_playback(&self, bvid: &str, preview: bool, priority: RequestPriority) -> Option<ProviderError> {
-        if let Ok(Ok(detail)) =
-            tokio::time::timeout(Duration::from_secs(3), self.video_detail_with_priority(bvid, priority)).await
+    async fn restricted_playback(
+        &self,
+        bvid: &str,
+        preview: bool,
+        priority: RequestPriority,
+    ) -> Option<ProviderError> {
+        if let Ok(Ok(detail)) = tokio::time::timeout(
+            Duration::from_secs(3),
+            self.video_detail_with_priority(bvid, priority),
+        )
+        .await
         {
             if detail.access.blocked_kind(None).is_some() {
                 let charge = self.charge_info_with_priority(&detail, priority).await;
@@ -1668,19 +1790,31 @@ impl BilibiliProvider {
             .user_agent("Mozilla/5.0 Resonance/0.1")
             .build()?;
         let (epoch, session) = self.request_session().await;
-        let lease = self.requests.acquire(requests::Stage::Comments,
-            session_uid(session.as_deref()), RequestPriority::Foreground, true).await?;
+        let lease = self
+            .requests
+            .acquire(
+                requests::Stage::Comments,
+                session_uid(session.as_deref()),
+                RequestPriority::Foreground,
+                true,
+            )
+            .await?;
         self.check_request_epoch(epoch)?;
         let response = client
             .get(format!("{API_ORIGIN}/x/v1/dm/list.so?oid={cid}"))
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .send()
-            .await.map_err(safe_network_error)?;
+            .await
+            .map_err(safe_network_error)?;
         if let Some(error) = lease.http_restriction(response.status(), response.headers()) {
             return Err(error);
         }
-        let bytes = response.error_for_status().map_err(safe_network_error)?
-            .bytes().await.map_err(safe_network_error)?;
+        let bytes = response
+            .error_for_status()
+            .map_err(safe_network_error)?
+            .bytes()
+            .await
+            .map_err(safe_network_error)?;
         let body = if bytes.starts_with(b"<") {
             String::from_utf8_lossy(&bytes).into_owned()
         } else {
@@ -1703,11 +1837,14 @@ impl BilibiliProvider {
     }
 
     async fn get_data<T: DeserializeOwned>(&self, url: Url) -> Result<T, ProviderError> {
-        self.get_data_with_priority(url, RequestPriority::Foreground).await
+        self.get_data_with_priority(url, RequestPriority::Foreground)
+            .await
     }
 
     async fn get_data_with_priority<T: DeserializeOwned>(
-        &self, url: Url, priority: RequestPriority,
+        &self,
+        url: Url,
+        priority: RequestPriority,
     ) -> Result<T, ProviderError> {
         let stage = requests::Stage::for_url(&url);
         self.get_data_for(url, stage, priority, None).await
@@ -1720,43 +1857,70 @@ impl BilibiliProvider {
         priority: RequestPriority,
         web_url: Option<Url>,
     ) -> Result<T, ProviderError> {
-        self.read_json(url, stage, priority, web_url, |lease, status, headers, value| {
-            envelope_data(lease, status, headers, value, false)
-        }).await
+        self.read_json(
+            url,
+            stage,
+            priority,
+            web_url,
+            |lease, status, headers, value| envelope_data(lease, status, headers, value, false),
+        )
+        .await
     }
 
     async fn read_json<T>(
-        &self, url: Url, stage: requests::Stage, priority: RequestPriority, web_url: Option<Url>,
-        parse: impl FnOnce(&requests::Lease<'_>, reqwest::StatusCode, &HeaderMap, serde_json::Value) -> Result<T, ProviderError>,
+        &self,
+        url: Url,
+        stage: requests::Stage,
+        priority: RequestPriority,
+        web_url: Option<Url>,
+        parse: impl FnOnce(
+            &requests::Lease<'_>,
+            reqwest::StatusCode,
+            &HeaderMap,
+            serde_json::Value,
+        ) -> Result<T, ProviderError>,
     ) -> Result<T, ProviderError> {
         let (epoch, session) = self.request_session().await;
-        let lease = self.requests.acquire(stage, session_uid(session.as_deref()), priority, true).await?;
+        let lease = self
+            .requests
+            .acquire(stage, session_uid(session.as_deref()), priority, true)
+            .await?;
         let result = async {
             self.check_request_epoch(epoch)?;
             if let Some(web_url) = web_url {
-                self.ensure_search_session(web_url, session.as_deref(), &lease).await?;
+                self.ensure_search_session(web_url, session.as_deref(), &lease)
+                    .await?;
             }
             self.check_request_epoch(epoch)?;
             lease.validate()?;
-            let request = self.authenticated_get_with(&self.client, url.clone(), session.as_deref());
+            let request =
+                self.authenticated_get_with(&self.client, url.clone(), session.as_deref());
             let response = match request.send().await {
-                Err(error) if !lease.is_probe() && (error.is_connect() || (error.is_request() && !error.is_timeout())) => {
+                Err(error)
+                    if !lease.is_probe()
+                        && (error.is_connect() || (error.is_request() && !error.is_timeout())) =>
+                {
                     // Resume a dead pooled connection only before an HTTP response.
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     self.check_request_epoch(epoch)?;
                     lease.validate()?;
-                    let fresh = Self::build_client(self.cookies.clone()).map_err(safe_network_error)?;
-                    self.authenticated_get_with(&fresh, url, session.as_deref()).send().await
+                    let fresh =
+                        Self::build_client(self.cookies.clone()).map_err(safe_network_error)?;
+                    self.authenticated_get_with(&fresh, url, session.as_deref())
+                        .send()
+                        .await
                 }
                 response => response,
-            }.map_err(safe_network_error)?;
+            }
+            .map_err(safe_network_error)?;
             let (status, headers, json) = response_json(response, &lease, false).await?;
             let data = parse(&lease, status, &headers, json)?;
             let _session = self.session_cookie.read().await;
             self.check_request_epoch(epoch)?;
             lease.succeeded();
             Ok(data)
-        }.await;
+        }
+        .await;
         if result.as_ref().is_err_and(ProviderError::retryable_read) {
             let _session = self.session_cookie.read().await;
             self.check_request_epoch(epoch)?;
@@ -1767,8 +1931,13 @@ impl BilibiliProvider {
         result
     }
 
-    async fn favorite_data<T: DeserializeOwned>(&self, url: Url, priority: RequestPriority) -> Result<T, ProviderError> {
-        self.get_data_for(url, requests::Stage::Favorites, priority, None).await
+    async fn favorite_data<T: DeserializeOwned>(
+        &self,
+        url: Url,
+        priority: RequestPriority,
+    ) -> Result<T, ProviderError> {
+        self.get_data_for(url, requests::Stage::Favorites, priority, None)
+            .await
     }
 
     async fn request_session(&self) -> (u64, Option<String>) {
@@ -1783,7 +1952,12 @@ impl BilibiliProvider {
         Ok(())
     }
 
-    fn authenticated_get_with(&self, client: &Client, url: Url, session: Option<&str>) -> reqwest::RequestBuilder {
+    fn authenticated_get_with(
+        &self,
+        client: &Client,
+        url: Url,
+        session: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         let request = client.get(url.clone());
         match session {
             Some(session) => {
@@ -1837,10 +2011,19 @@ impl BilibiliProvider {
         let (epoch, session) = self.request_session().await;
         let cookie = session.ok_or(ProviderError::NotAuthenticated)?;
         let stage = requests::Stage::for_url(&url);
-        let lease = self.requests.acquire(stage, session_uid(Some(&cookie)), RequestPriority::Foreground, false).await?;
+        let lease = self
+            .requests
+            .acquire(
+                stage,
+                session_uid(Some(&cookie)),
+                RequestPriority::Foreground,
+                false,
+            )
+            .await?;
         self.check_request_epoch(epoch)?;
         lease.validate()?;
-        let response = self.client
+        let response = self
+            .client
             .post(url)
             .header(COOKIE, cookie)
             .form(form)
@@ -1859,23 +2042,35 @@ fn safe_network_error(error: reqwest::Error) -> ProviderError {
 }
 
 fn session_uid(cookie: Option<&str>) -> u64 {
-    cookie.into_iter().flat_map(|cookie| cookie.split(';'))
+    cookie
+        .into_iter()
+        .flat_map(|cookie| cookie.split(';'))
         .find_map(|pair| pair.trim().strip_prefix("DedeUserID=")?.parse().ok())
         .unwrap_or(0)
 }
 
 fn inspect_code(
-    lease: &requests::Lease<'_>, status: reqwest::StatusCode, headers: &HeaderMap, code: i64,
-    data: Option<&serde_json::Value>, message: String,
+    lease: &requests::Lease<'_>,
+    status: reqwest::StatusCode,
+    headers: &HeaderMap,
+    code: i64,
+    data: Option<&serde_json::Value>,
+    message: String,
 ) -> Result<(), ProviderError> {
-    if data.and_then(|data| data.get("v_voucher"))
+    if data
+        .and_then(|data| data.get("v_voucher"))
         .and_then(serde_json::Value::as_str)
         .is_some_and(|voucher| !voucher.is_empty())
     {
         return Err(lease.restrict(true, Some(status.as_u16()), Some(code), None));
     }
     if requests::is_rate_code(lease.stage(), code) {
-        return Err(lease.restrict(false, Some(status.as_u16()), Some(code), requests::delay_from_header(headers, std::time::SystemTime::now())));
+        return Err(lease.restrict(
+            false,
+            Some(status.as_u16()),
+            Some(code),
+            requests::delay_from_header(headers, std::time::SystemTime::now()),
+        ));
     }
     if code != 0 {
         return Err(ProviderError::Api { code, message });
@@ -1884,7 +2079,9 @@ fn inspect_code(
 }
 
 async fn response_json(
-    response: reqwest::Response, lease: &requests::Lease<'_>, write: bool,
+    response: reqwest::Response,
+    lease: &requests::Lease<'_>,
+    write: bool,
 ) -> Result<(reqwest::StatusCode, HeaderMap, serde_json::Value), ProviderError> {
     let status = response.status();
     let headers = response.headers().clone();
@@ -1894,8 +2091,12 @@ async fn response_json(
     if write && (status.is_server_error() || status == reqwest::StatusCode::REQUEST_TIMEOUT) {
         return Err(ProviderError::WriteUnconfirmed);
     }
-    let json = response.error_for_status().map_err(safe_network_error)?
-        .json().await.map_err(|error| {
+    let json = response
+        .error_for_status()
+        .map_err(safe_network_error)?
+        .json()
+        .await
+        .map_err(|error| {
             if write {
                 ProviderError::WriteUnconfirmed
             } else if error.is_timeout() || error.is_connect() {
@@ -1908,12 +2109,29 @@ async fn response_json(
 }
 
 fn envelope_data<T: DeserializeOwned>(
-    lease: &requests::Lease<'_>, status: reqwest::StatusCode, headers: &HeaderMap,
-    value: serde_json::Value, write: bool,
+    lease: &requests::Lease<'_>,
+    status: reqwest::StatusCode,
+    headers: &HeaderMap,
+    value: serde_json::Value,
+    write: bool,
 ) -> Result<T, ProviderError> {
-    let invalid = || if write { ProviderError::WriteUnconfirmed } else { ProviderError::UnexpectedResponse };
-    let envelope: Envelope<serde_json::Value> = serde_json::from_value(value).map_err(|_| invalid())?;
-    inspect_code(lease, status, headers, envelope.code, envelope.data.as_ref(), envelope.message)?;
+    let invalid = || {
+        if write {
+            ProviderError::WriteUnconfirmed
+        } else {
+            ProviderError::UnexpectedResponse
+        }
+    };
+    let envelope: Envelope<serde_json::Value> =
+        serde_json::from_value(value).map_err(|_| invalid())?;
+    inspect_code(
+        lease,
+        status,
+        headers,
+        envelope.code,
+        envelope.data.as_ref(),
+        envelope.message,
+    )?;
     match envelope.data {
         Some(data) => serde_json::from_value(data).map_err(|_| invalid()),
         None if write => serde_json::from_value(serde_json::Value::Null).map_err(|_| invalid()),
@@ -1974,8 +2192,16 @@ fn comment_page_from_data(data: ReplyData, requested: i64) -> CommentPage {
     // The pinned list is separate from replies. Some responses repeat its first
     // item in upper.top, which also supplies the pin on its own on older responses.
     let first_page = page == 1;
-    let pinned = if first_page { data.top_replies.unwrap_or_default() } else { Vec::new() };
-    let upper_top = if first_page { data.upper.and_then(|upper| upper.top) } else { None };
+    let pinned = if first_page {
+        data.top_replies.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let upper_top = if first_page {
+        data.upper.and_then(|upper| upper.top)
+    } else {
+        None
+    };
     let mut seen = HashSet::new();
     let items = pinned
         .into_iter()
@@ -2174,7 +2400,8 @@ mod tests {
             "upper": {"top": {"rpid": 31, "member": {}, "content": {"message": "置顶"}}},
             "top_replies": null,
             "replies": null
-        })).unwrap();
+        }))
+        .unwrap();
         let first = comment_page_from_data(data, 1);
         assert_eq!(first.items.len(), 1);
         assert_eq!(first.items[0].id, 31);
@@ -2190,14 +2417,17 @@ mod tests {
             "page": {"num": 1, "size": 20, "count": 41},
             "replies": [{"rpid": 90071992547409921_i64, "root": 90071992547409920_i64,
                          "member": {}, "content": {"message": "0:59 续篇"}}]
-        })).unwrap();
+        }))
+        .unwrap();
         let first = comment_reply_page_from_data(payload, 1);
         assert!(!first.is_end);
         assert_eq!(first.next, 2);
         assert_eq!(first.items[0].id_text, "90071992547409921");
         assert_eq!(first.items[0].root_id_text, "90071992547409920");
 
-        let payload: ReplyData = from_value(json!({"page": {"num": 3, "size": 20, "count": 41}, "replies": []})).unwrap();
+        let payload: ReplyData =
+            from_value(json!({"page": {"num": 3, "size": 20, "count": 41}, "replies": []}))
+                .unwrap();
         assert!(comment_reply_page_from_data(payload, 3).is_end);
         assert!(comment_reply_page_from_data(ReplyData::default(), 1).is_end);
     }
@@ -2495,7 +2725,8 @@ mod tests {
         let empty = serde_json::from_value::<super::FavoritePage>(serde_json::json!({
             "medias": null,
             "has_more": false
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(empty.medias.is_none() && !empty.has_more);
     }
 
@@ -2598,7 +2829,10 @@ mod tests {
                 assert_eq!(searches.load(Ordering::SeqCst), 2);
             } else {
                 assert!(matches!(result, Err(super::ProviderError::RateLimited(_))));
-                assert!(matches!(provider.search_response(search, web).await, Err(super::ProviderError::RateLimited(_))));
+                assert!(matches!(
+                    provider.search_response(search, web).await,
+                    Err(super::ProviderError::RateLimited(_))
+                ));
                 assert_eq!(searches.load(Ordering::SeqCst), 1);
             }
             assert_eq!(homes.load(Ordering::SeqCst), 1);
@@ -2609,16 +2843,25 @@ mod tests {
     #[tokio::test]
     async fn verification_envelope_is_checked_before_typed_result_and_scoped_to_account() {
         use axum::{Json, Router, routing::get};
-        let router = Router::new().route("/probe", get(|| async {
-            Json(serde_json::json!({"code": 0, "data": {"v_voucher": "do-not-disclose"}}))
-        }));
+        let router = Router::new().route(
+            "/probe",
+            get(|| async {
+                Json(serde_json::json!({"code": 0, "data": {"v_voucher": "do-not-disclose"}}))
+            }),
+        );
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/probe", socket.local_addr().unwrap()).parse::<super::Url>().unwrap();
+        let url = format!("http://{}/probe", socket.local_addr().unwrap())
+            .parse::<super::Url>()
+            .unwrap();
         let server = tokio::spawn(async move { axum::serve(socket, router).await.unwrap() });
         let mut provider = super::BilibiliProvider::new().unwrap();
         provider.requests = super::Arc::new(super::requests::Policy::new(None));
-        provider.set_session_cookie(Some("DedeUserID=42".into())).await;
-        let result = provider.get_data_with_priority::<Vec<String>>(url, super::RequestPriority::Foreground).await;
+        provider
+            .set_session_cookie(Some("DedeUserID=42".into()))
+            .await;
+        let result = provider
+            .get_data_with_priority::<Vec<String>>(url, super::RequestPriority::Foreground)
+            .await;
         let error = crate::interface::error::CommandError::bilibili(result.unwrap_err());
         let serialized = serde_json::to_value(error).unwrap();
         assert_eq!(serialized["code"], "bili_verification_required");
@@ -2626,10 +2869,29 @@ mod tests {
         assert_eq!(serialized["httpStatus"], 200);
         assert!(!serialized.to_string().contains("do-not-disclose"));
         assert!(matches!(
-            provider.requests.acquire(super::requests::Stage::Catalog, 42, super::RequestPriority::Background, true).await,
+            provider
+                .requests
+                .acquire(
+                    super::requests::Stage::Catalog,
+                    42,
+                    super::RequestPriority::Background,
+                    true
+                )
+                .await,
             Err(super::ProviderError::VerificationRequired(_))
         ));
-        assert!(provider.requests.acquire(super::requests::Stage::Catalog, 43, super::RequestPriority::Background, true).await.is_ok());
+        assert!(
+            provider
+                .requests
+                .acquire(
+                    super::requests::Stage::Catalog,
+                    43,
+                    super::RequestPriority::Background,
+                    true
+                )
+                .await
+                .is_ok()
+        );
         server.abort();
     }
 

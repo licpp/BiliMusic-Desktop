@@ -91,10 +91,15 @@ pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
     tauri::async_runtime::spawn(async move {
         let payload = serde_json::from_str::<serde_json::Value>(&payload);
         let result = match &payload {
-            Ok(payload) => crate::native_playback::resolve_with_guard(&app, payload.clone(), || {
-                RESOLVE_REQUEST.load(Ordering::SeqCst) == token
-            }).await,
-            Err(_) => Err(crate::interface::error::CommandError::validation("无效的后台播放请求")),
+            Ok(payload) => {
+                crate::native_playback::resolve_with_guard(&app, payload.clone(), || {
+                    RESOLVE_REQUEST.load(Ordering::SeqCst) == token
+                })
+                .await
+            }
+            Err(_) => Err(crate::interface::error::CommandError::validation(
+                "无效的后台播放请求",
+            )),
         };
         if RESOLVE_REQUEST.load(Ordering::SeqCst) != token {
             return;
@@ -113,7 +118,6 @@ pub fn bilimusic_ohos_resolve(request: u32, payload: String) {
         }
     });
 }
-
 
 #[napi_derive_ohos::napi]
 pub fn bilimusic_ohos_diagnostic(payload: String) {

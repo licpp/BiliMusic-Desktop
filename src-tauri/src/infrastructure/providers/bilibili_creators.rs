@@ -99,21 +99,35 @@ impl BilibiliProvider {
                     .append_pair("page_size", "20");
             }
             _ => {
-                let nav = self.read_json(
-                    self.api_url("/x/web-interface/nav"),
-                    requests::Stage::Search,
-                    RequestPriority::Foreground,
-                    Some(Url::parse(WEB_ORIGIN).unwrap()),
-                    |lease, status, headers, envelope| {
-                        let code = envelope["code"].as_i64().ok_or(ProviderError::UnexpectedResponse)?;
-                        let data = &envelope["data"];
-                        // The ordinary visitor response contains signing metadata even when not logged in.
-                        let code = if code == -101 && data["wbi_img"].is_object() { 0 } else { code };
-                        inspect_code(lease, status, headers, code, Some(data),
-                            envelope["message"].as_str().unwrap_or_default().into())?;
-                        Ok(data.clone())
-                    },
-                ).await?;
+                let nav = self
+                    .read_json(
+                        self.api_url("/x/web-interface/nav"),
+                        requests::Stage::Search,
+                        RequestPriority::Foreground,
+                        Some(Url::parse(WEB_ORIGIN).unwrap()),
+                        |lease, status, headers, envelope| {
+                            let code = envelope["code"]
+                                .as_i64()
+                                .ok_or(ProviderError::UnexpectedResponse)?;
+                            let data = &envelope["data"];
+                            // The ordinary visitor response contains signing metadata even when not logged in.
+                            let code = if code == -101 && data["wbi_img"].is_object() {
+                                0
+                            } else {
+                                code
+                            };
+                            inspect_code(
+                                lease,
+                                status,
+                                headers,
+                                code,
+                                Some(data),
+                                envelope["message"].as_str().unwrap_or_default().into(),
+                            )?;
+                            Ok(data.clone())
+                        },
+                    )
+                    .await?;
                 let keys = ["img_url", "sub_url"]
                     .map(|k| {
                         nav["wbi_img"][k]
@@ -155,8 +169,14 @@ impl BilibiliProvider {
             }
         }
         let stage = requests::Stage::for_url(&url);
-        let data: Value = self.get_data_for(url, stage, RequestPriority::Foreground,
-            Some(Url::parse(WEB_ORIGIN).unwrap())).await?;
+        let data: Value = self
+            .get_data_for(
+                url,
+                stage,
+                RequestPriority::Foreground,
+                Some(Url::parse(WEB_ORIGIN).unwrap()),
+            )
+            .await?;
         Ok(json!({"data":data,"page":page}))
     }
 }

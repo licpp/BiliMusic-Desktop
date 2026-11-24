@@ -161,7 +161,10 @@ fn read_profile(path: &std::path::Path) -> Result<String, CommandError> {
         Ok(profile) => Ok(profile),
         // Guest playback starts before a profile marker has been created.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(_) => Err(playback_error("profile_unavailable", "无法读取当前播放账号，请重新播放")),
+        Err(_) => Err(playback_error(
+            "profile_unavailable",
+            "无法读取当前播放账号，请重新播放",
+        )),
     }
 }
 
@@ -186,9 +189,11 @@ fn validate_scope(
     }
     if let Some(expected) = expected_session {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
-        let session = crate::infrastructure::database::account_session(&c)
-            .map_err(CommandError::database)?;
+        let c =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
+        let session =
+            crate::infrastructure::database::account_session(&c).map_err(CommandError::database)?;
         if expected != session {
             return Err(changed());
         }
@@ -208,7 +213,9 @@ pub(crate) async fn resolve_with_guard(
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(20),
         resolve_inner(app, payload, current, &mut trace),
-    ).await.unwrap_or_else(|_| Err(resolution_timeout()));
+    )
+    .await
+    .unwrap_or_else(|_| Err(resolution_timeout()));
     if let Some(trace) = trace {
         let (outcome, code) = match &result {
             Ok(result) if result["skip"] == true => (Outcome::Skipped, None),
@@ -239,10 +246,17 @@ async fn resolve_inner(
     }
     trace.event.bvid = track["source"]["bvid"].as_str().map(str::to_owned);
     trace.event.cid = track["source"]["cid"].as_u64();
-    trace.event.engine = Some(if cfg!(target_os = "android") { Engine::AndroidMediaPlayer }
-        else if cfg!(target_os = "ios") { Engine::AvPlayer } else { Engine::OhosAvplayer });
+    trace.event.engine = Some(if cfg!(target_os = "android") {
+        Engine::AndroidMediaPlayer
+    } else if cfg!(target_os = "ios") {
+        Engine::AvPlayer
+    } else {
+        Engine::OhosAvplayer
+    });
     trace.event.initial_code = payload["initialErrorCode"].as_str().map(str::to_owned);
-    if track["importedEntry"].is_object() { trace.event.origin = Some(Source::Imported); }
+    if track["importedEntry"].is_object() {
+        trace.event.origin = Some(Source::Imported);
+    }
     trace.emit(Step::Resolve, Outcome::Started, None);
     let trace = diagnostic.insert(trace);
     let entry_id = track["id"].as_str().unwrap_or_default().to_owned();
@@ -252,7 +266,9 @@ async fn resolve_inner(
         if let Some(bvid) = source["bvid"].as_str() {
             let provider = app.state::<BilibiliProvider>();
             let season = queued_season(&track);
-            let legacy_catalog = season.as_ref().is_some_and(SeasonSummary::is_legacy_catalog);
+            let legacy_catalog = season
+                .as_ref()
+                .is_some_and(SeasonSummary::is_legacy_catalog);
             let resolve_parts = async {
                 let aid = source["aid"].as_i64().unwrap_or_default();
                 if aid <= 0 {
@@ -280,21 +296,25 @@ async fn resolve_inner(
                     season: season.filter(|_| !legacy_catalog),
                 })
             };
-            let video = match tokio::time::timeout(std::time::Duration::from_secs(10), resolve_parts).await {
-                Ok(Ok(video)) => video,
-                Ok(Err(error)) => {
-                    let _gate = sync.account_gate.lock().await;
-                    validate_scope(app, Some(&profile), expected_session, &current)?;
-                    let error = CommandError::audio_source(error);
-                    if error.code == "source_expired" { return Ok(visibility_skip(&entry_id)); }
-                    return Err(error);
-                }
-                Err(_) => {
-                    let _gate = sync.account_gate.lock().await;
-                    validate_scope(app, Some(&profile), expected_session, &current)?;
-                    return Err(CommandError::new("source_timeout", "获取分 P 超时", true));
-                }
-            };
+            let video =
+                match tokio::time::timeout(std::time::Duration::from_secs(10), resolve_parts).await
+                {
+                    Ok(Ok(video)) => video,
+                    Ok(Err(error)) => {
+                        let _gate = sync.account_gate.lock().await;
+                        validate_scope(app, Some(&profile), expected_session, &current)?;
+                        let error = CommandError::audio_source(error);
+                        if error.code == "source_expired" {
+                            return Ok(visibility_skip(&entry_id));
+                        }
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        let _gate = sync.account_gate.lock().await;
+                        validate_scope(app, Some(&profile), expected_session, &current)?;
+                        return Err(CommandError::new("source_timeout", "获取分 P 超时", true));
+                    }
+                };
             {
                 let chapter = video.season.is_some()
                     || !legacy_catalog && track["chapterContext"].as_bool().unwrap_or(false);
@@ -328,7 +348,9 @@ async fn resolve_inner(
                 let _gate = sync.account_gate.lock().await;
                 validate_scope(app, Some(&profile), expected_session, &current)?;
                 let db = app.state::<Database>();
-                let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+                let c =
+                    db.0.lock()
+                        .map_err(|_| CommandError::database("数据库正忙"))?;
                 let mut selected = None;
                 for part in &parts {
                     if visibility_allowed(&c, &payload, part).map_err(CommandError::database)? {
@@ -353,7 +375,9 @@ async fn resolve_inner(
     }
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let c =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
         if !visibility_allowed(&c, &payload, &track).map_err(CommandError::database)? {
             return Ok(visibility_skip(&entry_id));
         }
@@ -363,7 +387,9 @@ async fn resolve_inner(
     let stored = if refresh {
         let db = app.state::<Database>();
         let existing = {
-            let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+            let connection =
+                db.0.lock()
+                    .map_err(|_| CommandError::database("数据库正忙"))?;
             LibraryRepository::get(&connection, &entry_id).map_err(CommandError::database)?
         };
         drop(gate);
@@ -371,24 +397,37 @@ async fn resolve_inner(
             record
         } else {
             trace.emit(Step::TrackRecord, Outcome::Started, Some("track_missing"));
-            if offline == Some(true) { return Ok(visibility_skip(&entry_id)); }
+            if offline == Some(true) {
+                return Ok(visibility_skip(&entry_id));
+            }
             let mut source = input(&track).map_err(CommandError::validation)?;
             validate_track(&source)?;
-            let pages = app.state::<BilibiliProvider>().video_pagelist(&source.bvid).await;
+            let pages = app
+                .state::<BilibiliProvider>()
+                .video_pagelist(&source.bvid)
+                .await;
             let _gate = sync.account_gate.lock().await;
             validate_scope(app, Some(&profile), expected_session, &current)?;
             let pages = match pages {
                 Ok(pages) => pages,
                 Err(error) => {
                     let error = CommandError::audio_source(error);
-                    if error.code == "source_expired" { return Ok(visibility_skip(&entry_id)); }
+                    if error.code == "source_expired" {
+                        return Ok(visibility_skip(&entry_id));
+                    }
                     return Err(error);
                 }
             };
-            let part = pages.iter().find(|part| part.cid == source.cid)
-                .ok_or_else(|| playback_error("cid_mismatch", "播放队列中的分 P 已变更，请重新选择"))?;
+            let part = pages
+                .iter()
+                .find(|part| part.cid == source.cid)
+                .ok_or_else(|| {
+                    playback_error("cid_mismatch", "播放队列中的分 P 已变更，请重新选择")
+                })?;
             source.page = part.page as i32;
-            if part.duration_seconds > 0 { source.duration_seconds = part.duration_seconds.min(i64::MAX as u64) as i64; }
+            if part.duration_seconds > 0 {
+                source.duration_seconds = part.duration_seconds.min(i64::MAX as u64) as i64;
+            }
             let mut connection = db.0.lock().map_err(CommandError::database)?;
             if !visibility_allowed(&connection, &payload, &track).map_err(CommandError::database)? {
                 return Ok(visibility_skip(&entry_id));
@@ -396,11 +435,15 @@ async fn resolve_inner(
             // A concurrent sync may already have restored this record and its overrides.
             match LibraryRepository::get(&connection, &entry_id).map_err(CommandError::database)? {
                 Some(record) => record,
-                None => LibraryRepository::upsert(&mut connection, &source).map_err(CommandError::database)?,
+                None => LibraryRepository::upsert(&mut connection, &source)
+                    .map_err(CommandError::database)?,
             }
         }
     } else {
-        let record = library_record_play(app.state::<Database>(), input(&track).map_err(CommandError::validation)?)?;
+        let record = library_record_play(
+            app.state::<Database>(),
+            input(&track).map_err(CommandError::validation)?,
+        )?;
         drop(gate);
         record
     };
@@ -452,7 +495,9 @@ async fn resolve_inner(
     trace.emit(Step::Source, Outcome::Succeeded, None);
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let c =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
         if !visibility_allowed(&c, &payload, &track).map_err(CommandError::database)? {
             return Ok(visibility_skip(&entry_id));
         }
@@ -471,7 +516,9 @@ async fn resolve_inner(
     track["liked"] = json!(stored.liked);
     {
         let db = app.state::<Database>();
-        let c = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let c =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
         imported_presentation(&c, &mut track).map_err(CommandError::database)?;
     }
     // Select the saved checkpoint here, but apply duration policy only after
@@ -486,7 +533,9 @@ async fn resolve_inner(
         0.0
     } else {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let connection =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
         LibraryRepository::playback_position(&connection, &stored.id)
             .map_err(CommandError::database)?
     };
@@ -505,7 +554,9 @@ async fn resolve_inner(
     #[cfg(not(target_os = "android"))]
     let lyrics = {
         let db = app.state::<Database>();
-        let connection = db.0.lock().map_err(|_| CommandError::database("数据库正忙"))?;
+        let connection =
+            db.0.lock()
+                .map_err(|_| CommandError::database("数据库正忙"))?;
         crate::infrastructure::repositories::lyrics::LyricsRepository::get(&connection, &stored.id)
             .ok()
             .flatten()
@@ -537,7 +588,10 @@ mod tests {
         std::fs::write(&profile, [0xff]).unwrap();
         let failure = resolution_response(read_profile(&profile).map(|p| json!(p)));
         assert_eq!(failure["errorCode"], "profile_unavailable");
-        assert_eq!(resolution_response(Err(resolution_timeout()))["errorCode"], "source_timeout");
+        assert_eq!(
+            resolution_response(Err(resolution_timeout()))["errorCode"],
+            "source_timeout"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -698,19 +752,28 @@ mod visibility_tests {
     }
 }
 
-
 pub(crate) fn record_diagnostic(app: &tauri::AppHandle, payload: &Value) {
     use crate::infrastructure::{
         database::account_session,
         diagnostics::{Area, Diagnostics, Input},
     };
-    let Some(expected) = payload["accountSession"].as_str() else { return };
+    let Some(expected) = payload["accountSession"].as_str() else {
+        return;
+    };
     let expected_profile = payload["profile"].as_str();
-    let Ok(event) = serde_json::from_value::<Input>(payload["event"].clone()) else { return };
-    if event.area != Area::Playback { return }
+    let Ok(event) = serde_json::from_value::<Input>(payload["event"].clone()) else {
+        return;
+    };
+    if event.area != Area::Playback {
+        return;
+    }
     let database = app.state::<Database>();
-    let Ok(connection) = database.0.lock() else { return };
-    let Ok(owner) = current_profile(app) else { return };
+    let Ok(connection) = database.0.lock() else {
+        return;
+    };
+    let Ok(owner) = current_profile(app) else {
+        return;
+    };
     if account_session(&connection).ok().as_deref() != Some(expected)
         || expected_profile.is_some_and(|profile| profile != owner)
     {

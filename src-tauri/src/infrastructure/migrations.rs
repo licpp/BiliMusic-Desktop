@@ -99,7 +99,9 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
         )?;
     }
     if version < 11 {
-        c.execute_batch(include_str!("../../migrations/0011_linked_batch_matching.sql"))?;
+        c.execute_batch(include_str!(
+            "../../migrations/0011_linked_batch_matching.sql"
+        ))?;
         c.execute_batch(
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES(11); PRAGMA user_version=11;",
         )?;
@@ -111,7 +113,9 @@ pub fn migrate(c: &Connection) -> rusqlite::Result<()> {
         )?;
     }
     if newest < 13 {
-        c.execute_batch(include_str!("../../migrations/0013_collection_progress.sql"))?;
+        c.execute_batch(include_str!(
+            "../../migrations/0013_collection_progress.sql"
+        ))?;
         c.execute_batch(
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES(13); PRAGMA user_version=13;",
         )?;
@@ -127,12 +131,14 @@ mod tests {
     #[test]
     fn legacy_collection_checkpoint_survives_the_membership_migration() {
         let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql")).unwrap();
+        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
+            .unwrap();
         c.execute_batch("INSERT INTO collections(bvid) VALUES('up:42'),('season:42:73');
             INSERT INTO collection_progress VALUES('season:42:73','BV1tZuKzgENQ',7,85000,1794355030000);
             PRAGMA user_version=1;").unwrap();
         migrate(&c).unwrap();
-        c.execute("DELETE FROM collections WHERE bvid='season:42:73'", []).unwrap();
+        c.execute("DELETE FROM collections WHERE bvid='season:42:73'", [])
+            .unwrap();
         migrate(&c).unwrap();
         assert_eq!(
             c.query_row(

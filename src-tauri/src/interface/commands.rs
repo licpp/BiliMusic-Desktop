@@ -4,8 +4,8 @@ use crate::infrastructure::media_proxy::MediaProxy;
 pub(super) use crate::infrastructure::providers::bilibili::valid_bvid;
 use crate::infrastructure::providers::bilibili::{
     AccountProfile, BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FavoriteFolder,
-    FavoritePage, PlaybackSource, ProviderError, QrLogin, QrLoginStatus, RequestPriority, SearchPage,
-    SubscribedSeasonPage, VideoPart, VideoParts, VideoSource,
+    FavoritePage, PlaybackSource, ProviderError, QrLogin, QrLoginStatus, RequestPriority,
+    SearchPage, SubscribedSeasonPage, VideoPart, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -17,10 +17,10 @@ use crate::infrastructure::repositories::downloads::{
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
 };
+use crate::infrastructure::repositories::loudness::LoudnessRepository;
 use crate::infrastructure::repositories::lyrics::{
     LyricsRepository, SaveLyricsInput, StoredLyrics,
 };
-use crate::infrastructure::repositories::loudness::LoudnessRepository;
 use crate::infrastructure::repositories::playlists::{
     FAVORITES_PLAYLIST_ID, PlaylistRecord, PlaylistRepository,
 };
@@ -245,8 +245,10 @@ pub async fn bili_search(
     if keyword.is_empty() {
         return Err(CommandError::validation("请输入搜索关键词"));
     }
-    let session = database.0.lock().ok()
-        .and_then(|connection| crate::infrastructure::database::account_session(&connection).ok());
+    let session =
+        database.0.lock().ok().and_then(|connection| {
+            crate::infrastructure::database::account_session(&connection).ok()
+        });
     let result = provider
         .search(keyword, page.unwrap_or(1), page_size.unwrap_or(20))
         .await;
@@ -434,14 +436,18 @@ pub async fn bili_video_parts(
         .ok()
         .and_then(|c| crate::infrastructure::database::account_session(&c).ok());
     let detail = provider
-        .video_parts_request(&bvid, video_request_priority(background, resume), refresh.unwrap_or(false))
+        .video_parts_request(
+            &bvid,
+            video_request_priority(background, resume),
+            refresh.unwrap_or(false),
+        )
         .await
         .map_err(|error| match error {
             // A not-found result from the authoritative details endpoint can
             // be skipped here without labeling playurl failures as expired.
-            ProviderError::Api { code: -404, .. } => CommandError::new(
-                "source_unavailable", "B 站视频暂不可用", false,
-            ),
+            ProviderError::Api { code: -404, .. } => {
+                CommandError::new("source_unavailable", "B 站视频暂不可用", false)
+            }
             error => CommandError::audio_source(error),
         })?;
     if let Ok(connection) = database.0.lock() {
@@ -535,7 +541,12 @@ pub async fn bili_warm_playback(
         crate::interface::media::preferences(&c).map_err(CommandError::database)?
     };
     let (source, initial) = provider
-        .playback_startup_sources_with_priority(&bvid, cid, quality.audio_id, RequestPriority::Background)
+        .playback_startup_sources_with_priority(
+            &bvid,
+            cid,
+            quality.audio_id,
+            RequestPriority::Background,
+        )
         .await
         .map_err(CommandError::bilibili)?;
     let (quality, source) = initial
@@ -793,12 +804,18 @@ pub async fn bili_comment_reply_page(
     root: String,
     page: u32,
 ) -> Result<CommentPage, CommandError> {
-    let root = root.parse::<i64>().ok().filter(|root| *root > 0)
+    let root = root
+        .parse::<i64>()
+        .ok()
+        .filter(|root| *root > 0)
         .ok_or_else(|| CommandError::validation("无效的评论标识"))?;
     if aid <= 0 || page == 0 {
         return Err(CommandError::validation("无效的评论分页"));
     }
-    provider.comment_reply_page(aid, root, page).await.map_err(CommandError::bilibili)
+    provider
+        .comment_reply_page(aid, root, page)
+        .await
+        .map_err(CommandError::bilibili)
 }
 
 #[tauri::command]
@@ -1211,10 +1228,13 @@ async fn playback_plan(
     offline_only: bool,
 ) -> Result<PlaybackPlan, CommandError> {
     use crate::infrastructure::diagnostics::Source;
-    media_proxy
-        .ensure_running()
-        .await
-        .map_err(|_| CommandError::new("proxy_unavailable", "本机音频服务恢复失败，请稍后重试", true))?;
+    media_proxy.ensure_running().await.map_err(|_| {
+        CommandError::new(
+            "proxy_unavailable",
+            "本机音频服务恢复失败，请稍后重试",
+            true,
+        )
+    })?;
     let (track, paths, mut loudness_gain_db, account_session) = {
         let connection = database
             .0
@@ -1276,7 +1296,11 @@ async fn playback_plan(
         }
     }
     if offline_only {
-        return Err(CommandError::new("offline_unavailable", "此歌曲尚未保存在本机", false));
+        return Err(CommandError::new(
+            "offline_unavailable",
+            "此歌曲尚未保存在本机",
+            false,
+        ));
     }
     if refresh.unwrap_or(false) {
         media_proxy
@@ -1321,7 +1345,8 @@ async fn playback_plan(
     if let Some(descriptor) = provider.cached_loudness(&track.bvid, track.cid).await {
         loudness_gain_db = descriptor.gain_db();
         if let Ok(connection) = database.0.lock() {
-            let _ = LoudnessRepository::save_for_session(&connection, &account_session, &descriptor);
+            let _ =
+                LoudnessRepository::save_for_session(&connection, &account_session, &descriptor);
         }
     }
     let target_quality = source.quality_id;
@@ -1923,7 +1948,9 @@ pub fn collections_change(
 ) -> Result<(), String> {
     let mut c = database.0.lock().map_err(|_| "数据库正忙")?;
     if action == "cache" {
-        let expected = expected_account_session.as_deref().ok_or("账号已切换，请重试")?;
+        let expected = expected_account_session
+            .as_deref()
+            .ok_or("账号已切换，请重试")?;
         check_account_session(&c, expected).map_err(|error| error.message)?;
     }
     crate::infrastructure::repositories::collections::change(

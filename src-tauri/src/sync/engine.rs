@@ -24,7 +24,12 @@ use std::{
 type Docs = BTreeMap<Domain, Document>;
 #[cfg(test)]
 tokio::task_local! { pub(super) static BEFORE_PROJECT: Box<dyn Fn(&Database)>; }
-fn check_current(c: &Connection, cfg: &Config, expected: &View, session: &str) -> Result<(), String> {
+fn check_current(
+    c: &Connection,
+    cfg: &Config,
+    expected: &View,
+    session: &str,
+) -> Result<(), String> {
     if crate::infrastructure::database::account_session(c).map_err(err)? != session {
         return Err("同步账号会话已变更".into());
     }
@@ -78,10 +83,12 @@ fn save_menu(
             "__present" => Cell::Value(current.snapshot.records.contains_key(&conflict.key).into()),
             _ => current.facts.get(&key).cloned().unwrap_or(Cell::Missing),
         };
-        let can_restore_parent = !causal || conflict.field != "__parent"
-            || conflict.local.as_str().is_some_and(|parent| {
-                parent_recoverable(&docs[&Domain::Library], current, parent)
-            });
+        let can_restore_parent = !causal
+            || conflict.field != "__parent"
+            || conflict
+                .local
+                .as_str()
+                .is_some_and(|parent| parent_recoverable(&docs[&Domain::Library], current, parent));
         let mut cells = Vec::new();
         if can_restore_parent {
             cells.push((local.clone(), "本机".to_owned()));
@@ -761,7 +768,10 @@ fn capture_edits(
                     .and_then(|context| context.get(&present))
                     .is_some_and(|register| {
                         !register.values.is_empty()
-                            && register.values.iter().all(|v| v.cell == Cell::Value(true.into()))
+                            && register
+                                .values
+                                .iter()
+                                .all(|v| v.cell == Cell::Value(true.into()))
                     });
                 if changes.contains_key(&present) || known {
                     continue;
@@ -1089,7 +1099,11 @@ pub async fn sync(
             if !relation_conflicts(&docs[&Domain::Library])?.is_empty() {
                 return Err("恢复成员时，请同时保留它所属的歌单或文件夹".into());
             }
-            projection::snapshot(&docs[&Domain::Library], &docs[&Domain::Progress], cfg.history)?;
+            projection::snapshot(
+                &docs[&Domain::Library],
+                &docs[&Domain::Progress],
+                cfg.history,
+            )?;
             tx.commit().map_err(err)
         })?;
         all = with(db, cfg, |c| overlays(c, &target))?;
@@ -1888,14 +1902,17 @@ mod tests {
         cfg.history = true;
         let a = device(&cfg);
         run(&a, &cfg, &secret).await;
-        change(&a, &format!(
+        change(
+            &a,
+            &format!(
             "INSERT INTO source_items(id,provider,bvid,cid) VALUES('{ID}','bilibili','BVmirror',18);
              INSERT INTO tracks(id,source_item_id,title) VALUES('{ID}','{ID}','Source title');
              INSERT INTO playlists(id,name) VALUES('{LIST}','Imported');
              INSERT INTO playlist_items(playlist_id,track_id,position) VALUES('{LIST}','{ID}',0);
              INSERT INTO imported_entry_owned(playlist_id,track_id) VALUES('{LIST}','{ID}');
              INSERT INTO play_history(track_id,played_at) VALUES('{ID}','2026-01-01 00:00:00');"
-        ));
+        ),
+        );
         run(&a, &cfg, &secret).await;
         let b = device(&cfg);
         assert!(run(&b, &cfg, &secret).await.conflicts.is_empty());
@@ -1952,12 +1969,13 @@ mod tests {
         })
         .unwrap();
         assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
-        let title = a
-            .0
-            .lock()
-            .unwrap()
-            .query_row("SELECT title FROM metadata_overrides", [], |r| r.get::<_, String>(0))
-            .unwrap();
+        let title =
+            a.0.lock()
+                .unwrap()
+                .query_row("SELECT title FROM metadata_overrides", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap();
         assert_eq!(title, "Manual title");
 
         let b = device(&cfg);
@@ -1965,10 +1983,19 @@ mod tests {
         with(&b, &cfg, |c| {
             let snapshot = storage::export(c, &cfg.uid, true)?;
             assert!(snapshot.records.contains_key(&format!("favorite:{ID}")));
-            assert_eq!(snapshot.records[&format!("item:{LIST}|{ID}")].fields["position"], 4);
-            assert_eq!(snapshot.records[&format!("history:{ID}")].fields["resume"], "200:20000");
+            assert_eq!(
+                snapshot.records[&format!("item:{LIST}|{ID}")].fields["position"],
+                4
+            );
+            assert_eq!(
+                snapshot.records[&format!("history:{ID}")].fields["resume"],
+                "200:20000"
+            );
             let doc = outbox::confirmed(c, &target, Domain::Library)?;
-            assert_eq!(doc.registers[&present].values[0].cell, Cell::Value(false.into()));
+            assert_eq!(
+                doc.registers[&present].values[0].cell,
+                Cell::Value(false.into())
+            );
             Ok(())
         })
         .unwrap();
@@ -2060,18 +2087,30 @@ mod tests {
                 params![target, uuid::Uuid::new_v4().to_string(), "a".repeat(64)],
             )
             .map_err(err)?;
-            c.execute("INSERT INTO playlists(id,name) VALUES(?1,'core still syncs')", [LIST])
-                .map_err(err)?;
+            c.execute(
+                "INSERT INTO playlists(id,name) VALUES(?1,'core still syncs')",
+                [LIST],
+            )
+            .map_err(err)?;
             Ok(())
         })
         .unwrap();
 
         let partial = run(&a, &cfg, &secret).await;
         assert!(partial.conflicts.is_empty());
-        assert!(partial.import_error.as_deref().unwrap().contains("暂不可见"));
+        assert!(
+            partial
+                .import_error
+                .as_deref()
+                .unwrap()
+                .contains("暂不可见")
+        );
         assert!(partial.visibility_error.is_none());
         let last: String = with(&a, &cfg, |c| {
-            assert_eq!(super::super::sync_area_error(c, "import-error")?, partial.import_error);
+            assert_eq!(
+                super::super::sync_area_error(c, "import-error")?,
+                partial.import_error
+            );
             c.query_row(
                 "SELECT value FROM sync_info WHERE key=?1",
                 [format!("last_success:{target}")],
@@ -2086,7 +2125,14 @@ mod tests {
 
         change(&a, "DELETE FROM imported_entry_heads");
         assert!(run(&a, &cfg, &secret).await.import_error.is_none());
-        assert!(with(&a, &cfg, |c| super::super::sync_area_error(c, "import-error")).unwrap().is_none());
+        assert!(
+            with(&a, &cfg, |c| super::super::sync_area_error(
+                c,
+                "import-error"
+            ))
+            .unwrap()
+            .is_none()
+        );
         for db in [a, b] {
             std::fs::remove_dir_all(db.1).unwrap();
         }
@@ -2127,7 +2173,13 @@ mod tests {
             choices: Facts::from([(key, Cell::Missing)]),
         })
         .unwrap();
-        assert!(sync(&a, &cfg, &secret, Some(&selected), false).await.unwrap().conflicts.is_empty());
+        assert!(
+            sync(&a, &cfg, &secret, Some(&selected), false)
+                .await
+                .unwrap()
+                .conflicts
+                .is_empty()
+        );
         assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
         std::fs::remove_dir_all(a.1).unwrap();
         server.abort();

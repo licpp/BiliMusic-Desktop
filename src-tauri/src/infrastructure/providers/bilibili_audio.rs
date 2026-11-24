@@ -129,12 +129,14 @@ mod tests {
             {"id":999,"codecs":"mp4a.40.2","base_url":"https://cdn/unknown-bandwidth"},
             {"id":997,"codecs":"mp4a.40.2","bandwidth":32000,"base_url":""}],
             "flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(compatible_audio(&dash).unwrap().id, 30232);
         assert_eq!(select_audio(&dash, 30251).unwrap().id, 30251);
         let only_flac: DashData = serde_json::from_value(json!({
             "flac":{"audio":{"id":30251,"codecs":"fLaC","base_url":"https://cdn/hires"}}
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(compatible_audio(&only_flac).is_none());
     }
     #[test]

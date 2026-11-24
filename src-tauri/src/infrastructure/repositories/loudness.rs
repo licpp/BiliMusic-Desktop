@@ -92,25 +92,30 @@ mod tests {
         let original = Connection::open_in_memory().unwrap();
         let current = Connection::open_in_memory().unwrap();
         crate::infrastructure::migrations::migrate(&current).unwrap();
-        let descriptor = LoudnessDescriptor::from_volume(
-            "BVtest",
-            3,
-            &serde_json::json!({"measured_i": -12.0}),
-        )
-        .unwrap();
+        let descriptor =
+            LoudnessDescriptor::from_volume("BVtest", 3, &serde_json::json!({"measured_i": -12.0}))
+                .unwrap();
         LoudnessRepository::save_for_session(
             &current,
             &account_session(&original).unwrap(),
             &descriptor,
         )
         .unwrap();
-        assert!(LoudnessRepository::get(&current, "BVtest", 3).unwrap().is_none());
+        assert!(
+            LoudnessRepository::get(&current, "BVtest", 3)
+                .unwrap()
+                .is_none()
+        );
         LoudnessRepository::save_for_session(
             &current,
             &account_session(&current).unwrap(),
             &descriptor,
         )
         .unwrap();
-        assert!(LoudnessRepository::get(&current, "BVtest", 3).unwrap().is_some());
+        assert!(
+            LoudnessRepository::get(&current, "BVtest", 3)
+                .unwrap()
+                .is_some()
+        );
     }
 }

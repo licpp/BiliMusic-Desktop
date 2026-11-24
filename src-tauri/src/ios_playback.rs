@@ -69,7 +69,9 @@ pub unsafe extern "C" fn bilimusic_ios_resolve(request: i64, raw: *const c_char)
         }
         let result = match &payload {
             Ok(track) => crate::native_playback::resolve(&app, track.clone()).await,
-            Err(_) => Err(crate::interface::error::CommandError::validation("歌曲信息无效")),
+            Err(_) => Err(crate::interface::error::CommandError::validation(
+                "歌曲信息无效",
+            )),
         };
         let json = crate::native_playback::resolution_response(result);
         if let Ok(json) = CString::new(json.to_string()) {
@@ -131,7 +133,6 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
         }
     });
 }
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn bilimusic_ios_diagnostic_exit(kind: i32, at: u64) {

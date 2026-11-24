@@ -302,14 +302,18 @@ pub(super) fn usable_season_cover(cover: &str) -> bool {
 }
 
 pub(super) fn first_archive_cover(archives: &Value) -> Option<&str> {
-    archives.as_array()?.iter()
+    archives
+        .as_array()?
+        .iter()
         .filter_map(|archive| archive["pic"].as_str())
         .find(|cover| usable_season_cover(cover))
 }
 
 fn season_cover(mut summary: SeasonSummary, tracks: &[SeasonTrack]) -> SeasonSummary {
     if !usable_season_cover(&summary.cover_url)
-        && let Some(track) = tracks.iter().find(|track| usable_season_cover(&track.cover_url))
+        && let Some(track) = tracks
+            .iter()
+            .find(|track| usable_season_cover(&track.cover_url))
     {
         summary.cover_url = track.cover_url.clone();
     }
@@ -474,10 +478,15 @@ impl BilibiliProvider {
     }
 
     pub async fn video_pagelist(&self, bvid: &str) -> Result<Vec<VideoPart>, ProviderError> {
-        self.video_pagelist_with_priority(bvid, RequestPriority::Foreground).await
+        self.video_pagelist_with_priority(bvid, RequestPriority::Foreground)
+            .await
     }
 
-    pub async fn video_pagelist_with_priority(&self, bvid: &str, priority: RequestPriority) -> Result<Vec<VideoPart>, ProviderError> {
+    pub async fn video_pagelist_with_priority(
+        &self,
+        bvid: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<VideoPart>, ProviderError> {
         let epoch = self.catalog_epoch.load(Ordering::Relaxed);
         // A complete season already contains the same CID list.
         let embedded =
@@ -542,9 +551,18 @@ impl BilibiliProvider {
                 })?;
                 let rows = match rows {
                     Err(error @ ProviderError::Api { code: -404, .. }) => {
-                        match tokio::time::timeout(Duration::from_secs(3), self.video_detail_with_priority(bvid, priority)).await {
-                            Ok(Err(confirmed @ ProviderError::Api { code: 62002, .. })) => return Err(confirmed),
-                            Ok(Err(restricted)) if restricted.is_request_restricted() => return Err(restricted),
+                        match tokio::time::timeout(
+                            Duration::from_secs(3),
+                            self.video_detail_with_priority(bvid, priority),
+                        )
+                        .await
+                        {
+                            Ok(Err(confirmed @ ProviderError::Api { code: 62002, .. })) => {
+                                return Err(confirmed);
+                            }
+                            Ok(Err(restricted)) if restricted.is_request_restricted() => {
+                                return Err(restricted);
+                            }
                             Ok(Ok(detail)) => detail.pages,
                             _ => return Err(error),
                         }
@@ -594,8 +612,15 @@ impl BilibiliProvider {
         {
             return Ok(season.summary.cover_url.clone());
         }
-        let first: Value = self.get_data_with_priority(self.season_page_url(mid, id, 1, "12"), RequestPriority::Background).await?;
-        let cover = first["meta"]["cover"].as_str().filter(|cover| usable_season_cover(cover))
+        let first: Value = self
+            .get_data_with_priority(
+                self.season_page_url(mid, id, 1, "12"),
+                RequestPriority::Background,
+            )
+            .await?;
+        let cover = first["meta"]["cover"]
+            .as_str()
+            .filter(|cover| usable_season_cover(cover))
             .or_else(|| first_archive_cover(&first["archives"]));
         Ok(cover.map(normalize_url).unwrap_or_default())
     }
@@ -866,8 +891,16 @@ mod catalog_tests {
             {"pic":"//i0.hdslb.com/first.jpg"},
             {"pic":"//i0.hdslb.com/second.jpg"}
         ]);
-        assert_eq!(first_archive_cover(&archives), Some("//i0.hdslb.com/first.jpg"));
-        let tracks = archives.as_array().unwrap().iter().map(|archive| season_member(archive, None)).collect::<Vec<_>>();
+        assert_eq!(
+            first_archive_cover(&archives),
+            Some("//i0.hdslb.com/first.jpg")
+        );
+        let tracks = archives
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|archive| season_member(archive, None))
+            .collect::<Vec<_>>();
         let summary = SeasonSummary {
             id: 1,
             uploader_id: 2,
@@ -875,9 +908,18 @@ mod catalog_tests {
             cover_url: String::new(),
             uploader_name: String::new(),
         };
-        assert_eq!(season_cover(summary.clone(), &tracks).cover_url, "https://i0.hdslb.com/first.jpg");
-        let explicit = SeasonSummary { cover_url: "https://i0.hdslb.com/custom.jpg".into(), ..summary };
-        assert_eq!(season_cover(explicit, &tracks).cover_url, "https://i0.hdslb.com/custom.jpg");
+        assert_eq!(
+            season_cover(summary.clone(), &tracks).cover_url,
+            "https://i0.hdslb.com/first.jpg"
+        );
+        let explicit = SeasonSummary {
+            cover_url: "https://i0.hdslb.com/custom.jpg".into(),
+            ..summary
+        };
+        assert_eq!(
+            season_cover(explicit, &tracks).cover_url,
+            "https://i0.hdslb.com/custom.jpg"
+        );
     }
 
     #[test]
@@ -1030,7 +1072,11 @@ mod chapter_tests {
 
     #[test]
     fn no_official_chapters_is_distinct_from_a_malformed_list() {
-        for empty in [json!({}), json!({"view_points":null}), json!({"view_points":[]})] {
+        for empty in [
+            json!({}),
+            json!({"view_points":null}),
+            json!({"view_points":[]}),
+        ] {
             assert!(parse_video_chapters(&empty).unwrap().is_empty());
         }
         for malformed in [
@@ -1056,15 +1102,20 @@ mod chapter_tests {
         };
         {
             let mut player_metadata = provider.player_metadata.write().await;
-            player_metadata.insert((0, bvid.into(), 11), metadata(json!({
-                "view_points":[{"from":0,"to":30,"content":"第一段"}],
-                "subtitle":{"subtitles":[{"lan":"ai-zh","lan_doc":"中文"}]}
-            })));
+            player_metadata.insert(
+                (0, bvid.into(), 11),
+                metadata(json!({
+                    "view_points":[{"from":0,"to":30,"content":"第一段"}],
+                    "subtitle":{"subtitles":[{"lan":"ai-zh","lan_doc":"中文"}]}
+                })),
+            );
             player_metadata.insert((0, bvid.into(), 12), metadata(json!({"view_points":[]})));
         }
-        let (chapters, subtitles) =
-            tokio::try_join!(provider.video_chapters(bvid, 11), provider.subtitles(bvid, 11))
-                .unwrap();
+        let (chapters, subtitles) = tokio::try_join!(
+            provider.video_chapters(bvid, 11),
+            provider.subtitles(bvid, 11)
+        )
+        .unwrap();
         assert_eq!(chapters[0].title, "第一段");
         assert_eq!(subtitles[0].language, "ai-zh");
         assert!(provider.video_chapters(bvid, 12).await.unwrap().is_empty());
@@ -1088,8 +1139,14 @@ mod subtitle_regression_tests {
             {"lan":"zh-CN"}, {"lan":"ai-zh"}, {"lan":"en-US"}, {"lan":"ai-en-GB"}
         ]));
         let manual = choices(serde_json::json!([{"lan":""},{"lan":"en-US"}]));
-        assert_eq!(preferred_subtitle_entry(&both, None).unwrap()["lan"], "ai-zh");
-        assert_eq!(preferred_subtitle_entry(&manual, None).unwrap()["lan"], "en-US");
+        assert_eq!(
+            preferred_subtitle_entry(&both, None).unwrap()["lan"],
+            "ai-zh"
+        );
+        assert_eq!(
+            preferred_subtitle_entry(&manual, None).unwrap()["lan"],
+            "en-US"
+        );
         assert_eq!(
             preferred_subtitle_entry(&both, Some("ai-en")).unwrap()["lan"],
             "ai-en-GB"
@@ -1102,7 +1159,9 @@ mod subtitle_regression_tests {
             preferred_subtitle_entry(&both, Some("ai-ja")).unwrap()["lan"],
             "ai-zh"
         );
-        assert!(preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}])), None).is_none());
+        assert!(
+            preferred_subtitle_entry(&choices(serde_json::json!([{"lan":null}])), None).is_none()
+        );
         assert_eq!(subtitle_language_key("ai-cmn-Hans"), "zh");
         assert_eq!(subtitle_language_key("AI-jpn"), "ja");
     }

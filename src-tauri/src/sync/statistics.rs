@@ -406,7 +406,9 @@ fn tag_key(label: &str) -> (String, &str) {
     match lower.as_str() {
         "原创曲" | "原创歌曲" => ("原创歌曲".into(), "原创歌曲"),
         "翻彈" | "翻弹" => ("翻弹".into(), "翻弹"),
-        "ost" | "soundtrack" | "原聲帶" | "原声带" | "原声配乐" => ("原声配乐".into(), "原声配乐"),
+        "ost" | "soundtrack" | "原聲帶" | "原声带" | "原声配乐" => {
+            ("原声配乐".into(), "原声配乐")
+        }
         "vocaloid" => ("vocaloid".into(), "VOCALOID"),
         _ => (lower, label),
     }
@@ -418,25 +420,43 @@ pub(crate) async fn hydrate_tags(
 ) -> Result<usize, String> {
     use crate::infrastructure::{database::account_session, providers::bilibili::valid_bvid};
     static HYDRATING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let Ok(_running) = HYDRATING.try_lock() else { return Ok(0) };
+    let Ok(_running) = HYDRATING.try_lock() else {
+        return Ok(0);
+    };
     let (session, candidates) = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         let session = account_session(&c).map_err(err)?;
         let items = buckets(&c)?;
         let mut scores = Seconds::new();
         for (id, seconds) in items.into_iter().flat_map(|bucket| bucket.tracks) {
-            let Some(bvid) = id.strip_prefix("bilibili:").and_then(|id| id.split_once(':')).map(|(bvid, _)| bvid) else { continue };
+            let Some(bvid) = id
+                .strip_prefix("bilibili:")
+                .and_then(|id| id.split_once(':'))
+                .map(|(bvid, _)| bvid)
+            else {
+                continue;
+            };
             if valid_bvid(bvid) && seconds > 0.0 {
                 *scores.entry(bvid.into()).or_default() += seconds;
             }
         }
-        let mut checked = c.prepare("SELECT substr(key,11) FROM sync_info WHERE key LIKE 'bili-tags:%'
+        let mut checked = c
+            .prepare(
+                "SELECT substr(key,11) FROM sync_info WHERE key LIKE 'bili-tags:%'
             AND (COALESCE(json_extract(value,'$.checked'),0)>unixepoch()-2592000
-                OR COALESCE(json_extract(value,'$.attempted'),0)>unixepoch()-1800)").map_err(err)?;
-        let checked = checked.query_map([], |r| r.get::<_, String>(0)).map_err(err)?
-            .collect::<rusqlite::Result<std::collections::HashSet<_>>>().map_err(err)?;
-        let mut candidates: Vec<_> = scores.into_iter().filter(|(bvid,_)| !checked.contains(bvid)).collect();
-        candidates.sort_by(|a,b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                OR COALESCE(json_extract(value,'$.attempted'),0)>unixepoch()-1800)",
+            )
+            .map_err(err)?;
+        let checked = checked
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()
+            .map_err(err)?;
+        let mut candidates: Vec<_> = scores
+            .into_iter()
+            .filter(|(bvid, _)| !checked.contains(bvid))
+            .collect();
+        candidates.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         (session, candidates)
     };
     let mut changed = 0;
@@ -447,30 +467,64 @@ pub(crate) async fn hydrate_tags(
                 return Ok(0);
             }
         }
-        let result = tokio::time::timeout(std::time::Duration::from_secs(4), provider.video_tags(&bvid)).await;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            provider.video_tags(&bvid),
+        )
+        .await;
         if matches!(&result, Ok(Err(error)) if error.is_request_restricted()) {
             break;
         }
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        if account_session(&c).map_err(err)? != session { return Ok(0); }
+        if account_session(&c).map_err(err)? != session {
+            return Ok(0);
+        }
         let tags = result.ok().and_then(Result::ok).map(|tags| {
             let mut seen = std::collections::HashSet::new();
-            tags.iter().map(|label| tag_key(label))
-                .filter(|(key,label)| !key.is_empty() && label.chars().count() <= 40 && seen.insert(key.clone()))
-                .take(20).map(|(_,label)| label.to_owned()).collect::<Vec<_>>()
+            tags.iter()
+                .map(|label| tag_key(label))
+                .filter(|(key, label)| {
+                    !key.is_empty() && label.chars().count() <= 40 && seen.insert(key.clone())
+                })
+                .take(20)
+                .map(|(_, label)| label.to_owned())
+                .collect::<Vec<_>>()
         });
-        let mut cached = c.query_row("SELECT value FROM sync_info WHERE key=?1", [format!("bili-tags:{bvid}")], |r| r.get::<_, String>(0))
-            .optional().map_err(err)?.and_then(|value| serde_json::from_str::<Value>(&value).ok()).unwrap_or_else(|| json!({}));
+        let mut cached = c
+            .query_row(
+                "SELECT value FROM sync_info WHERE key=?1",
+                [format!("bili-tags:{bvid}")],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(err)?
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .unwrap_or_else(|| json!({}));
         let succeeded = tags.is_some();
         if let Some(tags) = tags {
             let next = json!(tags);
-            if cached.get("tags") != Some(&next) { changed += 1; }
+            if cached.get("tags") != Some(&next) {
+                changed += 1;
+            }
             cached["tags"] = next;
         }
-        c.execute("INSERT INTO sync_info(key,value) VALUES(?1,json_set(?2,?3,unixepoch()))
+        c.execute(
+            "INSERT INTO sync_info(key,value) VALUES(?1,json_set(?2,?3,unixepoch()))
             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            params![format!("bili-tags:{bvid}"),cached.to_string(),if succeeded { "$.checked" } else { "$.attempted" }]).map_err(err)?;
-        if !succeeded { break; }
+            params![
+                format!("bili-tags:{bvid}"),
+                cached.to_string(),
+                if succeeded {
+                    "$.checked"
+                } else {
+                    "$.attempted"
+                }
+            ],
+        )
+        .map_err(err)?;
+        if !succeeded {
+            break;
+        }
     }
     Ok(changed)
 }
@@ -488,11 +542,23 @@ fn preferences(
          LEFT JOIN metadata_overrides m ON m.track_id=t.id WHERE t.id=?1",
         )
         .map_err(err)?;
-    let mut tag_query = c.prepare("SELECT substr(key,11),json_extract(value,'$.tags') FROM sync_info
-        WHERE key LIKE 'bili-tags:%' AND json_type(value,'$.tags')='array'").map_err(err)?;
-    let tags = tag_query.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(err)?
-        .filter_map(|row| row.ok().and_then(|(bvid,value)| serde_json::from_str::<Vec<String>>(&value).ok().map(|tags| (bvid,tags))))
-        .collect::<BTreeMap<_,_>>();
+    let mut tag_query = c
+        .prepare(
+            "SELECT substr(key,11),json_extract(value,'$.tags') FROM sync_info
+        WHERE key LIKE 'bili-tags:%' AND json_type(value,'$.tags')='array'",
+        )
+        .map_err(err)?;
+    let tags = tag_query
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(err)?
+        .filter_map(|row| {
+            row.ok().and_then(|(bvid, value)| {
+                serde_json::from_str::<Vec<String>>(&value)
+                    .ok()
+                    .map(|tags| (bvid, tags))
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut artists = BTreeMap::<String, (String, f64)>::new();
     let mut uploaders = BTreeMap::<String, (String, f64)>::new();
     let mut themes = BTreeMap::<String, (String, f64)>::new();
@@ -545,8 +611,14 @@ fn preferences(
                 .unwrap_or_else(|| format!("name:{}", uploader.trim().to_lowercase()));
             add(&mut uploaders, key, uploader.trim(), seconds);
         }
-        let bvid = track.strip_prefix("bilibili:").and_then(|id| id.split_once(':')).map(|(bvid, _)| bvid);
-        if let Some(labels) = bvid.and_then(|bvid| tags.get(bvid)).filter(|labels| !labels.is_empty()) {
+        let bvid = track
+            .strip_prefix("bilibili:")
+            .and_then(|id| id.split_once(':'))
+            .map(|(bvid, _)| bvid);
+        if let Some(labels) = bvid
+            .and_then(|bvid| tags.get(bvid))
+            .filter(|labels| !labels.is_empty())
+        {
             theme_seconds += seconds;
             let mut seen = std::collections::HashSet::new();
             for label in labels {
@@ -653,10 +725,14 @@ fn preferences_include_tracks_outside_the_top_fifty_and_keep_artist_and_uploader
 fn video_tags_merge_aliases_and_are_weighted_across_parts() {
     let c = Connection::open_in_memory().unwrap();
     crate::infrastructure::migrations::migrate(&c).unwrap();
-    c.execute("INSERT INTO sync_info VALUES(?1,?2)", params![
-        "bili-tags:BV17J411z74y",
-        json!({"tags": ["原创曲", "原创歌曲", "VOCALOID", "电子音乐"]}).to_string(),
-    ]).unwrap();
+    c.execute(
+        "INSERT INTO sync_info VALUES(?1,?2)",
+        params![
+            "bili-tags:BV17J411z74y",
+            json!({"tags": ["原创曲", "原创歌曲", "VOCALOID", "电子音乐"]}).to_string(),
+        ],
+    )
+    .unwrap();
     let tracks = Seconds::from([
         ("bilibili:BV17J411z74y:1".into(), 50.0),
         ("bilibili:BV17J411z74y:2".into(), 70.0),
@@ -876,12 +952,17 @@ pub async fn listening_sync(
         return Ok(false);
     }
     super::background::run(
-        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>().map(|state| state.inner().clone()),
+        app.try_state::<crate::infrastructure::diagnostics::Diagnostics>()
+            .map(|state| state.inner().clone()),
         &database,
         &state,
         super::scheduler::Domain::Statistics,
         automatic.unwrap_or(false),
-        Box::pin(listening_sync_inner(app.clone(), database.clone(), state.clone())),
+        Box::pin(listening_sync_inner(
+            app.clone(),
+            database.clone(),
+            state.clone(),
+        )),
         |_| (false, false, false),
     )
     .await

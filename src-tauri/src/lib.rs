@@ -56,7 +56,11 @@ pub fn run() {
     let builder = builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&["floating-lyrics", "floating-lyrics-unlock", tray_player::LABEL])
+                .with_denylist(&[
+                    "floating-lyrics",
+                    "floating-lyrics-unlock",
+                    tray_player::LABEL,
+                ])
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
@@ -334,7 +338,9 @@ pub fn run() {
         .expect("failed to build BiliMusic")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(diagnostics) = app.try_state::<infrastructure::diagnostics::Diagnostics>() {
+                if let Some(diagnostics) =
+                    app.try_state::<infrastructure::diagnostics::Diagnostics>()
+                {
                     diagnostics.flush_on_exit();
                 }
             }

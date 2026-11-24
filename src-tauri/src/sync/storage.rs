@@ -94,13 +94,15 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
         if history {
-            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at
+            let mut q = c.prepare(
+                "SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at
                  FROM collection_progress p
                  LEFT JOIN collections own ON own.bvid=p.reference
                  LEFT JOIN collections creator ON creator.bvid=p.creator_ref
                  WHERE own.bvid IS NOT NULL OR creator.bvid IS NOT NULL
                  ORDER BY own.bvid IS NOT NULL DESC,p.observed_at DESC,p.reference
-                 LIMIT ?1")?;
+                 LIMIT ?1",
+            )?;
             for row in q.query_map([COLLECTION_PROGRESS_LIMIT], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -235,9 +237,14 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             .optional()
             .map_err(|e| e.to_string())?;
         if let Some(overrides) = overrides {
-            for (field, value) in ["overrideTitle", "overrideArtist", "overrideAlbum", "overrideCover"]
-                .into_iter()
-                .zip(overrides)
+            for (field, value) in [
+                "overrideTitle",
+                "overrideArtist",
+                "overrideAlbum",
+                "overrideCover",
+            ]
+            .into_iter()
+            .zip(overrides)
             {
                 r.fields.insert(field.into(), json!(value));
             }
@@ -282,7 +289,10 @@ pub fn apply_with_inferred_tracks(
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for id in ids {
             let key = format!("track:{id}");
-            if !keep.contains(id.as_str()) && s.records.contains_key(&key) && !inferred.contains(&key) {
+            if !keep.contains(id.as_str())
+                && s.records.contains_key(&key)
+                && !inferred.contains(&key)
+            {
                 tx.execute("INSERT OR REPLACE INTO sync_lyric_archive(track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at) SELECT track_id,provider,provider_lyric_id,raw_text,parsed_json,bias_ms,selected_manually,updated_at FROM lyrics WHERE track_id=?1",[&id])?;
                 tx.execute("DELETE FROM lyrics WHERE track_id=?1", [&id])?;
             }

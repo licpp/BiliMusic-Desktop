@@ -81,9 +81,8 @@ impl Snapshot {
     }
     pub(super) fn omit_followed_season_progress(&mut self) {
         let direct = self.collection_references();
-        self.records.retain(|_, r| {
-            r.kind != "collectionProgress" || direct.contains(text(r, "reference"))
-        });
+        self.records
+            .retain(|_, r| r.kind != "collectionProgress" || direct.contains(text(r, "reference")));
     }
     fn collection_references(&self) -> BTreeSet<String> {
         self.records

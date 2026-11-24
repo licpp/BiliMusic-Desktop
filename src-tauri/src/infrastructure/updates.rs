@@ -289,7 +289,11 @@ mod tests {
         let local = "0.4.0".parse().unwrap();
         let previous = "0.3.7".parse().unwrap();
         let current = current_build();
-        let patch = if current == 50 { current - 1 } else { current + 1 };
+        let patch = if current == 50 {
+            current - 1
+        } else {
+            current + 1
+        };
         let data = serde_json::json!({"version":"0.4.0","platforms":[
             {"id":"android","status":"available","build":patch,"file":"phone.apk","size":10,"sha256":"a".repeat(64),
                 "channels":[{"url":"https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.0/phone.apk"}]},

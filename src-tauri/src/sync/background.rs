@@ -41,7 +41,8 @@ pub(super) fn scope_key(c: &rusqlite::Connection, cfg: &super::Config) -> Result
 fn context(db: &Database, state: &SyncState) -> Result<(String, String, String), String> {
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
     let scope = context_key(db, &c)?;
-    let session = crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?;
+    let session =
+        crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?;
     let saved: Option<String> = c
         .query_row(
             "SELECT json FROM sync_scheduler WHERE target=?1",
@@ -295,7 +296,10 @@ mod tests {
             ),
         ];
         for (command, size) in sizes {
-            assert!(size <= 4096, "{command} sync retains {size} bytes in the IPC future");
+            assert!(
+                size <= 4096,
+                "{command} sync retains {size} bytes in the IPC future"
+            );
         }
     }
 

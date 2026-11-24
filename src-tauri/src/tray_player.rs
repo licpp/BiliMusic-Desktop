@@ -122,7 +122,13 @@ pub fn initialize(app: &AppHandle) -> tauri::Result<()> {
             let suppress_release = AtomicBool::new(false);
             tray = tray.on_tray_icon_event(move |tray, event| {
                 if cfg!(target_os = "windows")
-                    && matches!(event, TrayIconEvent::DoubleClick { button: MouseButton::Left, .. })
+                    && matches!(
+                        event,
+                        TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        }
+                    )
                 {
                     suppress_release.store(true, Ordering::Relaxed);
                     let _ = perform(tray.app_handle(), Action::Show);
@@ -138,9 +144,13 @@ pub fn initialize(app: &AppHandle) -> tauri::Result<()> {
                 {
                     if cfg!(target_os = "windows") && button == MouseButton::Left {
                         let was_double = suppress_release.swap(false, Ordering::Relaxed);
-                        if button_state == MouseButtonState::Up && was_double { return; }
+                        if button_state == MouseButtonState::Up && was_double {
+                            return;
+                        }
                     }
-                    if panel_available && opens_player(button, button_state, cfg!(target_os = "macos")) {
+                    if panel_available
+                        && opens_player(button, button_state, cfg!(target_os = "macos"))
+                    {
                         if let Err(error) = toggle_panel(tray.app_handle(), position, rect) {
                             eprintln!("Unable to display tray player: {error}");
                         }
