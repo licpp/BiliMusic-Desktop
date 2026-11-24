@@ -1,5 +1,34 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createHash } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+function frontendProvenance(edition: string): Plugin {
+  let target: string | string[] | false
+  return {
+    name: 'bilimusic-frontend-provenance',
+    apply: 'build',
+    configResolved(config) {
+      target = config.build.target
+    },
+    async writeBundle(options, bundle) {
+      if (!options.dir) throw new Error('Missing frontend output directory')
+      const folder = options.dir
+      const filenames = Object.keys(bundle).sort()
+      const files = Object.fromEntries(await Promise.all(filenames.map(async name => [
+        name,
+        createHash('sha256').update(await readFile(join(folder, name))).digest('hex'),
+      ])))
+      await writeFile(join(folder, 'frontend-build.json'), JSON.stringify({
+        edition,
+        platform: process.env.TAURI_ENV_PLATFORM || 'shared',
+        target,
+        files,
+      }, null, 2))
+    },
+  }
+}
 
 const androidWebViewPreflight: Plugin = {
   name: 'bilimusic-android-webview-preflight',
@@ -17,7 +46,7 @@ const androidWebViewPreflight: Plugin = {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), ...(mode === 'large-screen' ? [{
+  plugins: [react(), frontendProvenance(mode === 'large-screen' ? 'large-screen' : 'standard'), ...(mode === 'large-screen' ? [{
     name: 'bilimusic-large-screen-entry',
     transformIndexHtml: { order: 'pre' as const, handler: (html: string) => html.replace('/src/main.tsx', '/src/large-screen/main.tsx') },
   }] : process.env.TAURI_ENV_PLATFORM === 'android' ? [androidWebViewPreflight] : [])],

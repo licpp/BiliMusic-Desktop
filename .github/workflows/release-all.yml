@@ -195,7 +195,7 @@ jobs:
         shell: bash
         run: |
           node scripts/release-notices.mjs ${{ matrix.target }} THIRD_PARTY_LICENSES-${{ matrix.artifact }}.json
-          node -e "const fs=require('fs');fs.writeFileSync('build-provenance.json',JSON.stringify({version:require('./package.json').version,build:Number(process.env.BILIMUSIC_BUILD_NUMBER),source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID},null,2))"
+          node -e "const fs=require('fs');const crypto=require('crypto');const frontend=require('./dist/frontend-build.json');for(const [path,hash] of Object.entries(frontend.files)){if(crypto.createHash('sha256').update(fs.readFileSync('dist/'+path)).digest('hex')!==hash)throw Error('Frontend asset mismatch: '+path)}fs.writeFileSync('build-provenance.json',JSON.stringify({version:require('./package.json').version,build:Number(process.env.BILIMUSIC_BUILD_NUMBER),source:process.env.RELEASE_SOURCE,target:'${{ matrix.target }}',runner:'${{ matrix.os }}',run:process.env.GITHUB_RUN_ID,frontend},null,2))"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

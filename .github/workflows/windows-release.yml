@@ -81,4 +81,5 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             release-notices-Windows.json
+            dist/frontend-build.json
           if-no-files-found: error

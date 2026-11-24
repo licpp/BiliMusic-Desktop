@@ -97,6 +97,7 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             android-bridge-acl.json
+            dist/frontend-build.json
             native/android-player/android/build/test-results/testReleaseUnitTest/*.xml
             native/android-player/android/build/reports/lyric-previews/*.png
           if-no-files-found: error
