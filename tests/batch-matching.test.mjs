@@ -5,7 +5,7 @@ const {outputFiles}=await build({entryPoints:['src/services/batchMatching.ts'],b
  b.onResolve({filter:/@tauri-apps\/api\/core/},()=>({path:'ipc',namespace:'mock'}))
  b.onResolve({filter:/\/desktopApi$/},()=>({path:'api',namespace:'mock'}))
  b.onResolve({filter:/\/accountScope$/},()=>({path:'account',namespace:'mock'}))
- b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='ipc'?`export const invoke=(...args)=>globalThis.api.invoke(...args)`:a.path==='account'?`export const accountEpoch=()=>globalThis.epoch`:`export const searchLyrics=(...args)=>globalThis.api.lyrics(...args);export const searchMetadataCatalog=(...args)=>globalThis.api.catalog(...args);export const getStoredLyrics=async()=>null;`}))
+ b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='ipc'?`export const invoke=(...args)=>globalThis.api.invoke(...args)`:a.path==='account'?`export const accountEpoch=()=>globalThis.epoch`:`export const searchLyrics=(...args)=>globalThis.api.lyrics(...args);export const searchMetadataCatalog=(...args)=>globalThis.api.catalog(...args);export const getStoredLyrics=async()=>null;export const toTrackInput=track=>({id:track.id,bvid:track.source.bvid,cid:track.source.cid});`}))
 }}]})
 const {matchTracksAutomatically,matchingMetadata}=await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 const track={id:'bilibili:BV1GJ411x7h7:1',title:'王菲《红豆》',source:{provider:'bilibili',bvid:'BV1GJ411x7h7',cid:1,page:1},durationSeconds:240,liked:false}
@@ -28,4 +28,22 @@ test('batch supplies uploader context and distinguishes failed providers from no
  const input={...track,artist:'录音棚',source:{...track.source,uploaderName:'录音棚'}}
  const r=await matchTracksAutomatically([input,{...input,id:'other'}],new AbortController().signal,()=>{})
  assert.equal(r.failed,1);assert.equal(r.unmatched,1);assert.equal(writes.length,0)
+})
+
+test('linked matching supplies new source data only for an unseen part with a match', async () => {
+  reset()
+  const existing = { ...track, id: 'bilibili:BV1GJ411x7h7:2', source: { ...track.source, cid: 2 } }
+  const unmatched = { ...track, id: 'bilibili:BV1GJ411x7h7:3', source: { ...track.source, cid: 3 } }
+  const invoke = api.invoke
+  api.invoke = (command, args) => {
+    if (command !== 'batch_match_snapshot') return invoke(command, args)
+    assert.equal(args.allowMissing, true)
+    return { session: 'session-1', lyricToken: null, protected: false, trackExists: args.trackId === existing.id }
+  }
+  api.lyrics = async (_title, _artist, _force, source) => ({ candidates: source.cid === 3 ? [] : [lyric] })
+  const result = await matchTracksAutomatically([track, existing, unmatched], new AbortController().signal, () => {}, undefined, true)
+  assert.equal(result.matched, 2)
+  assert.equal(result.unmatched, 1)
+  assert.deepEqual(writes[0].newTrack, { id: track.id, bvid: track.source.bvid, cid: 1 })
+  assert.ok(!('newTrack' in writes[1]))
 })

@@ -1,4 +1,5 @@
 import './shared/runtimeCompatibility'
+import { retryOnceUnlessBiliPaused } from './services/biliRequestStatus'
 import './styles/components/content-visibility.css'
 import { startUpdateChecks } from './services/updates'
 import { installAccountQueryScope } from './services/queryKeys'
@@ -40,7 +41,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
-      retry: 1,
+      retry: retryOnceUnlessBiliPaused,
       refetchOnWindowFocus: false,
     },
   },
@@ -76,6 +77,7 @@ if (windowLayoutReady) void windowLayoutReady.then(mount)
 else mount()
 
 import './styles/collections.css'
+import './shared/video-result.css'
 import './styles/downloads.css'
 
 import './styles/mobile-pages.css'
@@ -94,5 +96,7 @@ import './styles/list-toolbar.css'
 import './styles/interaction-motion.css'
 import './styles/tablet.css'
 import './styles/controls.css'
+import './features/chapters/chapters.css'
+import './features/comments/chapterEditor.css'
 
 import './features/settings/diagnostics.css'

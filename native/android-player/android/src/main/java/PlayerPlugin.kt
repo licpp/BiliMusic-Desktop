@@ -430,6 +430,10 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 activity.window.decorView.setBackgroundColor(android.graphics.Color.parseColor(if (light) "#f4f6fa" else "#071019"))
             } else {
                 val service = PlaybackService.instance
+                if (args.action == "resume" && service?.hasResumeTarget() != true) {
+                    invoke.reject("原生播放器尚未就绪", "native_not_ready")
+                    return@runOnUiThread
+                }
                 if (args.action.startsWith("sleep") && service == null) {
                     invoke.reject("请先开始播放"); return@runOnUiThread
                 }
@@ -448,6 +452,6 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     }
     @Command
     fun snapshot(invoke: Invoke) {
-        activity.runOnUiThread { invoke.resolve(PlaybackService.instance?.snapshot() ?: JSObject()) }
+        activity.runOnUiThread { invoke.resolve(PlaybackService.instance?.snapshot() ?: JSObject().put("stopped", true)) }
     }
 }

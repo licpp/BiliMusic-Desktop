@@ -40,7 +40,10 @@
 .statistics-entry-copy small { color:var(--muted);font-size:11px;line-height:1.5; }
 .load-more-status { padding:12px;text-align:center;color:var(--muted);font-size:11px; }
 @media(max-width:960px) {
- :root[data-platform="desktop"] .app-shell { grid-template-rows:minmax(0,1fr) 92px calc(60px + env(safe-area-inset-bottom,0px)); }
+ :root[data-platform="desktop"] .app-shell {
+  --desktop-nav-height:calc(60px + env(safe-area-inset-bottom,0px));
+  grid-template-rows:minmax(0,1fr) 92px var(--desktop-nav-height);
+ }
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface)>.player-dock { display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-rows:48px 20px;align-items:center;gap:4px 12px;width:100%;max-width:none;height:92px;justify-self:stretch;padding:8px 16px; }
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-track-group { display:flex;grid-area:1/1;align-items:center;gap:6px;width:auto;min-width:0;justify-self:stretch; }
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-track { display:flex;gap:8px;min-width:0; }
@@ -52,12 +55,12 @@
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .progress { grid-area:2/1/3/-1;width:100%;padding:0; }
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-tools { display:flex;grid-area:1/3;align-items:center;width:auto;gap:0; }
  :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-tools>svg,:root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-tools>input { display:none; }
- :root[data-platform="desktop"] .app-shell .queue-drawer { bottom:152px; }
+ :root[data-platform="desktop"] .app-shell .queue-drawer { bottom:calc(92px + var(--desktop-nav-height)); }
 }
 @media(max-width:600px) {
- :root[data-platform="desktop"] .app-shell>.player-dock { padding-inline:10px;column-gap:6px; }
+ :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface)>.player-dock { padding-inline:10px;column-gap:6px; }
  :root[data-platform="desktop"] .app-shell .dock-heart { display:none; }
- :root[data-platform="desktop"] .app-shell .dock-controls { gap:2px; }
+ :root[data-platform="desktop"] :is(.app-shell,.desktop-lyrics-surface) .dock-controls { gap:2px; }
 }
 .action-menu-portal { position:fixed;inset:0;pointer-events:none; }
 .action-menu-portal > * { pointer-events:auto; }
@@ -95,5 +98,5 @@
 input[type="range"] { touch-action:none; }
 .progress input[type="range"] { height:24px;min-height:24px; }
 @media(min-width:961px) {
-  .app-shell:not(.lyrics-immersive) > .player-dock .progress input[type="range"] { height:16px;min-height:16px; }
+  :is(.app-shell:not(.lyrics-immersive),.desktop-lyrics-surface) > .player-dock .progress input[type="range"] { height:16px;min-height:16px; }
 }

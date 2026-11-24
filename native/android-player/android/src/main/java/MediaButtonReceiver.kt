@@ -8,6 +8,8 @@ import android.content.Intent
 class MediaButtonReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val key = intent.mediaButtonKey() ?: return
-        PlaybackService.instance?.handleMediaButton(key)
+        val service = PlaybackService.instance
+        if (service?.hasResumeTarget() == true) service.handleMediaButton(key)
+        else if (key.startsPausedPlayback()) PlaybackService.restartPausedFromMediaButton(context)
     }
 }

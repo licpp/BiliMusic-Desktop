@@ -1,10 +1,6 @@
 import { isTauri, invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isAndroid, isIOS, isMobile, isOHOS } from './platform'
 
-export const desktopFrame = isTauri() && !isMobile
-  ? /Windows/i.test(navigator.userAgent) ? 'windows' : /Macintosh|Mac OS X/i.test(navigator.userAgent) ? 'macos' : 'browser'
-  : 'browser'
 let appearance = Promise.resolve()
 
 const insetSides = ['top', 'right', 'bottom', 'left'] as const
@@ -60,13 +56,12 @@ export function setMiniPlayerPanel(expanded: boolean): Promise<void> {
   return transition
 }
 export function setImmersiveWindow(active: boolean, keepSystemInsets = false) {
-  if (isOHOS) return Promise.resolve()
-  // Serialize native frame changes so a quick open/close always restores the frame.
+  // Desktop lyrics use the same window viewport as the underlying browse page.
+  if (!isMobile || isOHOS) return Promise.resolve()
+  // Serialize mobile system bar changes so a quick open/close restores the insets.
   appearance = appearance.catch(() => undefined).then(async () => {
     if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
     else if (isIOS) await invoke('plugin:ios-player|control', { action: 'immersive', value: active ? 1 : 0 })
-    else if (desktopFrame === 'macos') await getCurrentWindow().setTitleBarStyle(active ? 'overlay' : 'visible')
-    else if (desktopFrame === 'windows') await getCurrentWindow().setDecorations(!active)
   })
   return appearance
 }

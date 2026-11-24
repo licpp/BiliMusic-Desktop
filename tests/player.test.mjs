@@ -210,6 +210,34 @@ test('clicking a list song replaces the queue and starts at its original index',
  await store.getState().previous();assert.equal(store.getState().current.id,'2');
  await store.getState().previous();assert.equal(store.getState().current.id,'1');listeners.pagehide();
 });
+
+test('desktop previous switches tracks on the first press after playback has advanced', async () => {
+  const { store, audio, listeners } = setup()
+  await store.getState().playFromList([track('1'), track('2')], '2')
+  audio[0].currentTime = 35
+  audio[0].callbacks.timeupdate()
+
+  await store.getState().previous()
+
+  assert.equal(store.getState().current.id, '1')
+  assert.equal(audio[0].src, 'local://1')
+  assert.equal(audio[0].currentTime, 0)
+  listeners.pagehide()
+})
+
+test('desktop previous restarts the current track when there is no other track', async () => {
+  const { store, audio, listeners } = setup()
+  await store.getState().playFromList([track('1')], '1')
+  audio[0].currentTime = 35
+  audio[0].callbacks.timeupdate()
+
+  await store.getState().previous()
+
+  assert.equal(store.getState().current.id, '1')
+  assert.equal(audio[0].currentTime, 0)
+  listeners.pagehide()
+})
+
 test('changing list during resolution cannot restore the old queue or song',async()=>{
  const {store,listeners}=setup(),pending=deferred();globalThis.testApi.record=async value=>value.id==='1'?pending.promise:value;
  const first=store.getState().playFromList([track('1'),track('2')],'1');
@@ -251,6 +279,61 @@ test('moving a BV in the queue moves its parts together without changing the pla
   assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '1', '2'])
   store.getState().removeQueueRows(['1', '2'])
   assert.deepEqual(store.getState().queue.map(item => item.id), ['3'])
+})
+
+test('dropping a queue track preserves playback and keeps hidden rows in their source slots', async () => {
+  const { store, audio, storage, module } = setup()
+  const hidden = track('9')
+  const other = { ...track('3'), source: { ...track('3').source, bvid: 'BVother' } }
+  const downloaded = [track('1'), track('2'), other, track('4')]
+  module.useOfflinePlayback.setState({ offline: true, library: module.indexOfflineTracks(downloaded) })
+  await store.getState().playFromList([downloaded[0], hidden, ...downloaded.slice(1)], '2')
+  const { current } = store.getState()
+  audio[0].currentTime = 28
+  audio[0].callbacks.timeupdate()
+
+  store.getState().reorderQueueRows(['3'], ['1'], 'before', 'track')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '1', '2', '4'])
+  assert.deepEqual(store.getState().queueBase.map(item => item.id), ['3', '9', '1', '2', '4'])
+  assert.deepEqual(JSON.parse(storage.get('resonance-player-v1')).state.queueOrder, ['3', '9', '1', '2', '4'])
+  store.getState().reorderQueueRows(['3'], ['2'], 'after', 'track')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['1', '2', '3', '4'])
+  module.useOfflinePlayback.setState({ offline: false, library: null })
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['1', '9', '2', '3', '4'])
+  assert.equal(store.getState().current, current)
+  assert.equal(store.getState().status, 'playing')
+  assert.equal(store.getState().progressSeconds, 28)
+  assert.equal(audio[0].plays, 1)
+  await store.getState().next()
+  assert.equal(store.getState().current.id, '3')
+})
+
+test('queue drops move contiguous video groups and restrict parts to their own run', async () => {
+  const { store, module } = setup()
+  const part = (id, bvid, page) => ({ ...track(id), source: { ...track(id).source, bvid, page } })
+  await store.getState().playFromList([
+    part('1', 'BVfirst', 1), part('2', 'BVfirst', 2), part('3', 'BVother', 1),
+    part('4', 'BVother', 2), part('5', 'BVfirst', 3), part('6', 'BVlast', 1),
+  ], '2', { kind: 'season', title: '合集' })
+  const reorder = store.getState().reorderQueueRows
+  const original = store.getState().queue
+  const intent = module.playbackIntent()
+  reorder(['1'], ['5'], 'after', 'part')
+  reorder(['1'], ['4'], 'before', 'track')
+  reorder(['1', '2'], ['3'], 'before', 'group')
+  reorder(['1', '2'], ['3', '4'], 'before', 'group')
+  assert.equal(store.getState().queue, original)
+  assert.equal(module.playbackIntent(), intent)
+
+  reorder(['1'], ['2'], 'after', 'part')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['2', '1', '3', '4', '5', '6'])
+  reorder(['3', '4'], ['6'], 'after', 'group')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['2', '1', '5', '6', '3', '4'])
+  const merged = store.getState().queue
+  reorder(['2', '1'], ['6'], 'after', 'group')
+  reorder(['6'], ['missing'], 'after', 'group')
+  assert.equal(store.getState().queue, merged)
+  assert.equal(store.getState().current.id, '2')
 })
 
 test('transient playback connection errors retry once with a fresh source', async () => {
@@ -557,12 +640,13 @@ test('prepared quality candidates stay silent and commit only one fresh gain', a
   listeners.pagehide()
 })
 test('desktop shuffle consumes a round once, goes back through real history and restores the pending deck',async()=>{
- const {store:s,listeners,storage}=setup()
+ const {store:s,audio,listeners,storage}=setup()
  const queue=Array.from({length:10},(_,i)=>track(String(i+1)))
  await s.getState().playFromList(queue,'1');s.getState().toggleShuffle()
  const heard=['1']
  for(let i=1;i<10;i++){await s.getState().next();heard.push(s.getState().current.id)}
  assert.equal(new Set(heard).size,10)
+ audio[0].currentTime=35;audio[0].callbacks.timeupdate()
  await s.getState().previous();assert.equal(s.getState().current.id,heard.at(-2))
  await s.getState().next();assert.equal(s.getState().current.id,heard.at(-1))
  listeners.pagehide()
@@ -694,6 +778,36 @@ test('offline resume can explicitly start a non-first saved part inside a groupe
   assert.equal(store.getState().current.id, second.id)
   assert.equal(store.getState().progressSeconds, 42)
   assert.deepEqual(store.getState().queueBase.map(item => item.id), [group.id])
+})
+
+test('offline queue drops preserve unresolved source rows alongside downloaded parts', async () => {
+  const { store, module, storage } = setup()
+  const first = track('1')
+  const rawVideo = { ...first, resolveParts: true }
+  const second = { ...track('2'), source: { ...track('2').source, page: 2 } }
+  const otherVideo = id => ({ ...track(id), source: { ...track(id).source, bvid: `BVother${id}` } })
+  const third = otherVideo('3'), fourth = otherVideo('4'), unsaved = otherVideo('9')
+  module.useOfflinePlayback.setState({ offline: true, library: module.indexOfflineTracks([first, second, third, fourth]) })
+  await store.getState().playFromList([rawVideo, unsaved, third, fourth], '3', { kind: 'season', title: '合集' })
+  const reorder = store.getState().reorderQueueRows
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['1', '2', '3', '4'])
+
+  reorder(['1'], ['2'], 'after', 'part')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['2', '1', '3', '4'])
+  assert.deepEqual(store.getState().queueBase.map(item => item.id), ['1', '9', '3', '4'])
+  assert.equal(store.getState().queueBase[0], rawVideo)
+
+  reorder(['2', '1'], ['4'], 'after', 'group')
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '4', '2', '1'])
+  assert.deepEqual(store.getState().queueBase.map(item => item.id), ['3', '9', '4', '1'])
+  assert.equal(store.getState().queueBase[3], rawVideo)
+  const saved = JSON.parse(storage.get('resonance-player-v1'))
+  const restored = setup(saved)
+  assert.deepEqual(restored.store.getState().queueBase.map(item => item.id), ['3', '9', '4', '1'])
+  assert.equal(restored.store.getState().queueBase[3].resolveParts, true)
+
+  module.useOfflinePlayback.setState({ offline: false, library: null })
+  assert.deepEqual(store.getState().queue.map(item => item.id), ['3', '9', '4', '1'])
 })
 
 test('queue skips confirmed expired videos but still distinguishes a network failure', async () => {

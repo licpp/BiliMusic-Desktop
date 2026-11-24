@@ -6,6 +6,12 @@ export function createSnapshotOrder() {
   const retired = new Set<string>()
   return {
     get latest() { return latest },
+    retireIfCurrent(observed: NativeAudioState | undefined) {
+      if (latest !== observed) return false
+      if (latest?.engineInstanceId) retired.add(latest.engineInstanceId)
+      latest = undefined
+      return true
+    },
     accept(next: NativeAudioState) {
       if (latest?.engineInstanceId && !next.engineInstanceId) return false
       if (next.engineInstanceId && retired.has(next.engineInstanceId)) return false

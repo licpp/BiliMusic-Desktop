@@ -12,7 +12,7 @@ import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
 import { favoriteVideoExpired, favoriteVideoTrack } from '../../services/mediaSources'
 import { seasonPlaybackQueue } from '../player/playerStore'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, ListChecks, Play, Plus, RefreshCw } from 'lucide-react'
 import { changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts } from '../../services/desktopApi'
@@ -26,15 +26,18 @@ import { ActionMenu } from '../../shared/ActionMenu'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
 import { useRowContextMenu } from '../../shared/useRowContextMenu'
 import { CollectionDialog } from '../../shared/CollectionDialog'
-import { linkedFolderKey, reloadLinkedFolder } from '../../services/linkedFolders'
+import { linkedFolderKey } from '../../services/linkedFolders'
+import { openBiliVerification } from '../../services/biliRequestStatus'
+import { useLinkedMatchedCovers } from '../../services/linkedMatchedCovers'
 import { VideoPartsList } from './VideoPartsList'
 import { usePlayerStore } from '../player/playerStore'
 import { PlaylistMenu } from './PlaylistEntry'
 import { useTrackSelection } from './useTrackSelection'
-import { LinkedSelectionActions } from './LinkedSelectionActions'
+import { LinkedMatchStatus, LinkedSelectionActions } from './LinkedSelectionActions'
+import { useLinkedFolderRefresh } from './useLinkedFolderRefresh'
 import { useCompactLayout } from '../../shared/useCompactLayout'
 
-const wideSelectionToolbarWidth = 820
+const wideSelectionToolbarWidth = 880
 
 export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & { biliFolderId: number }; onUnlink: () => void }) {
   const { biliFolderId: folderId, name } = playlist
@@ -53,7 +56,11 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   }, [compact])
   const offline = useOfflinePlayback()
   const folder = useQuery({ queryKey: linkedFolderKey(folderId), queryFn: () => getLinkedFolder(folderId) })
+  const { refreshing, refresh, error: refreshError, read, message, pause, paused, canRetry } = useLinkedFolderRefresh(folderId, folder.isPending, offline.offline)
+  const refreshedAt = folder.data?.refreshedAt
   const visibleFolder = useListDataDuringNavigation(folder.data, folderId)
+  const videoIds = useMemo(() => visibleFolder?.videos.map(video => video.bvid) ?? [], [visibleFolder])
+  const matchedCovers = useLinkedMatchedCovers(videoIds)
   const loadingFolder = folder.isLoading || Boolean(folder.data && !visibleFolder)
   const [filter, setFilter] = useState('')
   const sortEntity=`linkedFolder:${folderId}`,listSort=useListSort(sortEntity)
@@ -61,13 +68,10 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const visibleVideos = orderedVideos.filter(video => matchesListSearch(filter, video.title, video.bvid))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
-  const [refreshError, setRefreshError] = useState('')
   const [expanded, setExpanded] = useState<string>()
   const [confirm, setConfirm] = useState<FavoriteVideo>()
   const [bvid, setBvid] = useState('')
   const [adding, setAdding] = useState(false)
-  const refreshGeneration = useRef(0)
   const currentBvid = usePlayerStore(state => state.current?.source.bvid)
   const list = useRef<HTMLDivElement>(null)
   useListReveal(list, loadingFolder, visibleVideos.length > 0)
@@ -90,20 +94,6 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     catch (cause) { setError(commandErrorMessage(cause)) }
     finally { setBusy(false) }
   }
-  const refresh = useCallback(async () => {
-    const generation = ++refreshGeneration.current
-    const epoch = accountEpoch()
-    setRefreshing(true)
-    setRefreshError('')
-    try { await reloadLinkedFolder(client, folderId) }
-    catch (cause) { if (generation === refreshGeneration.current && epoch === accountEpoch()) setRefreshError(commandErrorMessage(cause)) }
-    finally { if (generation === refreshGeneration.current && epoch === accountEpoch()) setRefreshing(false) }
-  }, [client, folderId])
-  useEffect(() => {
-    if (!offline.offline) void refresh()
-    return () => { refreshGeneration.current++ }
-  }, [offline.offline, refresh])
-
   const change = async (videoId: string, add: boolean) => {
     const epoch = accountEpoch()
     const updated = await changeLinkedVideo(folderId, videoId, add)
@@ -126,8 +116,8 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     <header>
       <div><span className="eyebrow">BILIBILI</span>
         <div className="linked-folder-title"><h2>{folder.data?.name || name}</h2>
-          <span className="sync-label" role="status" title={folder.data ? new Date(folder.data.refreshedAt * 1000).toLocaleString('zh-CN') : undefined}>
-            {refreshing ? '正在同步…' : refreshError ? '同步失败' : folder.data ? '已同步' : '等待同步'}
+          <span className="sync-label" role="status" title={refreshedAt ? new Date(refreshedAt * 1000).toLocaleString('zh-CN') : undefined}>
+            {refreshing ? '正在同步…' : paused ? '同步暂停' : refreshError ? '同步失败' : refreshedAt ? '已同步' : '等待同步'}
           </span>
         </div>
         <p>{folder.data?.videos.length ?? playlist.trackCount} 个视频 · 关联 B 站收藏夹</p>
@@ -148,10 +138,12 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
         </div>
       </div>
     </div>
+    <LinkedMatchStatus folderId={folderId} refreshPause={pause}/>
     {filter.trim() && !visibleVideos.length && <p className="collection-empty">没有匹配的视频</p>}
-    {refreshError && <div className="linked-refresh-error" role="alert">
-      <span>{folder.data ? '已保留上次同步的内容。' : ''}{refreshError}</span>
-      <button type="button" className="collection-flat-button" onClick={() => void refresh()}><RefreshCw size={15}/>重试</button>
+    {message && <div className="linked-refresh-error" role="status">
+      <span>{message}{!refreshedAt && read > 0 && ` · 已读取 ${read} 个视频`}</span>
+      {pause?.reason === 'verificationRequired' && <button type="button" className="collection-flat-button" onClick={() => void run(openBiliVerification)}>前往 B 站</button>}
+      <button type="button" className="collection-flat-button" disabled={!canRetry} onClick={() => void refresh()}><RefreshCw size={15}/>{paused ? '继续' : '重试'}</button>
     </div>}
     {adding && <form className="playlist-management" onSubmit={event => {
       event.preventDefault()
@@ -169,15 +161,15 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
       </footer>
     </CollectionDialog>}
     {error && !confirm && <p role="alert" className="inline-error">{error}</p>}
-    {!visibleFolder && (loadingFolder || refreshing) && <ListSkeleton wide label="正在读取收藏夹" />}
+    {(!visibleFolder && loadingFolder || !refreshedAt && refreshing) && <ListSkeleton wide label={read ? `已读取 ${read} 个视频` : '正在读取收藏夹'} />}
     {folder.error && !refreshError && !refreshing && !folder.data && <p role="alert" className="inline-error">{commandErrorMessage(folder.error)}</p>}
-    {visibleFolder?.videos.length === 0 && <p className="batch-message">这个收藏夹里还没有视频</p>}
+    {refreshedAt && visibleFolder?.videos.length === 0 ? <p className="batch-message">这个收藏夹里还没有视频</p> : null}
     <div className="result-list" ref={list}>{rendered.rows.map((video, index) => selection.selecting ?
       <article key={video.bvid} data-offline-unavailable={offlineUnavailable(queue[index], offline) || undefined} className="result-card"><label className="result-main linked-select-row">
         <input className="track-select" type="checkbox" aria-label={`选择 ${video.title || video.bvid}`} checked={selection.ids.has(queue[index].id)} onChange={() => selection.toggle(queue[index].id)}/>
-        <span className="result-cover"><Artwork src={video.cover}/></span><span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{favoriteVideoExpired(video) ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
+        <span className="result-cover"><Artwork src={matchedCovers.byVideo.get(video.bvid) || video.cover}/></span><span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{favoriteVideoExpired(video) ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
       </label></article> :
-      <LinkedVideoRow key={video.bvid} video={video} queue={queue} title={name} current={currentBvid === video.bvid}
+      <LinkedVideoRow key={video.bvid} folderId={folderId} video={video} cover={matchedCovers.byVideo.get(video.bvid)} partCovers={matchedCovers.byPart} queue={queue} title={name} current={currentBvid === video.bvid}
       expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
       onRemove={() => { setError(''); setConfirm(video) }}/>) }
       {rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}
@@ -185,7 +177,10 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   </section>
 }
 
-function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, onRemove }: {
+function LinkedVideoRow({ folderId, video, cover, partCovers, queue, title, expanded, busy, current, onOpen, onRemove }: {
+  folderId: number
+  cover?: string
+  partCovers: ReadonlyMap<string, string>
   queue: import('../../domain/track').Track[]; title: string
   video: FavoriteVideo; expanded: boolean; busy: boolean; current: boolean; onOpen: () => void; onRemove: () => void
 }) {
@@ -210,7 +205,7 @@ function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, 
   return <article ref={ref} data-offline-unavailable={unavailable || undefined} className="result-card">
     <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
       <button type="button" className="result-main" disabled={unavailable} aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}>
-        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}<VideoAccessBadge access={access} onCover/></span>
+        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={cover || video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}<VideoAccessBadge access={access} onCover/></span>
         <span className="result-copy"><strong>{video.title || video.bvid}</strong><small className="result-byline"><span>{expired ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</span></small></span>
         {multiple && (expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>)}
       </button>
@@ -220,16 +215,18 @@ function LinkedVideoRow({ video, queue, title, expanded, busy, current, onOpen, 
       </>}</ActionMenu>
     </div>
     {playError && <p role="alert" className="inline-error">{playError}</p>}
-    {expanded && multiple && <LinkedVideoParts bvid={video.bvid} queue={queue} title={title}/>}
+    {expanded && multiple && <LinkedVideoParts folderId={folderId} bvid={video.bvid} partCovers={partCovers} queue={queue} title={title}/>}
   </article>
 }
 
-function LinkedVideoParts({ bvid, queue, title }: { bvid: string; queue: import('../../domain/track').Track[]; title: string }) {
+function LinkedVideoParts({ folderId, bvid, partCovers, queue, title }: { folderId: number; bvid: string; partCovers: ReadonlyMap<string, string>; queue: import('../../domain/track').Track[]; title: string }) {
   const detail = useQuery({ queryKey: accountQueryKey('collection-parts', bvid), queryFn: () => getVideoParts(bvid) })
   if (detail.isLoading) return <p className="batch-message">正在加载分 P…</p>
   if (detail.error) return <p role="alert" className="inline-error">{commandErrorMessage(detail.error)}</p>
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
   const tracks = video.parts.map(part => toTrack(video, part))
-  return <VideoPartsList savedContainer locateCurrent queueSource={{ kind: 'season', title, origin: 'linked-favorite' }} playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)} tracks={tracks}/>
+  return <VideoPartsList savedContainer locateCurrent linkedFolderId={folderId} queueSource={{ kind: 'season', title, origin: 'linked-favorite' }}
+    playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)}
+    tracks={tracks.map(track => ({ ...track, coverUrl: partCovers.get(track.id) || track.coverUrl }))}/>
 }

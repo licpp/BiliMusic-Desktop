@@ -2,7 +2,10 @@ import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
 import { useVerticalDismiss } from '../../shared/useVerticalDismiss'
 import { usePanelReveal } from '../../shared/usePanelReveal'
 import { usePanelPresence } from '../../shared/usePanelPresence'
-import { SeekRange } from '../../shared/SeekRange'
+import { ChapterSeekRange } from '../chapters/ChapterSeekRange'
+import { ChapterTrigger } from '../chapters/ChapterTrigger'
+import { ChapterDirectory } from '../chapters/ChapterDirectory'
+import type { PlaybackChapters } from '../chapters/usePlaybackChapters'
 import { ScrollingTrackTitle } from './ScrollingTrackTitle'
 import { knownArtist } from '../../domain/sourceTitle'
 import { useSourceTitleMetadata } from '../../shared/useSourceTitleMetadata'
@@ -62,9 +65,9 @@ import { useAutoLyricAlignment } from './useAutoLyricAlignment'
 
 const danmakuDensityLabels = ['1/8', '1/4', '1/2', '全屏']
 
-type Props = { open?: boolean; fullscreenRequested: boolean; setVideoFullscreen: (enabled: boolean) => void; inert?: boolean; motionSurface?: RefObject<HTMLElement | null>; onSwipeRelease?: (offset: number, dismissed: boolean) => void; onMiniPlayer?: () => void; onOpenSleepTimer: () => void; onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
+type Props = { chapters: PlaybackChapters; open?: boolean; fullscreenRequested: boolean; setVideoFullscreen: (enabled: boolean) => void; inert?: boolean; motionSurface?: RefObject<HTMLElement | null>; onSwipeRelease?: (offset: number, dismissed: boolean) => void; onMiniPlayer?: () => void; onOpenSleepTimer: () => void; onClose: () => void; onFavorite: () => void; favoritePending: boolean; onOpenCollection: (item: Collection) => void }
 
-export function LyricsView({ open = true, fullscreenRequested, setVideoFullscreen, inert = false, motionSurface, onSwipeRelease, onMiniPlayer, onOpenSleepTimer, onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
+export function LyricsView({ open = true, chapters, fullscreenRequested, setVideoFullscreen, inert = false, motionSurface, onSwipeRelease, onMiniPlayer, onOpenSleepTimer, onClose, onFavorite, favoritePending, onOpenCollection }: Props) {
   const compact = useCompactLayout()
   const tablet = useTabletWidth() && isMobile
   const dockLyrics = !isMobile || !compact || tablet
@@ -131,10 +134,10 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
   const [controlsTouched, setControlsTouched] = useState(0)
   const revealControls = useCallback(() => { setControlsShown(true); setControlsTouched(Date.now()) }, [])
   useEffect(() => {
-    if (!controlsShown || status !== 'playing' || videoSettingsOpen || rateOpen || videoSeeking) return
+    if (!controlsShown || status !== 'playing' || videoSettingsOpen || rateOpen || videoSeeking || chapters.directoryOpen) return
     const timer = window.setTimeout(() => setControlsShown(false), 3000)
     return () => window.clearTimeout(timer)
-  }, [controlsShown, controlsTouched, status, videoSettingsOpen, rateOpen, videoSeeking])
+  }, [controlsShown, controlsTouched, status, videoSettingsOpen, rateOpen, videoSeeking, chapters.directoryOpen])
   const videoFullscreen = open && mediaMode === 'video' && fullscreenRequested
   const swipeCover = isMobile && mediaMode === 'cover' && !videoFullscreen
   const coverDrag = useVerticalDismiss<HTMLDivElement>(motionSurface ?? panel, swipeCover && open, onClose, { settle: onSwipeRelease })
@@ -160,8 +163,22 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
   })
   const [commentsOpen, setCommentsOpen] = useState(false)
   const commentsPresent = usePanelPresence(commentsOpen && open, 220)
+  const chaptersOpen = open && chapters.directoryOpen
+  const desktopChaptersPresent = usePanelPresence(!isMobile && chaptersOpen, 200)
   const closeComments = useCallback(() => setCommentsOpen(false), [])
   const openComments = useCallback(() => setCommentsOpen(true), [])
+  const toggleDockComments = (trigger: HTMLButtonElement) => {
+    if (commentsOpen) { closeComments(); return }
+    if (!isMobile && chapters.directoryOpen) {
+      trigger.focus({ preventScroll: true })
+      chapters.close()
+    }
+    openComments()
+  }
+  const toggleDesktopChapters = (trigger: HTMLElement) => {
+    if (!chapters.directoryOpen) closeComments()
+    chapters.toggle(trigger)
+  }
   const [biasOpen, setBiasOpen] = useState(false)
   const [browsingLyrics, setBrowsingLyrics] = useState(false)
   const [browseIndex, setBrowseIndex] = useState(-1)
@@ -561,7 +578,8 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
       {dockLyrics && dockActions && createPortal(<>
         {supplementControl}
         {!isIOS && !isOHOS && <FloatingLyricsToggle/>}
-        <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={()=>setCommentsOpen(value=>!value)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
+        {(!isMobile || tablet) && <ChapterTrigger model={isMobile ? chapters : { ...chapters, toggle: toggleDesktopChapters }}/>}
+        <button type="button" className="lyrics-dock-comments" aria-label={commentsOpen?'收起评论':'查看评论'} title="评论" aria-pressed={commentsOpen} onClick={event => toggleDockComments(event.currentTarget)} disabled={!current.source.aid}><MessageCircle size={18}/></button>
         {bvid&&<button type="button" className="lyrics-dock-ai" aria-label={subtitles.active?'关闭 AI / B站字幕':'开启 AI / B站字幕'} title={`${subtitleLabel} · ${subtitles.active?'已开启':subtitles.preferred?'歌词优先':'已关闭'}`} aria-pressed={subtitles.active} aria-busy={subtitles.busy} onClick={toggleSubtitles}><AiSubtitleIcon active={subtitles.active} busy={subtitles.busy} manual={subtitleLabel==='B 站字幕'}/></button>}
       </>,dockActions)}
       <header className="lyrics-topbar">
@@ -608,7 +626,7 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
         {videoTools}
         {mobileFullscreen && <div className="video-fullscreen-transport" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
           <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? <Pause size={20} fill="currentColor"/> : <Play size={20} fill="currentColor"/>}</button>
-          <span>{formatDuration(progressSeconds, duration >= 3600)}</span><SeekRange aria-label="视频播放进度" duration={duration} trackKey={current.id} value={Math.min(progressSeconds, duration)} onPreview={seconds => { setVideoSeeking(seconds !== undefined); if (seconds !== undefined) revealControls() }} onSeek={seconds => { revealControls(); usePlayerStore.getState().seek(seconds) }}/><span>{formatDuration(duration)}</span>{danmakuToggle}
+          <span>{formatDuration(progressSeconds, duration >= 3600)}</span><ChapterSeekRange aria-label="视频播放进度" duration={duration} trackKey={current.id} chapters={chapters.items} value={Math.min(progressSeconds, duration)} onPreview={seconds => { setVideoSeeking(seconds !== undefined); if (seconds !== undefined) revealControls() }} onSeek={seconds => { revealControls(); usePlayerStore.getState().seek(seconds) }}/>{chapters.items.length ? <ChapterTrigger model={chapters} variant="time"/> : <span>{formatDuration(duration)}</span>}{danmakuToggle}
         </div>}
         </div>
         <div className="lyrics-track-meta">
@@ -645,6 +663,7 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
           <p key={`${line.timeMs}-${index}`} ref={(node) => { lineRefs.current[index] = node }} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview ? 'button' : undefined} tabIndex={timingPreview ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : undefined}><span className="lyric-original"><WordLyric line={line} active={index === activeIndex} timeMs={progressSeconds * 1000 - biasMs} clock={open && status === 'playing' ? lyricClock : undefined}/></span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}{browsingLyrics && !timingPreview && (syncedLyrics || subtitles.lines) && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={() => seekLine(index)}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
         )) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
+      {(isMobile ? chaptersOpen : desktopChaptersPresent) && <ChapterDirectory model={chapters} mobile={isMobile} open={chaptersOpen} fullscreen={videoFullscreen}/>}
       {biasOpen && !subtitles.lines && <LyricsBiasControl value={stored?.biasMs || 0} enabled={syncedLyrics} error={biasSaveError}
         onAutoAlign={() => void autoAlignment.run()} autoBusy={autoAlignment.busy} onAdjust={adjustBias} onClose={() => { setBiasOpen(false); void biasWriter.flush() }} onActivity={() => setBiasActivity(Date.now())} />}
 
@@ -663,7 +682,9 @@ export function LyricsView({ open = true, fullscreenRequested, setVideoFullscree
       {open && rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
       {open && seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
       {open && partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
-      {commentsPresent && current.source.aid && <CommentsPanel open={commentsOpen && open} key={current.id} trackId={current.id} aid={current.source.aid} onClose={closeComments} video={mediaMode === 'video' ? videoCover.current : null} />}
+      {commentsPresent && current.source.aid && <CommentsPanel open={commentsOpen && open} key={current.id} trackId={current.id} aid={current.source.aid} onClose={closeComments} chapters={chapters.canImport ? {
+        durationSeconds: chapters.duration, existingChapters: chapters.existingChapters, isCurrent: chapters.isCurrent, onSave: chapters.save,
+      } : undefined} video={mediaMode === 'video' ? videoCover.current : null} />}
       {open && editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
       {open && replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)}/>}
     </section>

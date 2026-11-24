@@ -40,27 +40,41 @@ pub fn valid_reference(value: &str) -> bool {
     }
     value.starts_with("BV") && value.len() <= 32 && value.bytes().all(|b| b.is_ascii_alphanumeric())
 }
+
+pub fn season_creator_reference(reference: &str) -> Option<String> {
+    let (mid, _) = reference.strip_prefix("season:")?.split_once(':')?;
+    valid_reference(reference).then(|| format!("up:{mid}"))
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionProgress {
     pub bvid: String,
     pub cid: i64,
     pub position_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_ref: Option<String>,
 }
 
 pub fn progress(c: &Connection, reference: &str) -> rusqlite::Result<Option<CollectionProgress>> {
     use rusqlite::OptionalExtension;
-    c.query_row(
-        "SELECT bvid,cid,position_ms FROM collection_progress WHERE reference=?1",
-        [reference],
-        |row| {
-            Ok(CollectionProgress {
-                bvid: row.get(0)?,
-                cid: row.get(1)?,
-                position_ms: row.get(2)?,
-            })
-        },
-    )
+    let creator = reference.starts_with("up:");
+    let sql = if creator {
+        "SELECT bvid,cid,position_ms,reference FROM collection_progress
+         WHERE (reference=?1 OR creator_ref=?1) AND EXISTS(SELECT 1 FROM collections WHERE bvid=?1)
+         ORDER BY observed_at DESC,reference DESC LIMIT 1"
+    } else {
+        "SELECT bvid,cid,position_ms,reference FROM collection_progress WHERE reference=?1"
+    };
+    c.query_row(sql, [reference], |row| {
+        let saved_reference: String = row.get(3)?;
+        Ok(CollectionProgress {
+            bvid: row.get(0)?,
+            cid: row.get(1)?,
+            position_ms: row.get(2)?,
+            collection_ref: (creator && saved_reference != reference).then_some(saved_reference),
+        })
+    })
     .optional()
 }
 
@@ -83,21 +97,30 @@ pub fn save_progress(
     if bvid.len() <= 2
         || !bvid.starts_with("BV")
         || !valid_reference(bvid)
+        || !valid_reference(reference)
         || cid <= 0
         || (reference != bvid && !reference.starts_with("season:") && !reference.starts_with("up:"))
         || !seconds.is_finite()
         || !(0.0..=604800.0).contains(&seconds)
-        || observed_at <= 0
+        || !(1..=9_007_199_254_740_991).contains(&observed_at)
     {
         return Ok(false);
     }
     c.execute(
         "INSERT INTO collection_progress(reference,bvid,cid,position_ms,observed_at)
-         SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM collections WHERE bvid=?1)
+         SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM collections WHERE bvid=?1 OR bvid=?6)
          ON CONFLICT(reference) DO UPDATE SET bvid=excluded.bvid,cid=excluded.cid,position_ms=excluded.position_ms,observed_at=excluded.observed_at
          WHERE excluded.observed_at >= collection_progress.observed_at",
-        params![reference, bvid, cid, (seconds * 1000.0).round() as i64, observed_at],
+        params![reference, bvid, cid, (seconds * 1000.0).round() as i64, observed_at, season_creator_reference(reference)],
     ).map(|changed| changed > 0)
+}
+
+pub fn prune_progress(c: &Connection) -> rusqlite::Result<usize> {
+    c.execute(
+        "DELETE FROM collection_progress AS p
+         WHERE NOT EXISTS(SELECT 1 FROM collections c WHERE c.bvid=p.reference OR c.bvid=p.creator_ref)",
+        [],
+    )
 }
 pub fn init_folders(c: &Connection) -> rusqlite::Result<()> {
     let exists: bool = c.query_row(
@@ -358,8 +381,8 @@ pub fn change(
             }
             "remove" => {
                 execute("DELETE FROM creator_notes WHERE bvid=?1", &[&id])?;
-                execute("DELETE FROM collection_progress WHERE reference=?1", &[&id])?;
                 execute("DELETE FROM collections WHERE bvid=?1", &[&id])?;
+                prune_progress(&tx).map_err(|e| e.to_string())?;
             }
             _ => return Err("不支持的收藏操作".into()),
         }
@@ -574,5 +597,40 @@ mod tests {
             id
         );
         assert_eq!(list(&c).unwrap().folders.len(), 2);
+    }
+
+    #[test]
+    fn followed_season_progress_uses_the_same_checkpoint_after_favoriting() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        let first = "season:42:73";
+        let second = "season:42:74";
+        let song = "bilibili:BV1tZuKzgENQ:7";
+        assert!(!save_progress(&c, first, song, 12.0, 100).unwrap());
+        c.execute("INSERT INTO collections(bvid) VALUES('up:42')", []).unwrap();
+        assert!(save_progress(&c, first, song, 12.0, 100).unwrap());
+        assert!(save_progress(&c, second, song, 25.0, 200).unwrap());
+        assert!(save_progress(&c, "up:42", song, 55.0, 300).unwrap());
+        assert_eq!(progress(&c, "up:42").unwrap().unwrap().collection_ref, None);
+
+        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [first]).unwrap();
+        assert!(save_progress(&c, first, song, 65.0, 400).unwrap());
+        assert!(!save_progress(&c, first, song, 18.0, 390).unwrap());
+        assert_eq!(
+            progress(&c, "up:42").unwrap().unwrap().collection_ref.as_deref(),
+            Some(first)
+        );
+        assert_eq!(progress(&c, first).unwrap().unwrap().position_ms, 65_000);
+        assert_eq!(progress(&c, second).unwrap().unwrap().position_ms, 25_000);
+        assert!(progress(&c, "season:42:75").unwrap().is_none());
+
+        c.execute("DELETE FROM collections WHERE bvid=?1", [first]).unwrap();
+        assert_eq!(prune_progress(&c).unwrap(), 0);
+        assert_eq!(progress(&c, first).unwrap().unwrap().position_ms, 65_000);
+        c.execute("INSERT INTO collections(bvid) VALUES(?1)", [second]).unwrap();
+        c.execute("DELETE FROM collections WHERE bvid='up:42'", []).unwrap();
+        assert_eq!(prune_progress(&c).unwrap(), 2);
+        assert!(progress(&c, first).unwrap().is_none());
+        assert_eq!(progress(&c, second).unwrap().unwrap().position_ms, 25_000);
     }
 }

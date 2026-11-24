@@ -94,8 +94,14 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
             );
         }
         if history {
-            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at FROM collection_progress p JOIN collections c ON c.bvid=p.reference LIMIT 2001")?;
-            for row in q.query_map([], |r| {
+            let mut q = c.prepare("SELECT p.reference,p.bvid,p.cid,p.position_ms,p.observed_at
+                 FROM collection_progress p
+                 LEFT JOIN collections own ON own.bvid=p.reference
+                 LEFT JOIN collections creator ON creator.bvid=p.creator_ref
+                 WHERE own.bvid IS NOT NULL OR creator.bvid IS NOT NULL
+                 ORDER BY own.bvid IS NOT NULL DESC,p.observed_at DESC,p.reference
+                 LIMIT ?1")?;
+            for row in q.query_map([COLLECTION_PROGRESS_LIMIT], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -366,10 +372,7 @@ pub fn apply_with_inferred_tracks(
             "DELETE FROM creator_notes WHERE bvid NOT IN (SELECT bvid FROM collections)",
             [],
         )?;
-        tx.execute(
-            "DELETE FROM collection_progress WHERE reference NOT IN (SELECT bvid FROM collections)",
-            [],
-        )?;
+        crate::infrastructure::repositories::collections::prune_progress(tx)?;
         if history {
             for r in s
                 .records

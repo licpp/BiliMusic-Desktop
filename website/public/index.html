@@ -3,26 +3,103 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="BiliMusic，独立开源的B站音乐与长音频播放器。导入歌单、匹配歌词和歌曲信息，按分类听合集，可选响度均衡与坚果云同步。支持电脑、手机、平板及车机 / TV，另提供 Linux 测试版。">
-  <meta name="theme-color" content="#101216"><title>BiliMusic · 收藏好声音，随时接着听</title>
-  <link rel="icon" href="/assets/app-icon.png"><link rel="stylesheet" href="/style.css?v=0.3.0"><link rel="stylesheet" href="/downloads.css?v=0.3.5"><script type="module" src="/app.js?v=0.4.2-car-debian"></script>
+  <meta name="theme-color" content="#101216">
+  <link rel="canonical" href="https://bilimusic.cn/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="BiliMusic">
+  <meta property="og:title" content="BiliMusic · 收藏好声音，随时接着听">
+  <meta property="og:description" content="独立开源的 B 站音乐与长音频播放器。支持导入歌单、逐字歌词匹配、响度均衡与跨设备云同步，覆盖电脑、手机、平板与大屏。">
+  <meta property="og:url" content="https://bilimusic.cn/">
+  <meta property="og:image" content="https://bilimusic.cn/assets/bilibili-feedback.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="BiliMusic · 收藏好声音，随时接着听">
+  <meta name="twitter:description" content="独立开源的 B 站音乐与长音频播放器，覆盖 macOS、Windows、Android、iOS、鸿蒙、车机/TV 与 Linux。">
+  <meta name="twitter:image" content="https://bilimusic.cn/assets/bilibili-feedback.jpg">
+  <title>BiliMusic · 收藏好声音，随时接着听</title>
+  <link rel="icon" href="/assets/app-icon.png">
+  <link rel="stylesheet" href="/style.css?v=0.4.4">
+  <link rel="stylesheet" href="/downloads.css?v=0.4.4">
+  <script type="module" src="/app.js?v=0.4.4"></script>
 </head>
 <body>
-  <header class="nav"><a href="#" class="brand" aria-label="BiliMusic 首页"><img src="/assets/app-icon.png" alt="" width="34" height="34">BiliMusic<span class="brand-tag">OPEN SOURCE</span></a><nav aria-label="主导航"><a href="#features">功能</a><a href="#download">下载</a><a href="#feedback">反馈</a><a class="github-link" href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></nav><a class="nav-download" href="#download">获取 BiliMusic <span aria-hidden="true">↗</span></a></header>
+  <header class="site-header">
+    <div class="nav">
+      <a href="#" class="brand" aria-label="BiliMusic 首页"><img src="/assets/app-icon.png" alt="" width="34" height="34">BiliMusic<span class="brand-tag">OPEN SOURCE</span></a>
+      <nav aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#download">下载</a>
+        <a href="#changelog">更新日志</a>
+        <a href="#feedback">反馈</a>
+        <a class="github-link" href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+      <a class="nav-download" href="#download">获取 BiliMusic <span aria-hidden="true">↓</span></a>
+    </div>
+  </header>
   <main>
     <section class="hero wrap">
-      <div class="hero-copy"><p class="eyebrow"><span class="status-dot"></span>独立开源 · 让喜欢的声音陪着你</p><h1>收藏的好声音，<br>随时<span>接着听。</span></h1><p class="intro">把喜欢的B站音乐、有声书和长音频，收进自己的音乐库。<br>导入已有歌单、匹配歌词与歌曲资料，在电脑、手机、平板和大屏之间接着听。</p><div class="hero-actions"><a class="button primary" href="#download">下载 BiliMusic <span aria-hidden="true">↓</span></a><a class="quiet-link" href="#features">看看它能做什么 <span aria-hidden="true">↗</span></a></div><div class="platform-note"><span>macOS</span><span>Windows</span><span>Android · 手机 / 平板</span><span>iOS · 自签</span><span>HarmonyOS · 测试</span><span>车机 / TV</span><span>Linux · 测试</span></div></div>
-      <div class="hero-art" aria-label="BiliMusic 播放体验示意"><div class="art-caption"><span>YOUR MUSIC, YOUR MOMENT</span><span>01 / 03</span></div><div class="vinyl"><div class="vinyl-label"><span>BiliMusic</span><b>听见<br>此刻</b><small>SIDE A · GOOD VIBES ONLY</small></div></div><div class="floating-player"><div class="mini-art"></div><div><b>让旋律慢下来</b><span>你的下一首喜欢</span></div><button id="hero-play" class="circle-button" aria-label="播放界面动画示意，不播放音频">▶</button><div class="mini-progress"><span></span></div><small>界面示意 · 无音频</small></div><span class="orbit-label">为每一次「我喜欢」留一个位置。</span></div>
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot"></span><span>独立开源 · 让喜欢的声音陪着你</span><a id="hero-version" class="version-pill" href="#changelog" hidden></a></p>
+        <h1>收藏的好声音，<br>随时<span>接着听。</span></h1>
+        <p class="intro">把喜欢的B站音乐、有声书和长音频，收进自己的音乐库。<br>导入已有歌单、匹配歌词与歌曲资料，在电脑、手机、平板和大屏之间接着听。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#download">下载 BiliMusic <span aria-hidden="true">↓</span></a>
+          <a class="quiet-link" href="#features">看看它能做什么 <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="platform-note" aria-label="支持平台快速跳转">
+          <button type="button" class="platform-chip" data-jump-platform="mac">macOS</button>
+          <button type="button" class="platform-chip" data-jump-platform="windows">Windows</button>
+          <button type="button" class="platform-chip" data-jump-platform="android">Android · 手机 / 平板</button>
+          <button type="button" class="platform-chip" data-jump-platform="ios">iOS · 自签</button>
+          <button type="button" class="platform-chip" data-jump-platform="ohos">HarmonyOS · 测试</button>
+          <button type="button" class="platform-chip" data-jump-platform="android">车机 / TV</button>
+          <button type="button" class="platform-chip" data-jump-platform="linux">Linux · 测试</button>
+        </div>
+      </div>
+      <div class="hero-art" aria-label="BiliMusic 播放体验示意">
+        <div class="art-caption"><span>YOUR MUSIC, YOUR MOMENT</span><span>01 / 03</span></div>
+        <div class="vinyl"><div class="vinyl-label"><span>BiliMusic</span><b>听见<br>此刻</b><small>SIDE A · GOOD VIBES ONLY</small></div></div>
+        <div class="floating-player">
+          <div class="mini-art"></div>
+          <div><b>让旋律慢下来</b><span>你的下一首喜欢</span></div>
+          <button id="hero-play" type="button" class="circle-button" aria-label="播放界面动画示意，不播放音频">▶</button>
+          <div class="mini-progress"><span></span></div>
+          <small>界面示意 · 点击播放键查看动画</small>
+        </div>
+        <span class="orbit-label">为每一次「我喜欢」留一个位置。</span>
+      </div>
     </section>
     <div class="principles wrap"><span>音乐，按你的方式。</span><p>整理B站收藏</p><p>听歌，也听书</p><p>歌词与专辑匹配</p><p>跨设备云同步</p></div>
-    <section class="experience wrap" id="features"><div class="section-heading"><div><p class="eyebrow">A PLACE FOR YOUR FAVORITES</p><h2>从收藏到日常，<br>让喜欢的声音更好听。</h2></div><p>一首歌、一部有声书，或一段陪伴。<br>把分散的好内容，整理成自己的聆听日常。</p></div>
-      <div class="preview-tabs" role="tablist" aria-label="功能预览"><button id="tab-library" role="tab" aria-selected="true" aria-controls="panel-library" data-preview="library">01 音乐库</button><button id="tab-lyrics" role="tab" aria-selected="false" aria-controls="panel-lyrics" data-preview="lyrics" tabindex="-1">02 歌词陪伴</button><button id="tab-metadata" role="tab" aria-selected="false" aria-controls="panel-metadata" data-preview="metadata" tabindex="-1">03 专辑匹配</button></div>
+    <section class="experience wrap" id="features">
+      <div class="section-heading"><div><p class="eyebrow">A PLACE FOR YOUR FAVORITES</p><h2>从收藏到日常，<br>让喜欢的声音更好听。</h2></div><p>一首歌、一部有声书，或一段陪伴。<br>把分散的好内容，整理成自己的聆听日常。</p></div>
+      <div class="preview-tabs" role="tablist" aria-label="功能预览">
+        <button id="tab-library" type="button" role="tab" aria-selected="true" aria-controls="panel-library" data-preview="library">01 音乐库</button>
+        <button id="tab-lyrics" type="button" role="tab" aria-selected="false" aria-controls="panel-lyrics" data-preview="lyrics" tabindex="-1">02 歌词陪伴</button>
+        <button id="tab-metadata" type="button" role="tab" aria-selected="false" aria-controls="panel-metadata" data-preview="metadata" tabindex="-1">03 专辑匹配</button>
+      </div>
       <div class="app-preview">
         <aside class="mock-sidebar"><div class="mock-logo">BiliMusic</div><span>⌂ &nbsp; 首页</span><span>⌕ &nbsp; 搜索</span><b>♡ &nbsp; 我喜欢</b><span>◷ &nbsp; 最近播放</span><hr><small>我的歌单</small><span>午后留白</span><span>回家路上</span><span>值得循环</span><div class="sidebar-bottom">音乐，在你身边。</div></aside>
-        <div class="preview-panel" role="tabpanel" id="panel-library" aria-labelledby="tab-library"><div class="mock-top"><span>你的音乐库</span><span class="mock-pill">LOCAL LIBRARY</span></div><div class="library-header"><div class="cover cover-main">♡</div><div><small>每一首，都值得收藏</small><h3>我喜欢的音乐</h3><p>把零散的喜欢，连成自己的歌单。</p></div></div><div class="mock-table"><div class="table-head"><span>#</span><span>歌曲 / 歌手</span><span>专辑</span><span>时长</span></div><div class="track active"><span>♫</span><span><b>海风来信</b><small>示例歌手</small></span><span>夏日随想</span><span>03:42</span></div><div class="track"><span>02</span><span><b>把日落留住</b><small>示例歌手</small></span><span>沿途风景</span><span>04:16</span></div><div class="track"><span>03</span><span><b>雨停后的街角</b><small>示例歌手</small></span><span>城市漫游</span><span>03:58</span></div></div></div>
-        <div class="preview-panel" role="tabpanel" id="panel-lyrics" aria-labelledby="tab-lyrics" hidden><div class="mock-top"><span>沉浸播放</span><span class="mock-pill">LYRICS & VIDEO</span></div><div class="lyrics-demo"><div class="cover cover-main">♪</div><div><p>让忙碌停在门外</p><b>把此刻交给音乐</b><p>下一段旋律，慢慢来</p><small>匹配歌词，跟着旋律一起唱。<br>也能重新选择更合适的版本。</small></div></div></div>
+        <div class="preview-panel" role="tabpanel" id="panel-library" aria-labelledby="tab-library">
+          <div class="mock-top"><span>你的音乐库</span><span class="mock-pill">LOCAL LIBRARY</span></div>
+          <div class="library-header"><div class="cover cover-main">♡</div><div><small>每一首，都值得收藏</small><h3>我喜欢的音乐</h3><p>把零散的喜欢，连成自己的歌单。</p></div></div>
+          <div class="mock-table">
+            <div class="table-head"><span>#</span><span>歌曲 / 歌手</span><span>专辑</span><span>时长</span></div>
+            <button type="button" class="track active" data-mock-track data-title="海风来信" data-artist="示例歌手" data-duration="03:42"><span class="track-idx">♫</span><span><b>海风来信</b><small>示例歌手</small></span><span>夏日随想</span><span>03:42</span></button>
+            <button type="button" class="track" data-mock-track data-title="把日落留住" data-artist="示例歌手" data-duration="04:16"><span class="track-idx">02</span><span><b>把日落留住</b><small>示例歌手</small></span><span>沿途风景</span><span>04:16</span></button>
+            <button type="button" class="track" data-mock-track data-title="雨停后的街角" data-artist="示例歌手" data-duration="03:58"><span class="track-idx">03</span><span><b>雨停后的街角</b><small>示例歌手</small></span><span>城市漫游</span><span>03:58</span></button>
+          </div>
+        </div>
+        <div class="preview-panel" role="tabpanel" id="panel-lyrics" aria-labelledby="tab-lyrics" hidden><div class="mock-top"><span>沉浸播放</span><span class="mock-pill">LYRICS &amp; VIDEO</span></div><div class="lyrics-demo"><div class="cover cover-main">♪</div><div><p>让忙碌停在门外</p><b>把此刻交给音乐</b><p>下一段旋律，慢慢来</p><small>匹配歌词，跟着旋律一起唱。<br>也能重新选择更合适的版本。</small></div></div></div>
         <div class="preview-panel" role="tabpanel" id="panel-metadata" aria-labelledby="tab-metadata" hidden><div class="mock-top"><span>编辑歌曲信息</span><span class="mock-pill">YOUR LIBRARY, YOUR RULES</span></div><div class="metadata-demo"><div class="cover cover-main">♫</div><div><p><small>歌曲名称</small><b>海风来信</b></p><p><small>歌手</small><b>填写歌名与歌手</b></p><p><small>专辑与封面</small><b>一键查找，确认后补全</b></p></div></div></div>
-        <div class="mock-dock"><span class="tiny-cover">♪</span><div><b>海风来信</b><small>示例歌手</small></div><span class="dock-heart">♥</span><span class="dock-controls">Ⅰ◀ <b>Ⅱ</b> ▶Ⅰ</span><span class="dock-line"></span><small>03:42</small></div>
-      </div><p class="preview-footnote">交互式功能示意，非实际曲目或资源。正式界面以客户端为准。</p>
+        <div class="mock-dock">
+          <span class="tiny-cover">♪</span>
+          <div><b id="mock-dock-title">海风来信</b><small id="mock-dock-artist">示例歌手</small></div>
+          <button type="button" id="mock-dock-heart" class="dock-heart" aria-label="切换示例收藏状态" aria-pressed="true">♥</button>
+          <span class="dock-controls" aria-hidden="true">Ⅰ◀ <b>Ⅱ</b> ▶Ⅰ</span>
+          <span class="dock-line"></span>
+          <small id="mock-dock-duration">03:42</small>
+        </div>
+      </div>
+      <p class="preview-footnote">交互式功能示意（可点击曲目与标签体验），非实际曲目或资源。正式界面以客户端为准。</p>
       <div class="feature-notes">
         <article><span>01 / 好音乐，收在一起</span><h3>带上你的歌单，<br>收好新的喜欢。</h3><p>导入B站收藏夹，或粘贴网易云、QQ音乐、酷狗、酷我、咪咕的歌单链接，自动匹配B站视频。支持重新搜索与换源，歌单顺序照旧。</p></article>
         <article><span>02 / 不止听歌</span><h3>长内容分章节，<br>想听哪段就听哪段。</h3><p>有声书、讲座和长音频，按合集分类浏览、展开分P，也能隐藏不想听的部分。点击续播，自动找到上次的内容和分类。</p></article>
@@ -33,29 +110,36 @@
     <section class="download-section" id="download"><div class="wrap">
       <div class="section-heading"><div><p class="eyebrow">MAKE ROOM FOR MUSIC</p><h2>喜欢的声音，<br>手机电脑都能听。</h2></div><p>电脑、手机、车机与 TV，选适合你的版本。<br>国内下载优先推荐 Gitee。</p></div>
       <aside class="sync-upgrade-note" id="sync-upgrade-note" aria-label="云同步升级提醒"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 19.5 9M4.5 15A8 8 0 0 0 17.9 17.9"/></svg><p><strong>云同步已升级</strong><span>建议所有设备更新至最新版本。0.3.1 及更早版本与新版暂不同步，各设备更新后会自动合并原有数据。</span></p></aside>
-      <div class="download-grid" id="download-platforms" aria-live="polite"><p>正在加载安装包信息…</p></div>
+      <div class="download-grid" id="download-platforms" aria-live="polite"><p class="download-loading">正在加载安装包信息…</p></div>
       <div class="community-links">
-        <a class="community-links-card" href="/assets/qq-community.jpg" target="_blank" rel="noopener noreferrer">
-          <div class="community-links-preview community-qr-preview">
-            <span class="community-qr"><img src="/assets/qq-community.jpg" alt="" width="1152" height="2048" loading="lazy"></span>
+        <div class="community-links-card community-qq-card">
+          <button type="button" class="community-links-preview community-qr-preview" id="open-qq-qr" aria-label="放大查看 QQ 群二维码">
+            <span class="community-qr"><img src="/assets/qq-community.jpg" alt="BiliMusic 交流 QQ 群二维码" width="1284" height="2283" loading="lazy"></span>
+          </button>
+          <div class="community-links-copy">
+            <h3>加入 QQ 群</h3>
+            <span>群号 1132131566 · 交流反馈与尝鲜</span>
+            <div class="community-actions-row">
+              <button type="button" class="community-pill-btn" id="copy-qq-btn" data-qq="1132131566">复制群号</button>
+              <button type="button" class="community-text-action" id="open-qq-qr-text">放大二维码 ↗</button>
+            </div>
           </div>
-          <div class="community-links-copy"><h3>加入 QQ 群</h3><span>群号 1132131566</span><span class="community-links-action">查看二维码 ↗</span></div>
-        </a>
+        </div>
         <a class="community-links-card" href="https://www.bilibili.com/video/BV1rfsf6PEXr/" target="_blank" rel="noopener noreferrer">
           <div class="community-links-preview">
-            <img class="community-video-cover" src="/assets/bilibili-feedback.jpg" alt="" width="640" height="360" loading="lazy">
-            <span class="community-video-play" aria-hidden="true">▶</span>
+            <img class="community-video-cover" src="/assets/bilibili-feedback.jpg" alt="BiliMusic B 站项目介绍视频封面" width="1920" height="1080" loading="lazy">
+            <span class="community-video-play" aria-hidden="true"><span>▶</span></span>
           </div>
-          <div class="community-links-copy"><h3>来 B 站聊聊</h3><span>观看项目介绍，在评论区交流</span><span class="community-links-action">前往 B 站 ↗</span></div>
+          <div class="community-links-copy"><h3>来 B 站聊聊</h3><span>观看项目介绍，在评论区交流想法</span><span class="community-links-action">前往 B 站观看 ↗</span></div>
         </a>
       </div>
       <div id="download-stats" class="download-stats" aria-live="polite"><span>正在加载下载统计…</span></div>
       <p class="download-note">欢迎体验并反馈。请按设备选择平台与架构。大屏版适用于 Android 车机和 TV。Linux 为测试版。iOS 提供需自行签名的 IPA；鸿蒙 NEXT 提供未签名 HAP 测试包，真机需自行签名。<a href="/harmony.html">查看鸿蒙安装说明 ↗</a></p>
-      <details class="download-note"><summary>首次安装与更新说明</summary><p>macOS 使用临时签名，尚未经过 Apple 公证；Windows 尚未取得发布者签名。Android 使用固定签名，可覆盖此前相同签名的安装包（versionCode 10602 及之后）；更早的临时签名包请先备份数据后反馈协助迁移。</p><p>将最新版本拖入“应用程序”并替换旧版。若系统提示开发者未验证，在确认下载来源与 SHA-256 后，可按 Apple 的指引前往“系统设置 → 隐私与安全性”，为 BiliMusic 单独选择“仍要打开”。临时签名不等于 Apple 认证或公证。如果仍提示“已损坏”，请核对版本和校验值后反馈。</p><a href="https://support.apple.com/zh-cn/102445" target="_blank" rel="noopener noreferrer">Apple 官方打开说明 ↗</a></details>
-      <p class="download-note">下载与使用前请阅读 <button class="text-button" data-policy>使用声明</button>。第三方媒体内容不随软件分发；开源许可不代表获得内容授权。<a id="release-notes" href="https://github.com/licpp/BiliMusic-Desktop/releases" target="_blank" rel="noopener noreferrer">版本说明与校验清单 ↗</a></p>
+      <details class="download-note download-details"><summary>首次安装与更新说明</summary><p>macOS 使用临时签名，尚未经过 Apple 公证；Windows 尚未取得发布者签名。Android 使用固定签名，可覆盖此前相同签名的安装包（versionCode 10602 及之后）；更早的临时签名包请先备份数据后反馈协助迁移。</p><p>将最新版本拖入“应用程序”并替换旧版。若系统提示开发者未验证，在确认下载来源与 SHA-256 后，可按 Apple 的指引前往“系统设置 → 隐私与安全性”，为 BiliMusic 单独选择“仍要打开”。临时签名不等于 Apple 认证或公证。如果仍提示“已损坏”，请核对版本和校验值后反馈。</p><a href="https://support.apple.com/zh-cn/102445" target="_blank" rel="noopener noreferrer">Apple 官方打开说明 ↗</a></details>
+      <p class="download-note">下载与使用前请阅读 <button type="button" class="text-button" data-policy>使用声明</button>。第三方媒体内容不随软件分发；开源许可不代表获得内容授权。<a id="release-notes" href="https://github.com/licpp/BiliMusic-Desktop/releases" target="_blank" rel="noopener noreferrer">版本说明与校验清单 ↗</a></p>
     </div></section>
     <section class="release-history-section wrap" id="changelog" aria-labelledby="changelog-heading" hidden>
-      <div class="section-heading"><div><p class="eyebrow">RELEASE NOTES</p><h2 id="changelog-heading">更新历史</h2></div></div>
+      <div class="section-heading"><div><p class="eyebrow">RELEASE NOTES</p><h2 id="changelog-heading">更新历史</h2></div><p>持续迭代修复与新特性，记录每一次打磨。</p></div>
       <div id="current-release-changes"></div>
       <details class="release-history-details" id="past-releases">
         <summary>查看历史版本</summary>
@@ -63,11 +147,25 @@
       </details>
     </section>
     <section class="feedback-section wrap" id="feedback">
-      <div class="feedback-copy"><p class="eyebrow">LET’S MAKE IT BETTER</p><h2>用得不顺手？<br>直接告诉我们。</h2><p>不用注册，也不用研究 GitHub。<br>遇到的问题、想要的功能，都可以在这里说。</p><div class="feedback-tip"><span aria-hidden="true">↗</span><div><b>描述越清楚，越容易解决</b><p>建议写上操作步骤、预期结果与实际表现。<br>请勿包含密码、Cookie 或其他敏感信息。</p></div></div><button id="rights-feedback" class="quiet-link">版权与权利人反馈 <span aria-hidden="true">→</span></button></div>
-      <form id="feedback-form"><div class="form-row"><label>反馈类型<select name="category" required><option value="bug">遇到问题</option><option value="suggestion">功能建议</option><option value="copyright">版权与权利反馈</option><option value="other">其他</option></select></label><label>使用平台<select name="platform" required><option value="macOS">macOS</option><option value="Windows">Windows</option><option value="Android">Android</option><option value="Android Large Screen">大屏版（车机 / TV）</option><option value="iOS">iOS（自签版）</option><option value="HarmonyOS">HarmonyOS NEXT（测试版）</option><option value="website">网站</option><option value="other">其他</option></select></label></div><label>简单说说你的问题<input name="title" required minlength="3" maxlength="120" placeholder="例如：切换视频后一直在加载"></label><label>详细描述<textarea name="message" required minlength="10" maxlength="5000" rows="5" placeholder="发生了什么？可以怎样重现？如果是版权反馈，请提供涉及的链接、权属依据和具体诉求。"></textarea></label><div class="form-row"><label>软件版本 <span>（选填）</span><input name="version" maxlength="40" placeholder="例如 0.3.6"></label><label>联系方式 <span>（选填，版权反馈必填）</span><input name="contact" maxlength="200" placeholder="邮箱或其他可联系的方式"></label></div><div class="honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div><label class="checkbox-label"><input name="consent" type="checkbox" required><span>我已阅读 <button type="button" class="text-button" data-policy>使用与隐私说明</button>，同意为处理本次反馈保存所填信息。</span></label><div class="form-bottom"><span>仅维护者可见 · 不会自动公开到 GitHub</span><button class="button primary" id="submit-feedback" type="submit">提交反馈 <span aria-hidden="true">↗</span></button></div><div id="feedback-status" role="status" aria-live="polite"></div></form>
+      <div class="feedback-copy"><p class="eyebrow">LET’S MAKE IT BETTER</p><h2>用得不顺手？<br>直接告诉我们。</h2><p>不用注册，也不用研究 GitHub。<br>遇到的问题、想要的功能，都可以在这里说。</p><div class="feedback-tip"><span aria-hidden="true">↗</span><div><b>描述越清楚，越容易解决</b><p>建议写上操作步骤、预期结果与实际表现。<br>请勿包含密码、Cookie 或其他敏感信息。</p></div></div><button id="rights-feedback" type="button" class="quiet-link">版权与权利人反馈 <span aria-hidden="true">→</span></button></div>
+      <form id="feedback-form"><div class="form-row"><label>反馈类型<select name="category" required><option value="bug">遇到问题</option><option value="suggestion">功能建议</option><option value="copyright">版权与权利反馈</option><option value="other">其他</option></select></label><label>使用平台<select name="platform" required><option value="macOS">macOS</option><option value="Windows">Windows</option><option value="Android">Android</option><option value="Android Large Screen">大屏版（车机 / TV）</option><option value="iOS">iOS（自签版）</option><option value="HarmonyOS">HarmonyOS NEXT（测试版）</option><option value="website">网站</option><option value="other">其他</option></select></label></div><label>简单说说你的问题<input name="title" required minlength="3" maxlength="120" placeholder="例如：切换视频后一直在加载"></label><label>详细描述<textarea name="message" required minlength="10" maxlength="5000" rows="5" placeholder="发生了什么？可以怎样重现？如果是版权反馈，请提供涉及的链接、权属依据和具体诉求。"></textarea></label><div class="form-row"><label>软件版本 <span>（选填）</span><input name="version" maxlength="40" placeholder="例如 0.4.3"></label><label>联系方式 <span>（选填，版权反馈必填）</span><input name="contact" maxlength="200" placeholder="邮箱或其他可联系的方式"></label></div><div class="honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div><label class="checkbox-label"><input name="consent" type="checkbox" required><span>我已阅读 <button type="button" class="text-button" data-policy>使用与隐私说明</button>，同意为处理本次反馈保存所填信息。</span></label><div class="form-bottom"><span>仅维护者可见 · 不会自动公开到 GitHub</span><button class="button primary" id="submit-feedback" type="submit">提交反馈 <span aria-hidden="true">↗</span></button></div><div id="feedback-status" role="status" aria-live="polite"></div></form>
     </section>
     <section class="open-source wrap"><span class="open-symbol" aria-hidden="true">{ }</span><div><p class="eyebrow">BUILT IN THE OPEN</p><h2>开源，让每一个想法都有回响。</h2><p>独立开发，持续改进。代码、版本更新与开发讨论，都在 GitHub。</p></div><a class="button" href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">前往 GitHub <span aria-hidden="true">↗</span></a></section>
   </main>
-  <footer class="wrap"><div class="footer-top"><a href="#" class="brand"><img src="/assets/app-icon.png" alt="" width="28" height="28">BiliMusic</a><div><button class="text-button" data-policy>使用声明与隐私</button><a href="#feedback">联系与反馈</a><a href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div></div><p>BiliMusic 为独立开源项目，非哔哩哔哩官方产品。仅用于学习和测试，请于下载后24小时内删除。不提供任何破解内容，不内置、托管或销售媒体资源。第三方内容的权利归相应权利人所有；接口可访问不代表获得内容授权。请遵守适用法律、平台规则与授权范围，支持原创与正版。</p><div class="footer-bottom"><span>© 2026 BiliMusic Contributors · MIT License</span><span>留一点时间，听喜欢的音乐。</span></div></footer>
-  <dialog id="policy-dialog" aria-labelledby="policy-title"><div class="dialog-heading"><div><p class="eyebrow">PLEASE READ BEFORE USE</p><h2 id="policy-title">使用声明与隐私说明</h2></div><button class="close-dialog" aria-label="关闭">×</button></div><div id="policy-content" class="policy-content" role="region" aria-label="使用声明正文" tabindex="0"><p>正在加载说明…</p></div><div id="download-consent" hidden><p id="download-availability" role="status"></p><label class="checkbox-label"><input id="download-accepted" type="checkbox"><span>我已阅读并理解以上说明，将在法律、平台规则及授权允许的范围内使用。</span></label><button id="confirm-download" class="button primary" disabled>同意并下载</button></div><button id="policy-close" class="button">我知道了</button></dialog>
+  <footer class="wrap"><div class="footer-top"><a href="#" class="brand"><img src="/assets/app-icon.png" alt="" width="28" height="28">BiliMusic</a><div><button type="button" class="text-button" data-policy>使用声明与隐私</button><a href="#feedback">联系与反馈</a><a href="https://github.com/licpp/BiliMusic-Desktop" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div></div><p>BiliMusic 为独立开源项目，非哔哩哔哩官方产品。仅用于学习和测试，请于下载后24小时内删除。不提供任何破解内容，不内置、托管或销售媒体资源。第三方内容的权利归相应权利人所有；接口可访问不代表获得内容授权。请遵守适用法律、平台规则与授权范围，支持原创与正版。</p><div class="footer-bottom"><span>© 2026 BiliMusic Contributors · MIT License</span><span>留一点时间，听喜欢的音乐。</span></div></footer>
+  <dialog id="policy-dialog" aria-labelledby="policy-title"><div class="dialog-heading"><div><p class="eyebrow">PLEASE READ BEFORE USE</p><h2 id="policy-title">使用声明与隐私说明</h2></div><button type="button" class="close-dialog" aria-label="关闭">×</button></div><div id="policy-content" class="policy-content" role="region" aria-label="使用声明正文" tabindex="0"><p>正在加载说明…</p></div><div id="download-consent" hidden><p id="download-availability" role="status"></p><label class="checkbox-label"><input id="download-accepted" type="checkbox"><span>我已阅读并理解以上说明，将在法律、平台规则及授权允许的范围内使用。</span></label><button type="button" id="confirm-download" class="button primary" disabled>同意并下载</button></div><button type="button" id="policy-close" class="button">我知道了</button></dialog>
+  <dialog id="qr-dialog" class="qr-dialog" aria-labelledby="qr-dialog-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">COMMUNITY</p><h2 id="qr-dialog-title">加入 BiliMusic QQ 群</h2></div>
+      <button type="button" class="close-dialog" id="close-qr-dialog" aria-label="关闭">×</button>
+    </div>
+    <div class="qr-dialog-body">
+      <img src="/assets/qq-community.jpg" alt="BiliMusic QQ 群二维码（群号 1132131566）" width="1284" height="2283">
+      <p>使用手机 QQ 扫描上方二维码，或复制群号手动搜索加入。</p>
+      <div class="qr-dialog-actions">
+        <button type="button" class="button primary" id="copy-qq-modal-btn" data-qq="1132131566">复制群号 1132131566</button>
+        <a class="button" href="/assets/qq-community.jpg" target="_blank" rel="noopener noreferrer">新窗口打开原图 ↗</a>
+      </div>
+    </div>
+  </dialog>
 </body></html>

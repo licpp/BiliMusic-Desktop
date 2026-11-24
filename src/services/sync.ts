@@ -12,9 +12,9 @@ export type TrackRepairPreview = {
   total: number
   entries: { kind: 'favorite' | 'playlist' | 'history'; label: string; trackId: string }[]
 }
-export type SyncStatus = { visibilityError?:string; importError?:string; localError?:string; trackRepair?: TrackRepairPreview | null; config: SyncConfig; lastSuccess?: string; records: number; bytes: number }
+export type SyncStatus = { visibilityError?:string; importError?:string; chaptersError?:string; localError?:string; trackRepair?: TrackRepairPreview | null; config: SyncConfig; lastSuccess?: string; records: number; bytes: number }
 export type SyncConflict = { key: string; field: string; local: unknown; remote: unknown }
-export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean; skipped?: boolean; visibilityError?: string; importError?: string }
+export type SyncOutcome = { conflicts: SyncConflict[]; records: number; bytes: number; changed: boolean; skipped?: boolean; visibilityError?: string; importError?: string; chaptersError?: string }
 export const defaultSyncConfig: SyncConfig = { enabled: false, provider: 'webdav', uid: '', url: 'https://dav.jianguoyun.com/dav/', history: false, statistics: false, initialized: false, deviceId: '' }
 export const syncStatus = () => invoke<SyncStatus>('sync_status')
 export async function syncNow(preview = false, resolution?: string, automatic = false) {

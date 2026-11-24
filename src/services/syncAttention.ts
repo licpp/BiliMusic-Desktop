@@ -9,7 +9,7 @@ export function reportSyncOutcome(outcome: SyncOutcome, preview = false) {
   if (outcome.skipped) return
   useSyncAttention.setState({ outcome: outcome.conflicts.length || preview ? outcome : null,
     libraryIssue: null,
-    library: outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改待确认` : preview ? '请完成首次同步' : outcome.importError || outcome.visibilityError ? '部分资料待同步' : '' })
+    library: outcome.conflicts.length ? `有 ${outcome.conflicts.length} 处修改待确认` : preview ? '请完成首次同步' : outcome.importError || outcome.visibilityError || outcome.chaptersError ? '部分资料待同步' : '' })
 }
 export function reportSyncError(domain: 'library' | 'statistics', failed: boolean, error?: unknown) {
   const state = useSyncAttention.getState()

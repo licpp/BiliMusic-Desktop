@@ -60,7 +60,7 @@ pub async fn bili_media_options(
     provider
         .media_options(&bvid, cid)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 #[tauri::command]
 pub async fn bili_season(
@@ -75,7 +75,7 @@ pub async fn bili_season(
     provider
         .season(mid, season_id, refresh.unwrap_or(false))
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 #[tauri::command]
 pub async fn bili_season_cover(
@@ -86,7 +86,21 @@ pub async fn bili_season_cover(
     if mid <= 0 || season_id <= 0 {
         return Err(CommandError::validation("合集标识无效"));
     }
-    provider.season_preview_cover(mid, season_id).await.map_err(CommandError::provider)
+    provider.season_preview_cover(mid, season_id).await.map_err(CommandError::bilibili)
+}
+#[tauri::command]
+pub async fn bili_video_chapters(
+    provider: State<'_, BilibiliProvider>,
+    bvid: String,
+    cid: i64,
+) -> Result<Vec<VideoChapter>, CommandError> {
+    if !valid_bvid(&bvid) || cid <= 0 {
+        return Err(CommandError::validation("视频分 P 标识无效"));
+    }
+    provider
+        .video_chapters(&bvid, cid)
+        .await
+        .map_err(CommandError::bilibili)
 }
 #[tauri::command]
 pub async fn bili_subtitles(
@@ -97,7 +111,7 @@ pub async fn bili_subtitles(
     provider
         .subtitles(&bvid, cid)
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }
 #[tauri::command]
 pub async fn bili_subtitle_lines(
@@ -109,7 +123,7 @@ pub async fn bili_subtitle_lines(
     let lines = provider
         .subtitle_lines(&bvid, cid, &language)
         .await
-        .map_err(CommandError::provider)?;
+        .map_err(CommandError::bilibili)?;
     if lines.is_empty() {
         return Err(CommandError::validation("这份字幕没有可显示的内容"));
     }
@@ -312,5 +326,5 @@ pub async fn bili_creator_catalog(
             page.unwrap_or(1),
         )
         .await
-        .map_err(CommandError::provider)
+        .map_err(CommandError::bilibili)
 }

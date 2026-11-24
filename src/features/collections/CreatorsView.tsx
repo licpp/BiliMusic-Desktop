@@ -2,12 +2,11 @@ import { useListRows } from '../../shared/useListRows'
 import { useListDataDuringNavigation, useListReveal } from '../../shared/useListMotion'
 import { ListSkeleton } from '../../shared/ListSkeleton'
 import { accountQueryKey } from '../../services/queryKeys'
-import { CoverCount } from '../../shared/CoverCount'
+import { VideoResultRow } from '../../shared/VideoResultRow'
 import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { CreatorActions, CreatorManager } from './CreatorTools'
-import { listen } from '@tauri-apps/api/event'
 import { formatAudienceCount } from '../../shared/count'
 import { accountEpoch } from '../../services/accountScope'
 import { formatDuration } from '../../shared/time'
@@ -17,27 +16,24 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
-  readCollectionProgress,
   changeCollection,
   listCollections,
   type Collection,
 } from '../../services/collections'
 import { commandErrorMessage, getVideoParts } from '../../services/desktopApi'
 import { creatorVideoRow } from '../../services/mediaSources'
-import {
-  playbackIntent,
-  seasonPlaybackQueue,
-  usePlayerStore,
-} from '../player/playerStore'
+import { seasonPlaybackQueue } from '../player/playerStore'
 import { toTrack } from '../../services/collectionTrack'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { useSeasonCover } from '../../shared/useSeasonCover'
 import { Artwork } from '../../shared/Artwork'
 import { LoadMore } from '../../shared/LoadMore'
 import { SwipeTabPages } from '../../shared/SwipeTabPages'
+import { createCollectionResume, isCurrentCollectionResume, resolveCreatorContinuation, resumeCreatorUploads, type OpenCollection } from './creatorContinuation'
+import { useCollectionProgress } from './useCollectionProgress'
 
 type Creator = {
   mid: number
@@ -47,9 +43,12 @@ type Creator = {
   fans?: number
 }
 type Catalog = { data: any; page: number }
-function CreatorSeasonCover({ reference, cover, count }: { reference: string; cover: string; count: number }) {
-  const image = useSeasonCover(reference, cover)
-  return <span className="creator-season-cover"><Artwork src={image.cover} elementRef={image.ref}/><CoverCount count={count} unit="个视频" single/></span>
+function CreatorSeasonRow({ collection, count, onOpen }: { collection: Collection; count: number; onOpen?: OpenCollection }) {
+  const image = useSeasonCover(collection.bvid, collection.coverUrl)
+  return <div className="video-result-card">
+    <VideoResultRow title={collection.title} coverUrl={image.cover} coverRef={image.ref} count={count} countUnit="个视频"
+      onClick={() => onOpen?.(collection)}/>
+  </div>
 }
 
 const catalog = (action: string, mid?: number, page = 1, keyword = '') =>
@@ -233,10 +232,12 @@ export function CreatorPage({
   item,
   onOpen,
   searchQuery,
+  active = true,
 }: {
   item: Collection
-  onOpen?: (item: Collection) => void
+  onOpen?: OpenCollection
   searchQuery?: string
+  active?: boolean
 }) {
   const mid = Number(item.bvid.slice(3))
   const profile = useQuery({
@@ -253,24 +254,10 @@ export function CreatorPage({
     queryFn: listCollections,
   })
   const followed = saved.data?.items.some((value) => value.bvid === item.bvid)
-  const checkpoint = useQuery({
-    queryKey: accountQueryKey('collection-progress', item.bvid),
-    queryFn: () => readCollectionProgress(item.bvid),
-    enabled: Boolean(followed),
-  })
-  useEffect(() => {
-    if (!followed) return
-    const subscription = listen<string>(
-      'collection-progress-changed',
-      (event) => {
-        if (event.payload === item.bvid) void checkpoint.refetch()
-      },
-    ).catch(() => undefined)
-    return () => {
-      void subscription.then((stop) => stop?.())
-    }
-  }, [followed, item.bvid, checkpoint.refetch])
+  const checkpoint = useCollectionProgress(item.bvid, active && Boolean(followed))
   const [resuming, setResuming] = useState(false)
+  const resumeVersion = useRef(0)
+  useLayoutEffect(() => { setResuming(false); return () => { resumeVersion.current++ } }, [active, item.bvid])
 
   const [localSearch, setLocalSearch] = useState('')
   const inputQuery = (searchQuery ?? localSearch).trim()
@@ -346,51 +333,27 @@ export function CreatorPage({
       className="creator-resume"
       disabled={resuming}
       onClick={async () => {
+        const point = checkpoint.data
+        if (!active || !point || resuming) return
+        const request = createCollectionResume(point)
+        const version = ++resumeVersion.current
+        const present = () => version === resumeVersion.current && request.account === accountEpoch()
+        const current = () => present() && isCurrentCollectionResume(request)
         setResuming(true)
         setError('')
-        const scope = accountEpoch(),
-          intent = playbackIntent()
-        const point = checkpoint.data!
         try {
-          let entries = keyword ? [] : creatorVideos(videoResult.data?.pages),
-            page = keyword ? 0 : videoResult.data?.pages.length || 0
-          let total = keyword ? Infinity : videoResult.data?.pages[0]?.data.page?.count ?? Infinity
-          while (
-            !entries.some((video) => video.bvid === point.bvid) &&
-            entries.length < total
-          ) {
-            const next = await catalog('videos', mid, ++page)
-            if (scope !== accountEpoch() || intent !== playbackIntent()) return
-            const rows = next.data.list?.vlist || []
-            if (!rows.length) break
-            entries.push(...rows)
-            total = next.data.page?.count ?? entries.length
+          const target = await resolveCreatorContinuation(point, item, current)
+          if (!target || !current()) return
+          if ('collection' in target && onOpen) {
+            onOpen(target.collection, request)
+            return
           }
-          if (!entries.some((video) => video.bvid === point.bvid))
-            throw new Error('上次播放的视频已不在这个 UP 主的投稿中')
-          const detail = await getVideoParts(point.bvid)
-          if (scope !== accountEpoch() || intent !== playbackIntent()) return
-          const parts = detail.parts.map((part) => toTrack(detail, part))
-          const selected = parts.find((track) => track.source.cid === point.cid)
-          if (!selected) throw new Error('上次播放的分 P 已不可用')
-          const full = entries.map(video => creatorVideoRow(video, mid, item.title))
-          await usePlayerStore.getState().playFromList(
-            seasonPlaybackQueue(full, selected, parts),
-            selected.id,
-            {
-              kind: 'season',
-              title: item.title,
-              collectionRef: item.bvid,
-              creatorMid: mid,
-              creatorPage: page,
-              creatorTotal: total,
-            },
-            point.positionMs / 1000, true,
-          )
+          const detail = 'detail' in target ? target.detail : await getVideoParts(point.bvid)
+          await resumeCreatorUploads(item, point, detail, current, page => catalog('videos', mid, page), keyword ? [] : videoResult.data?.pages)
         } catch (cause) {
-          setError(commandErrorMessage(cause))
+          if (current()) setError(commandErrorMessage(cause))
         } finally {
-          setResuming(false)
+          if (present()) setResuming(false)
         }
       }}
     >
@@ -406,8 +369,8 @@ export function CreatorPage({
   const renderVideosPane = () => <>
     {loadingVideos && <ListSkeleton label={inputQuery ? '正在搜索这位 UP 主的投稿' : '正在读取投稿'} />}
     {!loadingVideos && !videoResult.isPending && !videoResult.error && inputQuery && !videos.length && <p className="collection-empty">这位 UP 主暂无匹配的投稿，试试其他关键词。</p>}
-    {(videoResult.error || error) && (
-      <p role="alert">{commandErrorMessage(videoResult.error || error)}</p>
+    {videoResult.error && (
+      <p role="alert">{commandErrorMessage(videoResult.error)}</p>
     )}
     {!settling && (
       <VideoPartsList
@@ -439,24 +402,10 @@ export function CreatorPage({
     {seasonResult.error && (
       <p role="alert">{commandErrorMessage(seasonResult.error)}</p>
     )}
-    <div ref={seasonList}>{renderedSeasons.rows.map((season) => (
-      <button
-        className="creator-row creator-season"
-        key={season.meta.season_id}
-        onClick={() =>
-          onOpen?.({
-            bvid: `season:${mid}:${season.meta.season_id}`,
-            folderId: '',
-            title: season.meta.name,
-            coverUrl: season.meta.cover,
-            uploaderName: item.title,
-          })
-        }
-      >
-        <CreatorSeasonCover reference={`season:${mid}:${season.meta.season_id}`} cover={season.meta.cover} count={season.meta.total}/>
-        <strong>{season.meta.name}</strong>
-      </button>
-    ))}{renderedSeasons.more ? <div ref={renderedSeasons.tail} className="list-render-tail" aria-hidden="true"/> : seasonPagination}</div>
+    <div ref={seasonList} className="video-result-layout video-result-list">{renderedSeasons.rows.map((season) => {
+      const collection = { bvid: `season:${mid}:${season.meta.season_id}`, folderId: '', title: season.meta.name, coverUrl: season.meta.cover, uploaderName: item.title }
+      return <CreatorSeasonRow collection={collection} count={season.meta.total} onOpen={onOpen} key={collection.bvid}/>
+    })}{renderedSeasons.more ? <div ref={renderedSeasons.tail} className="list-render-tail" aria-hidden="true"/> : seasonPagination}</div>
   </>
 
   return (
@@ -486,6 +435,7 @@ export function CreatorPage({
           </button>
         </div>
       </header>
+      {error && <p role="alert">{error}</p>}
       {searchQuery === undefined && <ScopedSearchField creator value={localSearch} onChange={setLocalSearch} className="creator-content-search"/>}
       {inputQuery ? <>
         <p className="creator-search-summary" role="status">在这位 UP 主的投稿中搜索“{inputQuery}”{!settling && totalVideos !== undefined ? ` · ${totalVideos} 个结果` : ''}</p>

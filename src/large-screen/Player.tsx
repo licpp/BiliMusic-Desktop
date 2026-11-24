@@ -1,4 +1,9 @@
-import { SeekRange } from '../shared/SeekRange'
+import { ChapterSeekRange } from '../features/chapters/ChapterSeekRange'
+import { ChapterTrigger } from '../features/chapters/ChapterTrigger'
+import { ChapterRows } from '../features/chapters/ChapterDirectory'
+import { usePlaybackChapters, type PlaybackChapters } from '../features/chapters/usePlaybackChapters'
+import type { PlaybackChapter } from '../domain/playbackChapters'
+import { useOverlayDismiss } from '../shared/useOverlayDismiss'
 import { PlayingVideoReplacement } from '../features/library/PlayingVideoReplacement'
 import { useSourceTitleMetadata } from '../shared/useSourceTitleMetadata'
 import { trackSubtitle } from '../domain/sourceTitle'
@@ -8,7 +13,7 @@ import { fitMediaFrame, centeredLyricScroll, playerViewportLayout, lyricRowCount
 import { progressKeyAction } from './playerNavigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Captions, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Captions, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText, RefreshCw, X } from 'lucide-react'
 import { usePlayerStore, playbackClock, playbackRates, reloadCurrentAudioSource } from '../features/player/playerStore'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaybackSettings } from '../features/lyrics/PlaybackSettings'
@@ -45,7 +50,7 @@ export function LargeControls() {
   return <div className="large-controls"><button className="large-icon" aria-label="上一首" disabled={!current} onClick={() => void usePlayerStore.getState().previous()}><SkipBack/></button><button className="large-play" data-primary-focus aria-label={status === 'playing' || busy ? '暂停' : '播放'} disabled={!current} onClick={() => void usePlayerStore.getState().toggle()}>{busy ? <LoaderCircle className="spin"/> : status === 'playing' ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button className="large-icon" aria-label="下一首" disabled={!current} onClick={() => void usePlayerStore.getState().next()}><SkipForward/></button></div>
 }
 
-export function LargeProgress() {
+export function LargeProgress({ chapters }: { chapters?: readonly PlaybackChapter[] }) {
   const position = usePlayerStore(s => s.progressSeconds), duration = usePlayerStore(s => s.durationSeconds)
   const id = usePlayerStore(s => s.current?.id)
   const [draft, setDraft] = useState<number | null>(null)
@@ -55,7 +60,7 @@ export function LargeProgress() {
     window.addEventListener('bilimusic-back', back, true)
     return () => window.removeEventListener('bilimusic-back', back, true)
   }, [draft])
-  return <div className={`large-progress${draft !== null ? ' adjusting' : ''}`}><SeekRange duration={duration} trackKey={id} onSeek={seconds => { usePlayerStore.getState().seek(seconds); setDraft(null) }} data-focus="playback-seek" aria-label="播放进度" aria-valuetext={`${formatDuration(draft ?? position, duration >= 3600)}，${draft === null ? '按确定调整进度' : '左右调整，确定保存，返回取消'}`} min={0} max={Math.max(1, duration)} value={Math.min(duration, draft ?? position)} disabled={!duration} onBlur={() => setDraft(null)}
+  return <div className={`large-progress${draft !== null ? ' adjusting' : ''}`}><ChapterSeekRange duration={duration} trackKey={id} chapters={chapters} onSeek={seconds => { usePlayerStore.getState().seek(seconds); setDraft(null) }} data-focus="playback-seek" aria-label="播放进度" aria-valuetext={`${formatDuration(draft ?? position, duration >= 3600)}，${draft === null ? '按确定调整进度' : '左右调整，确定保存，返回取消'}`} min={0} max={Math.max(1, duration)} value={Math.min(duration, draft ?? position)} disabled={!duration} onBlur={() => setDraft(null)}
     onKeyDown={e => {
       const action = progressKeyAction(e.key, draft, position, duration, e.repeat)
       if (!action) return
@@ -68,6 +73,7 @@ export function LargeProgress() {
 
 export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navigate }: { onBack: () => void; onQueue: () => void; onFavorite: () => void; onMore: (track: Track) => void; onSleep: () => void; navigate: Navigate }) {
   const sourceClient = useQueryClient()
+  const chapters = usePlaybackChapters(true)
   const [replacingVideo, setReplacingVideo] = useState<Track | null>(null)
   const current = usePlayerStore(s => s.current), error = usePlayerStore(s => s.error)
   const playbackFailed = usePlayerStore(s => s.status === 'error')
@@ -133,7 +139,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
     window.addEventListener('bilimusic-back', back)
     return () => window.removeEventListener('bilimusic-back', back)
   }, [fullscreen, shown])
-  useEffect(() => { if (!fullscreen || settings) return; const timer = window.setTimeout(() => { setShown(false) }, 3500); return () => clearTimeout(timer) }, [fullscreen, settings, activity])
+  useEffect(() => { if (!fullscreen || settings || chapters.directoryOpen) return; const timer = window.setTimeout(() => { setShown(false) }, 3500); return () => clearTimeout(timer) }, [fullscreen, settings, activity, chapters.directoryOpen])
   const reveal = () => { setShown(true); setActivity(n => n + 1) }
   if (!current) return null
   const videoFailure = source.error && videoSourceIssue(source.error)
@@ -142,27 +148,41 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
     {!source.data && !source.error && <VideoStartup key={current.id} poster={current.coverUrl} message="正在准备画面…"/>}</>
   return <div ref={player} className={`large-player${fullscreen ? ' is-fullscreen' : ''}`} data-density={density} data-wide-media={wideMedia || undefined} data-media-error={error ? true : undefined}>
     <LyricsBackdrop cover={current.coverUrl}/>
-    <header className="large-player-header"><button className="large-text-button" data-focus="player-back" aria-label="返回浏览" onClick={onBack}><ArrowLeft/><span>返回浏览</span></button><div className="large-toolbar"><button data-focus="player-video" data-focus-down={video ? 'video-fullscreen' : undefined} aria-label={video ? '封面' : '视频'} aria-pressed={video} onClick={() => { const next = !video; setVideo(next); setFullscreen(false); localStorage.setItem('lyrics-media-mode', next ? 'video' : 'cover') }}>{video ? <Music2/> : <MonitorPlay/>}<span>{video ? '封面' : '视频'}</span></button><button aria-label="队列" onClick={onQueue}><ListVideo/><span>队列</span></button>{current.importedEntry?.trackId === current.id && <button aria-label="更换视频" onClick={() => setReplacingVideo(current)}><RefreshCw/><span>更换视频</span></button>}</div></header>
+    <header className="large-player-header"><button className="large-text-button" data-focus="player-back" aria-label="返回浏览" onClick={onBack}><ArrowLeft/><span>返回浏览</span></button><div className="large-toolbar"><button data-focus="player-video" data-focus-down={video ? 'video-fullscreen' : undefined} aria-label={video ? '封面' : '视频'} aria-pressed={video} onClick={() => { const next = !video; setVideo(next); setFullscreen(false); localStorage.setItem('lyrics-media-mode', next ? 'video' : 'cover') }}>{video ? <Music2/> : <MonitorPlay/>}<span>{video ? '封面' : '视频'}</span></button><ChapterTrigger model={chapters} variant="text"/><button aria-label="队列" onClick={onQueue}><ListVideo/><span>队列</span></button>{current.importedEntry?.trackId === current.id && <button aria-label="更换视频" onClick={() => setReplacingVideo(current)}><RefreshCw/><span>更换视频</span></button>}</div></header>
     <div className="large-player-body"><section className="large-player-info">
       <div className="large-media-stage" ref={mediaStage}><div className="large-media-frame" style={stageSize.width ? mediaFit : undefined} onLoadedMetadataCapture={e => { const element = e.target; if (element instanceof HTMLVideoElement && element.videoWidth && element.videoHeight) setVideoAspect({ trackId: current.id, ratio: element.videoWidth / element.videoHeight }) }}>{video ? <div className={`large-video${fullscreen ? ' expanded' : ''}`} role={fullscreen ? 'dialog' : undefined} aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? '全屏视频' : '视频小窗'} onPointerMove={fullscreen ? reveal : undefined} onKeyDownCapture={fullscreen ? e => { if (!shown) { e.preventDefault(); e.stopPropagation(); reveal() } else reveal() } : undefined}>
         {frame}{videoReady && danmaku.visible && danmaku.query.data && <DanmakuCanvas items={danmaku.query.data} scale={danmaku.size} opacity={danmaku.opacity} density={2 ** (danmaku.density - 3)}/>}{!fullscreen && <button tabIndex={-1} aria-hidden="true" className="large-video-tap" onClick={() => { setFullscreen(true); reveal() }}/>}
-        {fullscreen && <><button className="large-video-surface" tabIndex={shown ? -1 : 0} aria-label="显示视频播放控制" onClick={reveal}/><div className="large-video-controls" hidden={!shown} onFocus={reveal}><header><button onClick={() => { setFullscreen(false) }}><ArrowLeft/>退出全屏</button><strong>{current.title}</strong><button aria-pressed={danmaku.visible} aria-label={danmaku.visible ? '关闭弹幕' : '显示弹幕'} onClick={danmaku.toggle}><MessageSquareText/>弹幕</button><button onClick={() => setSettings(true)}><Settings2/>播放设置</button></header><LargeProgress/><LargeControls/></div></>}
+        {fullscreen && <><button className="large-video-surface" tabIndex={shown ? -1 : 0} aria-label="显示视频播放控制" onClick={reveal}/><div className="large-video-controls" hidden={!shown} onFocus={reveal}><header><button onClick={() => { setFullscreen(false) }}><ArrowLeft/>退出全屏</button><strong>{current.title}</strong><button aria-pressed={danmaku.visible} aria-label={danmaku.visible ? '关闭弹幕' : '显示弹幕'} onClick={danmaku.toggle}><MessageSquareText/>弹幕</button><ChapterTrigger model={chapters} variant="text"/><button onClick={() => setSettings(true)}><Settings2/>播放设置</button></header><LargeProgress chapters={chapters.items}/><LargeControls/></div></>}
       </div> : <Artwork adaptAspect className="large-player-cover" src={current.coverUrl}
         onAspectRatio={ratio => setCoverAspect({ url: current.coverUrl, ratio })}/>}</div>
       {video && !fullscreen && <button ref={trigger} className="large-video-open" aria-label="全屏播放视频" data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back"
         style={{ '--large-frame-right': `${(stageSize.width - mediaFit.width) / 2}px`, '--large-frame-bottom': `${(stageSize.height - mediaFit.height) / 2}px` } as CSSProperties}
         onClick={() => { setFullscreen(true); reveal() }}><Expand/><span>全屏</span></button>}</div>
-      <div className="large-player-title"><h1 title={wideMedia ? current.displayTitle || current.title : undefined}>{current.displayTitle || current.title}</h1><p>{trackSubtitle(current)}</p></div><LargeProgress/><LargeControls/>
+      <div className="large-player-title"><h1 title={wideMedia ? current.displayTitle || current.title : undefined}>{current.displayTitle || current.title}</h1><p>{trackSubtitle(current)}</p></div><LargeProgress chapters={chapters.items}/><LargeControls/>
       {error && <div className="large-error" role="alert"><PlaybackErrorText issue={error}/><div className="playback-issue-actions">
         {playbackFailed && <button type="button" onClick={() => void usePlayerStore.getState().toggle()}>重试</button>}
         <CopyPlaybackDiagnostics issue={error} track={current}/>
       </div></div>}
-    </section><LargeLyrics track={current} toolsHost={lyricTools} density={density}/></div>
+    </section>{chapters.directoryOpen && !fullscreen ? <LargeChapterDirectory model={chapters}/> : <LargeLyrics track={current} toolsHost={lyricTools} density={density}/>}</div>
     <footer className="large-player-footer"><div className="large-player-extras"><button className={current.liked ? 'liked' : ''} aria-pressed={current.liked} aria-label={current.liked ? '取消喜欢' : '喜欢'} onClick={onFavorite}><Heart fill={current.liked ? 'currentColor' : 'none'}/></button><PlaybackModeButton/><button aria-label="选集" onClick={() => navigate({ kind: 'collection', item: { bvid: current.source.bvid, title: current.videoTitle || current.title, coverUrl: current.coverUrl || '', uploaderName: current.source.uploaderName || '', folderId: '' } })}><ListVideo/><span>选集</span></button><button aria-label="设置" onClick={() => setSettings(true)}><Settings2/><span>设置</span></button><button aria-label="当前歌曲更多操作" onClick={() => onMore(current)}>···</button></div><div className="large-lyrics-tools-host" ref={setLyricTools}/></footer>
+    {chapters.directoryOpen && fullscreen && <LargeDialog title="章节" drawer className="large-chapters-dialog" onClose={chapters.close}>
+      <ChapterRows items={chapters.items} duration={chapters.duration} autoFocus onSeek={seconds => { chapters.seek(seconds); chapters.close() }}/>
+    </LargeDialog>}
     {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)} renderDialog={body => <LargeDialog title="更换视频" className="import-match-large-dialog" onClose={() => setReplacingVideo(null)}>{body}</LargeDialog>}/>}
     {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack"><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting/><CaptionLanguageSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
   </div>
 }
+function LargeChapterDirectory({ model }: { model: PlaybackChapters }) {
+  const panel = useRef<HTMLElement>(null)
+  useOverlayDismiss(panel, true, model.close)
+  return <section ref={panel} className="large-lyrics large-chapter-directory" aria-label="章节">
+    <header><h2>章节</h2><small>{model.origin === 'official' ? 'B 站章节' : '来自评论'}</small>
+      <button type="button" className="large-icon" aria-label="收起章节" onClick={model.close}><X/></button>
+    </header>
+    <ChapterRows items={model.items} duration={model.duration} autoFocus onSeek={model.seek}/>
+  </section>
+}
+
 function RateSetting() { const rate = usePlayerStore(s => s.rate); return <section className="large-setting-section"><h3>播放速度</h3><div className="large-options">{playbackRates.map(r => <button key={r} aria-pressed={rate === r} onClick={() => void usePlayerStore.getState().setRate(r)}>{r}×</button>)}</div></section> }
 function CaptionSetting() { const subtitles = useBiliSubtitles(); return <button className="large-setting-toggle" aria-pressed={subtitles.active} onClick={subtitles.toggle}><Sparkles/><span>AI字幕</span><small>{subtitles.active ? '已开启' : '未开启'}</small></button> }
 

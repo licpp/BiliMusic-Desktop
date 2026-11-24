@@ -21,7 +21,7 @@ const mocks={
  useTrackSelection:`export const useTrackSelection=()=>({selecting:false,exit(){},enter(){},ids:new Set()});export const BatchTrackActions=()=>null`,
  ActionMenu:`import {createElement} from 'react';export const ActionMenu=({children})=>createElement('aside',null,children(()=>{}))`,
  platform:`export const isMobile=false,isIOS=false,isAndroid=false,isOHOS=false,isLargeScreen=false`,
- core:`export const isTauri=()=>false;export const invoke=async()=>null`,
+ core:`export const isTauri=()=>false;export const invoke=async()=>null;export class Channel {}`,
 }
 b.onResolve({filter:/@tauri-apps\/api\/core$/},()=>({path:'core',namespace:'fixture'}))
 b.onResolve({filter:/\/(playerStore|playlistImport|importedEntries|useCompactLayout|useLocateCurrentRow|sourceTitles|sync|TrackMenuButton|DownloadsView|ListSort|useTrackSelection|ActionMenu|platform)$/},a=>({path:a.path.split('/').at(-1),namespace:'fixture'}))

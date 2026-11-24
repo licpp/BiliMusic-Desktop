@@ -5,7 +5,7 @@ use crate::{
     infrastructure::{
         database::{Database, account_session},
         repositories::{
-            library::{LibraryRepository, MetadataPatch, TrackRecord},
+            library::{LibraryRepository, MetadataPatch, TrackInput, TrackRecord},
             lyrics::{LyricsRepository, SaveLyricsInput, StoredLyrics},
         },
     },
@@ -22,6 +22,7 @@ pub struct MatchSnapshot {
     session: String,
     lyric_token: Option<String>,
     protected: bool,
+    track_exists: bool,
 }
 
 /// Includes the explicit override values and the full local lyric selection.
@@ -88,11 +89,15 @@ fn has_override(c: &Connection, track_id: &str) -> rusqlite::Result<bool> {
 fn protected_lyrics(lyrics: &StoredLyrics) -> bool {
     lyrics.selected_manually || lyrics.bias_ms != 0 || lyrics.provider == "local"
 }
-fn snapshot(c: &Connection, track_id: &str) -> Result<MatchSnapshot, CommandError> {
-    if LibraryRepository::get(c, track_id)
+fn snapshot(
+    c: &Connection,
+    track_id: &str,
+    allow_missing: bool,
+) -> Result<MatchSnapshot, CommandError> {
+    let track_exists = LibraryRepository::get(c, track_id)
         .map_err(CommandError::database)?
-        .is_none()
-    {
+        .is_some();
+    if !track_exists && !allow_missing {
         return Err(CommandError::validation("歌曲尚未加入资料库"));
     }
     let lyrics = LyricsRepository::get(c, track_id).map_err(CommandError::database)?;
@@ -103,6 +108,7 @@ fn snapshot(c: &Connection, track_id: &str) -> Result<MatchSnapshot, CommandErro
         // existing override as protected rather than guessing who authored it.
         protected: has_override(c, track_id).map_err(CommandError::database)?
             || lyrics.as_ref().is_some_and(protected_lyrics),
+        track_exists,
     })
 }
 #[derive(Deserialize)]
@@ -125,7 +131,10 @@ struct LyricLine {
 fn time_valid(t: f64) -> bool {
     t.is_finite() && (0.0..=604_800_000.0).contains(&t)
 }
-fn validate(metadata: &MetadataPatch, lyrics: &SaveLyricsInput) -> Result<(), CommandError> {
+pub(super) fn validate(
+    metadata: &MetadataPatch,
+    lyrics: &SaveLyricsInput,
+) -> Result<(), CommandError> {
     if metadata.title.trim().is_empty()
         || metadata.title.chars().count() > 1000
         || metadata
@@ -194,15 +203,42 @@ fn commit(
     expected_lyric_token: Option<&str>,
     metadata: &MetadataPatch,
     lyrics: &SaveLyricsInput,
+    new_track: Option<&TrackInput>,
 ) -> Result<bool, CommandError> {
     validate(metadata, lyrics)?;
+    if let Some(track) = new_track {
+        super::commands::validate_track(track)?;
+        if track.id != track_id {
+            return Err(CommandError::validation("歌曲来源标识不一致"));
+        }
+    }
     let tx = c.unchecked_transaction().map_err(CommandError::database)?;
-    if account_session(c).map_err(CommandError::database)? != expected_session
-        || LibraryRepository::get(c, track_id)
-            .map_err(CommandError::database)?
-            .is_none()
-        || has_override(c, track_id).map_err(CommandError::database)?
-    {
+    if account_session(&tx).map_err(CommandError::database)? != expected_session {
+        return Ok(false);
+    }
+    let saved = apply_pair(
+        &tx,
+        track_id,
+        expected_lyric_token,
+        metadata,
+        lyrics,
+        new_track,
+    )?;
+    tx.commit().map_err(CommandError::database)?;
+    Ok(saved)
+}
+
+/// Apply a validated catalogue/lyrics pair under the caller's checked session
+/// and transaction so a linked job can commit the checkpoint with its result.
+pub(super) fn apply_pair(
+    c: &Connection,
+    track_id: &str,
+    expected_lyric_token: Option<&str>,
+    metadata: &MetadataPatch,
+    lyrics: &SaveLyricsInput,
+    new_track: Option<&TrackInput>,
+) -> Result<bool, CommandError> {
+    if has_override(c, track_id).map_err(CommandError::database)? {
         return Ok(false);
     }
     let existing = LyricsRepository::get(c, track_id).map_err(CommandError::database)?;
@@ -210,6 +246,15 @@ fn commit(
         || existing.as_ref().map(token).as_deref() != expected_lyric_token
     {
         return Ok(false);
+    }
+    if LibraryRepository::get(c, track_id)
+        .map_err(CommandError::database)?
+        .is_none()
+    {
+        let Some(track) = new_track else {
+            return Ok(false);
+        };
+        LibraryRepository::upsert_source(c, track).map_err(CommandError::database)?;
     }
     c.execute(
         "INSERT INTO metadata_overrides(track_id,title,artist,album,cover_url) VALUES(?1,?2,?3,?4,?5)",
@@ -223,7 +268,6 @@ fn commit(
     )
     .map_err(CommandError::database)?;
     LyricsRepository::save(c, track_id, lyrics, false).map_err(CommandError::database)?;
-    tx.commit().map_err(CommandError::database)?;
     Ok(true)
 }
 
@@ -268,9 +312,10 @@ pub(super) fn save_manual_pair(
 pub fn batch_match_snapshot(
     database: State<'_, Database>,
     track_id: String,
+    allow_missing: Option<bool>,
 ) -> Result<MatchSnapshot, CommandError> {
     let c = database.0.lock().map_err(CommandError::database)?;
-    snapshot(&c, &track_id)
+    snapshot(&c, &track_id, allow_missing.unwrap_or(false))
 }
 #[tauri::command]
 pub fn batch_match_commit(
@@ -280,8 +325,21 @@ pub fn batch_match_commit(
     expected_lyric_token: Option<String>,
     metadata: MetadataPatch,
     lyrics: SaveLyricsInput,
+    new_track: Option<TrackInput>,
+    job: Option<super::linked_batch_matching::MatchLease>,
 ) -> Result<bool, CommandError> {
     let c = database.0.lock().map_err(CommandError::database)?;
+    if let Some(job) = job {
+        return super::linked_batch_matching::commit(
+            &c,
+            &job,
+            &expected_session,
+            &track_id,
+            expected_lyric_token.as_deref(),
+            &metadata,
+            &lyrics,
+        );
+    }
     commit(
         &c,
         &track_id,
@@ -289,6 +347,7 @@ pub fn batch_match_commit(
         expected_lyric_token.as_deref(),
         &metadata,
         &lyrics,
+        new_track.as_ref(),
     )
 }
 
@@ -335,12 +394,145 @@ mod tests {
             s.lyric_token.as_deref(),
             &metadata(),
             &lyrics("42"),
+            None,
         )
+    }
+    fn unseen_track() -> TrackInput {
+        TrackInput {
+            id: "bilibili:BV1GJ411x7h7:2".into(),
+            bvid: "BV1GJ411x7h7".into(),
+            aid: None,
+            cid: 2,
+            page: 2,
+            source_title: "第二首原视频".into(),
+            source_title_context: None,
+            title: "第二首原视频".into(),
+            artist: None,
+            album: None,
+            cover_url: Some("https://example.com/source.jpg".into()),
+            duration_seconds: 300,
+            uploader_id: None,
+            uploader_name: None,
+        }
+    }
+    fn apply_unseen(
+        c: &Connection,
+        s: &MatchSnapshot,
+        track: &TrackInput,
+    ) -> Result<bool, CommandError> {
+        commit(
+            c,
+            &track.id,
+            &s.session,
+            s.lyric_token.as_deref(),
+            &metadata(),
+            &lyrics("42"),
+            Some(track),
+        )
+    }
+    #[test]
+    fn matching_an_unseen_part_atomically_creates_its_track_without_history_or_likes() {
+        let c = db();
+        let input = unseen_track();
+        assert!(snapshot(&c, &input.id, false).is_err());
+        let s = snapshot(&c, &input.id, true).unwrap();
+        assert!(!s.track_exists);
+        assert!(!s.protected);
+        assert!(LibraryRepository::get(&c, &input.id).unwrap().is_none());
+        assert!(apply_unseen(&c, &s, &input).unwrap());
+
+        let track = LibraryRepository::get(&c, &input.id).unwrap().unwrap();
+        let chosen = LyricsRepository::get(&c, &input.id).unwrap().unwrap();
+        assert_eq!(track.cid, input.cid);
+        assert_eq!(track.page, input.page);
+        assert_eq!(track.title, metadata().title);
+        assert_eq!(track.cover_url, metadata().cover_url);
+        assert_eq!(track.source_video_title, input.source_title);
+        assert_eq!(chosen.provider_lyric_id, "42");
+        assert!(!chosen.selected_manually);
+        assert!(snapshot(&c, &input.id, true).unwrap().track_exists);
+        assert!(!apply_unseen(&c, &s, &input).unwrap());
+        let history_and_likes: i64 = c
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM play_history) + (SELECT COUNT(*) FROM favorites)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(history_and_likes, 0);
+    }
+    #[test]
+    fn failing_to_save_lyrics_rolls_back_the_unseen_track_and_its_metadata() {
+        let c = db();
+        let input = unseen_track();
+        let s = snapshot(&c, &input.id, true).unwrap();
+        c.execute_batch("CREATE TRIGGER fail_batch BEFORE INSERT ON lyrics BEGIN SELECT RAISE(ABORT,'disk full'); END;")
+            .unwrap();
+        assert!(apply_unseen(&c, &s, &input).is_err());
+        assert!(LibraryRepository::get(&c, &input.id).unwrap().is_none());
+        assert!(!has_override(&c, &input.id).unwrap());
+        let source_exists: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_items WHERE id=?1)",
+                [&input.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!source_exists);
+    }
+    #[test]
+    fn stale_unseen_snapshots_cannot_cross_accounts_or_override_manual_lyrics() {
+        let mut c = db();
+        let input = unseen_track();
+        let s = snapshot(&c, &input.id, true).unwrap();
+        c.execute(
+            "UPDATE account_session SET token=lower(hex(randomblob(16)))",
+            [],
+        )
+        .unwrap();
+        assert!(!apply_unseen(&c, &s, &input).unwrap());
+        assert!(LibraryRepository::get(&c, &input.id).unwrap().is_none());
+
+        let s = snapshot(&c, &input.id, true).unwrap();
+        LibraryRepository::upsert(&mut c, &input).unwrap();
+        LyricsRepository::save(&c, &input.id, &lyrics("77"), true).unwrap();
+        assert!(!apply_unseen(&c, &s, &input).unwrap());
+        assert!(!has_override(&c, &input.id).unwrap());
+        assert_eq!(
+            LyricsRepository::get(&c, &input.id)
+                .unwrap()
+                .unwrap()
+                .provider_lyric_id,
+            "77"
+        );
+    }
+    #[test]
+    fn unseen_source_must_match_the_requested_track_id() {
+        let c = db();
+        let input = unseen_track();
+        let s = snapshot(&c, &input.id, true).unwrap();
+        let id = "bilibili:BV1GJ411x7h7:3";
+        assert!(
+            commit(
+                &c,
+                id,
+                &s.session,
+                None,
+                &metadata(),
+                &lyrics("42"),
+                Some(&input)
+            )
+            .is_err()
+        );
+        assert!(LibraryRepository::get(&c, &input.id).unwrap().is_none());
+        let mut invalid = input;
+        invalid.cid = 3;
+        assert!(apply_unseen(&c, &s, &invalid).is_err());
     }
     #[test]
     fn commits_matching_metadata_and_lyrics_atomically_without_changing_track_identity() {
         let c = db();
-        let s = snapshot(&c, TRACK).unwrap();
+        let s = snapshot(&c, TRACK, false).unwrap();
         assert!(!s.protected);
         assert!(s.lyric_token.is_none());
         assert!(apply(&c, &s).unwrap());
@@ -352,7 +544,7 @@ mod tests {
         assert_eq!(chosen.provider, "qq");
         assert_eq!(chosen.provider_lyric_id, "42");
         assert!(!chosen.selected_manually);
-        assert!(snapshot(&c, TRACK).unwrap().protected);
+        assert!(snapshot(&c, TRACK, false).unwrap().protected);
         assert!(!apply(&c, &s).unwrap());
     }
     #[test]
@@ -403,7 +595,7 @@ mod tests {
     fn manual_metadata_or_lyrics_wins_a_late_automatic_result() {
         for manual_lyrics in [false, true] {
             let c = db();
-            let s = snapshot(&c, TRACK).unwrap();
+            let s = snapshot(&c, TRACK, false).unwrap();
             if manual_lyrics {
                 LyricsRepository::save(&c, TRACK, &lyrics("77"), true).unwrap();
             } else {
@@ -419,7 +611,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            assert!(snapshot(&c, TRACK).unwrap().protected);
+            assert!(snapshot(&c, TRACK, false).unwrap().protected);
             assert!(!apply(&c, &s).unwrap());
             if manual_lyrics {
                 assert_eq!(
@@ -443,9 +635,9 @@ mod tests {
     fn existing_bias_and_a_concurrent_bias_adjustment_are_preserved() {
         let c = db();
         LyricsRepository::save(&c, TRACK, &lyrics("77"), false).unwrap();
-        let s = snapshot(&c, TRACK).unwrap();
+        let s = snapshot(&c, TRACK, false).unwrap();
         LyricsRepository::set_bias(&c, TRACK, 1200).unwrap();
-        assert!(snapshot(&c, TRACK).unwrap().protected);
+        assert!(snapshot(&c, TRACK, false).unwrap().protected);
         assert!(!apply(&c, &s).unwrap());
         assert_eq!(
             LyricsRepository::get(&c, TRACK).unwrap().unwrap().bias_ms,
@@ -457,11 +649,11 @@ mod tests {
     fn selection_aba_and_account_aba_are_rejected() {
         let c = db();
         LyricsRepository::save(&c, TRACK, &lyrics("42"), false).unwrap();
-        let s = snapshot(&c, TRACK).unwrap();
+        let s = snapshot(&c, TRACK, false).unwrap();
         LyricsRepository::save(&c, TRACK, &lyrics("77"), false).unwrap();
         LyricsRepository::save(&c, TRACK, &lyrics("42"), false).unwrap();
         assert!(!apply(&c, &s).unwrap());
-        let current = snapshot(&c, TRACK).unwrap();
+        let current = snapshot(&c, TRACK, false).unwrap();
         c.execute(
             "UPDATE account_session SET token=lower(hex(randomblob(16)))",
             [],
@@ -479,7 +671,7 @@ mod tests {
     fn sql_failure_after_metadata_insert_rolls_back_both_halves() {
         let c = db();
         LyricsRepository::save(&c, TRACK, &lyrics("77"), false).unwrap();
-        let s = snapshot(&c, TRACK).unwrap();
+        let s = snapshot(&c, TRACK, false).unwrap();
         let before = LyricsRepository::get(&c, TRACK).unwrap().unwrap();
         c.execute_batch("CREATE TRIGGER fail_batch BEFORE UPDATE ON lyrics BEGIN SELECT RAISE(ABORT,'disk full'); END;").unwrap();
         assert!(apply(&c, &s).is_err());
@@ -491,27 +683,27 @@ mod tests {
     #[test]
     fn rejects_deleted_tracks_invalid_sources_and_malformed_or_oversized_payloads() {
         let c = db();
-        let s = snapshot(&c, TRACK).unwrap();
+        let s = snapshot(&c, TRACK, false).unwrap();
         for provider in ["local", "bilibili", "unknown"] {
             let mut input = lyrics("42");
             input.provider = provider.into();
-            assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input).is_err());
+            assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input, None).is_err());
         }
         let mut input = lyrics("42");
         input.raw_text = "x".repeat(2_000_001);
-        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input).is_err());
+        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input, None).is_err());
         input = lyrics("42");
         input.parsed_json = "{}".into();
-        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input).is_err());
+        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input, None).is_err());
         input.parsed_json = r#"[{"timeMs":-1,"text":"bad"}]"#.into();
-        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input).is_err());
+        assert!(commit(&c, TRACK, &s.session, None, &metadata(), &input, None).is_err());
         let mut patch = metadata();
         patch.cover_url = Some("javascript:alert(1)".into());
-        assert!(commit(&c, TRACK, &s.session, None, &patch, &lyrics("42")).is_err());
+        assert!(commit(&c, TRACK, &s.session, None, &patch, &lyrics("42"), None).is_err());
         c.execute("DELETE FROM tracks WHERE id=?1", [TRACK])
             .unwrap();
         assert!(!apply(&c, &s).unwrap());
         assert!(!has_override(&c, TRACK).unwrap());
-        assert!(snapshot(&c, TRACK).is_err());
+        assert!(snapshot(&c, TRACK, false).is_err());
     }
 }

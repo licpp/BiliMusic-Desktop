@@ -1,5 +1,6 @@
 package app.bilimusic.player
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
@@ -17,6 +18,8 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import androidx.media3.common.Player
 import androidx.media3.session.MediaSession as Media3Session
+import app.tauri.plugin.Invoke
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -83,6 +86,40 @@ class BackgroundPlaybackTest {
         PlaybackService.listener = null; PlaybackService.resolveListener = null; PlaybackService.listeningListener = null
         PlaybackService.controllerListener = null; PlaybackService.queueData = null; PlaybackService.profilePath = null
     }
+    @Test fun webViewResumeReportsDestroyedPlaybackService() {
+        load()
+        service.control("pause")
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val plugin = PlayerPlugin(activity)
+        val resume = """{"action":"resume"}"""
+        val responses = mutableListOf<Pair<Long, String>>()
+        fun invoke(command: String, args: String) = Invoke(0, command, 1, 2,
+            { callback, json -> responses.add(callback to json) }, args, ObjectMapper())
+
+        plugin.control(invoke("control", resume))
+        idle()
+        assertEquals(1L, responses.single().first)
+        assertEquals("playing", service.snapshot().getString("status"))
+        service.control("pause")
+        service.onDestroy()
+        try {
+            responses.clear()
+            plugin.control(invoke("control", resume))
+            idle()
+            val rejection = responses.single()
+            assertEquals(2L, rejection.first)
+            assertEquals("native_not_ready", JSONObject(rejection.second).getString("code"))
+            responses.clear()
+            plugin.snapshot(invoke("snapshot", "{}"))
+            idle()
+            val snapshot = responses.single()
+            assertEquals(1L, snapshot.first)
+            assertTrue(JSONObject(snapshot.second).getBoolean("stopped"))
+        } finally {
+            service = Robolectric.buildService(PlaybackService::class.java).create().get()
+        }
+    }
+
     @Test fun floatingLyricsReopenAtTheDraggedPositionAfterServiceRestart() {
         ShadowSettings.setCanDrawOverlays(true)
         fun enable(enabled: Boolean) {
@@ -505,6 +542,66 @@ class BackgroundPlaybackTest {
         assertEquals(29.0, service.snapshot().getDouble("position"), .1)
         assertEquals(1, requests.size)
     }
+    @Test fun onlyFreshPlayAndHeadsetToggleEventsCanRestartPausedPlayback() {
+        val resumeKeys = listOf(KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK)
+        for (code in resumeKeys) {
+            assertTrue("initial down for key $code", KeyEvent(KeyEvent.ACTION_DOWN, code).startsPausedPlayback())
+            assertFalse("up for key $code", KeyEvent(KeyEvent.ACTION_UP, code).startsPausedPlayback())
+            assertFalse("held key $code", KeyEvent(0L, 50L, KeyEvent.ACTION_DOWN, code, 1).startsPausedPlayback())
+        }
+        val otherKeys = listOf(KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP, KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_VOLUME_UP)
+        for (code in otherKeys) {
+            assertFalse("initial down for key $code", KeyEvent(KeyEvent.ACTION_DOWN, code).startsPausedPlayback())
+        }
+    }
+
+    @Test fun headsetResumesThePausedTrackAfterTheServiceIsDestroyed() {
+        val queue = JSONObject(checkNotNull(PlaybackService.queueData)).put("accountSession", "test-account-session")
+        PlaybackService.queueData = queue.toString()
+        service.updateQueue(queue.toString())
+        load()
+        service.control("next")
+        val oldRequest = requests.single()
+        reply(oldRequest)
+        service.control("seek", 25.0); idle()
+        service.control("pause"); idle()
+        service.onDestroy()
+        try {
+            val app = org.robolectric.RuntimeEnvironment.getApplication()
+            val startedServices = shadowOf(app)
+            val receiver = MediaButtonReceiver()
+            receiver.onReceive(app, mediaKeyIntent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_HEADSETHOOK)))
+            receiver.onReceive(app, mediaKeyIntent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE)))
+            assertNull(startedServices.nextStartedService)
+
+            receiver.onReceive(app, mediaKeyIntent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HEADSETHOOK)))
+            val start = checkNotNull(startedServices.nextStartedService)
+            assertEquals(PlaybackService::class.java.name, start.component?.className)
+            service = Robolectric.buildService(PlaybackService::class.java).create().get()
+            service.onStartCommand(start, 0, 1)
+            service.onStartCommand(start, 0, 2)
+
+            assertEquals(2, requests.size)
+            val request = requests.last()
+            assertNotEquals(oldRequest.first, request.first)
+            assertEquals("2", request.second.getJSONObject("track").getString("id"))
+            assertEquals("test-account-session", request.second.getString("accountSession"))
+            assertTrue(request.second.getBoolean("refresh"))
+            assertEquals(25.0, request.second.getDouble("position"), .1)
+            reply(oldRequest)
+            assertEquals("buffering", service.snapshot().getString("status"))
+            reply(request)
+
+            assertEquals("playing", service.snapshot().getString("status"))
+            assertEquals(25.0, service.snapshot().getDouble("position"), .1)
+            service.control("next")
+            assertEquals("3", requests.last().second.getJSONObject("track").getString("id"))
+        } finally {
+            if (PlaybackService.instance == null) service = Robolectric.buildService(PlaybackService::class.java).create().get()
+        }
+    }
+
     @Test fun headsetReceiverTargetsThisServiceAndConsumesKeyUpOnce() {
         load()
         val receiver = MediaButtonReceiver()

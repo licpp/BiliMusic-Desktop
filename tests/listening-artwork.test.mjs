@@ -54,10 +54,14 @@ test('account switches discard both queued and in-flight cover results', async (
   assert.equal(f.calls.length, 2)
 })
 
-test('source rate limits cool down missing-cover requests instead of flooding Bilibili', async () => {
-  const { f, cover } = setup(async () => { throw new Error('HTTP 429') })
-  await assert.rejects(cover(`bilibili:${bv[0]}:1`), /429/)
-  await new Promise(setImmediate)
-  await assert.rejects(cover(`bilibili:${bv[1]}:1`), /暂缓/)
-  assert.equal(f.calls.length, 1)
+test('structured native holds drop queued artwork without a separate cooldown timer', async () => {
+  const active = new Map()
+  const { f, cover } = setup(bvid => new Promise((resolve, reject) => active.set(bvid, { resolve, reject })))
+  const request = Promise.allSettled(bv.map(bvid => cover(`bilibili:${bvid}:1`)))
+  const limit = { code: 'bili_rate_limited', retryAt: Date.now() + 60_000 }
+  active.get(bv[0]).reject(limit)
+  active.get(bv[1]).resolve(detail('已在途'))
+  const settled = await request
+  assert.equal(settled[2].reason, limit)
+  assert.deepEqual(f.calls, bv.slice(0, 2))
 })

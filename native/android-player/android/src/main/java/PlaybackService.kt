@@ -24,6 +24,7 @@ import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicLong
 
 /** Audio lives outside the WebView so backgrounding and screen lock do not stop it. */
 @OptIn(UnstableApi::class)
@@ -36,9 +37,30 @@ class PlaybackService : MediaSessionService() {
         @Volatile var resolveListener: ((Long, JSONObject) -> Unit)? = null
         var controllerListener: ((MediaController) -> Unit)? = null
         var queueData: String? = null
+        private val resolutionRequests = AtomicLong()
+        private var pausedPlayback: PausedPlayback? = null
+        private const val MEDIA_BUTTON_RESUME = "app.bilimusic.player.RESUME_FROM_MEDIA_BUTTON"
         private const val CHANNEL = "bilimusic-playback"
         private const val NOTIFICATION = 1001
+
+        internal fun restartPausedFromMediaButton(context: Context) {
+            if (pausedPlayback == null || resolveListener == null) return
+            try {
+                context.startForegroundService(Intent(context, PlaybackService::class.java).setAction(MEDIA_BUTTON_RESUME))
+            } catch (error: IllegalStateException) {
+                android.util.Log.w("BiliMusicPlayback", "Android declined media button service start", error)
+            }
+        }
     }
+    private data class PausedPlayback(
+        val profile: String,
+        val queue: NativeQueue,
+        val track: JSONObject,
+        val position: Double,
+        val rate: Float,
+        val volume: Float,
+        val gain: OutputGain,
+    )
     private var player: MediaPlayer? = null
     private var sourceCandidate: MediaPlayer? = null
     private var sourceReply: ((String?) -> Unit)? = null
@@ -105,7 +127,7 @@ class PlaybackService : MediaSessionService() {
     private var collectionRef: String? = null
     private var positionSavedAt = 0L
     private var didFinishTrack = false
-    private val queue = NativeQueue()
+    private var queue = NativeQueue()
     private val systemQueue = SystemPlaybackQueue()
     private var nativeTrack: JSONObject? = null
     private var nativeRequest = 0L
@@ -185,7 +207,7 @@ class PlaybackService : MediaSessionService() {
         notifyLyricsChanged()
     }
     private fun cancelResolution() {
-        nativeRequest += 1; resolvingNative = false
+        nativeRequest = resolutionRequests.incrementAndGet(); resolvingNative = false
         transitionWakeLock?.let { if (it.isHeld) it.release() }; transitionWakeLock = null
     }
     private fun advance(direction: Int, ended: Boolean = false, restartCurrent: Boolean = true) {
@@ -487,7 +509,19 @@ class PlaybackService : MediaSessionService() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            MEDIA_BUTTON_RESUME -> resumePausedPlayback(startId)
+            Intent.ACTION_MEDIA_BUTTON -> {
+                val key = intent.mediaButtonKey()
+                if (hasResumeTarget()) {
+                    // Media3 on Android 11 and earlier can address the service via a foreground PendingIntent.
+                    startPlaybackForeground()
+                    key?.let(::handleMediaButton)
+                    if (status == "paused" && !focusResume.pending) stopForeground(STOP_FOREGROUND_DETACH)
+                } else if (key?.startsPausedPlayback() == true) resumePausedPlayback(startId)
+                else stopRejectedMediaButtonStart(startId)
+            }
             "prepare" -> {
+                pausedPlayback = null
                 mediaButtons.cancel()
                 listeningSession = java.util.UUID.randomUUID().toString(); playbackRevision += 1
                 cancelResolution(); recoveryAttempted = false
@@ -513,15 +547,44 @@ class PlaybackService : MediaSessionService() {
                 updateMetadata(); updateSessionPlaybackState()
                 startPlaybackForeground()
             }
-            "load" -> { mediaButtons.cancel(); load(intent) }
+            "load" -> { pausedPlayback = null; mediaButtons.cancel(); load(intent) }
             "next", "previous", "toggle", "resume", "pause", "stop" -> controlFromMediaSession(intent.action!!)
         }
         // Never restart silently after Android kills the process: saved URLs are temporary.
         return START_NOT_STICKY
     }
+
+    private fun resumePausedPlayback(startId: Int) {
+        // A play request from the UI, or another system delivery, can win the race.
+        if (hasResumeTarget()) return
+        val resume = pausedPlayback
+        pausedPlayback = null
+        if (resume == null || resolveListener == null || resume.profile != currentProfile() ||
+            resume.queue.accountSession != queue.accountSession) {
+            stopRejectedMediaButtonStart(startId)
+            return
+        }
+        queue = resume.queue
+        queueData?.let(::updateQueue)
+        volume = resume.volume
+        playbackRate = resume.rate
+        outputGain = resume.gain
+        listeningProfile = resume.profile
+        diagnosticAccount = queue.accountSession
+        android.util.Log.i("BiliMusicPlayback", "restarting paused playback from media button")
+        resolveTrack(queue.find(resume.track.getString("id")) ?: resume.track, refresh = true, position = resume.position)
+        diagnostic("media-key", "started", "service_restart")
+    }
+
+    private fun stopRejectedMediaButtonStart(startId: Int) {
+        // Fulfill the foreground start contract even if an account or queue change invalidated the checkpoint.
+        startPlaybackForeground()
+        stopSelfResult(startId)
+    }
+
     private fun load(intent: Intent, waitingForFocus: Boolean = false) {
         // Keep the transition wake lock until MediaPlayer has prepared and sought.
-        nativeRequest += 1; resolvingNative = false
+        nativeRequest = resolutionRequests.incrementAndGet(); resolvingNative = false
         recoveryAttempted = intent.getBooleanExtra("nativeRecovery", false)
         if (!recoveryAttempted) initialErrorCode = null
         val nextDiagnostic = intent.getStringExtra("diagnosticId") ?: java.util.UUID.randomUUID().toString()
@@ -898,6 +961,8 @@ class PlaybackService : MediaSessionService() {
         publish()
     }
     private fun emitAction(action: String) { listener?.invoke(snapshot().put("action",action)) }
+    internal fun hasResumeTarget() = player != null || nativeTrack != null || resolvingNative
+
     fun control(action: String, value: Double = 0.0) {
         when (action) {
             "next", "previous", "toggle", "resume", "pause", "stop" -> mediaButtons.cancel()
@@ -913,7 +978,7 @@ class PlaybackService : MediaSessionService() {
             "pause" -> { abandonFocus(); pause() }
             "resume" -> {
                 if (expireSleepIfNeeded() || status == "playing" || status == "buffering") return
-                if (player == null && nativeTrack == null && !resolvingNative) {
+                if (!hasResumeTarget()) {
                     emitAction("resume")
                     return
                 }
@@ -942,7 +1007,7 @@ class PlaybackService : MediaSessionService() {
                 publish()
             }
             "volume" -> { volume = value.coerceIn(0.0, 1.0).toFloat(); applyOutput() }
-            "stop" -> { cancelResolution(); pendingUpgradeUrl = null;abandonFocus();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
+            "stop" -> { pausedPlayback = null; cancelResolution(); pendingUpgradeUrl = null;abandonFocus();cancelSourceSwitch();clearSleep(); savePosition(force = true); accountListening(true); snapshot(); player?.release(); player = null; prepared = false; status = "paused"; publish(); stopSelf() }
         }
     }
     private fun samplePlaybackPosition() {
@@ -1106,6 +1171,14 @@ class PlaybackService : MediaSessionService() {
         return builder.build()
     }
     override fun onDestroy() {
+        val profile = listeningProfile
+        val track = nativeTrack
+        if (status == "paused" && prepared && profile != null && track != null && track.optString("id") == id &&
+            profile == currentProfile() && playbackLyricsAccount == queue.accountSession) {
+            samplePlaybackPosition()
+            pausedPlayback = PausedPlayback(profile, queue, track, if (didFinishTrack) 0.0 else lastPosition,
+                playbackRate, volume, outputGain)
+        }
         mediaButtons.cancel()
         outputRamp?.let { handler.removeCallbacks(it) };outputRamp=null
         cancelResolution()

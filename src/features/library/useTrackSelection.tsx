@@ -1,4 +1,5 @@
 import { BatchMatchButton } from './BatchMatchButton'
+import { LinkedMatchButton } from './LinkedMatchControls'
 import { accountEpoch } from '../../services/accountScope'
 import { useEffect, useRef, useState } from 'react'
 import { Download, EyeOff, FolderPlus, ListPlus } from 'lucide-react'
@@ -32,10 +33,11 @@ export function useTrackSelection(tracks: Track[]) {
   }
 }
 
-export function BatchTrackActions({ selection, total, onRemove, onHide, downloadScope, allowAutoMatch = false }: {
+export function BatchTrackActions({ selection, total, onRemove, onHide, downloadScope, allowAutoMatch = false, linkedFolderId }: {
   selection: ReturnType<typeof useTrackSelection>
   total: number
   allowAutoMatch?: boolean
+  linkedFolderId?: number
   downloadScope?: string
   onHide?: (tracks: Track[]) => Promise<void>
   onRemove?: (tracks: Track[]) => Promise<void>
@@ -77,7 +79,7 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, download
         finally { setRemoving(false) }
       }}><FolderPlus size={16}/>加入歌单</button>
       {selected.some(track => track.source.provider === 'bilibili') && <button disabled={downloading || removing} onClick={() => void download()}><Download size={16}/>下载所选</button>}
-      {allowAutoMatch && <BatchMatchButton tracks={selected}/>}
+      {linkedFolderId ? <LinkedMatchButton folderId={linkedFolderId} tracks={selected}/> : allowAutoMatch && <BatchMatchButton tracks={selected}/>}
       {onHide && <button disabled={!selected.length || removing} onClick={async()=>{setRemoving(true);try{await onHide(selected)}catch(e){setMessage(commandErrorMessage(e))}finally{setRemoving(false)}}}><EyeOff size={16}/>隐藏所选</button>}
       {onRemove && <button disabled={!selected.length || removing} onClick={() => setConfirmRemove(true)}>移除所选</button>}
       <button onClick={exit} disabled={removing}>完成</button>

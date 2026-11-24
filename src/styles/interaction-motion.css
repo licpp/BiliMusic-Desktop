@@ -1,6 +1,7 @@
 :root {
   --bottom-sheet-motion:220ms cubic-bezier(.2,.8,.2,1);
   --bottom-sheet-scrim:rgba(2,8,13,.34);
+  --bottom-sheet-resting-height:min(74%,680px);
 }
 .lyrics-view {
   opacity: 0;
@@ -49,13 +50,13 @@
 :root[data-layout="mobile"] :is(.lyrics-view .lyrics-close,.comments-sheet .comments-sheet-handle,.collection-dialog .collection-sheet-handle,.action-menu-panel .touch-sheet-handle) { touch-action:none; }
 .app-shell.lyrics-immersive > .immersive-backdrop { opacity:0;transition:opacity 160ms ease; }
 .app-shell.lyrics-immersive > .immersive-backdrop[data-panel-open] { opacity:1;transition-duration:220ms; }
-.comments-panel:not(.comments-sheet) {
+.comments-panel:not(.comments-sheet),.chapter-directory {
   animation:none;
   opacity:0;
   transform:translateX(12px);
   transition:transform 200ms ease-out,opacity 160ms ease;
 }
-.comments-panel:not(.comments-sheet)[data-panel-open] { opacity:1;transform:none; }
+.comments-panel:not(.comments-sheet)[data-panel-open],.chapter-directory[data-panel-open] { opacity:1;transform:none; }
 :root[data-layout="mobile"][data-keyboard-open] .comments-panel:not(.comments-sheet) {
   bottom:max(12px,calc(var(--keyboard-overlap,0px) - 64px));
 }
@@ -114,6 +115,7 @@
 @media (prefers-reduced-motion:reduce) {
   .lyrics-view,.lyrics-view[data-panel-open],.lyrics-view .lyrics-cover,.lyrics-view .lyrics-track-meta,
   .app-shell.lyrics-immersive > .immersive-backdrop,
+  .chapter-directory,
   .collection-dialog-layer[data-closing],.collection-dialog[data-closing],.collection-dialog-mobile-sheet,
   :root[data-layout="mobile"] .queue-sheet-backdrop {
     transition:none;

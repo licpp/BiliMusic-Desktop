@@ -13,7 +13,7 @@ function subscribeToLayout(listener: () => void) {
 }
 const isMobileLayout = () => window.matchMedia(mobileQuery).matches
 
-export function CommentsSurface({ children, open, onClose, onBackFromThread, onBackFromComposer, video }: { children: ReactNode; open: boolean; onClose: () => void; onBackFromThread?: () => void; onBackFromComposer?: () => void; video?: HTMLElement | null }) {
+export function CommentsSurface({ children, open, onClose, onBackFromThread, onBackFromComposer, video, chapterEditor }: { children: ReactNode; open: boolean; onClose: () => void; onBackFromThread?: () => void; onBackFromComposer?: () => void; video?: HTMLElement | null; chapterEditor?: boolean }) {
   const mobile = useSyncExternalStore(subscribeToLayout, isMobileLayout)
   const [expanded, setExpanded] = useState(false)
   const panel = useRef<HTMLElement>(null)
@@ -73,14 +73,16 @@ export function CommentsSurface({ children, open, onClose, onBackFromThread, onB
     data-video={video && !expanded && !forceExpanded ? true : undefined}
     onClick={event => { if (event.target === event.currentTarget) back() }} onKeyDown={event => {
     if (event.key !== 'Tab') return
-    const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, [contenteditable="true"], a[href], [tabindex="0"]') ?? [])
+    const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea, [contenteditable="true"], a[href], [tabindex="0"]') ?? [])
       .filter(control => !control.closest('[inert]'))
     if (!controls.length) return
     const first = controls[0], last = controls[controls.length - 1]
     if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }}>
-    <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''} mobile-comments`} role="dialog" aria-modal="true" aria-label="歌曲评论" tabIndex={-1} onFocusCapture={event => { if (event.target instanceof HTMLElement&&event.target.matches('textarea,[contenteditable="true"]')) setExpanded(true) }}>
+    <section ref={panel} className={`comments-panel comments-sheet${expanded || forceExpanded ? ' expanded' : ''} mobile-comments`} data-chapter-editor={chapterEditor || undefined} role="dialog" aria-modal="true" aria-label="歌曲评论" tabIndex={-1} onFocusCapture={event => {
+      if (!chapterEditor && event.target instanceof HTMLElement && event.target.matches('input,textarea,[contenteditable="true"]')) setExpanded(true)
+    }}>
       <button className="comments-sheet-handle" type="button" aria-label={expanded ? '收起评论面板' : '展开评论面板'} aria-expanded={expanded} {...drag}><span /></button>
       {children}
     </section>

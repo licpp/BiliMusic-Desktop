@@ -4,7 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_BYTES: usize = 3 * 1024 * 1024;
 pub const HISTORY_LIMIT: usize = 200;
+pub(super) const COLLECTION_PROGRESS_LIMIT: usize = 2000;
 pub const MISSING_TRACK: &str = "同步记录缺少歌曲";
+
+fn has_progress_parent(reference: &str, contains: impl Fn(&str) -> bool) -> bool {
+    contains(reference)
+        || crate::infrastructure::repositories::collections::season_creator_reference(reference)
+            .is_some_and(|creator| contains(&creator))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -70,6 +78,19 @@ impl Snapshot {
         {
             record.fields.remove("resume");
         }
+    }
+    pub(super) fn omit_followed_season_progress(&mut self) {
+        let direct = self.collection_references();
+        self.records.retain(|_, r| {
+            r.kind != "collectionProgress" || direct.contains(text(r, "reference"))
+        });
+    }
+    fn collection_references(&self) -> BTreeSet<String> {
+        self.records
+            .values()
+            .filter(|r| r.kind == "collection")
+            .map(|r| text(r, "bvid").to_owned())
+            .collect()
     }
     pub fn use_legacy_cloud_format(&mut self) {
         self.records
@@ -139,15 +160,36 @@ impl Snapshot {
         self.records.retain(|_, r| {
             r.kind != "item" || lists.contains(&format!("playlist:{}", text(r, "playlistId")))
         });
-        let collections: BTreeSet<_> = self
-            .records
-            .values()
-            .filter(|r| r.kind == "collection")
-            .map(|r| text(r, "bvid").to_owned())
-            .collect();
+        let collections = self.collection_references();
         self.records.retain(|_, r| {
-            r.kind != "collectionProgress" || collections.contains(text(r, "reference"))
+            r.kind != "collectionProgress"
+                || has_progress_parent(text(r, "reference"), |key| collections.contains(key))
         });
+        // Keep the established snapshot budget. Direct collection checkpoints
+        // retain priority, and followed-only checkpoints use the remainder.
+        let mut checkpoints: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.kind == "collectionProgress")
+            .map(|(key, r)| {
+                (
+                    key,
+                    collections.contains(text(r, "reference")),
+                    parse_checkpoint(text(r, "checkpoint")).map_or(0, |checkpoint| checkpoint.0),
+                )
+            })
+            .collect();
+        if checkpoints.len() > COLLECTION_PROGRESS_LIMIT {
+            checkpoints.sort_unstable_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)).then(a.0.cmp(b.0)));
+            let excess: Vec<_> = checkpoints
+                .into_iter()
+                .skip(COLLECTION_PROGRESS_LIMIT)
+                .map(|(key, _, _)| key.clone())
+                .collect();
+            for key in excess {
+                self.records.remove(&key);
+            }
+        }
         let referenced: BTreeSet<_> = self
             .records
             .values()
@@ -308,10 +350,11 @@ impl Snapshot {
                 "collectionProgress" => {
                     let reference = text(r, "reference");
                     key == &format!("collectionProgress:{reference}")
-                        && self
-                            .records
-                            .get(&format!("collection:{reference}"))
-                            .is_some_and(|r| r.kind == "collection")
+                        && has_progress_parent(reference, |parent| {
+                            self.records
+                                .get(&format!("collection:{parent}"))
+                                .is_some_and(|r| r.kind == "collection")
+                        })
                         && parse_checkpoint(text(r, "checkpoint")).is_some_and(|(_, bvid, _, _)| {
                             reference.starts_with("season:")
                                 || reference.starts_with("up:")
@@ -366,7 +409,7 @@ impl Snapshot {
             ("collectionFolder", 100),
             ("linkedFolder", 500),
             ("collection", 2000),
-            ("collectionProgress", 2000),
+            ("collectionProgress", COLLECTION_PROGRESS_LIMIT),
             ("view", 2),
             ("playlist", 500),
             ("track", 5000),

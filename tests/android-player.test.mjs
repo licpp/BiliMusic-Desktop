@@ -23,22 +23,94 @@ const output = await build({
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;
-      export const controlAndroidAudio = async (...args) => globalThis.nativeTest.controls.push(args);
+      export const controlAndroidAudio = async (...args) => {
+        globalThis.nativeTest.controls.push(args);
+        await globalThis.nativeTest.control?.(...args);
+      };
       export const prepareAndroidAudio = async t => globalThis.nativeTest.controls.push(['prepare', t.id]);
       export const playAndroidAudio = async (...args) => globalThis.nativeTest.plays.push(args);
     ` }))
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {}, dispatchEvent() {}, setInterval: () => 0 }
+  const listeners = {}
+  globalThis.window = { addEventListener(type, callback) { listeners[type] = callback }, dispatchEvent() {}, setInterval: () => 0 }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('Android must not create WebView audio') } }
-  globalThis.nativeTest = { controls: [], plays: [], queues: [], resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
+  globalThis.nativeTest = { controls: [], plays: [], queues: [], listeners, resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
   const m = { exports: {} }; new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), m, m.exports)
   return m.exports.usePlayerStore
 }
 const track = { id: 'bilibili:BV123:1', title: '歌曲', artist: '歌手', durationSeconds: 120, source: { bvid: 'BV123', cid: 1, page: 1 } }
+test('Android resumes the same queue entry from its paused position after the native service was destroyed', async () => {
+  const store = setup()
+  const second = { ...track, id: 'bilibili:BV123:2', source: { ...track.source, cid: 2, page: 2 } }
+  await store.getState().playFromList([track, second], track.id)
+  nativeTest.event({ id: track.id, status: 'playing', position: 34 })
+  nativeTest.event({ id: track.id, status: 'paused', position: 35 })
+  nativeTest.control = async action => {
+    if (action === 'resume') throw { code: 'native_not_ready' }
+  }
+  nativeTest.state = { stopped: true }
+  const statuses = []
+  store.subscribe(state => statuses.push(state.status))
+
+  await store.getState().toggle()
+
+  assert.equal(nativeTest.plays.length, 2)
+  assert.equal(nativeTest.plays[1][0].id, track.id)
+  assert.equal(nativeTest.plays[1][2], 35)
+  assert.deepEqual(store.getState().queue.map(item => item.id), [track.id, second.id])
+  assert.ok(!statuses.includes('playing'))
+  nativeTest.event({ id: track.id, status: 'playing', position: 36 })
+  assert.equal(store.getState().status, 'playing')
+})
+
+test('Android waits for the native service to confirm resume without reloading an existing source', async () => {
+  const store = setup()
+  await store.getState().play(track)
+  nativeTest.event({ id: track.id, status: 'playing', position: 33 })
+  nativeTest.event({ id: track.id, status: 'paused', position: 34 })
+  await store.getState().toggle()
+  assert.equal(store.getState().status, 'buffering')
+  nativeTest.event({ id: track.id, status: 'playing', position: 35 })
+  assert.equal(store.getState().status, 'playing')
+  assert.equal(nativeTest.plays.length, 1)
+})
+
+test('Android retains the paused position when returning to the app detects the stopped service', async () => {
+  const store = setup()
+  await store.getState().play(track)
+  nativeTest.event({ id: track.id, status: 'playing', position: 34 })
+  nativeTest.event({ id: track.id, status: 'paused', position: 35 })
+  nativeTest.state = { stopped: true }
+  nativeTest.listeners.focus()
+  await new Promise(resolve => setImmediate(resolve))
+
+  await store.getState().toggle()
+
+  assert.equal(nativeTest.plays.length, 2)
+  assert.equal(nativeTest.plays[1][2], 35)
+  assert.ok(!nativeTest.controls.some(([action]) => action === 'resume'))
+})
+
+test('Android can cancel a pending resume before a stale service error returns', async () => {
+  const store = setup()
+  await store.getState().play(track)
+  nativeTest.event({ id: track.id, status: 'playing', position: 33 })
+  nativeTest.event({ id: track.id, status: 'paused', position: 34 })
+  let rejectResume
+  nativeTest.control = action => action === 'resume' ? new Promise((_, reject) => { rejectResume = reject }) : undefined
+  const resuming = store.getState().toggle()
+  await store.getState().toggle()
+  rejectResume({ code: 'native_not_ready' })
+  await resuming
+  assert.deepEqual(nativeTest.controls.slice(-2), [['resume'], ['pause']])
+  assert.equal(store.getState().status, 'paused')
+  assert.equal(store.getState().error, null)
+  assert.equal(nativeTest.plays.length, 1)
+})
 test('Android routes playback, seek and volume to native service and accepts only current track state', async () => {
   const s = setup(); await s.getState().play(track)
   assert.equal(nativeTest.plays.length, 1)

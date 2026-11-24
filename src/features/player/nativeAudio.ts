@@ -46,8 +46,11 @@ export function createNativeAudio(plugin: string, bind?: (callback: (state: Stat
   const setCollection = (id: string, collectionRef?: string) => invoke(`plugin:${plugin}|control`, { action: 'collection', id, collectionRef })
   const control = (action: NativeControlAction, value = 0, settingsRevision?: number) => invoke(`plugin:${plugin}|control`, { action, value, ...(settingsRevision !== undefined ? {settingsRevision} : {}) })
   const snapshot = async () => {
+    const observed = order.latest
     const state = await invoke<State>(`plugin:${plugin}|snapshot`)
-    if (!order.accept(state)) return normalizeNativeSnapshot(order.latest!)
+    const serviceStopped = state.stopped && !state.engineInstanceId && !state.id && !state.action
+    const accepted = serviceStopped ? order.retireIfCurrent(observed) : order.accept(state)
+    if (!accepted) return normalizeNativeSnapshot(order.latest ?? { stopped: true })
     clock.update(state, performance.now())
     return normalizeNativeSnapshot(state)
   }

@@ -11,6 +11,10 @@ internal fun Intent.mediaButtonKey(): KeyEvent? {
     return IntentCompat.getParcelableExtra(this, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
 }
 
+internal fun KeyEvent.startsPausedPlayback(): Boolean = action == KeyEvent.ACTION_DOWN && repeatCount == 0 &&
+    (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+        keyCode == KeyEvent.KEYCODE_HEADSETHOOK)
+
 /** Raw headset keys use one gesture state for session and broadcast delivery. */
 internal class MediaButtons(
     private val handler: Handler,

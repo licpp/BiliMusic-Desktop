@@ -13,8 +13,10 @@ pub mod list_preferences;
 mod playlist_sources;
 
 pub mod visibility;
+pub mod chapters;
 
 pub mod imported_entries;
 
 pub mod batch_matching;
 pub mod diagnostics;
+pub mod linked_batch_matching;

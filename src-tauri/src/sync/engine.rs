@@ -878,6 +878,7 @@ fn outcome(view: &View, conflicts: Vec<Conflict>, changed: bool) -> Outcome {
         conflicts,
         visibility_error: None,
         import_error: None,
+        chapters_error: None,
         records: view.snapshot.records.len(),
         bytes: serde_json::to_vec(view).map_or(0, |v| v.len()),
         changed,
@@ -1268,13 +1269,9 @@ pub async fn sync(
     })?;
     net.parents().await?;
     publish(db, cfg, &target, &net, &mut state, &mut lease).await?;
-    let visibility_session = with(db, cfg, |c| {
-        crate::infrastructure::database::account_session(c).map_err(err)
-    })?;
-    let visibility_result = super::visibility::exchange(db, cfg, secret, lease.actor()).await;
     let check_area_session = |c: &Connection| {
         let active = super::config_from_connection(c)?.ok_or("同步连接已改变")?;
-        if crate::infrastructure::database::account_session(c).map_err(err)? != visibility_session {
+        if crate::infrastructure::database::account_session(c).map_err(err)? != session {
             return Err("同步账号会话已变更".to_string());
         }
         if active.provider != cfg.provider || active.url != cfg.url || active.uid != cfg.uid {
@@ -1282,6 +1279,8 @@ pub async fn sync(
         }
         Ok(())
     };
+    with(db, cfg, check_area_session)?;
+    let visibility_result = super::visibility::exchange(db, cfg, secret, lease.actor()).await;
     let visibility_error = visibility_result.as_ref().err().cloned();
     with(db, cfg, |c| {
         check_area_session(c)?;
@@ -1289,20 +1288,28 @@ pub async fn sync(
     })?;
     let import_result = super::import_entries::exchange(db, cfg, secret, lease.actor()).await;
     let import_error = import_result.as_ref().err().cloned();
+    let chapters_result =
+        super::chapters::exchange(db, cfg, secret, lease.actor(), &session, &after.snapshot).await;
+    let chapters_error = chapters_result.as_ref().err().cloned();
     with(db, cfg, |c| {
         check_area_session(c)?;
         let tx = c.unchecked_transaction().map_err(err)?;
         put(c, &target, "import-error", &import_error)?;
+        put(c, &target, "chapters-error", &chapters_error)?;
         c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(err)?;
         tx.commit().map_err(err)
     })?;
     let mut result = outcome(
         &after,
         vec![],
-        after != current || visibility_result.unwrap_or(false) || import_result.unwrap_or(false),
+        after != current
+            || visibility_result.unwrap_or(false)
+            || import_result.unwrap_or(false)
+            || chapters_result.unwrap_or(false),
     );
     result.visibility_error = visibility_error;
     result.import_error = import_error;
+    result.chapters_error = chapters_error;
     Ok(result)
 }
 

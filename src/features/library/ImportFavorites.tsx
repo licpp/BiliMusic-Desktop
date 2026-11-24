@@ -120,13 +120,15 @@ function ImportFavoritesFlow({onClose,onImported,onViewCollections}:Omit<ImportF
       const results=await importFavoriteFolders({folders:selected,mode,scope:currentScope,copyIds:copyIds.current,stopped,
         progress:text=>{if(!stopped())setBiliStatus(text)},
         result:value=>{if(!stopped()){setBiliResults(items=>[...items,value]);if(mode==='copy'&&value.id)setPartialId(value.id)}},
-        link:id=>reloadLinkedFolder(client,id,true),videos:getFavoriteVideos,detail:getVideoParts,save:commitImportTracks,
+        link:id=>reloadLinkedFolder(client,id,true),videos:getFavoriteVideos,
+        detail:bvid=>getVideoParts(bvid,false,{background:true,resume:true}),save:commitImportTracks,
       })
       if(stopped())return
-      const failed=results.filter(result=>result.error)
-      setFolderIds(new Set(failed.map(result=>result.folderId)))
-      setBiliStatus(`已完成 ${results.length-failed.length} 个收藏夹${failed.length?`，${failed.length} 个待重试`:''}`)
-      if(selected.length===1&&mode==='link'&&!failed.length&&results[0]?.id)onImported(results[0].id,'link')
+      const completed=new Set(results.filter(result=>!result.error).map(result=>result.folderId))
+      const pending=selected.filter(folder=>!completed.has(folder.id))
+      setFolderIds(new Set(pending.map(folder=>folder.id)))
+      setBiliStatus(`已完成 ${completed.size} 个收藏夹${pending.length?`，${pending.length} 个待重试`:''}`)
+      if(selected.length===1&&mode==='link'&&!pending.length&&results[0]?.id)onImported(results[0].id,'link')
     }catch(cause){if(!stopped())setError(commandErrorMessage(cause))}
     finally{if(!stopped()){setBusy(false);await refresh()}}
   }

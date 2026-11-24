@@ -79,7 +79,9 @@ Android 13 起系统媒体控件主要读会话。媒体会话的 `TITLE`、`DIS
 
 Android 服务在换曲时通过原生通道加载已匹配歌词，系统标题歌词开关随时可以切换歌词所在行。根据用户的字幕偏好，缺少匹配歌词时可加载该分 P 的 B 站字幕。桌面歌词与系统媒体卡片共享时间轴和原生播放时钟。前端可以提交当前播放会话的有效歌词，后台查询结果按账号会话、播放会话与最新歌词请求校验。歌词查询有独立超时，播放会继续。
 
-通知动作、蓝牙传输指令和原始媒体键使用同一套播放命令。原始耳机键使用 Android 的双击时间窗口，并合并对同一按键事件的重复投递。旧控制器可以读队列并使用上下曲。Media3 提供给旧控制器的队列 ID 是列表位置，修改队列后旧 ID 可能指向另一首，因此只向 Media3 控制器接受指定条目跳转。进程被杀后的耳机续播仍依赖后续接入 Media3 的恢复回调，使用持久化队列与进度重新解析音源。
+通知动作、蓝牙传输指令和原始媒体键使用同一套播放命令。原始耳机键使用 Android 的双击时间窗口，并合并对同一按键事件的重复投递。旧控制器可以读队列并使用上下曲。Media3 提供给旧控制器的队列 ID 是列表位置，修改队列后旧 ID 可能指向另一首，因此只向 Media3 控制器接受指定条目跳转。
+
+暂停后 Android 可能停止播放服务。应用进程仍在时，系统发来的播放或耳机切换键可重启服务，按原队列和暂停位置重新解析音源。主动停止会清除这次恢复记录。应用进程被系统杀掉后的恢复需要持久化恢复状态以及能在后台独立初始化的音源解析器。 [Android 后台执行限制](https://developer.android.com/about/versions/oreo/background#services) · [系统媒体按键路由](https://developer.android.com/media/legacy/media-buttons#finding-a-media-session)
 
 小米、OPPO 和 vivo 的卡片适配以正式文档和项目权限为依据。Android 16 的实时通知也有样式资格和系统策略，需单独判断。小米的单应用音量属于声音助手，Android 公共接口提供的是音量流和播放器自身增益。 [小米超级岛接入](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2132) · [OPPO 流体云接入](https://open.oppomobile.com/documentation/page/info?id=12639) · [vivo 原子通知接入](https://dev.vivo.com.cn/documentCenter/doc/894) · [Android 实时通知](https://developer.android.com/develop/ui/views/notifications/live-update) · [Android 音频输出](https://developer.android.com/media/platform/output) · [小米声音助手](https://www.mi.com/global/support/article/KA-08490/)
 

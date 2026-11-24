@@ -17,7 +17,7 @@ use tauri::Manager;
 pub(crate) mod lyrics;
 
 fn playback_error(code: &'static str, message: &'static str) -> CommandError {
-    CommandError { code, message: message.into(), retryable: true }
+    CommandError::new(code, message, true)
 }
 
 pub(crate) fn resolution_response(result: Result<Value, CommandError>) -> Value {
@@ -292,7 +292,7 @@ async fn resolve_inner(
                 Err(_) => {
                     let _gate = sync.account_gate.lock().await;
                     validate_scope(app, Some(&profile), expected_session, &current)?;
-                    return Err(CommandError { code: "source_timeout", message: "获取分 P 超时".into(), retryable: true });
+                    return Err(CommandError::new("source_timeout", "获取分 P 超时", true));
                 }
             };
             {

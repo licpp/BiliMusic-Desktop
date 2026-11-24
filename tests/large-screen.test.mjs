@@ -147,6 +147,25 @@ test('short lyric windows prioritize the current line and budget room for transl
  assert.equal(lyricRowCount(400,true),5)
  assert.equal(lyricRowCount(600,false),7)
 })
+test('old car WebViews can place the lyric viewport and pad the first and final lines', async () => {
+ const css = await readFile('src/large-screen/large-screen.css', 'utf8')
+ const legacyRules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[^{}]*:is\([^{}]*\{[^{}]*\}/g, '')
+ const flattenedRegions = [...legacyRules.matchAll(/([^{}]+)\{\s*display:contents\s*;?\s*\}/g)]
+   .flatMap(match => match[1].split(',').map(selector => selector.trim()))
+ for (const region of ['body', 'info', 'footer']) {
+   assert.ok(flattenedRegions.includes(`.large-player[data-wide-media] .large-player-${region}`))
+ }
+ assert.match(legacyRules, /html\[data-layout="large"\] #root\s*\{\s*min-width:0;/)
+ assert.match(legacyRules, /\.large-lyric-window\s*\{[^{}]*padding-top:var\(--large-lyric-inset,[^{}]*padding-bottom:var\(--large-lyric-inset,/)
+})
+test('the standard car player bounds the shared row when timed lyrics resize', async () => {
+ const css = await readFile('src/large-screen/large-screen.css', 'utf8')
+ // Chromium 74 grew an implicit auto row on each lyric viewport measurement.
+ for (const selector of ['large-player-body', 'large-lyrics']) {
+   const declarations = css.match(new RegExp(`^\\.${selector}\\s*\\{([^{}]*)\\}`, 'm'))?.[1] ?? ''
+   assert.match(declarations, /(?:^|;)\s*grid-template-rows:\s*minmax\(0(?:px)?,\s*1fr\)\s*(?:;|$)/, `.${selector} requires a bounded grid row`)
+ }
+})
 test('video frames retain their ratio inside the reserved stage on wide, narrow and portrait sources',()=>{
  for(const [width,height,ratio] of [[480,204,16/9],[200,360,16/9],[480,300,9/16],[800,300,4/3]]){
   const fit=fitMediaFrame(width,height,ratio)

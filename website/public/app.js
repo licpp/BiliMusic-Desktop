@@ -10,9 +10,27 @@ let platform;
 let releaseManifest;
 let downloadPolicyVersion;
 let latestDownloadStats;
+let selectDownloadFamily;
 const element = (tag, text, className) => {
   const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node;
 };
+async function copyText(text, button, copiedLabel = '已复制 ✓') {
+  const original = button.dataset.originalLabel || button.textContent;
+  button.dataset.originalLabel = original;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = copiedLabel;
+    button.classList.add('copied');
+    clearTimeout(button._copyTimer);
+    button._copyTimer = setTimeout(() => {
+      button.textContent = original;
+      button.classList.remove('copied');
+    }, 1800);
+  } catch {
+    button.textContent = '请长按复制';
+    setTimeout(() => { button.textContent = original; }, 1800);
+  }
+}
 function platformIcon(platform) {
   const icon = element('div', null, 'download-icon');
   icon.setAttribute('aria-hidden', 'true');
@@ -38,7 +56,9 @@ function renderDownloadStats(stats) {
     const downloads = (stats.platforms[count.dataset.downloadCount] || 0) + (stats.platforms[count.dataset.downloadCountAlias] || 0);
     count.textContent = `累计下载 ${format(downloads)} 次`;
   }
-  target.replaceChildren(element('span', `累计下载 ${format(stats.total)} 次`));
+  const lead = element('span');
+  lead.append('累计下载 ', element('strong', format(stats.total)), ' 次');
+  target.replaceChildren(element('span', null, 'status-dot'), lead);
   const date = new Date(stats.startedAt).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai' });
   target.append(element('small',`自 ${date} 起统计官网发起下载次数`));
 }
@@ -123,7 +143,14 @@ function renderDownloadPanel(group, item, panel) {
     }
     article.append(channels);
     const utilities = element('div', null, 'download-utilities');
-    const checksum = element('details', null, 'checksum'); checksum.append(element('summary', 'SHA-256 校验值'), element('code', item.sha256)); utilities.append(checksum);
+    const checksum = element('details', null, 'checksum');
+    const checksumBox = element('div', null, 'checksum-box');
+    const copyBtn = element('button', '复制 SHA-256', 'copy-checksum-btn');
+    copyBtn.type = 'button';
+    copyBtn.addEventListener('click', () => copyText(item.sha256, copyBtn));
+    checksumBox.append(element('code', item.sha256), copyBtn);
+    checksum.append(element('summary', 'SHA-256 校验值'), checksumBox);
+    utilities.append(checksum);
     if (group.id === 'ios' || group.id === 'ohos') {
       const guide = element('a', group.id === 'ios' ? '自签安装说明 ↗' : '签名与安装说明 ↗', 'download-guide'); guide.href = group.id === 'ios' ? '/ios.html' : '/harmony.html'; utilities.append(guide);
     }
@@ -139,6 +166,11 @@ async function loadDownloads() {
     if (!response.ok) throw new Error('发布信息加载失败');
     releaseManifest = await response.json(); target.replaceChildren();
     $('#release-notes').href = releaseManifest.releaseNotes;
+    const versionPill = $('#hero-version');
+    if (versionPill && releaseManifest.version) {
+      versionPill.textContent = `v${releaseManifest.version} 现已发布`;
+      versionPill.hidden = false;
+    }
     renderReleaseHistory(releaseManifest);
     $('#feedback-form [name="version"]').placeholder = `例如 ${releaseManifest.version}`;
     const groups = groupDownloads(releaseManifest.platforms);
@@ -146,7 +178,7 @@ async function loadDownloads() {
     const recommended = groups.find(group => group.id === detected && group.items.some(item => item.status === 'available'));
     const pickerHeading = element('div', null, 'download-picker-heading');
     pickerHeading.append(element('strong', '选择设备平台'));
-    if (recommended) pickerHeading.append(element('span', `本机推荐：${recommended.name}`, 'download-device-hint'));
+    if (recommended) pickerHeading.append(element('span', `已自动匹配本机：${recommended.name}`, 'download-device-hint'));
     const tabs = element('div', null, 'download-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '下载平台');
     const panel = element('div', null, 'download-panel'); panel.id = 'download-platform-panel'; panel.setAttribute('role', 'tabpanel');
     function select(group, focus = false) {
@@ -155,12 +187,16 @@ async function loadDownloads() {
       if (focus) tab.focus({ preventScroll: true });
       renderDownloadPanel(group, group.items.find(item => item.status === 'available') || group.items[0], panel);
     }
+    selectDownloadFamily = familyId => {
+      const match = groups.find(g => g.id === familyId);
+      if (match) select(match);
+    };
     for (const group of groups) {
       const tab = element('button', null, 'download-tab'); tab.type = 'button'; tab.id = `download-tab-${group.id}`; tab.dataset.family = group.id;
       tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', panel.id);
       const label = element('span', group.name, 'download-tab-name');
-      if (group.id === 'linux') label.append(element('small', '测试版'));
-      if (group === recommended) label.append(element('small', '推荐', 'download-recommended-label'));
+      if (group === recommended) label.append(element('small', '本机', 'download-recommended-label'));
+      else if (group.id === 'linux') label.append(element('small', '测试版'));
       tab.append(platformIcon(group.id), label);
       tab.addEventListener('click', () => select(group));
       tab.addEventListener('keydown', event => {
@@ -173,7 +209,7 @@ async function loadDownloads() {
     const initial = preferredDownloadFamily(groups, navigator.userAgent, navigator.maxTouchPoints);
     if (initial) select(initial);
   } catch {
-    target.replaceChildren(element('p','下载信息暂时无法加载，请稍后重试。'));
+    target.replaceChildren(element('p','下载信息暂时无法加载，请稍后重试。','download-loading'));
     const retry=element('button','重新加载','button'); retry.type='button'; retry.dataset.retry='true'; target.append(retry);
   }
 }
@@ -185,6 +221,23 @@ $('#download-platforms').addEventListener('click',event => {
   if (item && channel?.url) openPolicy({item,channel});
 });
 loadDownloads();
+
+// Hero platform chips jump smoothly to download section and pick that platform
+document.querySelectorAll('[data-jump-platform]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    selectDownloadFamily?.(chip.dataset.jumpPlatform);
+    $('#download')?.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+
+// Auto-preselect detected platform in feedback form
+(() => {
+  const detected = detectedDownloadFamily(navigator.userAgent, navigator.maxTouchPoints);
+  const map = { mac: 'macOS', windows: 'Windows', android: 'Android', ios: 'iOS', ohos: 'HarmonyOS' };
+  const selectEl = $('#feedback-form [name="platform"]');
+  if (selectEl && detected && map[detected]) selectEl.value = map[detected];
+})();
+
 function getPolicy() {
   return policyPromise ||= fetch('/api/v1/policy').then(r => { if (!r.ok) throw new Error('无法加载使用说明，请稍后重试。'); return r.json(); }).catch(error => { policyPromise = undefined; throw error; });
 }
@@ -200,7 +253,6 @@ async function openPolicy(downloadPlatform) {
   const family = platform && downloadFamily(platform.item);
   const installation = family === 'mac' ? 'macOS 安装包尚未经过 Apple 公证。' : family === 'ios' ? 'IPA 需自行签名安装。' : family === 'ohos' ? '未签名 HAP 测试包，需自行签名安装。' : family === 'linux' ? 'Linux 测试版，尚未完成完整设备验收。' : family === 'android' ? 'APK 使用固定签名。' : 'Windows 安装包尚未取得发布者签名。';
   $('#download-availability').textContent = platform ? `${platform.item.name} · ${platform.item.architecture} · 下载源：${platform.channel.name}。${installation}` : '';
-  if(platform?.item.id==='android' && platform.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
   const content = $('#policy-content'); content.replaceChildren();
   const loading = document.createElement('p'); loading.textContent = '正在加载说明…'; content.append(loading);
   dialog.showModal(); dialog.scrollTop = 0; content.scrollTop = 0;
@@ -220,6 +272,7 @@ async function openPolicy(downloadPlatform) {
 document.querySelectorAll('[data-policy]').forEach(button => button.addEventListener('click', () => openPolicy()));
 $('.close-dialog').addEventListener('click', () => $('#policy-dialog').close());
 $('#policy-close').addEventListener('click', () => $('#policy-dialog').close());
+$('#policy-dialog').addEventListener('click', event => { if (event.target === event.currentTarget) event.currentTarget.close(); });
 $('#download-accepted').addEventListener('change', event => { $('#confirm-download').disabled = !event.target.checked || $('#confirm-download').dataset.loaded !== 'true'; });
 $('#confirm-download').addEventListener('click', async () => {
   if (!platform || !$('#download-accepted').checked) return;
@@ -229,17 +282,51 @@ $('#confirm-download').addEventListener('click', async () => {
     const result=await response.json(); if (!response.ok) throw new Error(result.message || '下载暂时不可用，请稍后重试。');
     if (result.downloadStats) renderDownloadStats(result.downloadStats);
     if (platform !== selection || !$('#policy-dialog').open) return;
-    $('#download-availability').textContent=`正在前往 ${selection.channel.name} 下载 ${result.file}。若未开始下载，可重试或选择另一个下载源。`;
-    if(selection.item.id==='android' && selection.channel.id==='gitee') $('#download-availability').textContent+=' 若下载器把文件保存为 .apk.zip，请去掉末尾 .zip 后安装，无需解压。';
+    $('#download-availability').textContent=`正在下载 ${result.file}。若未开始下载，可重试或选择另一个下载源。`;
     window.location.assign(result.url);
   } catch (error) { if (platform===selection) $('#download-availability').textContent=error.message || '网络请求失败，请稍后重试。'; }
   finally { if (platform===selection) { button.textContent='重新下载'; button.disabled=!$('#download-accepted').checked; } }
 });
+
+// QQ QR modal & one-click copy group number
+const qrDialog = $('#qr-dialog');
+const openQr = () => qrDialog?.showModal();
+$('#open-qq-qr')?.addEventListener('click', openQr);
+$('#open-qq-qr-text')?.addEventListener('click', openQr);
+$('#close-qr-dialog')?.addEventListener('click', () => qrDialog?.close());
+qrDialog?.addEventListener('click', event => { if (event.target === qrDialog) qrDialog.close(); });
+$('#copy-qq-btn')?.addEventListener('click', event => copyText(event.currentTarget.dataset.qq, event.currentTarget));
+$('#copy-qq-modal-btn')?.addEventListener('click', event => copyText(event.currentTarget.dataset.qq, event.currentTarget, '群号已复制 ✓'));
+
+// Hero living vinyl play animation
 $('#hero-play').addEventListener('click', event => {
   const active = $('.floating-player').classList.toggle('playing');
+  $('.hero-art').classList.toggle('playing', active);
   event.currentTarget.textContent = active ? 'Ⅱ' : '▶';
   event.currentTarget.setAttribute('aria-label', active ? '暂停播放界面动画示意' : '播放界面动画示意，不播放音频');
 });
+
+// Interactive mockup track switching & heart toggle
+const mockTracks = [...document.querySelectorAll('[data-mock-track]')];
+mockTracks.forEach((row, index) => {
+  row.addEventListener('click', () => {
+    mockTracks.forEach((other, i) => {
+      const isCurrent = other === row;
+      other.classList.toggle('active', isCurrent);
+      const badge = other.querySelector('.track-idx');
+      if (badge) badge.textContent = isCurrent ? '♫' : `0${i + 1}`;
+    });
+    const titleEl = $('#mock-dock-title'), artistEl = $('#mock-dock-artist'), durEl = $('#mock-dock-duration');
+    if (titleEl) titleEl.textContent = row.dataset.title || '';
+    if (artistEl) artistEl.textContent = row.dataset.artist || '';
+    if (durEl) durEl.textContent = row.dataset.duration || '';
+  });
+});
+$('#mock-dock-heart')?.addEventListener('click', event => {
+  const pressed = event.currentTarget.getAttribute('aria-pressed') === 'true';
+  event.currentTarget.setAttribute('aria-pressed', String(!pressed));
+});
+
 const tabs = [...document.querySelectorAll('[data-preview]')];
 function selectTab(tab) {
   for (const item of tabs) {

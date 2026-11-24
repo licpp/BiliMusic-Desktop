@@ -2,6 +2,7 @@ import type { FavoriteFolder, FavoritePage, BiliVideoParts } from '../domain/bil
 import type { Playlist } from '../domain/library'
 import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
+import { biliRequestPause } from './biliRequestStatus'
 import { commandErrorMessage, isConnectionError } from './userErrors'
 
 export type FolderImportResult = { folderId: number; name: string; id?: string; count: number; error?: string }
@@ -12,29 +13,17 @@ type ImportOptions = {
   videos: (id: number, page: number) => Promise<FavoritePage>
   detail: (bvid: string) => Promise<BiliVideoParts>
   save: (scope: string, id: string, name: string, entries: { track: Track }[]) => Promise<Playlist>
-  wait?: (ms: number) => Promise<void>
 }
-export const biliRequestLimited = (error: unknown) => /(?:\b412\b|\b429\b|-352|-412|-509|-799|请求.*限制|请求.*频繁)/.test(String(typeof error === 'object' && error && 'message' in error ? error.message : error))
-const transient = (error: unknown) => biliRequestLimited(error) || isConnectionError(error) || /超时|timeout/i.test(String(error))
+const transient = (error: unknown) => isConnectionError(error) || /超时|timeout/i.test(String(error))
 
 export async function importFavoriteFolders(options: ImportOptions) {
   const { stopped, progress } = options
-  const wait = options.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const cancelled = () => { if (stopped()) throw new Error('导入已停止') }
-  let reads = 0
   async function read<T>(request: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; ; attempt++) {
-      cancelled()
-      if (reads++) await wait(400)
-      cancelled()
-      try { const data = await request(); cancelled(); return data }
-      catch (error) {
-        cancelled()
-        if (attempt >= 2 || !transient(error)) throw error
-        progress(`${biliRequestLimited(error) ? 'B 站暂时限制了请求' : '连接暂时中断'}，稍后重试（${attempt + 1}/2）…`)
-        await wait(1500 * 2 ** attempt)
-      }
-    }
+    cancelled()
+    const data = await request()
+    cancelled()
+    return data
   }
   const results: FolderImportResult[] = []
   for (const [index, folder] of options.folders.entries()) {
@@ -61,7 +50,7 @@ export async function importFavoriteFolders(options: ImportOptions) {
             progress(`「${folder.title}」 · 正在读取「${video.title}」 · 已保存 ${count} 首`)
             let detail: BiliVideoParts
             try { detail = await read(() => options.detail(video.bvid)) }
-            catch (error) { cancelled(); if (transient(error) || /401|-101|登录/.test(String(typeof error === 'object' && error && 'message' in error ? error.message : error))) throw error; failures++; continue }
+            catch (error) { cancelled(); if (biliRequestPause(error) || transient(error) || /401|-101|登录/.test(String(typeof error === 'object' && error && 'message' in error ? error.message : error))) throw error; failures++; continue }
             for (let offset = 0; offset < detail.parts.length; offset += 100) {
               cancelled()
               const saved = await options.save(options.scope, target, folder.title.slice(0, 80), detail.parts.slice(offset, offset + 100).map(part => ({ track: toTrack(detail, part) })))
@@ -80,6 +69,7 @@ export async function importFavoriteFolders(options: ImportOptions) {
       if (stopped()) break
       const result = { folderId: folder.id, name: folder.title, id, count, error: commandErrorMessage(error, '读取收藏夹失败，请稍后重试') }
       results.push(result); options.result(result)
+      if (biliRequestPause(error)) break
     }
   }
   return results

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, FolderPlus, ListPlus } from 'lucide-react'
+import { Download, FolderPlus, ListPlus, Sparkles } from 'lucide-react'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { accountEpoch } from '../../services/accountScope'
 import { commandErrorMessage, removeLinkedVideos } from '../../services/desktopApi'
@@ -11,6 +11,8 @@ import { usePlayerStore } from '../player/playerStore'
 import { chooseTrackPlaylist } from './trackActionStore'
 import { useTrackSelection } from './useTrackSelection'
 import { resolveLinkedSelection } from './linkedSelection'
+import { useLinkedMatchControls } from './LinkedMatchControls'
+export { LinkedMatchStatus } from './LinkedMatchControls'
 
 export function LinkedSelectionActions({ folderId, selection, total, onFolderChanged, confirmDialog, onChoosePlaylist = chooseTrackPlaylist, toolbarClass = 'collection-actions batch-actions', compact = false }: {
   folderId: number
@@ -24,6 +26,7 @@ export function LinkedSelectionActions({ folderId, selection, total, onFolderCha
 }) {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const matching = useLinkedMatchControls(folderId)
   const [confirmed, setConfirmed] = useState<string[]>()
   const alive = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -65,9 +68,12 @@ export function LinkedSelectionActions({ folderId, selection, total, onFolderCha
     { label: '加入队列', icon: <ListPlus size={16}/>, run: () => void apply('queue') },
     { label: '加入歌单', icon: <FolderPlus size={16}/>, run: () => void apply('playlist') },
     { label: '下载所选', icon: <Download size={16}/>, run: () => void apply('download') },
+    { id: 'auto-match', label: '自动匹配', icon: <Sparkles size={16}/>, title: '同时匹配歌曲信息与歌词',
+      disabled: !matching.canStart, run: () => { setMessage(''); void matching.start(selection.selected) } },
     { label: '移除所选', title: '每次最多移除 50 个视频', disabled: selectedCount > 50, run: () => setConfirmed(selection.selected.map(track => track.source.bvid)) },
-  ].map(action => <button key={action.label} type="button" role={close ? 'menuitem' : undefined} title={action.title}
+  ].map(action => <button key={action.id ?? action.label} type="button" role={close ? 'menuitem' : undefined} title={action.title}
     disabled={!selectedCount || busy || action.disabled} onClick={() => { close?.(); action.run() }}>{action.icon}{action.label}</button>)
+  const feedback = busy ? '正在处理…' : message
   return <>
     <div className={compact ? `${toolbarClass} linked-selection-controls` : toolbarClass} role="toolbar" aria-label="已选视频操作">
       <button type="button" onClick={selection.all} disabled={!total || busy}>{selectedCount === total && total > 0 ? '取消全选' : '全选'}</button>
@@ -75,7 +81,7 @@ export function LinkedSelectionActions({ folderId, selection, total, onFolderCha
       {compact ? <ActionMenu label="批量操作" sheet>{actions}</ActionMenu> : actions()}
       <button type="button" disabled={busy} onClick={selection.exit}>完成</button>
     </div>
-    {(message || busy) && <p className="batch-message" role="status">{busy ? '正在处理…' : message}</p>}
+    {feedback && <p className="batch-message" role="status">{feedback}</p>}
     {confirmed && confirmDialog(<>
       <p>从 B 站收藏夹移除已选的 {confirmed.length} 个完整视频及其全部分 P？</p>
       <footer className={toolbarClass}>

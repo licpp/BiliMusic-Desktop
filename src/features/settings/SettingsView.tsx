@@ -29,7 +29,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
   const [downloadDirectory, setDownloadDirectory] = useState('')
   const [loading, setLoading] = useState(true), [error, setError] = useState('')
   const sync = useQuery({ queryKey:accountQueryKey('sync-status'), queryFn:syncStatus, enabled:inDesktopShell, retry:false })
-  const attention = runtimeAttention || (sync.data?.trackRepair || sync.data?.localError || sync.data?.importError || sync.data?.visibilityError || sync.error ? '同步待处理' : '')
+  const attention = runtimeAttention || (sync.data?.trackRepair || sync.data?.localError || sync.data?.importError || sync.data?.visibilityError || sync.data?.chaptersError || sync.error ? '同步待处理' : '')
   useEffect(() => {
     if (!inDesktopShell || isAndroid) { setLoading(false); return }
     void getDownloadDirectory().then(setDownloadDirectory).catch(cause => setError(commandErrorMessage(cause))).finally(() => setLoading(false))

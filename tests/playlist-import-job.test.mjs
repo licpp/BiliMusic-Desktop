@@ -291,3 +291,29 @@ test('间歇性限流不会被单首成功清零；冷却期间继续操作也�
   assert.equal(calls,4)
  }finally{api.pausePlaylistImport();t.mock.timers.reset()}
 })
+
+test('来自原生层的限流保留 Retry-After，等待期间不会自动或手动发起请求', async t => {
+  await reset()
+  const now = Date.now()
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now })
+  const retryAt = now + 2500
+  let calls = 0
+  globalThis.__importTest.search = async () => {
+    if (++calls === 1) throw { code: 'bili_rate_limited', retryAt }
+    return [hit]
+  }
+  try {
+    api.newPlaylistImport({ source:'text', name:'测试原生限流', songs:[source] }, '测试原生限流')
+    await api.runPlaylistImport()
+    assert.equal(api.usePlaylistImport.getState().job.state, 'paused')
+    assert.equal(api.usePlaylistImport.getState().job.retryAt, retryAt)
+    await api.runPlaylistImport()
+    assert.equal(calls, 1)
+    t.mock.timers.tick(3000)
+    await new Promise(setImmediate)
+    assert.equal(calls, 1)
+    await api.runPlaylistImport()
+    assert.equal(calls, 2)
+    assert.equal(api.usePlaylistImport.getState().job.state, 'done')
+  } finally { api.pausePlaylistImport(); t.mock.timers.reset() }
+})

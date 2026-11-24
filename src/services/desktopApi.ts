@@ -15,7 +15,7 @@ export type { LyricWord, LyricLine, LyricCandidate, LyricSearchResult, StoredLyr
 import type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
 export type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
 import { accountEpoch } from './accountScope'
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core'
 import { getVideoParts } from './videoPages'
 export { getVideoParts } from './videoPages'
 import { toTrack } from './collectionTrack'
@@ -29,7 +29,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename bili_linked_remove_selected'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -247,8 +247,12 @@ export const pollLoginQr = (key: string) => invoke<QrLoginStatus>('bili_qr_login
 export const logoutBilibili = () => invoke<void>('bili_logout')
 export const getFavoriteFolders = () => invoke<FavoriteFolder[]>('bili_favorite_folders')
 export const getFavoriteVideos = (folderId: number, page: number) => invoke<FavoritePage>('bili_favorite_videos', { folderId, page })
-export const getLinkedFolder = (folderId: number) => invoke<LinkedFolder | null>('bili_linked_folder', { folderId })
-export const refreshLinkedFolder = (folderId: number, link = false) => write<LinkedFolder>('bili_linked_refresh', { folderId, link })
+export const getLinkedFolder = (folderId: number) => scopedInvoke<LinkedFolder | null>('bili_linked_folder', { folderId })
+export function refreshLinkedFolder(folderId: number, link = false, background = false, progress?: (read: number) => void) {
+  const onProgress = new Channel<number>()
+  if (progress) onProgress.onmessage = progress
+  return write<LinkedFolder>('bili_linked_refresh', { folderId, link, background, onProgress })
+}
 export const changeLinkedVideo = (folderId: number, bvid: string, add: boolean) => write<LinkedFolder>('bili_linked_change', { folderId, bvid, add })
 export const removeLinkedVideos = (folderId: number, bvids: string[]) => write<{ folder: LinkedFolder; removed: string[]; failed: { bvid: string; message: string }[] }>('bili_linked_remove_selected', { folderId, bvids })
 export const unlinkBiliFolder = (folderId: number) => write<void>('bili_linked_unlink', { folderId })
@@ -257,7 +261,7 @@ export const getCommentReplies = (aid: number, root: number, page = 1) => invoke
 export const setCommentLike = (aid: number, replyId: number, liked: boolean) => invoke<void>('bili_comment_like', { aid, replyId, liked })
 export const replyComment = (aid: number, message: string, root?: number, parent?: number) => invoke<void>('bili_comment_reply', { aid, message, root, parent })
 
-function toTrackInput(track: Track) {
+export function toTrackInput(track: Track) {
   track = sourceTrack(track)
   return {
     id: track.id, bvid: track.source.bvid, aid: track.source.aid, cid: track.source.cid, page: track.source.page,

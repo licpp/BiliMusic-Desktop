@@ -11,9 +11,10 @@ import type { BiliSearchPage } from '../domain/bilibili'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
 import { loadImportedEntries, seedImportedEntries, bindImportedEntries, replaceImportedEntry, importTrackInput, importAccountSession } from './importedEntries'
 import { ImportRequestPolicy, isImportRateLimit, isUnavailableImportCandidate, validImportBvid } from './playlistImportPolicy'
+import { biliPauseMessage, biliRequestPause, type BiliPause } from './biliRequestStatus'
 
 export type ImportRow = { entry?:ImportedEntry; order?:number; song: ImportSong; status:'pending'|'matched'|'missing'|'saved'; candidates:ImportChoice[]; chosen?:ImportChoice; message?:string }
-export type ImportJob = { session?:string; id:string; scope:string; name:string; source:string; rows:ImportRow[]; playlistId:string; state:'ready'|'matching'|'paused'|'waiting'|'saving'|'done'; message:string; retries:number; retryAt?:number }
+export type ImportJob = { session?:string; id:string; scope:string; name:string; source:string; rows:ImportRow[]; playlistId:string; state:'ready'|'matching'|'paused'|'waiting'|'saving'|'done'; message:string; retries:number; retryAt?:number; biliPause?:BiliPause }
 export const usePlaylistImport = create<{job:ImportJob|null;scope:string}>(()=>({job:null,scope:''}))
 let controller: AbortController | undefined
 let booting: Promise<void> | undefined
@@ -73,9 +74,9 @@ export async function bootPlaylistImport() {
       db.close()
       if(saved && saved.scope===scope && Array.isArray(saved.rows) && saved.rows.length<=5000 && epoch===accountEpoch()) {
         saved.rows.forEach((row,index)=>{row.order??=index})
-        requestPolicy.restore(saved.retryAt,saved.retries)
+        if(!saved.biliPause)requestPolicy.restore(saved.retryAt,saved.retries)
         if(!['done','ready'].includes(saved.state))saved.state='paused'
-        saved.message=saved.state==='paused'?'上次进度已保留，可以继续导入':saved.message
+        if(saved.state==='paused')saved.message=saved.biliPause?biliPauseMessage(saved.biliPause):'上次进度已保留，可以继续导入'
         publish(saved)
       }
     }catch{/* Progress remains available in memory when browser storage is unavailable. */}
@@ -137,7 +138,7 @@ async function search(keyword:string,signal:AbortSignal,interactive=false,page=1
     searchCache.set(key,{expires:Date.now()+(result.items.length?600_000:60_000),page:result})
     while(searchCache.size>100)searchCache.delete(searchCache.keys().next().value!)
     return result
-  }catch(error){if(epoch===accountEpoch()&&limited(error))requestPolicy.restricted();throw error}
+  }catch(error){if(epoch===accountEpoch()&&!biliRequestPause(error)&&limited(error))requestPolicy.restricted();throw error}
 }
 async function videoDetail(bvid:string,signal:AbortSignal) {
   await new Promise<void>((resolve,reject)=>{
@@ -158,7 +159,7 @@ async function videoDetail(bvid:string,signal:AbortSignal) {
     const detail=await getVideoParts(bvid)
     if(signal.aborted||epoch!==accountEpoch())throw abortError()
     return detail
-  }catch(error){if(epoch===accountEpoch()&&limited(error))requestPolicy.restricted();throw error}
+  }catch(error){if(epoch===accountEpoch()&&!biliRequestPause(error)&&limited(error))requestPolicy.restricted();throw error}
   finally{detailRequests--;detailWaiters.shift()?.()}
 }
 /** User searches are ordinary Bilibili searches, never filtered by the song. */
@@ -350,6 +351,13 @@ export async function runPlaylistImport(retryMissing=false) {
   if(retryMissing)job.rows.forEach(row=>{if(row.status==='missing')row.status='pending'})
   job.state='matching';job.message='正在匹配歌曲';publish(job,true)
   try {
+    if(job.biliPause) {
+      if(job.retryAt && job.retryAt>Date.now()) {
+        job.state='paused';job.message=biliPauseMessage(job.biliPause);publish(job,true)
+        return
+      }
+      job.biliPause=undefined;job.retryAt=undefined
+    }
     if(job.retryAt && job.retryAt>Date.now()){
       job.state='waiting';job.message='B 站暂时限制了搜索，等待后继续';publish(job,true)
       while(job.retryAt>Date.now())await delay(job.retryAt-Date.now(),signal)
@@ -393,6 +401,11 @@ export async function runPlaylistImport(retryMissing=false) {
     job.state='done';job.message='导入完成';publish(job,true)
   }catch(error) {
     if(runEpoch===own&&epoch===accountEpoch()&&usePlaylistImport.getState().job?.id===job.id) {
+      const pause=biliRequestPause(error)
+      if(pause) {
+        job.biliPause=pause;job.retryAt=pause.retryAt;job.state='paused';job.message=biliPauseMessage(pause);publish(job,true)
+        return
+      }
       if(limited(error))job.retryAt=requestPolicy.restricted(job.retries)
       if(limited(error)&&job.retries<2){
         job.retries++;job.state='waiting';job.message='B 站请求较多，稍后自动继续';publish(job,true)

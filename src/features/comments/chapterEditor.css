@@ -1,0 +1,119 @@
+.chapter-edit-form {
+  --chapter-time-width: clamp(88px, 26vw, 108px);
+  --chapter-control-height: 40px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  flex: 1;
+  min-height: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+.chapter-edit-labels,
+.chapter-edit-row {
+  display: grid;
+  grid-template-columns: var(--chapter-time-width) minmax(0, 1fr) var(--chapter-control-height);
+  align-items: start;
+  gap: 8px;
+  padding-inline: 3px;
+}
+.chapter-edit-labels { padding-block: 8px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.chapter-edit-labels > span { padding-inline-start: 10px; }
+.chapter-edit-scroll {
+  min-height: 0;
+  max-height: 52dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-block: 3px 8px;
+  scroll-padding-block: 8px;
+}
+.chapter-edit-row + .chapter-edit-row { margin-top: 8px; }
+.chapter-edit-form input[type="text"] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--chapter-control-height);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--base);
+  color: var(--ink);
+  font: inherit;
+}
+.comments-chapter-page .chapter-edit-form input[type="text"] { background: var(--panel); }
+.chapter-edit-form input::placeholder { color: var(--muted); }
+.chapter-edit-time { font-variant-numeric: tabular-nums; }
+.chapter-edit-title { display: grid; gap: 4px; min-width: 0; }
+.chapter-edit-title small { overflow: hidden; padding-inline: 10px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-edit-form button, .comment-chapter-status button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--chapter-control-height, 40px);
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chapter-edit-form button:disabled { opacity: .5; cursor: default; }
+.chapter-edit-form .chapter-edit-remove { width: 100%; padding: 0; color: var(--muted); }
+.chapter-edit-form .chapter-edit-add { margin-inline-end: auto; padding-inline: 6px; color: var(--cyan); }
+.chapter-edit-form .chapter-edit-cancel, .comment-chapter-status .chapter-edit-cancel { border-color: var(--line); background: var(--panel); }
+.chapter-edit-controls { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.chapter-edit-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+:root[data-layout="mobile"] .chapter-edit-actions > button { font-size: 13px; }
+.chapter-edit-form .chapter-edit-confirm { background: var(--cyan); color: #07131b; }
+:root[data-theme="light"] .chapter-edit-form .chapter-edit-confirm { color: #fff; }
+.chapter-edit-error { color: var(--coral); font-size: 13px; }
+@media (hover: hover) {
+  .chapter-edit-form :is(.chapter-edit-add,.chapter-edit-remove,.chapter-edit-cancel):hover:not(:disabled),
+  .comment-chapter-status .chapter-edit-cancel:hover { background: var(--panel-raised); }
+  .chapter-edit-form .chapter-edit-remove:hover:not(:disabled) { color: var(--coral); }
+  .chapter-edit-form .chapter-edit-confirm:hover:not(:disabled) { filter: brightness(.94); }
+}
+.comment-chapter-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 0;
+  padding: 16px;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.comment-chapter-reading { display: flex; align-items: center; gap: 8px; }
+.comment-chapter-reading svg { flex: none; color: var(--cyan); }
+.comment-chapter-status small { color: var(--muted); font-size: 13px; }
+.comments-chapter-page { position: absolute; inset: 0; z-index: 4; background: var(--base); }
+.comments-chapter-page > .comments-thread-header > div { min-width: 0; }
+.comments-chapter-page > .comments-thread-header h3,
+.comments-panel.mobile-comments[data-chapter-editor] .comments-chapter-page > .comments-thread-header h3,
+:root[data-layout="mobile"] .collection-dialog.chapter-editor-dialog > header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+.comments-chapter-page > .comments-thread-header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comments-chapter-page .chapter-edit-form { padding: 0 16px 16px; }
+.comments-chapter-page .chapter-edit-scroll { max-height: none; }
+.collection-dialog.chapter-editor-dialog { display: flex; flex-direction: column; width: min(460px, 100%); }
+.collection-dialog.chapter-editor-dialog > :is(header,.chapter-remove,.chapter-remove-confirm) { flex: none; }
+.collection-dialog.chapter-editor-dialog > .chapter-remove { align-self: flex-start; margin-top: 4px; padding-inline: 6px; font-size: 13px; }
+@media (max-width: 960px), (pointer: coarse) {
+  .chapter-edit-form { --chapter-control-height: 44px; }
+  .chapter-edit-form input[type="text"] { font-size: 16px; }
+  .comment-chapter-status button { min-height: 44px; }
+}
+@media (max-width: 960px) {
+  .collection-dialog.chapter-editor-dialog.collection-dialog-mobile-sheet { width: 100%; }
+  .comments-sheet .comments-chapter-page .chapter-edit-form { padding-bottom: calc(12px + var(--native-safe-bottom, env(safe-area-inset-bottom, 0px))); }
+  :root[data-layout="mobile"][data-keyboard-open] .comments-sheet .comments-chapter-page .chapter-edit-form { padding-bottom: 12px; }
+}

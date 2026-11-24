@@ -46,8 +46,6 @@ impl BilibiliProvider {
         mid: i64,
         page: u32,
     ) -> Result<Value, ProviderError> {
-        self.ensure_search_session(Url::parse(WEB_ORIGIN).unwrap(), false)
-            .await?;
         let page = page.max(1);
         let mut url = match action {
             "following" => self.api_url("/x/relation/followings"),
@@ -101,15 +99,21 @@ impl BilibiliProvider {
                     .append_pair("page_size", "20");
             }
             _ => {
-                let envelope: Value = self
-                    .authenticated_get(self.api_url("/x/web-interface/nav"))
-                    .await
-                    .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await?;
-                let nav = &envelope["data"];
+                let nav = self.read_json(
+                    self.api_url("/x/web-interface/nav"),
+                    requests::Stage::Search,
+                    RequestPriority::Foreground,
+                    Some(Url::parse(WEB_ORIGIN).unwrap()),
+                    |lease, status, headers, envelope| {
+                        let code = envelope["code"].as_i64().ok_or(ProviderError::UnexpectedResponse)?;
+                        let data = &envelope["data"];
+                        // The ordinary visitor response contains signing metadata even when not logged in.
+                        let code = if code == -101 && data["wbi_img"].is_object() { 0 } else { code };
+                        inspect_code(lease, status, headers, code, Some(data),
+                            envelope["message"].as_str().unwrap_or_default().into())?;
+                        Ok(data.clone())
+                    },
+                ).await?;
                 let keys = ["img_url", "sub_url"]
                     .map(|k| {
                         nav["wbi_img"][k]
@@ -150,17 +154,9 @@ impl BilibiliProvider {
                 )));
             }
         }
-        let data: Value = match self.get_data(url.clone()).await {
-            Err(ProviderError::Network(error))
-                if error.status() == Some(reqwest::StatusCode::PRECONDITION_FAILED) =>
-            {
-                let space =
-                    Url::parse(&format!("https://space.bilibili.com/{mid}/upload/video")).unwrap();
-                self.ensure_search_session(space, true).await?;
-                self.get_data(url).await?
-            }
-            result => result?,
-        };
+        let stage = requests::Stage::for_url(&url);
+        let data: Value = self.get_data_for(url, stage, RequestPriority::Foreground,
+            Some(Url::parse(WEB_ORIGIN).unwrap())).await?;
         Ok(json!({"data":data,"page":page}))
     }
 }

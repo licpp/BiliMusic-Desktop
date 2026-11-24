@@ -1,4 +1,5 @@
 mod source_titles;
+pub mod chapters;
 pub mod visibility;
 pub(crate) use source_titles::save as cache_source_titles;
 pub mod actor;
@@ -108,6 +109,7 @@ impl Default for Config {
 pub struct Status {
     pub visibility_error: Option<String>,
     pub import_error: Option<String>,
+    pub chapters_error: Option<String>,
     pub local_error: Option<String>,
     pub track_repair: Option<repair::Preview>,
     pub config: Config,
@@ -122,9 +124,15 @@ pub struct Outcome {
     pub conflicts: Vec<Conflict>,
     pub visibility_error: Option<String>,
     pub import_error: Option<String>,
+    pub chapters_error: Option<String>,
     pub records: usize,
     pub bytes: usize,
     pub changed: bool,
+}
+impl Outcome {
+    fn has_extension_error(&self) -> bool {
+        self.import_error.is_some() || self.visibility_error.is_some() || self.chapters_error.is_some()
+    }
 }
 fn config(db: &Database) -> Result<Config, String> {
     let c = db.0.lock().map_err(|_| "数据库正忙")?;
@@ -240,6 +248,7 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
     Ok(Status {
         visibility_error: sync_area_error(&c, "visibility-error")?,
         import_error: sync_area_error(&c, "import-error")?,
+        chapters_error: sync_area_error(&c, "chapters-error")?,
         local_error,
         config: cfg,
         track_repair,
@@ -483,7 +492,7 @@ pub async fn sync_now(
             (
                 outcome.changed,
                 !outcome.conflicts.is_empty(),
-                outcome.import_error.is_some() || outcome.visibility_error.is_some(),
+                outcome.has_extension_error(),
             )
         },
     )
@@ -494,6 +503,7 @@ pub async fn sync_now(
             conflicts: vec![],
             visibility_error: None,
             import_error: None,
+            chapters_error: None,
             records: 0,
             bytes: 0,
             changed: false,
@@ -576,6 +586,8 @@ async fn sync_now_inner(
         if cfg.provider != "webdav" {
             initial.omit_linked_folders();
             baseline.omit_linked_folders();
+            initial.omit_followed_season_progress();
+            baseline.omit_followed_season_progress();
         }
         if remote.legacy_cloud {
             initial.use_legacy_cloud_format();
@@ -633,6 +645,7 @@ async fn sync_now_inner(
                 conflicts,
                 visibility_error: None,
                 import_error: None,
+                chapters_error: None,
                 records: count,
                 bytes,
                 changed: merged != remote.snapshot,
@@ -669,6 +682,7 @@ async fn sync_now_inner(
             let local_linked = current.linked_folders();
             if cfg.provider != "webdav" {
                 current.omit_linked_folders();
+                current.omit_followed_season_progress();
             }
             if remote.legacy_cloud {
                 current.use_legacy_cloud_format();
@@ -736,6 +750,7 @@ async fn sync_now_inner(
             conflicts: vec![],
             visibility_error: None,
             import_error: None,
+                chapters_error: None,
             records: count,
             bytes,
             changed: initial != final_local,

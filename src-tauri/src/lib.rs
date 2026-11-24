@@ -97,6 +97,7 @@ pub fn run() {
                     .inspect_err(|_| diagnostics.startup_step(Step::MediaProxy, Outcome::Failed))?;
             diagnostics.startup_step(Step::MediaProxy, Outcome::Succeeded);
             diagnostics.startup_step(Step::NativeReady, Outcome::Started);
+            infrastructure::providers::bilibili::initialize_requests(&app.path().app_data_dir()?);
             let bilibili = BilibiliProvider::new()?;
             let saved_cookie = database.0.lock().ok().and_then(|connection| {
                 AuthRepository::get_cookie(&connection, "bilibili")
@@ -186,6 +187,9 @@ pub fn run() {
             interface::batch_matching::batch_match_snapshot,
             interface::batch_matching::batch_match_commit,
             interface::batch_matching::lyric_match_version,
+            interface::linked_batch_matching::linked_batch_match_job,
+            interface::linked_batch_matching::linked_batch_match_start,
+            interface::linked_batch_matching::linked_batch_match_update,
             global_shortcuts::global_shortcuts_apply,
             global_shortcuts::global_shortcuts_show,
             interface::media::bili_creator_catalog,
@@ -207,6 +211,8 @@ pub fn run() {
             sync::sync_hydrate_sources,
             interface::visibility::content_visibility,
             interface::visibility::content_visibility_save,
+            interface::chapters::get_saved_chapters,
+            interface::chapters::save_chapters,
             interface::list_preferences::list_preferences,
             interface::list_preferences::list_preferences_save,
             sync::sync_current_track,
@@ -224,6 +230,7 @@ pub fn run() {
             infrastructure::update_install::app_download_update,
             infrastructure::update_install::app_install_update,
             interface::commands::app_open_download_page,
+            interface::commands::bili_open_verification_page,
             interface::commands::library_summary,
             interface::commands::library_record_play,
             interface::commands::library_save_track,
@@ -250,6 +257,7 @@ pub fn run() {
             interface::commands::playlist_delete,
             interface::media::bili_season,
             interface::media::bili_season_cover,
+            interface::media::bili_video_chapters,
             interface::media::bili_subtitles,
             interface::media::bili_subtitle_lines,
             interface::media::bili_media_options,
@@ -274,6 +282,7 @@ pub fn run() {
             interface::commands::bili_subscribed_seasons,
             interface::commands::bili_favorite_videos,
             interface::linked_folders::bili_linked_folder,
+            interface::linked_folders::bili_linked_matched_covers,
             interface::linked_folders::bili_linked_create,
             interface::linked_folders::bili_linked_refresh,
             interface::linked_folders::bili_linked_change,
@@ -283,6 +292,7 @@ pub fn run() {
             interface::commands::bili_comments,
             interface::commands::bili_comment_emotes,
             interface::commands::bili_comment_replies,
+            interface::commands::bili_comment_reply_page,
             interface::commands::bili_comment_like,
             interface::commands::bili_comment_reply,
             interface::commands::lyrics_search,

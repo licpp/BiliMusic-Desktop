@@ -81,7 +81,6 @@ impl Plan {
                 "collection" if !text(record, "folderId").is_empty() => {
                     Some(format!("collectionFolder:{}", text(record, "folderId")))
                 }
-                "collectionProgress" => Some(format!("collection:{}", text(record, "reference"))),
                 _ => None,
             };
             if parent.is_some_and(|key| !self.merged.records.contains_key(&key)) {

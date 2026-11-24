@@ -4,7 +4,7 @@ import { accountEpoch } from './accountScope'
 import { accountKeyAt } from './queryKeys'
 import type { QueryClient } from '@tanstack/react-query'
 export type Collection = { note?: string; followers?: number; bvid: string; folderId: string; title: string; coverUrl: string; uploaderName: string }
-export type CollectionProgress = { bvid: string; cid: number; positionMs: number }
+export type CollectionProgress = { bvid: string; cid: number; positionMs: number; collectionRef?: string }
 export const readCollectionProgress = (reference: string) => invoke<CollectionProgress | null>('collection_progress', { reference })
 export type CollectionFolder = { id: string; name: string; scope?: 'collections' | 'creators' }
 export type Collections = { folders: CollectionFolder[]; items: Collection[] }

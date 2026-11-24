@@ -5,10 +5,8 @@ import { accountQueryKey } from '../../services/queryKeys'
 import { canManageVisibility, videoScope } from '../../domain/contentVisibility'
 import { chooseDownload } from '../downloads/downloadRequest'
 import { downloadSelectionMessage, prepareDownloadSelection } from '../downloads/downloadSelection'
-import { CoverCount } from '../../shared/CoverCount'
 import { CollectionDialog } from '../../shared/CollectionDialog'
-import { PublishedDate } from '../../shared/PublishedDate'
-import { VideoAccessBadge } from '../../shared/VideoAccessBadge'
+import { VideoResultRow } from '../../shared/VideoResultRow'
 import { CreatorsView } from '../collections/CreatorsView'
 import { SwipeTabPages } from '../../shared/SwipeTabPages'
 import { isMobile } from '../../services/platform'
@@ -17,7 +15,7 @@ import { toTrack } from '../../services/collectionTrack'
 import { listCollections, type Collection, type Collections } from '../../services/collections'
 import { CollectionBookmark, CollectionMenu } from '../collections/CollectionsView'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, CircleAlert, Columns2, Download, Heart, ListPlus, ListVideo, LoaderCircle, Play, RefreshCw, SearchX, UserRound, Waves } from 'lucide-react'
+import { ChevronDown, CircleAlert, Columns2, Download, Heart, ListPlus, ListVideo, LoaderCircle, Play, RefreshCw, SearchX, Waves } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
@@ -25,11 +23,9 @@ import { getSeason, seasonTracks } from '../../services/mediaSources'
 import { adoptSeasonQueue, playbackIntent, seasonPlaybackQueue, usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite } from '../../services/desktopApi'
 import type { BiliSearchItem, BiliVideoAccess, BiliVideoParts } from '../../domain/bilibili'
-import { formatDuration } from '../../shared/time'
-import { formatPlayCount } from '../../shared/count'
+import { retryOnceUnlessBiliPaused } from '../../services/biliRequestStatus'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { LoadMore } from '../../shared/LoadMore'
-import { PlayingMark } from '../../shared/PlayingMark'
 import { Artwork } from '../../shared/Artwork'
 import { VideoPartsList } from '../library/VideoPartsList'
 import { chooseVideoPlaylist } from '../library/trackActionStore'
@@ -73,7 +69,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const activeRef = useRef(active)
   activeRef.current = active
   useEffect(() => () => { selection.current++; browsing.current++; downloadIntent.current++ }, [])
-  const result = useInfiniteQuery({ queryKey: accountQueryKey('bilibili-search', query), initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: (failures, error) => failures < 1 && !/\b412\b/.test(commandErrorMessage(error)) })
+  const result = useInfiniteQuery({ queryKey: accountQueryKey('bilibili-search', query), initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: retryOnceUnlessBiliPaused })
   const searchData = useListDataDuringNavigation(result.data, query)
   const loadingResults = result.isLoading || Boolean(result.data && !searchData)
   const items = [...new Map(searchData?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
@@ -196,7 +192,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   }
 
   if (!inDesktopShell) return <EmptyState icon={Waves} title="桌面搜索已准备好" detail="请使用 npm run tauri dev 启动原生窗口，浏览器预览不会直接访问平台接口。" />
-  if (loadingResults) return <section ref={resultsSection} className="search-results" data-columns={twoColumns || undefined}><ListSkeleton wide label="正在搜索视频" /></section>
+  if (loadingResults) return <section ref={resultsSection} className="search-results video-result-layout" data-columns={twoColumns || undefined}><ListSkeleton wide label="正在搜索视频" /></section>
   if (result.isError && !items.length) return <EmptyState icon={CircleAlert} title="搜索暂时不可用" detail={commandErrorMessage(result.error)} action={<button onClick={() => result.refetch()}><RefreshCw size={15} />重新尝试</button>} />
   if (!items.length) return <EmptyState icon={SearchX} title="没有找到结果" detail="可以尝试歌曲名、歌手名或 BV 号" />
 
@@ -212,7 +208,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const dialogState = partsDialog ? expanded[partsDialog.bvid] : undefined
   const notice = actionNotice && <button className="library-toast" data-tone={actionNotice.kind} role={actionNotice.kind === 'error' ? 'alert' : 'status'} onClick={() => setActionNotice(null)}>{actionNotice.text}</button>
 
-  return <section ref={resultsSection} className="search-results" aria-label="视频搜索结果" data-columns={twoColumns || undefined}>
+  return <section ref={resultsSection} className="search-results video-result-layout" aria-label="视频搜索结果" data-columns={twoColumns || undefined}>
     <header className="search-results-toolbar">
       <span>约 {searchData?.pages[0]?.total.toLocaleString()} 个视频</span>
       {(!isMobile || roomForColumns) && <button type="button" className="search-layout-button" disabled={!roomForColumns} aria-pressed={twoColumns} onClick={toggleLayout} title={columns ? '切换为单列列表' : '切换为双列列表'}>
@@ -220,30 +216,14 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       </button>}
     </header>
     {!partsDialog && notice}
-    <div className="search-hit-list" ref={resultList}>{rendered.rows.map((item) => {
+    <div className="video-result-list" ref={resultList}>{rendered.rows.map((item) => {
       const state = expanded[item.bvid]
       const open = !twoColumns && Boolean(state?.open)
       return <SearchResultCard key={item.bvid} bvid={item.bvid} active={active} detail={state?.detail} open={open} onContextMenu={e=>{e.preventDefault(); if (!isMobile) setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>{(partCount, current, access) => <>
-        <div className="search-hit-row playing-row" data-current-row={current ? item.bvid : undefined}>
-          <button type="button" className="search-hit-play" aria-current={current ? 'true' : undefined} onContextMenu={event => { if (isMobile) { event.preventDefault(); void selectResult(item, partCount) } }} onClick={() => void resultAction(item, 'play')}>
-            <span className="search-hit-cover">
-              <Artwork src={item.coverUrl} />
-              {item.durationSeconds > 0 && <span className="search-hit-duration">{formatDuration(item.durationSeconds)}</span>}
-              <span className="search-hit-play-icon" aria-hidden="true"><Play size={17} fill="currentColor" /></span>
-              {current && <PlayingMark/>}<CoverCount count={partCount}/><VideoAccessBadge access={access} onCover/>
-            </span>
-            <span className="search-hit-copy">
-              <strong title={item.title}>{item.title || item.bvid}</strong>
-              <span className="search-hit-meta">
-                {item.uploaderName && <span className="search-hit-uploader" title={item.uploaderName}><UserRound size={13} aria-hidden="true"/><span>{item.uploaderName}</span></span>}
-                <span className="search-hit-stats">
-                  <span aria-label={`${formatPlayCount(item.playCount)} 次播放`}><Play size={12} aria-hidden="true"/>{formatPlayCount(item.playCount)}</span>
-                  <PublishedDate value={item.publishedAt}/>
-                </span>
-              </span>
-            </span>
-          </button>
-          <div className="search-hit-actions">
+        <VideoResultRow title={item.title || item.bvid} coverUrl={item.coverUrl} durationSeconds={item.durationSeconds} count={partCount}
+          uploaderName={item.uploaderName} playCount={item.playCount} publishedAt={item.publishedAt} access={access} currentId={current ? item.bvid : undefined}
+          onContextMenu={event => { if (isMobile) { event.preventDefault(); void selectResult(item, partCount) } }}
+          onClick={() => void resultAction(item, 'play')} actions={<>
             {!isMobile && (partCount ?? 0) > 1 && <button type="button" className="icon-action" aria-label={open ? '收起分 P' : '查看分 P'} title={open ? '收起分 P' : '查看分 P'}
               aria-haspopup={twoColumns ? 'dialog' : undefined} aria-expanded={twoColumns ? undefined : open} aria-controls={open ? `search-parts-${item.bvid}` : undefined}
               disabled={!twoColumns && state?.loading} onClick={event => {
@@ -260,8 +240,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
               <button role="menuitem" onClick={() => { close(); void resultAction(item, 'queue') }}><ListPlus size={16} />加入播放队列</button>
               <button role="menuitem" onClick={() => { close(); void resultAction(item, 'play') }}><Play size={16} />{open ? '播放全部分 P' : '播放'}</button>
             </>}/>
-          </div>
-        </div>
+          </>}/>
         {!twoColumns && state?.error && <div className="inline-error"><CircleAlert size={14} />{state.error}</div>}
         {open && state?.detail && <div id={`search-parts-${item.bvid}`}>{renderParts(state.detail)}</div>}
       </>}</SearchResultCard>
@@ -286,7 +265,7 @@ function SearchResultCard({ bvid, active, detail, open, onContextMenu, children 
 }) {
   const current = usePlayerStore(state => !open && state.current?.source.bvid === bvid)
   const { ref, pages, access } = useVisibleVideoPages<HTMLElement>(bvid, active && !detail, true)
-  return <article ref={ref} className="search-hit" data-expanded={open || undefined} onContextMenu={onContextMenu}>{children(detail?.parts.length ?? pages?.length, current, detail ? detail.access : access)}</article>
+  return <article ref={ref} className="video-result-card" data-expanded={open || undefined} onContextMenu={onContextMenu}>{children(detail?.parts.length ?? pages?.length, current, detail ? detail.access : access)}</article>
 }
 
 function EmptyState({ icon: Icon, title, detail, spinning, action }: { icon: typeof Waves; title: string; detail: string; spinning?: boolean; action?: ReactNode }) {

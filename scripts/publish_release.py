@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -110,11 +111,37 @@ def public_download(url, expected=None, destination=None):
             time.sleep(2)
 
 
+def stage_website_apks(site, work, manifest):
+    directory = Path(site) / 'apk-downloads'
+    packages = {p['file']: p for p in manifest.get('platforms', [])
+                if p.get('status') == 'available' and re.fullmatch(r'[a-zA-Z0-9_.-]+\.apk', p.get('file', ''))
+                and any(c.get('id') == 'gitee' and c.get('url') for c in p.get('channels', []))}
+
+    def matches(path, package):
+        if not path.is_file() or path.stat().st_size != package['size']:
+            return False
+        with path.open('rb') as file:
+            return hashlib.file_digest(file, 'sha256').hexdigest() == package['sha256']
+
+    for name, package in packages.items():
+        destination = directory / name
+        if matches(destination, package):
+            continue
+        source = Path(work) / 'assets' / name
+        require(matches(source, package), 'Website APK missing or changed: ' + name)
+        directory.mkdir(exist_ok=True)
+        temporary = directory / (name + '.tmp')
+        temporary.unlink(missing_ok=True)
+        os.link(source, temporary)
+        temporary.replace(destination)
+
+
 def deploy_site(site, work, candidate, previous, run, get):
     """Replace only the manifest, preserving the site and PostgreSQL counters."""
     path, backup = Path(site) / 'releases.json', Path(work) / 'previous-live-releases.json'
     current = json.loads(path.read_text())
     require(current in (previous, candidate), 'Live website changed concurrently; refusing deployment')
+    stage_website_apks(site, work, candidate)
     before = get('/api/v1/download-stats')['total']
     if not backup.exists():
         require(current == previous, 'Missing rollback manifest for already-active candidate')

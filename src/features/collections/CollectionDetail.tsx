@@ -7,13 +7,12 @@ import { useVisibilityRules } from '../../services/contentVisibility'
 import { accountQueryKey } from '../../services/queryKeys'
 import { useQuery,useQueryClient } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { ArrowLeft,History,ListPlus,LoaderCircle,Play,Plus,RefreshCw,Search,X } from 'lucide-react'
-import { useEffect,useMemo,useRef,useState } from 'react'
+import { useEffect,useLayoutEffect,useMemo,useRef,useState } from 'react'
 import type { Track } from '../../domain/track'
 import { filterSeasonSection,seasonResumeSelection } from '../../domain/seasonSections'
 import { accountEpoch } from '../../services/accountScope'
-import { cacheCollectionMetadata, listCollections,readCollectionProgress,type Collection } from '../../services/collections'
+import { cacheCollectionMetadata, listCollections, type Collection, type CollectionProgress } from '../../services/collections'
 import { toTrack } from '../../services/collectionTrack'
 import { addTracksToPlaylist,commandErrorMessage,createPlaylist,getVideoParts,saveLibraryTrack } from '../../services/desktopApi'
 import { sortList,sortTracks } from '../../services/listOrdering'
@@ -36,17 +35,21 @@ import { playbackIntent,resolveSeasonEntry,seasonPlaybackQueue,usePlayerStore } 
 import { CollectionBookmark } from './CollectionBookmark'
 import { CollectionMenu } from './CollectionMenu'
 import { CreatorPage } from './CreatorsView'
+import type { CollectionResumeRequest, OpenCollection } from './creatorContinuation'
+import { useCollectionProgress, useCollectionResumeRequest } from './useCollectionProgress'
 
 const useCollections = () => useQuery({queryKey:accountQueryKey('collections'),queryFn:listCollections})
-function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false, searchQuery }: {
+function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = '返回收藏合集', embedded = false, locateCurrent = true, hideBack = false, searchQuery, resumeRequest, active = true }: {
   item: Collection
   onBack: () => void
-  onOpenCollection?: (item: Collection) => void
+  onOpenCollection?: OpenCollection
   backLabel?: string
   embedded?: boolean
   locateCurrent?: boolean
   hideBack?: boolean
   searchQuery?: string
+  resumeRequest?: CollectionResumeRequest
+  active?: boolean
 }) {
   const offline = useOfflinePlayback()
   const visibilityRules=useVisibilityRules()
@@ -54,23 +57,11 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   const reference=parseSeasonReference(item.bvid)
   const bookmarks = useCollections()
   const saved = bookmarks.data?.items.some(collection => collection.bvid === item.bvid)
-  const progress = useQuery({
-    queryKey: accountQueryKey('collection-progress', item.bvid),
-    queryFn: () => readCollectionProgress(item.bvid),
-    enabled: Boolean(saved),
-    staleTime: 0,
-  })
-  const { refetch: refreshProgress } = progress
-  useEffect(() => {
-    if (!saved) return
-    const stop = listen<string>('collection-progress-changed', event => {
-      if (event.payload === item.bvid) void refreshProgress()
-    }).catch(() => undefined)
-    return () => { void stop.then(unlisten => unlisten?.()) }
-  }, [item.bvid, refreshProgress, saved])
+  const eligible = Boolean(saved || reference)
+  const progress = useCollectionProgress(item.bvid, active && eligible)
   const [resuming, setResuming] = useState(false)
   const resumeVersion = useRef(0)
-  useEffect(() => { setResuming(false); return () => { resumeVersion.current++ } }, [item.bvid])
+  useLayoutEffect(() => { setResuming(false); return () => { resumeVersion.current++ } }, [item.bvid, active])
   const forceRefresh = useRef(false)
   const q=useQuery({queryKey:accountQueryKey('collection-detail', item.bvid),queryFn:async()=>{
     if(reference){
@@ -119,7 +110,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
     if (!detail) return {tracks:[],playbackTracks:[],resumePlaybackTracks:[]}
     const sort = (rows:Track[]) => detailSort.rule.startsWith('plays:')
       ? sortTracks(rows,detailSort.rule,detailSort.dates,detailSort.playCounts)
-      : sortList(rows,detailSort.rule,track=>({id:track.id,name:track.title,date:track.publishedAt||detailSort.dates[track.source.bvid],playCount:track.playCount??detailSort.playCounts[track.source.bvid]}))
+      : sortList(rows,detailSort.rule,track=>({id:track.id,name:detail.catalog ? track.videoTitle || track.title : track.title,date:track.publishedAt||detailSort.dates[track.source.bvid],playCount:track.playCount??detailSort.playCounts[track.source.bvid]}))
     const project = (rows:Track[]) => {
       const catalog = detail.catalog
       if (!catalog) return rows
@@ -131,24 +122,27 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
   }, [detail, sections, selectedSection, detailSort.rule, detailSort.dates, detailSort.playCounts])
   const queueSource = { kind: reference ? 'season' as const : 'video' as const, title: detail?.title || item.title, collectionRef: item.bvid, visibilityManaged: Boolean(visibilityScope) }
   const unit=reference?'个视频':'个分 P'
-  const visibleTracks=tracks.filter(track=>track.title.toLowerCase().includes((searchQuery ?? filter).toLowerCase()))
-  const checkpoint = saved ? progress.data : undefined
+  const keyword = (searchQuery ?? filter).toLowerCase()
+  const visibleTracks = tracks.filter(track => track.title.toLowerCase().includes(keyword) || Boolean(reference && track.videoTitle?.toLowerCase().includes(keyword)))
+  const checkpoint = eligible ? progress.data : undefined
   const canPlay = (track: Track) => !isHidden(track) && offlineEntries(track, offline).some(part => !isHidden(part))
-  const canResume = checkpoint && resumePlaybackTracks.some(track => track.source.bvid === checkpoint.bvid &&
-    (track.source.cid === checkpoint.cid || track.resolveParts)) && resumePlaybackTracks.some(canPlay)
+  const mayResume = (point: CollectionProgress) => resumePlaybackTracks.some(track => track.source.bvid === point.bvid &&
+    (track.source.cid === point.cid || track.resolveParts)) && resumePlaybackTracks.some(canPlay)
+  const canResume = checkpoint && mayResume(checkpoint)
   const resumeTime = checkpoint?.positionMs ? formatDuration(Math.floor(checkpoint.positionMs / 1000)) : ''
   const resumeLabel = resuming ? '正在读取选集' : `继续上次播放${resumeTime ? ` · ${resumeTime}` : ''}`
-  const resume = async () => {
-    if (!canResume || !checkpoint || resuming) return
+  const resume = async (point: CollectionProgress) => {
+    if (resuming || !active) return
+    if (!mayResume(point)) { setMessage('没有可继续播放的内容。'); return }
     const epoch = accountEpoch()
     const intent = playbackIntent()
     const version = ++resumeVersion.current
-    const active = () => version === resumeVersion.current && epoch === accountEpoch()
-    const current = () => active() && intent === playbackIntent()
+    const present = () => version === resumeVersion.current && epoch === accountEpoch()
+    const current = () => present() && intent === playbackIntent()
     setResuming(true)
     setMessage('')
     try {
-      const prepared = await prepareListPlayback(resumePlaybackTracks, checkpoint, resolveSeasonEntry,
+      const prepared = await prepareListPlayback(resumePlaybackTracks, point, resolveSeasonEntry,
         current, t => !isHidden(t), offline.offline ? track => offlineEntries(track, offline) : undefined)
       if (!current()) return
       if (!prepared) { setMessage('没有可继续播放的内容。'); return }
@@ -157,8 +151,9 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       setFilter('')
       await player.playFromList(selection.tracks, prepared.trackId, queueSource, prepared.startAt, true)
     } catch (error) { if (current()) setMessage(commandErrorMessage(error)) }
-    finally { if (active()) setResuming(false) }
+    finally { if (present()) setResuming(false) }
   }
+  useCollectionResumeRequest(resumeRequest, active && Boolean(detail) && !bookmarks.isPending, resume)
   const copy=async()=>{
     const epoch=accountEpoch();setCopying(true);setMessage('')
     try{const list=await createPlaylist(detail?.title||item.title||'B 站合集');const ids:string[]=[];for (const entry of playbackTracks) {
@@ -192,7 +187,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       playbackTracks={playbackTracks} queueSource={queueSource} onOpenParts={reference ? setOpenedVideo : undefined}
       toolbar={{ primary: <>
         <button className="collection-primary" aria-label="播放全部" title="播放全部" disabled={!playbackTracks.some(canPlay)} onClick={()=>void player.playFromList(playbackTracks, playbackTracks[0].id, queueSource)}><Play size={15}/>播放全部</button>
-        {canResume && <button className="collection-resume" disabled={resuming} aria-busy={resuming} aria-label={resumeLabel} title={resumeLabel} onClick={() => void resume()}>
+        {canResume && <button className="collection-resume" disabled={resuming} aria-busy={resuming} aria-label={resumeLabel} title={resumeLabel} onClick={() => void resume(checkpoint)}>
           {resuming ? <LoaderCircle size={15} className="spin"/> : <History size={15}/>}<span>续播</span>
         </button>}
       </>, actions: <>
@@ -219,7 +214,7 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
       const close = () => setOpenedVideo(undefined)
       const queue = parts.length ? seasonPlaybackQueue(playbackTracks, parts[0], parts) : playbackTracks
       if (isMobile && video && parts.length > 1) return <MobilePartsContent detail={video} onBack={close} playbackTracks={queue} queueSource={queueSource} showSeasonLink={false}/>
-      return <CollectionDialog title={openedVideo.title} onClose={close}>
+      return <CollectionDialog title={openedVideo.videoTitle || openedVideo.title} onClose={close}>
         {nested.isError ? <button className="load-more" onClick={() => void nested.refetch()}>{commandErrorMessage(nested.error)} · 重试</button> :
           !video ? <p className="batch-message">正在读取选集…</p> :
           parts.length > 1 ? <VideoPartsList locateCurrent tracks={parts} playbackTracks={queue} queueSource={queueSource}/> : <p className="batch-message">这个视频可以直接播放。</p>}
@@ -230,5 +225,5 @@ function StandardCollectionDetail({ item, onBack, onOpenCollection, backLabel = 
 }
 
 export function CollectionDetail(props: Parameters<typeof StandardCollectionDetail>[0]) {
-  return props.item.bvid.startsWith('up:') ? <CreatorPage item={props.item} onOpen={props.onOpenCollection} searchQuery={props.searchQuery}/> : <StandardCollectionDetail {...props}/>
+  return props.item.bvid.startsWith('up:') ? <CreatorPage item={props.item} onOpen={props.onOpenCollection} searchQuery={props.searchQuery} active={props.active}/> : <StandardCollectionDetail {...props}/>
 }

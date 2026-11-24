@@ -448,6 +448,9 @@ pub(crate) async fn hydrate_tags(
             }
         }
         let result = tokio::time::timeout(std::time::Duration::from_secs(4), provider.video_tags(&bvid)).await;
+        if matches!(&result, Ok(Err(error)) if error.is_request_restricted()) {
+            break;
+        }
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         if account_session(&c).map_err(err)? != session { return Ok(0); }
         let tags = result.ok().and_then(Result::ok).map(|tags| {

@@ -117,7 +117,7 @@ export function LargeScreenApp() {
       {route.kind === 'library' && <LargeLibrary filterState={filterState} tab={tab} setTab={setTab} navigate={navigate}/>}
       {route.kind === 'folder' && <LargeLibrary filterState={filterState} key={route.id} tab={tab} setTab={setTab} navigate={navigate} folder={route}/>}
       {route.kind === 'playlist' && <LargePlaylist filterState={filterState} key={route.playlist.id} playlist={route.playlist} onMore={(track,replaceVideo)=>showMenu(track,undefined,replaceVideo)} navigate={navigate}/>}
-      {route.kind === 'collection' && <LargeCollection filterState={filterState} key={route.item.bvid} item={route.item} onMore={showMenu} navigate={navigate}/>}
+      {route.kind === 'collection' && <LargeCollection filterState={filterState} key={route.item.bvid} item={route.item} resumeRequest={route.resume} parentRef={route.parentRef} onMore={showMenu} navigate={navigate}/>}
       {route.kind === 'creator' && <LargeCreator route={route} navigate={navigate} replace={setRoute}/>}
       {route.kind === 'search' && <LargeSearch kind={searchKind} setKind={setSearchKind} query={query} setQuery={setQuery} navigate={navigate}/>}
       {route.kind === 'offline' && <LargeOffline/>}

@@ -88,7 +88,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
     await refreshSyncedLibrary(client)
     if (session !== accountEpoch()) return
     setOutcome(null)
-    if (result.importError || result.visibilityError) {
+    if (result.importError || result.visibilityError || result.chaptersError) {
       await status.refetch()
       if (session !== accountEpoch()) return
       setMessage('音乐库已同步，部分资料待处理')
@@ -144,6 +144,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   if (status.data?.localError) issues.push({ area: '本机资料', issue: describeSyncIssue(status.data.localError) })
   if (status.data?.importError) issues.push({ area: '导入歌单', issue: describeSyncIssue(status.data.importError) })
   if (status.data?.visibilityError) issues.push({ area: '隐藏偏好', issue: describeSyncIssue(status.data.visibilityError) })
+  if (status.data?.chaptersError) issues.push({ area: '章节', issue: describeSyncIssue(status.data.chaptersError) })
   if (statisticsIssue) issues.push({ area: '听歌统计', issue: statisticsIssue })
   const exportBackup = () => action(async session => {
     const path = await invoke<string>('sync_export')

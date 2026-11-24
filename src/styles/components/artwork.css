@@ -88,6 +88,5 @@
   pointer-events: none;
 }
 .large-card-art > .video-access-badge[data-cover] { top: 8px; right: 8px; font-size: .82rem; }
-.video-with-cover .video-part-index { position: relative; }
 .collection-detail > header .video-access-badge,
 .mobile-parts-summary .video-access-badge { margin-top: 5px; }

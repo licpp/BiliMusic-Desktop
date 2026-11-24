@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from publish_release import ApiError, Publisher, deploy_site, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
+from publish_release import ApiError, Publisher, deploy_site, stage_website_apks, public_download, publication_lock, release_content_type, fingerprint, cached_downloads_valid
 from release_packages import validate_bundle, verify_android_bridge, verify_android_libraries
 from prepare_release import prepare
 
@@ -673,6 +673,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'concurrently'):
                 publisher.mirror('github')
             self.assertEqual(publisher.api.call_count, 1)
+
+    def test_website_apks_follow_manifest_and_reuse_unchanged_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            work = site / 'release'
+            (work / 'assets').mkdir(parents=True)
+            data = b'signed Android APK'
+            package = dict(file='phone.apk', status='available', size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+                           channels=[{'id':'gitee', 'url':'https://gitee.com/'}])
+            manifest = {'platforms': [package]}
+            source = work / 'assets' / package['file']
+            source.write_bytes(bytes(len(data)))
+            with self.assertRaisesRegex(ValueError, 'missing or changed'):
+                stage_website_apks(site, work, manifest)
+            source.write_bytes(data)
+            stage_website_apks(site, work, manifest)
+            source.unlink()
+            stage_website_apks(site, work, manifest)
+            self.assertEqual((site / 'apk-downloads' / package['file']).read_bytes(), data)
 
     def test_failed_site_health_restores_previous_manifest(self):
         with tempfile.TemporaryDirectory() as directory:

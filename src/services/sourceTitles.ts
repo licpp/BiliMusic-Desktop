@@ -49,7 +49,7 @@ export async function hydrateSourceTitles(ids: string[], client: QueryClient, ca
       if (stored) {const next=withTrackTitle({...sourceTrack(track),...fromStoredTrack(stored),importedEntry:track.importedEntry || contexts.get(track.id),sourceTitleContext:stored.sourceTitleContext || track.sourceTitleContext});if(JSON.stringify(next)!==JSON.stringify(track))updates.set(track,next)}
       else {
         // Search-only queue entries need not exist in the library database.
-        const detail = await getVideoParts(track.source.bvid).catch(() => null)
+        const detail = await getVideoParts(track.source.bvid, false, { background: true }).catch(() => null)
         if (epoch !== accountEpoch()) return
         const part = detail?.parts.find(part => part.cid === track.source.cid)
         if (detail && part) {

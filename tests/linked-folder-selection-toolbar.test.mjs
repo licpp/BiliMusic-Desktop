@@ -50,12 +50,12 @@ test('compact linked folder groups batch actions, sorting and search in one sele
   assert.match(html, /^class="linked-folder-tools" data-selection="compact"/)
   assert.match(html, /linked-selection-controls.*全选.*已选 0.*aria-label="批量操作".*完成/)
   assert.match(html, /library-toolbar-icons.*aria-label="列表排序".*aria-label="搜索歌单中的视频"/)
-  assert.doesNotMatch(html, /加入队列|加入歌单|下载所选|移除所选/)
+  assert.doesNotMatch(html, /加入队列|加入歌单|下载所选|自动匹配|移除所选/)
 })
 
 test('wide linked folder groups individual selection actions and list tools in the same toolbar', () => {
   const html = toolbar(false)
   assert.match(html, /^class="linked-folder-tools" data-selection="wide"/)
-  assert.match(html, /加入队列.*加入歌单.*下载所选.*移除所选.*完成.*library-toolbar-icons.*aria-label="列表排序".*aria-label="搜索歌单中的视频"/)
+  assert.match(html, /加入队列.*加入歌单.*下载所选.*自动匹配.*移除所选.*完成.*library-toolbar-icons.*aria-label="列表排序".*aria-label="搜索歌单中的视频"/)
   assert.doesNotMatch(html, /aria-label="批量操作"/)
 })

@@ -8,7 +8,7 @@ import { slideNavigation, transformX } from './slideNavigation'
 import { holdListUpdates } from './navigationListMotion'
 import { isTextEditor } from './nativeTextEditing'
 
-const directControls = '[data-touch-picker],[data-order-editor],[data-swipe-cover],input,select,[role="slider"],.track-select,[data-mini-dock],.dock-track-group,.queue-sheet-handle,.lyrics-close,.comments-sheet-handle,.collection-sheet-handle,.touch-sheet-handle,video'
+const directControls = '[data-touch-picker],[data-order-editor],[data-swipe-cover],input,select,[role="slider"],.track-select,[data-mini-dock],.dock-track-group,.queue-sheet-handle,.queue-drag-handle,.lyrics-close,.comments-sheet-handle,.collection-sheet-handle,.touch-sheet-handle,video'
 
 function horizontallyScrollable(target: Element, surface: HTMLElement) {
   for (let item: Element | null = target; item && item !== surface; item = item.parentElement) {
@@ -135,7 +135,7 @@ export function installMobileGestures() {
     // previous tab instead of popping the whole route.
     const tabOwnsBackSwipe = Boolean(usableTabs?.hasAttribute('data-swipe-previous'))
     const row = target.closest('[data-overflow-panel],.track-context-menu,.icon-action,.action-menu-trigger') ? null :
-      target.closest<HTMLElement>('.result-main,.library-entry,.library-track,.video-part-row,.result-card,.queue-entry,.track-row')
+      target.closest<HTMLElement>('.result-main,.library-entry,.library-track,.video-part-row,[data-video-result-context],.result-card,.queue-entry,.track-row')
     press = { x: touch.clientX, y: touch.clientY, time: event.timeStamp, direction: 'pending', row,
       edge: !tabOwnsBackSwipe && canPop && !horizontallyScrollable(target, edgeSurface) ? edgeSurface : null,
       fallbackBack: fromEdge && !edgeSurface && !usableTabs,

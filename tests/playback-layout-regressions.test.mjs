@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
+import { readFile } from 'node:fs/promises'
 async function moduleAt(path) {
   const built = await build({ entryPoints:[path], bundle:true, write:false, format:'esm', platform:'node' })
   return import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
@@ -9,6 +10,11 @@ const { createNativeClock } = await moduleAt('src/features/player/nativeClock.ts
 const { touchDirection } = await moduleAt('src/shared/touchDirection.ts')
 const { visibleViewport } = await moduleAt('src/shared/visibleViewport.ts')
 const { matchesTrackSearch } = await moduleAt('src/shared/ListSearch.tsx')
+test('the mobile queue sheet bounds its column even when a title has a large intrinsic width', async () => {
+  const css = await readFile('src/styles/mobile.css', 'utf8')
+  const sheet = css.match(/\.queue-drawer\.queue-sheet\s*\{([^}]+)\}/)?.[1] ?? ''
+  assert.match(sheet, /grid-template-columns\s*:\s*minmax\(0,\s*1fr\)/)
+})
 test('a playing intention at zero does not manufacture progress; extrapolation is bounded after actual advancement', () => {
   const clock = createNativeClock()
   clock.update({ id:'a', revision:1, position:0, status:'playing' }, 0)

@@ -41,6 +41,32 @@ test('rejected snapshots cannot replay a previously delivered navigation command
  assert.equal(h.events.filter(e=>e.action==='next').length,1)
 })
 
+test('Android stopped snapshot retires the destroyed engine and freezes its clock', async () => {
+ const h = await setup()
+ const paused = { engineInstanceId: 'old-service', sessionId: 'session', id: 'a', sequence: 3, status: 'paused', position: 35 }
+ h.receive(paused)
+ globalThis.mediaIPC = async () => ({ stopped: true })
+ const snapshot = await h.audio.snapshot()
+ assert.equal(snapshot.stopped, true)
+ assert.equal(snapshot.id, undefined)
+ assert.equal(h.audio.playbackClock(), 35)
+ h.receive({ ...paused, sequence: 4 })
+ assert.equal(h.events.length, 1)
+ h.receive({ engineInstanceId: 'new-service', sessionId: 'new-session', id: 'a', sequence: 1, status: 'playing', position: 35 })
+ assert.equal(h.events.at(-1).engineInstanceId, 'new-service')
+})
+
+test('a delayed stopped snapshot cannot retire a replacement Android service', async () => {
+ const h = await setup()
+ h.receive({ engineInstanceId: 'old-service', sessionId: 'old', id: 'a', status: 'paused' })
+ let reply
+ globalThis.mediaIPC = () => new Promise(resolve => { reply = resolve })
+ const snapshot = h.audio.snapshot()
+ h.receive({ engineInstanceId: 'new-service', sessionId: 'new', id: 'a', status: 'playing' })
+ reply({ stopped: true })
+ assert.equal((await snapshot).engineInstanceId, 'new-service')
+})
+
 test('mobile playback publishes track metadata during preparation and carries it into playback',async()=>{
  const calls=[]
  globalThis.mediaIPC=async(command, payload)=>calls.push({command,payload})

@@ -13,16 +13,19 @@ const {safeGainDb,outputVolume,createOutputGain}=await load('src/features/player
 const {OutputGain}=await load('native/ohos-player/ohos/OutputGain.ets',{'.ets':'ts'})
 const fixtures=JSON.parse(await readFile('tests/fixtures/loudness.json','utf8'))
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`)
-test('desktop and Harmony output render all shared plans without changing volume or amplifying',()=>{
+test('desktop and Harmony use player headroom before ducking',()=>{
   for(const {gainDb} of fixtures) {
     const gain=new OutputGain();gain.configure(true,1);gain.plan(gainDb);gain.transition(0,false)
-    for(const volume of [0,.2,.7,1]) {
-      near(gain.level(volume,1,0),outputVolume(volume,gainDb))
-      near(gain.level(volume,.2,0),outputVolume(volume,gainDb,.2))
-      assert.ok(gain.level(volume,1,0)<=volume)
+    for(const volume of [0,.2,.7,.9,1]) {
+      const expected=Math.min(1,volume*Math.pow(10,gainDb/20))
+      near(gain.level(volume,1,0),expected)
+      near(gain.level(volume,.2,0),expected*.2)
+      near(outputVolume(volume,gainDb),expected)
+      near(outputVolume(volume,gainDb,.2),expected*.2)
     }
   }
-  for(const bad of [undefined,NaN,Infinity,-Infinity,6])assert.equal(safeGainDb(bad),0)
+  for(const bad of [undefined,NaN,Infinity,-Infinity])assert.equal(safeGainDb(bad),0)
+  assert.equal(safeGainDb(9),6)
 })
 test('toggles ramp in dB, rapid toggles start at the current level, new tracks do not inherit old attenuation',()=>{
   let now=0
@@ -45,7 +48,15 @@ test('iOS output renders the same plans and rejects stale settings', {skip:proce
     const cases=fixtures.map(f=>`check(${f.gainDb},${Math.pow(10,f.gainDb/20)})`).join('\n')
     await writeFile(join(dir,'main.swift'),source+`
 func near(_ a:Float,_ b:Float){precondition(abs(a-b)<0.000001)}
-func check(_ db:Double,_ expected:Double){var g=OutputGain();precondition(g.configure(true,1));g.plan(db);g.transition(0,smooth:false);near(g.level(0.7,0),Float(expected)*0.7);near(g.level(0,0),0)}
+func check(_ db:Double,_ expected:Double){
+    var g=OutputGain()
+    precondition(g.configure(true,1))
+    g.plan(db)
+    g.transition(0,smooth:false)
+    for volume: Float in [0,0.2,0.7,0.9,1] {
+        near(g.level(volume,0),min(1,Float(expected)*volume))
+    }
+}
 ${cases}
 var g=OutputGain();precondition(g.configure(true,2));g.plan(-12);g.transition(0,smooth:true);near(g.level(1,150),Float(pow(10.0,-6.0/20)))
 precondition(!g.configure(false,1));g.transition(300,smooth:false);near(g.level(1,300),Float(pow(10.0,-12.0/20)))

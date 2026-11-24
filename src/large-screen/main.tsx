@@ -1,4 +1,5 @@
 import '../shared/runtimeCompatibility'
+import { retryOnceUnlessBiliPaused } from '../services/biliRequestStatus'
 import 'core-js/es/array/flat'
 import 'core-js/es/array/flat-map'
 import 'core-js/es/global-this'
@@ -35,6 +36,7 @@ import '../styles/media-features.css'
 import '../styles/playback-cache.css'
 import '../styles/editor-polish.css'
 import './large-screen.css'
+import '../features/chapters/chapters.css'
 import '../features/settings/diagnostics.css'
 
 document.documentElement.dataset.layout = 'large'
@@ -44,7 +46,7 @@ document.documentElement.dataset.platform = isAndroid ? 'android' : 'desktop'
 installMobileKeyboard({ scrollContainers: '.large-dialog,.large-main', topInset: 58, onDismiss: dismissLargeKeyboard })
 installOverlayBack()
 if (isAndroid) void controlMobileAudio('largeScreen', 1).catch(() => undefined)
-const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } } })
+const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: retryOnceUnlessBiliPaused, refetchOnWindowFocus: false } } })
 const diagnoseReady = installStartupDiagnostics()
 function DiagnosticBoot() { useEffect(diagnoseReady, []); return null }
 installAccountQueryScope(client)

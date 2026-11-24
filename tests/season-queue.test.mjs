@@ -15,3 +15,13 @@ test('standalone videos list parts directly and season groups contain only multi
   assert.deepEqual(presentQueue([part('A', 1), part('C', 1, true), ...parts], 'season').groups.map(group => group.tracks.length), [1, 1, 2])
   assert.deepEqual(presentQueue(parts).groups.map(group => group.tracks.length), [1, 1])
 })
+
+test('queue group identity follows its tracks when runs and parts move', () => {
+  const first = [part('B', 1), part('B', 2)]
+  const second = [part('B', 3), part('B', 4)]
+  const separator = part('A', 1)
+  const keys = tracks => presentQueue(tracks, 'season').groups.map(group => group.key)
+  const [firstKey, separatorKey, secondKey] = keys([...first, separator, ...second])
+  assert.notEqual(firstKey, secondKey)
+  assert.deepEqual(keys([...second, separator, first[1], first[0]]), [secondKey, separatorKey, firstKey])
+})

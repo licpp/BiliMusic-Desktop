@@ -61,8 +61,6 @@
 :root[data-layout="mobile"] .video-parts-list .video-part-meta > small { display:inline;color:var(--muted);font-size:12px;font-weight:400;font-variant-numeric:tabular-nums; }
 :root[data-layout="mobile"] .video-parts-list .video-part-play > .video-part-duration,
 :root[data-layout="mobile"] .video-part-play>svg { display:none; }
-:root[data-layout="mobile"] .video-parts-list .video-with-cover > .video-part-play { grid-template-columns:76px minmax(0,1fr);gap:12px;min-height:80px;padding:10px 4px; }
-:root[data-layout="mobile"] .video-parts-list .video-with-cover .video-part-index { width:76px;height:48px; }
 .lyric-search-fields { display:contents; }
 /* The media element stays in place; only its containing surface fills/rotates. */
 :root[data-video-fullscreen="true"] {
