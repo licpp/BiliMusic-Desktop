@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { subscribeMediaQuery } from './subscribeMediaQuery'
 
 type PageMotion = 'forward' | 'back' | 'switch' | 'player'
 
@@ -22,11 +23,9 @@ export function animatePage(element: HTMLElement, motion: PageMotion, touch: boo
   const animation = element.animate(frames, { duration, easing: 'cubic-bezier(.2,.75,.25,1)' })
   running.set(element, animation)
   const update = () => { if (preference.matches) animation.finish() }
-  if (preference.addEventListener) preference.addEventListener('change', update)
-  else preference.addListener(update)
+  const unsubscribe = subscribeMediaQuery(preference, update)
   const clean = () => {
-    if (preference.removeEventListener) preference.removeEventListener('change', update)
-    else preference.removeListener(update)
+    unsubscribe()
     if (running.get(element) === animation) running.delete(element)
   }
   if (animation.finished) void animation.finished.then(clean, clean)

@@ -1,5 +1,6 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { animateMarquee, marqueeMotion } from './marquee'
+import { subscribeMediaQuery } from './subscribeMediaQuery'
 
 export function useMarquee(
   viewport: RefObject<HTMLElement | null>, track: RefObject<HTMLElement | null>, copy: RefObject<HTMLElement | null>,
@@ -24,7 +25,7 @@ export function useMarquee(
     }
     const observer = new ResizeObserver(measure)
     observer.observe(heading); observer.observe(original)
-    reduced.addEventListener('change', measure)
+    const unsubscribe = subscribeMediaQuery(reduced, measure)
     document.addEventListener('visibilitychange', measure)
     window.addEventListener('pageshow', measure)
     window.addEventListener('focus', measure)
@@ -32,7 +33,7 @@ export function useMarquee(
     measure()
     return () => {
       disposed = true; stop?.(); observer.disconnect()
-      reduced.removeEventListener('change', measure)
+      unsubscribe()
       document.removeEventListener('visibilitychange', measure)
       window.removeEventListener('pageshow', measure)
       window.removeEventListener('focus', measure)

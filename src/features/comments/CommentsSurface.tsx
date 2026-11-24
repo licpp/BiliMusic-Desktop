@@ -1,15 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { lockAppForPortal } from '../../shared/overlayStack'
+import { subscribeMediaQuery } from '../../shared/subscribeMediaQuery'
 import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
 import { usePanelReveal } from '../../shared/usePanelReveal'
 import { useVerticalDismiss } from '../../shared/useVerticalDismiss'
 
 const mobileQuery = '(max-width: 960px)'
 function subscribeToLayout(listener: () => void) {
-  const media = window.matchMedia(mobileQuery)
-  media.addEventListener('change', listener)
-  return () => media.removeEventListener('change', listener)
+  return subscribeMediaQuery(window.matchMedia(mobileQuery), listener)
 }
 const isMobileLayout = () => window.matchMedia(mobileQuery).matches
 

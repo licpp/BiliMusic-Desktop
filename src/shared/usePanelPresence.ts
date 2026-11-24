@@ -1,4 +1,5 @@
 import { useLayoutEffect, useState } from 'react'
+import { subscribeMediaQuery } from './subscribeMediaQuery'
 
 export function usePanelPresence(open: boolean, exitMs: number) {
   const [retained, setRetained] = useState(open)
@@ -15,10 +16,10 @@ export function usePanelPresence(open: boolean, exitMs: number) {
     const finish = () => setRetained(false)
     const timer = window.setTimeout(finish, exitMs)
     const change = () => { if (motion.matches) finish() }
-    motion.addEventListener('change', change)
+    const unsubscribe = subscribeMediaQuery(motion, change)
     return () => {
       window.clearTimeout(timer)
-      motion.removeEventListener('change', change)
+      unsubscribe()
     }
   }, [open, exitMs])
   return open || retained

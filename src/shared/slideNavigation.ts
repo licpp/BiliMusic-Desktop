@@ -1,3 +1,5 @@
+import { subscribeMediaQuery } from './subscribeMediaQuery'
+
 export const transformX = (pixels: number) => `translate3d(${pixels}px,0,0)`
 const transformY = (pixels: number) => `translate3d(0,${pixels}px,0)`
 
@@ -20,14 +22,19 @@ export function slideNavigation(element: HTMLElement, from: number | string, to:
   ], options)
   const animation = move(element, from, to, opacity)
   const companion = linked && move(linked.element, linked.from, linked.to)
+  if (!animation.finished || (companion && !companion.finished)) {
+    try { settle() }
+    finally { companion?.cancel(); animation.cancel() }
+    return
+  }
   const update = () => {
     if (!preference.matches) return
     animation.finish()
     companion?.finish()
   }
-  preference.addEventListener('change', update)
+  const unsubscribe = subscribeMediaQuery(preference, update)
   const clean = () => {
-    preference.removeEventListener('change', update)
+    unsubscribe()
     companion?.cancel()
   }
   // Both animations share the document timeline, duration and easing.
