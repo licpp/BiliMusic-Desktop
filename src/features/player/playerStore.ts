@@ -1,5 +1,5 @@
 import { audioDiagnosticEngine, startDiagnosticTrace, type DiagnosticDetails } from '../../services/diagnostics'
-import { listVisibilityOrigins, entryAllowed, orderedQueueTarget, visibleCheckpoint, packQueueBase,unpackQueueBase,type VisibilityOrigin } from '../../domain/contentVisibility'
+import { listVisibilityOrigins, entryAllowed, orderedQueueTarget, visibleCheckpoint, unpackQueueBase,type VisibilityOrigin } from '../../domain/contentVisibility'
 import { ensureVisibility, useContentVisibility } from '../../services/contentVisibility'
 import { ShuffleDeck, type ShuffleState } from '../../domain/shuffle'
 import { indexOfflineTracks, isOfflineVideoRow, offlineEntries, useOfflinePlayback, waitForOfflineLibrary } from './offlinePlayback'
@@ -16,13 +16,14 @@ import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobile
 import { syncAndroidQueue } from './androidAudio'
 import { iosListenerAge, playIOSAudio, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
 import { create } from 'zustand'
-import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware'
+import { persist } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
 import { getTrackPlaybackPlan, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
 import { videoDetailFromTrack } from '../../services/mediaSources'
 import { getVideoPages } from '../../services/videoPages'
 import { getVideoParts } from '../../services/desktopApi'
 import { toTrack } from '../../services/collectionTrack'
+import { createPlayerSnapshotStorage } from './playerSnapshot'
 import { playbackPositionScope, readPlaybackPosition, usablePlaybackPosition, writePlaybackPosition } from './playbackPosition'
 import { automaticResumePolicy, automaticResumePosition, isCollectionPlayback, normalizeResumeThreshold, type ResumeThreshold } from './resumePolicy'
 import { preparePlaybackStart } from './playbackStart'
@@ -253,50 +254,7 @@ type PlayerSnapshotDraft = Pick<PlayerState,
   'progressSeconds' | 'durationSeconds' | 'volume' | 'shuffled' | 'repeatMode' | 'resumeThresholdSeconds'
 > & { offlineQueue?: boolean }
 
-let persistTimer: ReturnType<typeof setTimeout> | undefined
-let pendingSnapshot: { key: string; value: StorageValue<PlayerSnapshotDraft> } | undefined
-let snapshotQueue: Track[] | undefined
-let snapshotCurrent: string | undefined
-
-function flushPlayerSnapshot() {
-  clearTimeout(persistTimer)
-  persistTimer = undefined
-  const pending = pendingSnapshot
-  pendingSnapshot = undefined
-  if (!pending) return
-
-  const { queueBase, offlineQueue, ...state } = pending.value.state
-  const base = queueBase ?? state.queue
-  const queue = offlineQueue ? queueForOfflineSnapshot(state.queue, base) : state.queue
-  const saved = { ...state, ...packQueueBase(queue, base), queue }
-  try {
-    localStorage.setItem(pending.key, JSON.stringify({ state: saved, version: pending.value.version }))
-  } catch { /* Playback remains usable when storage is full. */ }
-}
-
-const playerStorage: PersistStorage<PlayerSnapshotDraft> = {
-  getItem(key) {
-    const value = localStorage.getItem(key)
-    return value === null ? null : JSON.parse(value)
-  },
-  setItem(key, value) {
-    const { queue, current } = value.state
-    const urgent = queue !== snapshotQueue || current?.id !== snapshotCurrent
-    snapshotQueue = queue
-    snapshotCurrent = current?.id
-    pendingSnapshot = { key, value }
-    if (urgent) flushPlayerSnapshot()
-    else persistTimer ??= setTimeout(flushPlayerSnapshot, 1000)
-  },
-  removeItem(key) {
-    if (pendingSnapshot?.key === key) {
-      clearTimeout(persistTimer)
-      persistTimer = undefined
-      pendingSnapshot = undefined
-    }
-    localStorage.removeItem(key)
-  },
-}
+const { storage: playerStorage, flush: flushPlayerSnapshot } = createPlayerSnapshotStorage<PlayerSnapshotDraft>()
 window.addEventListener('pagehide', () => { flushPosition(); flushPlayerSnapshot() })
 window.addEventListener('blur', () => { flushPosition(); flushPlayerSnapshot() })
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.hidden) { flushPosition(); flushPlayerSnapshot() } })
@@ -1082,14 +1040,6 @@ function reorderVisibleBase(state: PlayerState, queue: Track[]) {
   }))
   const visibleSlots = ordered.values()
   return base.map(track => ordered.has(track) ? visibleSlots.next().value! : track)
-}
-function queueForOfflineSnapshot(queue: Track[], base: Track[]) {
-  const baseById = new Map(base.map(track => [track.id, track]))
-  return queue.flatMap(track => {
-    const original = baseById.get(track.id)
-    // A downloaded first part may have the same ID as its unresolved video.
-    return original ? [isOfflineVideoRow(original) ? original : track] : []
-  })
 }
 function reprojectVisibility(offlineChanged = false) {
   const state = usePlayerStore.getState(), rules = useContentVisibility.getState().rules
