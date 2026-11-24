@@ -51,6 +51,7 @@ jobs:
       - run: npm run android:init
       # Optimized native code and stripped symbols; sign the release APK with the existing preview key.
       - run: npm run android:build
+      - run: node scripts/verify-frontend-build.mjs dist standard chrome105 android
       - name: Test media controls and native lyric rendering
         working-directory: src-tauri/gen/android
         run: ./gradlew :tauri-plugin-android-player:testReleaseUnitTest --no-daemon

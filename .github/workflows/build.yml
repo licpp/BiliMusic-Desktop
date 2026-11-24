@@ -28,6 +28,8 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run build:large-screen
+      - run: node scripts/verify-frontend-build.mjs dist standard safari13
+      - run: node scripts/verify-frontend-build.mjs dist-large-screen large-screen chrome66
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-build-targets
@@ -78,6 +80,8 @@ jobs:
           else
             npm run tauri build -- --bundles ${{ matrix.bundle }}
           fi
+      - name: Verify the packaged frontend target
+        run: node scripts/verify-frontend-build.mjs dist standard ${{ runner.os == 'Windows' && 'chrome105' || 'safari13' }}
       - name: Verify packaged macOS signature
         if: runner.os == 'macOS'
         shell: bash

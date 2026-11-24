@@ -41,6 +41,7 @@ jobs:
       - run: npm run ios:init
       - name: Build real-device archive without signing credentials
         run: npm run ios:build
+      - run: node scripts/verify-frontend-build.mjs dist standard safari13 ios
       - run: node scripts/ios-verify-acl.mjs
       - uses: actions/upload-artifact@v4
         with:

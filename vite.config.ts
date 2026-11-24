@@ -1,28 +1,39 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 function frontendProvenance(edition: string): Plugin {
   let target: string | string[] | false
+  let publicDir = ''
+  async function publicFiles(directory: string, prefix = ''): Promise<string[]> {
+    const entries = await readdir(directory, { withFileTypes: true })
+    const files = await Promise.all(entries.map(entry => {
+      const name = prefix + entry.name
+      return entry.isDirectory() ? publicFiles(join(directory, entry.name), name + '/') : [name]
+    }))
+    return files.flat()
+  }
   return {
     name: 'bilimusic-frontend-provenance',
     apply: 'build',
     configResolved(config) {
       target = config.build.target
+      publicDir = config.build.copyPublicDir ? config.publicDir : ''
     },
     async writeBundle(options, bundle) {
       if (!options.dir) throw new Error('Missing frontend output directory')
       const folder = options.dir
-      const filenames = Object.keys(bundle).sort()
+      const copiedFiles = publicDir ? await publicFiles(publicDir) : []
+      const filenames = [...new Set([...Object.keys(bundle), ...copiedFiles])].sort()
       const files = Object.fromEntries(await Promise.all(filenames.map(async name => [
         name,
         createHash('sha256').update(await readFile(join(folder, name))).digest('hex'),
       ])))
       await writeFile(join(folder, 'frontend-build.json'), JSON.stringify({
         edition,
-        platform: process.env.TAURI_ENV_PLATFORM || 'shared',
+        platform: process.env.TAURI_ENV_PLATFORM || process.env.VITE_BILIMUSIC_PLATFORM || 'shared',
         target,
         files,
       }, null, 2))
