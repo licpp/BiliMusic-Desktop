@@ -91,6 +91,7 @@ npm run ohos:build    # 共用前端构建 + ARM64 HAP
 - [Android](ANDROID.md)
 - [iOS 自签与构建](iOS-self-sign.md)
 - [坚果云同步](CLOUD_SYNC_USAGE.md)
+- [历史版本同步升级与回退](SYNC_HISTORICAL_UPGRADE.md)
 - [听歌统计](PLAYBACK_STATISTICS.md)
 - [播放状态所有权](PLAYBACK_STATE_OWNERSHIP.md)
 
