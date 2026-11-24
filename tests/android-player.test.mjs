@@ -21,7 +21,7 @@ const output = await build({
       export const syncAndroidQueue = async (...args) => globalThis.nativeTest.queues.push(args);
       export const setAndroidCollection = async () => {};
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
-      export const snapshotAndroidAudio = async () => globalThis.nativeTest.state || ({});
+      export const snapshotAndroidAudio = async () => globalThis.nativeTest.snapshot ? globalThis.nativeTest.snapshot() : globalThis.nativeTest.state || ({});
       export const androidPlaybackClock = () => 0;
       export const controlAndroidAudio = async (...args) => {
         globalThis.nativeTest.controls.push(args);
@@ -34,11 +34,12 @@ const output = await build({
 })
 function setup() {
   const listeners = {}
-  globalThis.window = { addEventListener(type, callback) { listeners[type] = callback }, dispatchEvent() {}, setInterval: () => 0 }
+  const events = []
+  globalThis.window = { addEventListener(type, callback) { listeners[type] = callback }, dispatchEvent(event) { events.push(event.type) }, setInterval: () => 0 }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('Android must not create WebView audio') } }
-  globalThis.nativeTest = { controls: [], plays: [], queues: [], listeners, resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
+  globalThis.nativeTest = { controls: [], plays: [], queues: [], listeners, events, resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
   const m = { exports: {} }; new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), m, m.exports)
   return m.exports.usePlayerStore
 }
@@ -93,6 +94,33 @@ test('Android retains the paused position when returning to the app detects the 
   assert.equal(nativeTest.plays.length, 2)
   assert.equal(nativeTest.plays[1][2], 35)
   assert.ok(!nativeTest.controls.some(([action]) => action === 'resume'))
+})
+
+test('Android preserves a confirmed playback state when a pending foreground probe fails', async () => {
+  const store = setup()
+  await store.getState().play(track)
+  nativeTest.event({ id: track.id, status: 'playing', position: 6 })
+  let rejectProbe
+  nativeTest.snapshot = () => new Promise((_, reject) => { rejectProbe = reject })
+  nativeTest.listeners.focus()
+  await new Promise(resolve => setImmediate(resolve))
+  nativeTest.event({ id: track.id, status: 'playing', position: 7 })
+
+  rejectProbe(new Error('bridge unavailable'))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(store.getState().status, 'playing')
+  assert.equal(store.getState().progressSeconds, 7)
+  assert.equal(store.getState().error, null)
+  assert.ok(!nativeTest.events.includes('bilimusic-playback-reconciled'))
+
+  nativeTest.snapshot = async () => ({ id: track.id, status: 'playing', position: 8 })
+  nativeTest.listeners.focus()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(store.getState().progressSeconds, 8)
+  assert.equal(nativeTest.events.filter(event => event === 'bilimusic-playback-reconciled').length, 1)
+  await store.getState().toggle()
+  assert.equal(nativeTest.controls.at(-1)[0], 'pause')
+  assert.equal(nativeTest.plays.length, 1)
 })
 
 test('Android can cancel a pending resume before a stale service error returns', async () => {

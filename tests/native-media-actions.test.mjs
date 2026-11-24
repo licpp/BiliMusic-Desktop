@@ -2,7 +2,7 @@ import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
-const built=await build({entryPoints:['src/features/player/nativeAudio.ts','src/features/player/iosAudio.ts'],outdir:'out',bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'ipc',setup(b){b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const invoke=(...args)=>globalThis.mediaIPC(...args);export const addPluginListener=()=>{throw new Error("unexpected listener")};'}))}}]})
+const built=await build({entryPoints:['src/features/player/nativeAudio.ts','src/features/player/iosAudio.ts'],outdir:'out',bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'ipc',setup(b){b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const invoke=(...args)=>globalThis.mediaIPC(...args);export const addPluginListener=(...args)=>globalThis.iosListenerIPC(...args);'}))}}]})
 function load(name) {
  const m={exports:{}}
  const file=built.outputFiles.find(file=>file.path.endsWith(`/${name}.js`))
@@ -65,6 +65,55 @@ test('a delayed stopped snapshot cannot retire a replacement Android service', a
  h.receive({ engineInstanceId: 'new-service', sessionId: 'new', id: 'a', status: 'playing' })
  reply({ stopped: true })
  assert.equal((await snapshot).engineInstanceId, 'new-service')
+})
+
+test('iOS releases an observation registration that finishes after its replacement', async () => {
+ const { observeIOSAudio, restartIOSAudioObservation } = load('iosAudio')
+ const pending = [], active = new Map(), events = []
+ globalThis.iosListenerIPC = (_plugin, _event, callback) => new Promise(resolve => {
+  const id = pending.length + 1
+  pending.push(() => {
+   active.set(id, callback)
+   resolve({ unregister: async () => { active.delete(id) } })
+  })
+ })
+ const initial = observeIOSAudio(state => events.push(state.position))
+ const replacement = restartIOSAudioObservation()
+ pending[1]()
+ await replacement
+ pending[0]()
+ await initial
+ assert.deepEqual([...active.keys()], [2])
+ active.get(2)({ id: 'song', status: 'playing', position: 12 })
+ const third = restartIOSAudioObservation()
+ pending[2]()
+ await third
+ assert.deepEqual([...active.keys()], [3])
+ active.get(3)({ id: 'song', status: 'playing', position: 13 })
+ assert.deepEqual(events, [12, 13])
+})
+
+test('iOS retries an earlier listener removal on the next observation bind', async () => {
+ const { observeIOSAudio, restartIOSAudioObservation } = load('iosAudio')
+ const active = new Set(), events = []
+ let sequence = 0, rejectRemoval = true, obsoleteCallback
+ globalThis.iosListenerIPC = async (_plugin, _event, callback) => {
+  const id = ++sequence
+  active.add(id)
+  if (id === 1) obsoleteCallback = callback
+  return { unregister: async () => {
+   if (id === 1 && rejectRemoval) throw new Error('bridge suspended')
+   active.delete(id)
+  } }
+ }
+ await observeIOSAudio(state => events.push(state))
+ await restartIOSAudioObservation()
+ obsoleteCallback({ id: 'obsolete', status: 'paused' })
+ assert.deepEqual(events, [])
+ assert.deepEqual([...active], [1, 2])
+ rejectRemoval = false
+ await restartIOSAudioObservation()
+ assert.deepEqual([...active], [3])
 })
 
 test('mobile playback publishes track metadata during preparation and carries it into playback',async()=>{

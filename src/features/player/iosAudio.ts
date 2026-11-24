@@ -13,36 +13,55 @@ import type { AutomaticResumePolicy,ResumeThreshold } from './resumePolicy'
 import type { NativeAudioState as IOSAudioState, PlayerSnapshot } from './contracts'
 export type { NativeAudioState as IOSAudioState } from './contracts'
 
-let ready: Promise<unknown> | undefined
+let ready: Promise<void> | undefined
 let listener: PluginListener | undefined
+const retiredListeners = new Set<PluginListener>()
+const removingListeners = new Set<PluginListener>()
 let consumer: ((state: PlayerSnapshot) => void) | undefined
 let listenerGeneration = 0
 let lastEventAt = performance.now()
 const clock = createNativeClock()
 const order = createSnapshotOrder()
+
+function removeRetiredListeners() {
+  for (const value of retiredListeners) {
+    if (removingListeners.has(value)) continue
+    removingListeners.add(value)
+    void value.unregister().then(() => { retiredListeners.delete(value) }, () => undefined)
+      .finally(() => removingListeners.delete(value))
+  }
+}
+
 function bindIOSAudio() {
   const generation = ++listenerGeneration
-  return addPluginListener<IOSAudioState>('ios-player', 'state', state => {
+  if (listener) retiredListeners.add(listener)
+  listener = undefined
+  removeRetiredListeners()
+  ready = addPluginListener<IOSAudioState>('ios-player', 'state', state => {
     if (generation !== listenerGeneration) return
     if (!order.accept(state)) return
     lastEventAt = performance.now()
     clock.update(state, performance.now())
     consumer?.(normalizeNativeSnapshot(state))
-  }).then(value => { listener = value; return value }).catch(error => { if (generation === listenerGeneration) ready = undefined; throw error })
+  }).then(value => {
+    if (generation !== listenerGeneration) {
+      retiredListeners.add(value)
+      removeRetiredListeners()
+      return
+    }
+    listener = value
+    lastEventAt = performance.now()
+  }).catch(error => {
+    if (generation === listenerGeneration) ready = undefined
+    throw error
+  })
+  return ready
 }
 export function observeIOSAudio(callback: (state: PlayerSnapshot) => void) {
   consumer = callback
-  if (!ready) ready = bindIOSAudio()
-  return ready
+  return ready ?? bindIOSAudio()
 }
-export async function restartIOSAudioObservation() {
-  listenerGeneration += 1
-  if (listener) void listener.unregister().catch(() => undefined)
-  listener = undefined; ready = undefined
-  ready = bindIOSAudio()
-  await ready
-  lastEventAt = performance.now()
-}
+export const restartIOSAudioObservation = bindIOSAudio
 export const iosListenerAge = () => performance.now() - lastEventAt
 export const setIOSCollection = (id: string, collectionRef?: string) => invoke('plugin:ios-player|control', { action: 'collection', id, collectionRef })
 export const syncIOSQueue = async (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, resumeThresholdSeconds: ResumeThreshold = 0, source?: QueueSource) => invoke('plugin:ios-player|queue', await nativeQueueEnvelope(tracks, repeatMode, shuffled, resumeThresholdSeconds, source))

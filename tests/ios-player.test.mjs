@@ -21,12 +21,12 @@ const output = await build({
     ` : path === 'platform' ? 'export const isAndroid = false; export const isMobile = true; export const isIOS = true; export const isOHOS = false' : path === './iosAudio' ? `
       export const syncIOSQueue = async (...args) => { globalThis.iosTest.queues.push(args); if(globalThis.iosTest.queueDelay) await globalThis.iosTest.queueDelay; };
       export const playIOSAudio = async (...args) => globalThis.iosTest.plays.push(args);
-      export const iosListenerAge = () => 0;
-      export const restartIOSAudioObservation = async () => {};
+      export const iosListenerAge = () => globalThis.iosTest.listenerAge ?? 0;
+      export const restartIOSAudioObservation = async () => { globalThis.iosTest.rebinds++ };
     ` : `
       export const setMobileCollection = async () => {};
       export const observeMobileAudio = cb => { globalThis.iosTest.event = state => { globalThis.iosTest.state = state; cb(state) }; return Promise.resolve() };
-      export const snapshotMobileAudio = async () => globalThis.iosTest.state || ({});
+      export const snapshotMobileAudio = async () => globalThis.iosTest.snapshot ? globalThis.iosTest.snapshot() : globalThis.iosTest.state || ({});
       export const mobilePlaybackClock = () => 0;
       export const controlMobileAudio = async (...args) => { globalThis.iosTest.controls.push(args); if (args[0] === 'stop' && globalThis.iosTest.stop) await globalThis.iosTest.stop(); };
       export const prepareMobileAudio = async t => globalThis.iosTest.controls.push(['prepare', t.id]);
@@ -35,11 +35,12 @@ const output = await build({
   } }],
 })
 function setup() {
-  globalThis.window = { addEventListener() {}, dispatchEvent(event) { globalThis.iosTest.events.push(event.type) }, setInterval() { return 0 } }
+  const listeners = new Map()
+  globalThis.window = { addEventListener(type, callback) { listeners.set(type, callback) }, dispatchEvent(event) { globalThis.iosTest.events.push(event.type) }, setInterval() { return 0 } }
   globalThis.document = { addEventListener() {} }
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   globalThis.Audio = class { constructor() { throw new Error('iOS must not create WebView audio') } }
-  globalThis.iosTest = { events: [], controls: [], plays: [], queues: [], resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
+  globalThis.iosTest = { events: [], controls: [], plays: [], queues: [], listeners, rebinds: 0, resolve: async t => `http://127.0.0.1:1234/token/${t.id}` }
   const m = { exports: {} }; new Function('require', 'module', 'exports', output.outputFiles[0].text)(createRequire(import.meta.url), m, m.exports)
   return m.exports
 }
@@ -66,6 +67,24 @@ test('iOS reconciles background native track changes without resolving or playin
   assert.equal(s.getState().status, 'playing')
   assert.equal(s.getState().progressSeconds, 3)
   assert.equal(iosTest.plays.length, 1)
+})
+
+test('iOS coalesces foreground notification and preserves its rebind request during a pending snapshot', async () => {
+  const { usePlayerStore: store } = setup()
+  await store.getState().play(track('1'))
+  let finishProbe
+  iosTest.snapshot = () => new Promise(resolve => { finishProbe = resolve })
+  iosTest.listeners.get('focus')()
+  await new Promise(resolve => setImmediate(resolve))
+  iosTest.listenerAge = 3000
+  iosTest.listeners.get('pageshow')()
+  iosTest.listeners.get('focus')()
+  iosTest.snapshot = async () => ({ id: '1', status: 'playing', position: 9 })
+  finishProbe({ id: '1', status: 'playing', position: 8 })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(iosTest.rebinds, 1)
+  assert.equal(store.getState().progressSeconds, 9)
+  assert.equal(iosTest.events.filter(event => event === 'bilimusic-playback-reconciled').length, 1)
 })
 test('iOS cancelling URL resolution prevents late native autoplay', async () => {
   const { usePlayerStore: s } = setup(); let resolve

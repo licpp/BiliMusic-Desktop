@@ -876,29 +876,88 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
     ...(state.duration ? { durationSeconds: state.duration } : {}), ...(error === undefined ? {} : { error }) })
 }
 let nativeReady: Promise<void> | undefined
-function ensureNativeReady() {
+function ensureNativeReady(rebind = false) {
   if (!isMobile) return Promise.resolve()
-  return nativeReady ??= observeMobileAudio(onNativeState)
-    .then(async () => onNativeState(await snapshotMobileAudio()))
-    .catch(error => { nativeReady = undefined; throw error })
+  if (nativeReady && !rebind) return nativeReady
+  const epoch = accountEpoch()
+  const readiness = (rebind ? restartIOSAudioObservation() : observeMobileAudio(onNativeState))
+    .then(async () => {
+      const snapshot = await snapshotMobileAudio()
+      if (nativeReady === readiness && accountEpoch() === epoch) onNativeState(snapshot)
+    })
+    .catch(error => {
+      if (nativeReady === readiness) nativeReady = undefined
+      throw error
+    })
+  nativeReady = readiness
+  return readiness
 }
-void ensureNativeReady().then(() => applyLoudnessSetting()).catch(nativeError)
-let reconciliationPending = false
-let foregroundPending = false
+
+let failedObservationEpoch: number | undefined
+function reportNativeObservationFailure(epoch: number) {
+  if (epoch !== accountEpoch() || failedObservationEpoch === epoch) return
+  failedObservationEpoch = epoch
+  startDiagnosticTrace('playback', { engine: audioDiagnosticEngine() }).emit('control', 'failed', { code: 'native_observation_failed' })
+}
+
+if (isMobile) {
+  const epoch = accountEpoch()
+  void ensureNativeReady().then(() => {
+    if (epoch !== accountEpoch()) return
+    return applyLoudnessSetting().catch(() => {
+      if (epoch === accountEpoch()) startDiagnosticTrace('playback', { engine: audioDiagnosticEngine() }).emit('control', 'failed', { code: 'native_loudness_unavailable' })
+    })
+  }, () => reportNativeObservationFailure(epoch))
+}
+
+async function refreshNativePlayback(epoch: number, rebind: boolean) {
+  const refreshesSnapshot = !nativeReady || rebind
+  await ensureNativeReady(rebind)
+  if (!refreshesSnapshot) {
+    const snapshot = await snapshotMobileAudio()
+    if (epoch === accountEpoch()) onNativeState(snapshot)
+  }
+  return epoch === accountEpoch() && !accountResetting
+}
+
+let reconciling = false
+let rebinding = false
+let rebindPending = false
+let foregroundPending: number | undefined
 async function reconcileMobilePlayback(rebind = false, foreground = false) {
-  foregroundPending ||= foreground
-  if (reconciliationPending) return
-  reconciliationPending = true
+  if (foreground) foregroundPending = accountEpoch()
+  if (rebind && !rebinding) rebindPending = true
+  if (reconciling) return
+  reconciling = true
   try {
-    if (isIOS && rebind) await restartIOSAudioObservation()
-    else await ensureNativeReady()
-    onNativeState(await snapshotMobileAudio())
-  } catch (error) {
-    if (isIOS && !rebind) {
-      try { await restartIOSAudioObservation(); onNativeState(await snapshotMobileAudio()); return } catch { /* report the original failure */ }
-    }
-    nativeError(error)
-  } finally { reconciliationPending = false; if (foregroundPending) { foregroundPending = false; window.dispatchEvent(new Event('bilimusic-playback-reconciled')) } }
+    let epoch: number
+    do {
+      epoch = accountEpoch()
+      rebinding = rebindPending
+      rebindPending = false
+      let applied = false
+      try {
+        applied = await refreshNativePlayback(epoch, rebinding).catch(error => {
+          if (!isIOS || rebinding || epoch !== accountEpoch()) throw error
+          rebinding = true
+          rebindPending = false
+          return refreshNativePlayback(epoch, true)
+        })
+      } catch {
+        reportNativeObservationFailure(epoch)
+      }
+      if (applied) {
+        failedObservationEpoch = undefined
+        if (foregroundPending === epoch && !rebindPending && !document.hidden) {
+          foregroundPending = undefined
+          window.dispatchEvent(new Event('bilimusic-playback-reconciled'))
+        }
+      }
+    } while (rebindPending || (foregroundPending === accountEpoch() && foregroundPending !== epoch))
+  } finally {
+    reconciling = false
+    rebinding = false
+  }
 }
 if (isMobile) {
   const resume = () => { if (!document.hidden) void reconcileMobilePlayback(isIOS && iosListenerAge() > 2_000, true) }
