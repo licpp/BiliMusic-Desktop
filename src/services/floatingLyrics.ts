@@ -47,6 +47,16 @@ export async function setFloatingLyrics(enabled: boolean) {
 
 export function startFloatingLyrics() {
   if (!inDesktopShell) return
+  let disposed = false
+  const stop: (() => void)[] = []
+  const onWindow = (type: string, callback: EventListener) => {
+    window.addEventListener(type, callback)
+    stop.push(() => window.removeEventListener(type, callback))
+  }
+  const onDesktop = <T,>(type: string, callback: (payload: T) => void) => {
+    const subscription = listen<T>(type, ({ payload }) => { if (!disposed) callback(payload) }).catch(() => undefined)
+    stop.push(() => { void subscription.then(unlisten => unlisten?.()).catch(() => undefined) })
+  }
   let revision = 0, trackKey = '', stored: StoredLyrics | null = null, lines: LyricLine[] = [], lastNative = ''
   let pending = false, dirty = false
   let displaySource: LyricLine[] | undefined, displayLines: LyricLine[] = [], timelineRevision = 0
@@ -55,6 +65,7 @@ export function startFloatingLyrics() {
     return `${accountEpoch()}:${id}:${isAndroid ? nativeLyricPlaybackSession(id) ?? '' : ''}`
   }
   const publish = async () => {
+    if (disposed) return
     if (pending) { dirty = true; return }
     const state = usePlayerStore.getState(), current = state.current, style = useFloatingPreferences.getState()
     const captions=useSubtitleState.getState()
@@ -91,6 +102,7 @@ export function startFloatingLyrics() {
     }
   }
   const load = async () => {
+    if (disposed) return
     const key = currentKey(), request = ++revision
     trackKey=key; stored=null; lines=[]; void publish()
     const id = usePlayerStore.getState().current?.id
@@ -111,35 +123,36 @@ export function startFloatingLyrics() {
     if (saved.trackId !== usePlayerStore.getState().current?.id) return
     ++revision; stored=saved; lines=parseLrc(saved.rawText).length ? storedLyricLines(saved) : []; void publish()
   }
-  usePlayerStore.subscribe((state,previous) => {
+  stop.push(usePlayerStore.subscribe((state,previous) => {
     if (currentKey() !== trackKey) void load()
     else if (state.current?.title !== previous.current?.title || state.current?.artist !== previous.current?.artist ||
       isIOS && state.status === 'playing' && previous.status !== 'playing' ||
       !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
-  })
+  }))
   const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
-  useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()})
-  window.addEventListener('bilimusic-floating-lyrics-change',configure)
+  stop.push(useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()}))
+  onWindow('bilimusic-floating-lyrics-change',configure)
   configure()
-  useThemeStore.subscribe(() => { void publish() })
-  useSubtitleState.subscribe(() => { void publish() })
-  window.addEventListener('bilimusic-lyrics-updated',updated)
-  window.addEventListener('bilimusic-lyric-bias',updated)
-  window.addEventListener('bilimusic-floating-style',event=>{const value=(event as CustomEvent<{fontSize?:number;locked?:boolean}>).detail,current=useFloatingPreferences.getState();const patch:Partial<{fontSize:number;locked:boolean}>={};if(value.fontSize!==undefined&&value.fontSize!==current.fontSize)patch.fontSize=value.fontSize;if(value.locked!==undefined&&value.locked!==current.locked)patch.locked=value.locked;if(Object.keys(patch).length)current.update(patch)})
-  window.addEventListener('bilimusic-native-floating',event=>useFloatingLyrics.setState({enabled:(event as CustomEvent<boolean>).detail}))
-  window.addEventListener('bilimusic-floating-lyrics-change',()=>{lastNative='';void publish()})
-  window.addEventListener('bilimusic-account-changing',()=>{++revision;stored=null;lines=[];lastNative='';void setFloatingLyrics(false);void publish()})
+  stop.push(useThemeStore.subscribe(() => { void publish() }))
+  stop.push(useSubtitleState.subscribe(() => { void publish() }))
+  onWindow('bilimusic-lyrics-updated',updated)
+  onWindow('bilimusic-lyric-bias',updated)
+  onWindow('bilimusic-floating-style',event=>{const value=(event as CustomEvent<{fontSize?:number;locked?:boolean}>).detail,current=useFloatingPreferences.getState();const patch:Partial<{fontSize:number;locked:boolean}>={};if(value.fontSize!==undefined&&value.fontSize!==current.fontSize)patch.fontSize=value.fontSize;if(value.locked!==undefined&&value.locked!==current.locked)patch.locked=value.locked;if(Object.keys(patch).length)current.update(patch)})
+  onWindow('bilimusic-native-floating',event=>useFloatingLyrics.setState({enabled:(event as CustomEvent<boolean>).detail}))
+  onWindow('bilimusic-floating-lyrics-change',()=>{lastNative='';void publish()})
+  onWindow('bilimusic-account-changing',()=>{++revision;stored=null;lines=[];lastNative='';void setFloatingLyrics(false);void publish()})
   if (!isMobile) {
-    void listen<FloatingPreferences>('floating-lyrics-preferences',event=>{const current=useFloatingPreferences.getState(),value=readFloatingPreferences(JSON.stringify(event.payload));if(Object.entries(value).some(([key,next])=>current[key as keyof FloatingPreferences]!==next))current.update(value)})
-    void listen<string>('floating-lyrics-control', event => {
+    onDesktop<FloatingPreferences>('floating-lyrics-preferences',payload=>{const current=useFloatingPreferences.getState(),value=readFloatingPreferences(JSON.stringify(payload));if(Object.entries(value).some(([key,next])=>current[key as keyof FloatingPreferences]!==next))current.update(value)})
+    onDesktop<string>('floating-lyrics-control', action => {
       const player=usePlayerStore.getState()
-      if(event.payload==='toggle')void player.toggle()
-      else if(event.payload==='next')void player.next()
-      else if(event.payload==='previous')void player.previous()
+      if(action==='toggle')void player.toggle()
+      else if(action==='next')void player.next()
+      else if(action==='previous')void player.previous()
     })
-    void listen('floating-lyrics-unlock',()=>useFloatingPreferences.getState().update({locked:false}))
-    void listen('floating-lyrics-closed',()=>useFloatingLyrics.setState({enabled:false}))
-    window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
+    onDesktop('floating-lyrics-unlock',()=>useFloatingPreferences.getState().update({locked:false}))
+    onDesktop('floating-lyrics-closed',()=>useFloatingLyrics.setState({enabled:false}))
+    const timer = window.setInterval(()=>{if(useFloatingLyrics.getState().enabled)void publish()},250)
+    stop.push(() => window.clearInterval(timer))
   }
   if (isMobile && !isIOS) void setSystemTitleLyrics(localStorage.getItem('system-title-lyrics') === 'true').catch(() => undefined)
   if (isMobile) {
@@ -147,13 +160,19 @@ export function startFloatingLyrics() {
     const syncSubtitles = () => {
       const enabled = localStorage.getItem('lyrics-subtitles') === 'true'
       const language = readSubtitlePreference()?.language ?? ''
-      pendingSubtitles = pendingSubtitles.then(() => nativeLyrics({ action: 'subtitle-preference', enabled, language }))
+      pendingSubtitles = pendingSubtitles.then(() => !disposed && nativeLyrics({ action: 'subtitle-preference', enabled, language }))
         .catch(() => undefined)
     }
-    window.addEventListener('bilimusic-subtitle-preference', syncSubtitles)
+    onWindow('bilimusic-subtitle-preference', syncSubtitles)
     syncSubtitles()
   }
   void load()
+  return () => {
+    if (disposed) return
+    disposed = true
+    ++revision
+    for (const unsubscribe of stop) unsubscribe()
+  }
 }
 
 let systemTitleWrite: Promise<void> = Promise.resolve()

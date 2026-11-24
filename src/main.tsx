@@ -1,17 +1,11 @@
 import './shared/runtimeCompatibility'
 import { retryOnceUnlessBiliPaused } from './services/biliRequestStatus'
 import './styles/components/content-visibility.css'
-import { startUpdateChecks } from './services/updates'
 import { installAccountQueryScope } from './services/queryKeys'
 import { FloatingLyricsUnlockWindow } from './features/lyrics/FloatingLyricsUnlockWindow'
 import { SubtitleController } from './features/lyrics/useBiliSubtitles'
 import { FloatingLyricsWindow } from './features/lyrics/FloatingLyricsWindow'
-import { startFloatingLyrics } from './services/floatingLyrics'
-import { startCreatorQueue } from './services/creatorQueue'
-import { installLocalPlayback } from './app/localPlayback'
-import { startPreloadingNextTrack } from './features/player/preloadNextTrack'
-import { startListeningStatistics } from './services/listeningStatistics'
-import { startCloudSync } from './services/sync'
+import { installMainWindowRuntime } from './app/mainWindowRuntime'
 import { StrictMode, useEffect } from 'react'
 import { installStartupDiagnostics } from './services/diagnostics'
 import { createRoot } from 'react-dom/client'
@@ -22,7 +16,6 @@ import { installOHOSWindowInsets } from './services/immersiveWindow'
 import { installOverlayBack } from './shared/overlayStack'
 import { installMobileKeyboard } from './shared/mobileKeyboard'
 import { installMobileGestures } from './shared/mobileGestures'
-import { startAutomaticLyrics } from './features/lyrics/automaticLyrics'
 import { TrayPlayer } from './features/player/TrayPlayer'
 import './styles/global.css'
 import './styles/theme.css'
@@ -47,7 +40,6 @@ const queryClient = new QueryClient({
   },
 })
 
-installAccountQueryScope(queryClient)
 const floatingMode = new URLSearchParams(location.search).get('window')
 const floating = !isMobile && (floatingMode === 'lyrics' || floatingMode === 'lyrics-unlock')
 const tray = !isMobile && floatingMode === 'tray'
@@ -57,16 +49,8 @@ if (tray) {
 }
 const diagnoseReady = !floating && !tray ? installStartupDiagnostics() : undefined
 function DiagnosticBoot() { useEffect(() => { diagnoseReady?.() }, []); return null }
-if (!floating && !tray) {
-  installLocalPlayback(queryClient)
-  startUpdateChecks()
-  startCloudSync(queryClient)
-  startAutomaticLyrics()
-  startListeningStatistics()
-  startPreloadingNextTrack()
-  startCreatorQueue()
-  startFloatingLyrics()
-}
+const stopRuntime = floating || tray ? installAccountQueryScope(queryClient) : installMainWindowRuntime(queryClient)
+import.meta.hot?.dispose(stopRuntime)
 function mount() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode><QueryClientProvider client={queryClient}>{tray ? <TrayPlayer/> : floating ? floatingMode === 'lyrics-unlock' ? <FloatingLyricsUnlockWindow/> : <FloatingLyricsWindow/> : <><SubtitleController/><App/><DiagnosticBoot/></>}</QueryClientProvider></StrictMode>,

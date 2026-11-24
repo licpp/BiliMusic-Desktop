@@ -4,7 +4,7 @@ import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 
 const compiled = await build({
-  entryPoints: ['src/services/creatorQueue.ts'], bundle: true, write: false, format: 'cjs', platform: 'node',
+  entryPoints: ['src/features/player/creatorQueue.ts'], bundle: true, write: false, format: 'cjs', platform: 'node',
   plugins: [{ name: 'queue-boundaries', setup(builder) {
     builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: 'invoke', namespace: 'fixture' }))
     builder.onResolve({ filter: /playerStore$/ }, () => ({ path: 'store', namespace: 'fixture' }))
@@ -14,7 +14,11 @@ const compiled = await build({
       invoke: 'export const invoke=(...args)=>globalThis.creatorQueueTest.invoke(...args)',
       store: `
         export const usePlayerStore = {
-          subscribe(fn) { globalThis.creatorQueueTest.listener = fn },
+          subscribe(fn) {
+            const fixture = globalThis.creatorQueueTest
+            fixture.listener = fn
+            return () => { fixture.listener = undefined }
+          },
           getState: () => globalThis.creatorQueueTest.state,
         }
         export function appendCreatorQueuePage(expected, tracks, total) {
@@ -33,7 +37,7 @@ function setup(invoke) {
   globalThis.creatorQueueTest=fixture
   const module={exports:{}}
   new Function('require','module','exports',compiled.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports)
-  module.exports.startCreatorQueue()
+  fixture.stop = module.exports.startCreatorQueue()
   return fixture
 }
 const response={data:{list:{vlist:[{bvid:'next'}]},page:{count:60}}}
@@ -59,4 +63,15 @@ test('a newly selected search queue starts its own request after the old request
   requests[1].resolve(response)
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(f.commits[1].expected.source, f.state.queueSource)
+})
+
+test('creator queue disposal releases its subscription and ignores a catalog reply already in flight', async () => {
+  let finish
+  const f = setup(() => new Promise(resolve => { finish = resolve }))
+  const pending = f.listener(f.state)
+  f.stop()
+  finish(response)
+  await pending
+  assert.equal(f.listener, undefined)
+  assert.equal(f.commits.length, 0)
 })

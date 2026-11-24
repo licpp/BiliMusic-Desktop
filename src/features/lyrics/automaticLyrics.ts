@@ -12,12 +12,13 @@ import { chooseAutomaticLyrics } from '../../domain/automaticLyrics'
 
 export function startAutomaticLyrics() {
   if (!inDesktopShell) return
+  let active = true
   const attempted = new Map<string, number>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let scheduled = ''
   const keyFor = (track: Track) => `${accountEpoch()}:${JSON.stringify([track.id, track.title, track.artist, track.source?.uploaderName, track.durationSeconds])}`
   const run = async (track: Track, key: string) => {
-    const valid = () => { const current = usePlayerStore.getState().current; return current !== null && keyFor(current) === key }
+    const valid = () => { const current = usePlayerStore.getState().current; return active && current !== null && keyFor(current) === key }
     try {
       if (await getStoredLyrics(track.id) || !valid()) return
       let candidate: LyricCandidate | undefined
@@ -52,5 +53,5 @@ export function startAutomaticLyrics() {
   }
   const unsubscribe = usePlayerStore.subscribe(schedule)
   schedule()
-  return () => { clearTimeout(timer); unsubscribe() }
+  return () => { active = false; clearTimeout(timer); unsubscribe() }
 }

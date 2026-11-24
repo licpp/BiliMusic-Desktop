@@ -43,8 +43,9 @@ export const waitForOfflineLibrary = () => pending
 export function startOfflinePlayback(load: () => Promise<Track[]>) {
   let revision = 0
   let changingAccount = false
+  let disposed = false
   const refresh = () => {
-    if (changingAccount) return
+    if (changingAccount || disposed) return
     const epoch = accountEpoch(), request = ++revision
     const current = () => request === revision && epoch === accountEpoch()
     const update = (offline: boolean) => {
@@ -67,22 +68,36 @@ export function startOfflinePlayback(load: () => Promise<Track[]>) {
       update(navigator.onLine === false)
     }
   }
-  window.addEventListener('online', refresh)
-  window.addEventListener('offline', refresh)
-  window.addEventListener('bilimusic-account-changing', () => {
+  const accountChanging = () => {
     changingAccount = true
     revision++
     pending = undefined
     useOfflinePlayback.setState({ library: null })
-  })
-  window.addEventListener('bilimusic-account-changed', () => {
+  }
+  const accountChanged = () => {
     changingAccount = false
     refresh()
-  })
-  window.addEventListener('bilimusic-offline-files-changed', refresh)
-  window.addEventListener('bilimusic-library-synced', refresh)
-  document.addEventListener('visibilitychange', () => {
+  }
+  const visibilityChanged = () => {
     if (!document.hidden && (isOHOS || navigator.onLine === false || useOfflinePlayback.getState().offline)) refresh()
-  })
+  }
+  const handlers = {
+    online: refresh,
+    offline: refresh,
+    'bilimusic-account-changing': accountChanging,
+    'bilimusic-account-changed': accountChanged,
+    'bilimusic-offline-files-changed': refresh,
+    'bilimusic-library-synced': refresh,
+  }
+  for (const [type, handler] of Object.entries(handlers)) window.addEventListener(type, handler)
+  document.addEventListener('visibilitychange', visibilityChanged)
   refresh()
+  return () => {
+    if (disposed) return
+    disposed = true
+    ++revision
+    pending = undefined
+    for (const [type, handler] of Object.entries(handlers)) window.removeEventListener(type, handler)
+    document.removeEventListener('visibilitychange', visibilityChanged)
+  }
 }

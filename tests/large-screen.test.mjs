@@ -37,11 +37,8 @@ test('large screen target preserves native Android identity and uses isolated ou
  assert.match(await readFile('scripts/android-large-screen.mjs','utf8'),/artifacts\/build\/large-screen\/source/)
  const entry=await readFile('src/large-screen/main.tsx','utf8')
  assert.doesNotMatch(entry,/installMobileGestures/)
- assert.match(entry,/startFloatingLyrics/,"native system-title lyrics share the mobile controller without enabling an overlay")
- assert.match(entry,/startCloudSync/)
- assert.match(entry,/startListeningStatistics/)
- assert.match(entry,/installLocalPlayback\(client\)/)
- assert.match(await readFile('src/main.tsx','utf8'),/installLocalPlayback\(queryClient\)/)
+ assert.match(entry,/installMainWindowRuntime\(client\)/)
+ assert.match(await readFile('src/main.tsx','utf8'),/floating \|\| tray \? installAccountQueryScope\(queryClient\) : installMainWindowRuntime\(queryClient\)/)
 })
 test('manifest preparation is repeatable after regenerating or preparing twice',()=>{
  const once=editionManifest(manifest,true)

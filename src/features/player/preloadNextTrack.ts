@@ -6,10 +6,12 @@ import { prepareSeasonQueueEntry, usePlayerStore } from './playerStore'
 
 export function startPreloadingNextTrack() {
   if (!inDesktopShell) return
+  let active = true
   let scheduled = ''
   let timer: number | undefined
 
   function update() {
+    if (!active) return
     const { current, queue, status, shuffled, repeatMode, progressSeconds, durationSeconds } = usePlayerStore.getState()
     let next
     if (!useOfflinePlayback.getState().offline && current && status === 'playing' && durationSeconds > 0 && (progressSeconds >= 3 || durationSeconds - progressSeconds <= 20) && !shuffled && repeatMode !== 'one') {
@@ -29,19 +31,27 @@ export function startPreloadingNextTrack() {
     const epoch = accountEpoch()
     timer = window.setTimeout(() => {
       void (async () => {
-        const target = entry.resolveParts ? (await prepareSeasonQueueEntry(entry))?.source : source
-        if (scheduled !== key || epoch !== accountEpoch()) return
+        if (!active || scheduled !== key || epoch !== accountEpoch()) return
+        const target = entry.resolveParts ? (await prepareSeasonQueueEntry(entry, () => active))?.source : source
+        if (!active || scheduled !== key || epoch !== accountEpoch()) return
         if (target && target.cid > 0) await invoke('bili_warm_playback', { bvid: target.bvid, cid: target.cid })
       })().catch(() => undefined)
     }, 800)
   }
 
-  usePlayerStore.subscribe((state, previous) => {
+  const unsubscribePlayer = usePlayerStore.subscribe((state, previous) => {
     if (state.current?.id !== previous.current?.id || state.queue !== previous.queue ||
       state.status !== previous.status || state.repeatMode !== previous.repeatMode ||
       state.shuffled !== previous.shuffled || Math.floor(state.progressSeconds) !== Math.floor(previous.progressSeconds)) update()
   })
-  useOfflinePlayback.subscribe((state, previous) => { if (state.offline !== previous.offline) update() })
+  const unsubscribeOffline = useOfflinePlayback.subscribe((state, previous) => { if (state.offline !== previous.offline) update() })
   document.addEventListener('visibilitychange', update)
   update()
+  return () => {
+    active = false
+    window.clearTimeout(timer)
+    document.removeEventListener('visibilitychange', update)
+    unsubscribePlayer()
+    unsubscribeOffline()
+  }
 }

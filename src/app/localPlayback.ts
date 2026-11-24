@@ -8,5 +8,5 @@ export function installLocalPlayback(client: QueryClient) {
   for (const key of ['library', 'playlists', 'home-recent', 'linked-bili-folder', 'imported-entries', 'collections', 'list-preferences', 'collection-progress', 'search-history']) {
     client.setQueryDefaults([key], { networkMode: 'always' })
   }
-  if (inDesktopShell) startOfflinePlayback(listOfflinePlayableTracks)
+  if (inDesktopShell) return startOfflinePlayback(listOfflinePlayableTracks)
 }

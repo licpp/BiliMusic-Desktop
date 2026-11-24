@@ -1,19 +1,20 @@
 import { invoke } from '@tauri-apps/api/core'
-import { appendCreatorQueuePage, usePlayerStore, type QueueSource } from '../features/player/playerStore'
-import { creatorVideoRow } from './mediaSources'
-import { accountEpoch } from './accountScope'
+import { appendCreatorQueuePage, usePlayerStore, type QueueSource } from './playerStore'
+import { creatorVideoRow } from '../../services/mediaSources'
+import { accountEpoch } from '../../services/accountScope'
 
 // Extend the existing queue before reaching the loaded page's last few videos.
 // The subscription survives navigation away from the creator page.
 export function startCreatorQueue() {
   let pending = false
+  let disposed = false
   let retrySource: QueueSource | undefined
   let retryAfter = 0
 
   async function loadNextPage(state: ReturnType<typeof usePlayerStore.getState>) {
     const source = state.queueSource
     if (
-      pending ||
+      disposed || pending ||
       (source === retrySource && Date.now() < retryAfter) ||
       !source?.creatorMid ||
       !state.current
@@ -52,6 +53,7 @@ export function startCreatorQueue() {
         page: expected.page + 1,
         keyword: source.creatorKeyword || '',
       })
+      if (disposed) return
       const tracks = result.data.list.vlist.map(video => creatorVideoRow(video, creatorMid, source.title))
       applied = appendCreatorQueuePage(expected, tracks, result.data.page.count)
     } catch {
@@ -60,9 +62,13 @@ export function startCreatorQueue() {
     } finally {
       pending = false
       const current = usePlayerStore.getState()
-      if (!applied && current.queueSource !== source) void loadNextPage(current)
+      if (!disposed && !applied && current.queueSource !== source) void loadNextPage(current)
     }
   }
 
-  usePlayerStore.subscribe(loadNextPage)
+  const unsubscribe = usePlayerStore.subscribe(loadNextPage)
+  return () => {
+    disposed = true
+    unsubscribe()
+  }
 }

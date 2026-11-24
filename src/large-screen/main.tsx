@@ -9,19 +9,11 @@ import 'core-js/es/promise/finally'
 import 'core-js/es/string/match-all'
 import 'core-js/web/queue-microtask'
 import '../styles/components/content-visibility.css'
-import { startFloatingLyrics } from '../services/floatingLyrics'
-import { startUpdateChecks } from '../services/updates'
-import { installAccountQueryScope } from '../services/queryKeys'
-import { installLocalPlayback } from '../app/localPlayback'
+import { installMainWindowRuntime } from '../app/mainWindowRuntime'
 import { StrictMode, useEffect } from 'react'
 import { installStartupDiagnostics } from '../services/diagnostics'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { startCloudSync } from '../services/sync'
-import { startAutomaticLyrics } from '../features/lyrics/automaticLyrics'
-import { startListeningStatistics } from '../services/listeningStatistics'
-import { startPreloadingNextTrack } from '../features/player/preloadNextTrack'
-import { startCreatorQueue } from '../services/creatorQueue'
 import { SubtitleController } from '../features/lyrics/useBiliSubtitles'
 import { isAndroid } from '../services/platform'
 import { installOverlayBack } from '../shared/overlayStack'
@@ -49,13 +41,6 @@ if (isAndroid) void controlMobileAudio('largeScreen', 1).catch(() => undefined)
 const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: retryOnceUnlessBiliPaused, refetchOnWindowFocus: false } } })
 const diagnoseReady = installStartupDiagnostics()
 function DiagnosticBoot() { useEffect(diagnoseReady, []); return null }
-installAccountQueryScope(client)
-installLocalPlayback(client)
-startUpdateChecks()
-startCloudSync(client)
-startAutomaticLyrics()
-startFloatingLyrics()
-startListeningStatistics()
-startPreloadingNextTrack()
-startCreatorQueue()
+const stopRuntime = installMainWindowRuntime(client)
+import.meta.hot?.dispose(stopRuntime)
 createRoot(document.getElementById('root')!).render(<StrictMode><QueryClientProvider client={client}><SubtitleController/><LargeScreenApp/><DiagnosticBoot/></QueryClientProvider></StrictMode>)

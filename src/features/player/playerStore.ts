@@ -148,10 +148,10 @@ export async function resolveSeasonEntry(entry: Track) {
   return video.parts.map(part => toTrack(video, part))
 }
 
-export async function prepareSeasonQueueEntry(entry: Track) {
+export async function prepareSeasonQueueEntry(entry: Track, current: () => boolean = () => true) {
   const intent = playbackIntent()
   const parts = await resolveSeasonEntry(entry)
-  if (parts.length && intent === playbackIntent()) {
+  if (parts.length && intent === playbackIntent() && current()) {
     const state=usePlayerStore.getState(),origins=state.queueOrigins?.[entry.id]??['']
     usePlayerStore.setState({queueBase:replaceSeasonEntry(state.queueBase??state.queue,entry.id,parts),queueOrigins:{...state.queueOrigins,...Object.fromEntries(parts.map(part=>[part.id,origins]))}})
     reprojectVisibility()
