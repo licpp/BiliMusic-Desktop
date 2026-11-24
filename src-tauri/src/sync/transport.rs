@@ -1,6 +1,6 @@
 //! Provider routing and shared HTTP resources; provider formats live in their own modules.
-pub use super::cloud_transport::{CLOUD, authenticate, cloud_delete};
-use super::{Config, model::Snapshot};
+pub use super::cloud_transport::{authenticate, cloud_delete};
+use super::Config;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -8,16 +8,6 @@ use std::time::Duration;
 pub struct Secret {
     pub username: String,
     pub password: String,
-}
-pub struct Remote {
-    pub snapshot: Snapshot,
-    pub version: Option<String>,
-    pub dav: Option<super::dav::DavState>,
-    pub conflicts: Vec<super::model::Conflict>,
-    pub legacy_cloud: bool,
-    pub track_positions: bool,
-    pub creators: bool,
-    pub creator_groups: bool,
 }
 pub fn client() -> Result<Client, String> {
     #[cfg(not(test))]
@@ -45,10 +35,7 @@ pub fn client() -> Result<Client, String> {
     #[cfg(test)]
     Ok(built)
 }
-pub fn endpoint(c: &Config) -> Result<String, String> {
-    if c.provider == "cloud" {
-        return super::cloud_transport::endpoint(c);
-    }
+pub fn validate_nutstore(c: &Config) -> Result<(), String> {
     let u = url::Url::parse(&c.url).map_err(|_| "WebDAV地址无效")?;
     if u.scheme() != "https"
         || !u.username().is_empty()
@@ -57,31 +44,7 @@ pub fn endpoint(c: &Config) -> Result<String, String> {
         || u.fragment().is_some()
         || u.host_str() != Some("dav.jianguoyun.com")
     {
-        return Err("首版仅支持坚果云 HTTPS WebDAV 地址".into());
+        return Err("请使用坚果云 HTTPS WebDAV 地址".into());
     }
-    Ok(format!(
-        "{}/BiliMusic-sync-v1/{}/library.json",
-        c.url.trim_end_matches('/'),
-        c.uid
-    ))
-}
-
-pub async fn read(cfg: &Config, secret: &Secret) -> Result<Remote, String> {
-    match cfg.provider.as_str() {
-        "webdav" => super::dav::read(cfg, secret).await,
-        "cloud" => super::cloud_transport::read(cfg, secret).await,
-        _ => Err("未知的同步服务".into()),
-    }
-}
-pub async fn write(
-    cfg: &Config,
-    secret: &Secret,
-    remote: &Remote,
-    snapshot: &Snapshot,
-) -> Result<bool, String> {
-    match cfg.provider.as_str() {
-        "webdav" => super::dav::write(cfg, secret, remote, snapshot).await,
-        "cloud" => super::cloud_transport::write(cfg, secret, remote, snapshot).await,
-        _ => Err("未知的同步服务".into()),
-    }
+    Ok(())
 }

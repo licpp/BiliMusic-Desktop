@@ -251,7 +251,7 @@ pub fn build(
     }))
 }
 
-/// Publish captured legacy facts without inventing a new user edit or allocating an actor dot.
+/// Publish captured bootstrap facts without inventing a new user edit or allocating an actor dot.
 /// Only the bootstrap coordinator may call this; ordinary receive-only rounds use `build`.
 pub fn bootstrap_checkpoint(
     document: &Document,

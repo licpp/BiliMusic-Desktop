@@ -13,11 +13,11 @@ fn file(root: &Path, url: &str) -> PathBuf {
 }
 pub fn load(root: &Path, url: &str) -> Option<Entry> {
     let path = file(root, url);
-    if std::fs::metadata(&path).ok()?.len() > (super::dav::MAX_DOC_BYTES * 5) as u64 {
+    if std::fs::metadata(&path).ok()?.len() > (super::v2_net::MAX_OBJECT_BYTES * 5) as u64 {
         return None;
     }
     let entry: Entry = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    (entry.body.len() <= super::dav::MAX_DOC_BYTES
+    (entry.body.len() <= super::v2_net::MAX_OBJECT_BYTES
         && entry.digest == format!("{:x}", md5::compute(&entry.body)))
     .then_some(entry)
 }

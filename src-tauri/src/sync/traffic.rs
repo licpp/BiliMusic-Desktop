@@ -67,13 +67,6 @@ pub enum RequestError {
     Deferred(String),
 }
 impl RequestError {
-    pub fn without_url(self) -> Self {
-        match self {
-            Self::Network(e) => Self::Network(e.without_url()),
-            e => e,
-        }
-    }
-
     pub fn is_timeout(&self) -> bool {
         matches!(self,Self::Network(e) if e.is_timeout())
     }
@@ -82,9 +75,6 @@ impl RequestError {
     }
     pub fn is_body(&self) -> bool {
         matches!(self,Self::Network(e) if e.is_body())
-    }
-    pub fn is_request(&self) -> bool {
-        matches!(self,Self::Network(e) if e.is_request())
     }
 }
 pub fn retry_after(value: Option<&str>) -> Option<u64> {

@@ -198,8 +198,8 @@ test('a late old cover cannot overwrite the next song and failed covers do not i
   } finally { await h.plugin.destroy() }
 })
 
-const upload = body => ({ url: 'https://dav.jianguoyun.com/dav/BiliMusic-sync-v1/42/12345678-1234-4234-8234-123456789abc.json', authorization: 'Basic dGVzdDp0ZXN0', bodyBase64: body.toString('base64') })
-test('native WebDAV uploads exact snapshot bytes, disables redirects, and returns HTTP denials unchanged', async () => {
+const upload = body => ({ url: 'https://dav.jianguoyun.com/dav/BiliMusic-sync-v1/42/sync-v2/12345678-1234-4234-8234-123456789abc/bootstrap/genesis.json', authorization: 'Basic dGVzdDp0ZXN0', bodyBase64: body.toString('base64') })
+test('native WebDAV uploads V2 bytes, rejects V1 paths, and returns HTTP denials unchanged', async () => {
   const h = setup()
   try {
     const body = Buffer.from(JSON.stringify({ text: '歌曲信息'.repeat(100_000) }))
@@ -212,7 +212,8 @@ test('native WebDAV uploads exact snapshot bytes, disables redirects, and return
     assert.equal(request.configuration.security, undefined) // System certificate validation stays enabled.
     h.mock.uploadReply = async () => ({ statusCode: 401 })
     assert.equal((await h.command('webdav_put', upload(body))).value.status, 401)
-    assert.equal((await h.command('webdav_put', { ...upload(body), url: 'https://evil.example/dav/BiliMusic-sync-v1/42/12345678-1234-4234-8234-123456789abc.json' })).ok, false)
+    assert.equal((await h.command('webdav_put', { ...upload(body), url: upload(body).url.replace('dav.jianguoyun.com', 'evil.example') })).ok, false)
+    assert.equal((await h.command('webdav_put', { ...upload(body), url: 'https://dav.jianguoyun.com/dav/BiliMusic-sync-v1/42/12345678-1234-4234-8234-123456789abc.json' })).ok, false)
     assert.equal(h.uploads.length, 2)
   } finally { await h.plugin.destroy() }
 })

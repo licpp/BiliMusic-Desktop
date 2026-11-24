@@ -1,8 +1,67 @@
-//! Bounded WebDAV objects shared by compatibility control and v2. No conditional-write locks.
+//! Bounded WebDAV objects for V2. No conditional-write locks.
 use super::{
     Config, traffic,
     transport::{self, Secret},
 };
+pub(super) const MAX_OBJECT_BYTES: usize = 12 * 1024 * 1024;
+
+fn status_error(status: reqwest::StatusCode, operation: &str) -> String {
+    let reason = match status.as_u16() {
+        401 => "同步授权失效（HTTP 401），请使用坚果云应用密码重新连接（已停止自动重试）",
+        403 => "坚果云拒绝访问（HTTP 403），请检查账号权限、服务器目录及服务限制",
+        409 => "坚果云目录冲突（HTTP 409），请检查服务器地址是否指向已存在的文件夹",
+        429 => "坚果云请求过于频繁（HTTP 429），请稍后重试",
+        code => return format!("{operation}失败：坚果云返回 HTTP {code}"),
+    };
+    format!("{operation}失败：{reason}")
+}
+
+fn check_at(status: reqwest::StatusCode, operation: &str) -> Result<(), String> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(status_error(status, operation))
+    }
+}
+
+fn missing_ancestor(data: &[u8]) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(data);
+    let mut exception = false;
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(e)) => {
+                exception = e.local_name().as_ref() == b"exception";
+            }
+            Ok(quick_xml::events::Event::Text(e)) if exception => {
+                return e.decode().is_ok_and(|s| s == "AncestorsNotFound");
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
+}
+
+fn request_error(error: &super::traffic::RequestError, operation: &str) -> String {
+    if let super::traffic::RequestError::Deferred(message) = error {
+        return message.clone();
+    }
+    // Classify the cause, without returning request URLs, headers or server content.
+    let diagnostic = format!("{error:?}").to_ascii_lowercase();
+    let reason = if error.is_timeout() {
+        "连接超时，请检查网络后重试"
+    } else if diagnostic.contains("certificate") || diagnostic.contains("invalidpeer") {
+        "安全连接证书校验失败，请检查系统时间、代理与网络证书"
+    } else if diagnostic.contains("dns") || diagnostic.contains("resolve") {
+        "服务器域名解析失败，请检查网络与 DNS 设置"
+    } else if error.is_connect() {
+        "无法连接坚果云服务器，请检查网络、防火墙与代理设置"
+    } else if error.is_body() {
+        "传输中断，请检查网络稳定性后重试"
+    } else {
+        "网络请求中断，请检查网络与代理后重试"
+    };
+    format!("{operation}失败：{reason}")
+}
 type Listings = std::cell::RefCell<std::collections::BTreeMap<String, (Vec<String>, Option<u64>)>>;
 tokio::task_local! { static LISTINGS: Listings; }
 pub async fn discovery_round<T>(future: impl std::future::Future<Output = T>) -> T {
@@ -273,9 +332,9 @@ impl<'a> Client<'a> {
                     .basic_auth(&self.secret.username, Some(&self.secret.password)),
             )
             .await
-            .map_err(|e| super::dav::request_error(&e, "创建同步父目录"))?;
+            .map_err(|e| request_error(&e, "创建同步父目录"))?;
             if response.status().as_u16() != 405 {
-                super::dav::check_at(response.status(), "创建同步父目录")?;
+                check_at(response.status(), "创建同步父目录")?;
             }
             self.remember_directory(&path);
         }
@@ -300,7 +359,7 @@ impl<'a> Client<'a> {
             )
             .basic_auth(&self.secret.username, Some(&self.secret.password)))
     }
-    async fn verify_base(&self) -> Result<(), String> {
+    pub(super) async fn verify_base(&self) -> Result<(), String> {
         self.base_verified
             .get_or_try_init(|| async {
                 let response = traffic::send(
@@ -313,8 +372,8 @@ impl<'a> Client<'a> {
                         .header("Depth", "0"),
                 )
                 .await
-                .map_err(|e| super::dav::request_error(&e, "检查坚果云根目录"))?;
-                super::dav::check_at(response.status(), "检查坚果云根目录")
+                .map_err(|e| request_error(&e, "检查坚果云根目录"))?;
+                check_at(response.status(), "检查坚果云根目录")
             })
             .await
             .map(|_| ())
@@ -330,15 +389,15 @@ impl<'a> Client<'a> {
         }
         if status.as_u16() == 409 {
             let error = self.response(response).await?;
-            if super::dav::missing_ancestor(&error.body) {
+            if missing_ancestor(&error.body) {
                 // Only a verified, accessible configured base can represent an empty vault.
                 // Connection/preview stays read-only; never hide auth or arbitrary 409 errors.
                 self.verify_base().await?;
                 return Ok(None);
             }
-            return Err(super::dav::check_at(status, operation).unwrap_err());
+            return Err(status_error(status, operation));
         }
-        super::dav::check_at(status, operation)?;
+        check_at(status, operation)?;
         Ok(Some(response))
     }
     async fn response(&self, r: reqwest::Response) -> Result<Object, String> {
@@ -357,7 +416,7 @@ impl<'a> Client<'a> {
         let mut body = Vec::new();
         while let Some(chunk) = r.chunk().await.map_err(|_| "同步对象下载中断")? {
             traffic::downloaded(chunk.len());
-            if body.len() + chunk.len() > 12 * 1024 * 1024 {
+            if body.len() + chunk.len() > MAX_OBJECT_BYTES {
                 return Err("同步对象超过12MB".into());
             }
             body.extend_from_slice(&chunk);
@@ -396,7 +455,7 @@ impl<'a> Client<'a> {
         }
         let r = traffic::send(self.request("GET", path)?)
             .await
-            .map_err(|e| super::dav::request_error(&e, "读取同步对象"))?;
+            .map_err(|e| request_error(&e, "读取同步对象"))?;
         let Some(r) = self.optional_response(r, "读取同步对象").await? else {
             return Ok(None);
         };
@@ -451,7 +510,7 @@ impl<'a> Client<'a> {
                 ),
         )
         .await
-        .map_err(|e| super::dav::request_error(&e, "读取同步目录"))?;
+        .map_err(|e| request_error(&e, "读取同步目录"))?;
         let Some(r) = self.optional_response(r, "读取同步目录").await? else {
             return Ok((vec![], None));
         };
@@ -504,7 +563,7 @@ impl<'a> Client<'a> {
                 self.invalidate_listings(&directory);
                 let status = traffic::send(self.request("MKCOL", &directory)?.body(""))
                     .await
-                    .map_err(|e| super::dav::request_error(&e, "创建同步目录"))?
+                    .map_err(|e| request_error(&e, "创建同步目录"))?
                     .status();
                 if status.as_u16() == 409 && attempt == 0 {
                     self.directories.lock().unwrap().clear();
@@ -513,7 +572,7 @@ impl<'a> Client<'a> {
                     break;
                 }
                 if status.as_u16() != 405 {
-                    super::dav::check_at(status, "创建同步目录")?;
+                    check_at(status, "创建同步目录")?;
                 }
                 self.remember_directory(&directory);
             }
@@ -527,9 +586,9 @@ impl<'a> Client<'a> {
         self.invalidate_listings(path);
         let response = traffic::send(self.request("DELETE", path)?)
             .await
-            .map_err(|e| super::dav::request_error(&e, "清理同步提交"))?;
+            .map_err(|e| request_error(&e, "清理同步提交"))?;
         if response.status().as_u16() != 404 {
-            super::dav::check_at(response.status(), "清理同步提交")?;
+            check_at(response.status(), "清理同步提交")?;
         }
         Ok(())
     }
@@ -543,14 +602,14 @@ impl<'a> Client<'a> {
             for n in 1..parts.len() {
                 self.mkdir(&format!("{}/", parts[..n].join("/"))).await?;
             }
-            super::dav::check_at(self.put_once(path, body).await?, "上传同步对象")?;
+            check_at(self.put_once(path, body).await?, "上传同步对象")?;
         } else {
-            super::dav::check_at(status, "上传同步对象")?;
+            check_at(status, "上传同步对象")?;
         }
         Ok(())
     }
     async fn put_once(&self, path: &str, body: Vec<u8>) -> Result<reqwest::StatusCode, String> {
-        if body.len() > 12 * 1024 * 1024 {
+        if body.len() > MAX_OBJECT_BYTES {
             return Err("同步对象超过12MB".into());
         }
         #[cfg(target_env = "ohos")]
@@ -579,7 +638,7 @@ impl<'a> Client<'a> {
                     .body(body),
             )
             .await
-            .map_err(|e| super::dav::request_error(&e, "上传同步对象"))?;
+            .map_err(|e| request_error(&e, "上传同步对象"))?;
             Ok(r.status())
         }
     }

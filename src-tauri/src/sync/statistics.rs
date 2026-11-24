@@ -826,7 +826,7 @@ async fn account_credentials(
         let credentials: transport::Secret = serde_json::from_str(&value).map_err(err)?;
         let response = super::traffic::send(
             transport::client()?
-                .get(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
+                .get(super::cloud_transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
                 .bearer_auth(&credentials.password),
         )
         .await
@@ -898,6 +898,9 @@ async fn listening_sync_inner(
         let Some(cfg) = account_config(&database)? else {
             return Ok(false);
         };
+        if !matches!(cfg.provider.as_str(), "webdav" | "cloud") {
+            return Err("未知的同步服务".into());
+        }
         let cancellation = tokio_util::sync::CancellationToken::new();
         *state.statistics_active.lock().map_err(err)? = Some(cancellation.clone());
         (cfg, cancellation)
@@ -908,7 +911,7 @@ async fn listening_sync_inner(
         if cfg.provider == "webdav" {
             super::statistics_v2::exchange(&database, &cfg, &credentials).await
         } else {
-            exchange(&database, &cfg, &credentials, &base).await
+            exchange_cloud(&database, &cfg, &credentials, &base).await
         }
     };
     let result =
@@ -936,7 +939,7 @@ fn statistics_endpoint(cfg: &super::Config) -> Result<String, String> {
     if cfg.provider == "webdav" {
         v2_endpoint(cfg)
     } else {
-        Ok(transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
+        Ok(super::cloud_transport::endpoint(cfg)?.replace("/vault", "/statistics/"))
     }
 }
 pub(super) fn v2_endpoint(cfg: &super::Config) -> Result<String, String> {
@@ -947,7 +950,7 @@ pub(super) fn v2_endpoint(cfg: &super::Config) -> Result<String, String> {
         super::migration::Genesis::for_config(cfg)?.vault
     ))
 }
-async fn exchange(
+async fn exchange_cloud(
     db: &Database,
     cfg: &super::Config,
     secret: &transport::Secret,
@@ -955,38 +958,13 @@ async fn exchange(
 ) -> Result<(), String> {
     let http = transport::client()?;
     let request = |method: &str, url: String| {
-        let r = http
-            .request(reqwest::Method::from_bytes(method.as_bytes()).unwrap(), url)
+        http.request(reqwest::Method::from_bytes(method.as_bytes()).unwrap(), url)
             .header(
                 "User-Agent",
                 concat!("BiliMusic/", env!("CARGO_PKG_VERSION")),
-            );
-        if cfg.provider == "webdav" {
-            r.basic_auth(&secret.username, Some(&secret.password))
-        } else {
-            r.bearer_auth(&secret.password)
-        }
+            )
+            .bearer_auth(&secret.password)
     };
-    if cfg.provider == "webdav" {
-        // Statistics may run before the first library merge; create our parents as well.
-        let (account, _) = base
-            .trim_end_matches('/')
-            .rsplit_once('/')
-            .ok_or("统计目录无效")?;
-        let (application, _) = account.rsplit_once('/').ok_or("统计目录无效")?;
-        for folder in [
-            format!("{application}/"),
-            format!("{account}/"),
-            base.to_owned(),
-        ] {
-            let r = super::traffic::send(request("MKCOL", folder))
-                .await
-                .map_err(err)?;
-            if !r.status().is_success() && r.status().as_u16() != 405 {
-                return Err(format!("统计目录创建失败：HTTP {}", r.status().as_u16()));
-            }
-        }
-    }
     let (source, local, cutoff) = {
         let c = db.0.lock().map_err(err)?;
         active(db, &cfg.uid)?;
@@ -1055,14 +1033,6 @@ async fn exchange(
         }
         let bytes = encode(&b)?;
         uploaded += bytes.len() as u64;
-        if cfg.provider == "webdav" {
-            let r = super::traffic::send(request("MKCOL", format!("{base}{source}/")))
-                .await
-                .map_err(err)?;
-            if !r.status().is_success() && r.status().as_u16() != 405 {
-                return Err("无法创建统计来源目录".into());
-            }
-        }
         let r = super::traffic::send(
             request("PUT", format!("{base}{source}/{}.json.gz", b.month))
                 .header("Content-Type", "application/gzip")
@@ -1123,54 +1093,13 @@ async fn exchange(
         active(db, &cfg.uid)?;
         put_meta(&c, &published_key, &index_json)?;
     }
-    let sources: Vec<String> =
-        if cfg.provider == "webdav" {
-            let r = super::traffic::send(request("PROPFIND", base.to_owned())
-            .header("Depth", "1")
-            .header("Content-Type", "application/xml")
-            .body("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>"))
-            .await
-            .map_err(err)?;
-            if !r.status().is_success() {
-                return Err("统计目录读取失败".into());
-            }
-            let data = response_bytes(r).await?;
-            downloaded += data.len() as u64;
-            let mut reader = quick_xml::Reader::from_reader(data.as_slice());
-            let mut href = false;
-            let mut ids = Vec::new();
-            loop {
-                match reader.read_event() {
-                    Ok(quick_xml::events::Event::Start(e)) => {
-                        href = e.local_name().as_ref() == b"href"
-                    }
-                    Ok(quick_xml::events::Event::Text(e)) if href => {
-                        let text = e.decode().map_err(err)?;
-                        let name = text.rsplit('/').next().unwrap_or("");
-                        if let Some(id) = name
-                            .strip_prefix("index-")
-                            .and_then(|s| s.strip_suffix(".json"))
-                        {
-                            if uuid::Uuid::parse_str(id).is_ok() {
-                                ids.push(id.to_string())
-                            }
-                        }
-                    }
-                    Ok(quick_xml::events::Event::Eof) => break,
-                    Err(e) => return Err(err(e)),
-                    _ => {}
-                }
-            }
-            ids
-        } else {
-            let r = super::traffic::send(request("GET", base.to_owned()))
-                .await
-                .map_err(err)?;
-            if !r.status().is_success() {
-                return Err("云端统计接口暂不可用，请更新同步服务".into());
-            }
-            serde_json::from_slice(&response_bytes(r).await?).map_err(err)?
-        };
+    let response = super::traffic::send(request("GET", base.to_owned()))
+        .await
+        .map_err(err)?;
+    if !response.status().is_success() {
+        return Err("云端统计接口暂不可用，请更新同步服务".into());
+    }
+    let sources: Vec<String> = serde_json::from_slice(&response_bytes(response).await?).map_err(err)?;
     if sources.len() > 100 {
         return Err("统计来源超过100个".into());
     }
@@ -1299,8 +1228,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
-    struct DavFixture {
-        folders: std::collections::BTreeSet<String>,
+    struct CloudFixture {
         files: BTreeMap<String, Vec<u8>>,
         fail_index_once: bool,
         uploads: usize,
@@ -1308,14 +1236,14 @@ mod tests {
         month_started: Arc<tokio::sync::Notify>,
         continue_month: Arc<tokio::sync::Notify>,
     }
-    async fn dav_request(
-        HttpState(state): HttpState<Arc<Mutex<DavFixture>>>,
+    async fn cloud_request(
+        HttpState(state): HttpState<Arc<Mutex<CloudFixture>>>,
         OriginalUri(uri): OriginalUri,
         method: Method,
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Basic dGVzdDpwYXNz")
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer pass")
         {
             return StatusCode::UNAUTHORIZED.into_response();
         }
@@ -1334,44 +1262,7 @@ mod tests {
             resume.notified().await;
         }
         let mut state = state.lock().unwrap();
-        if method.as_str() == "MKCOL" {
-            if state.folders.contains(&path) {
-                return StatusCode::METHOD_NOT_ALLOWED.into_response();
-            }
-            let parent = format!(
-                "{}/",
-                path.trim_end_matches('/').rsplit_once('/').unwrap().0
-            );
-            if !state.folders.contains(&parent) {
-                return StatusCode::CONFLICT.into_response();
-            }
-            state.folders.insert(path);
-            return StatusCode::CREATED.into_response();
-        }
-        if method.as_str() == "PROPFIND" {
-            if !state.folders.contains(&path) {
-                return StatusCode::NOT_FOUND.into_response();
-            }
-            let files: String = state
-                .files
-                .keys()
-                .filter(|key| {
-                    key.strip_prefix(&path)
-                        .is_some_and(|rest| !rest.contains('/'))
-                })
-                .map(|key| format!("<d:response><d:href>{key}</d:href></d:response>"))
-                .collect();
-            return (
-                StatusCode::MULTI_STATUS,
-                format!("<d:multistatus xmlns:d=\"DAV:\">{files}</d:multistatus>"),
-            )
-                .into_response();
-        }
         if method == Method::PUT {
-            let parent = format!("{}/", path.rsplit_once('/').unwrap().0);
-            if !state.folders.contains(&parent) {
-                return StatusCode::CONFLICT.into_response();
-            }
             if path.contains("/index-") && state.fail_index_once {
                 state.fail_index_once = false;
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -1381,6 +1272,17 @@ mod tests {
             return StatusCode::CREATED.into_response();
         }
         if method == Method::GET {
+            if path.ends_with('/') {
+                let sources = state
+                    .files
+                    .keys()
+                    .filter_map(|key| {
+                        let file = key.strip_prefix(&path)?;
+                        file.strip_prefix("index-")?.strip_suffix(".json")
+                    })
+                    .collect::<Vec<_>>();
+                return axum::Json(sources).into_response();
+            }
             let Some(body) = state.files.get(&path) else {
                 return StatusCode::NOT_FOUND.into_response();
             };
@@ -1392,14 +1294,13 @@ mod tests {
         }
         StatusCode::METHOD_NOT_ALLOWED.into_response()
     }
-    async fn dav_server() -> (String, Arc<Mutex<DavFixture>>, tokio::task::JoinHandle<()>) {
-        let state = Arc::new(Mutex::new(DavFixture::default()));
-        state.lock().unwrap().folders.insert("/dav/".into());
+    async fn cloud_server() -> (String, Arc<Mutex<CloudFixture>>, tokio::task::JoinHandle<()>) {
+        let state = Arc::new(Mutex::new(CloudFixture::default()));
         let router = Router::new()
-            .fallback(dav_request)
+            .fallback(cloud_request)
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let root = format!("http://{}/dav", listener.local_addr().unwrap());
+        let root = format!("http://{}/statistics", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         (root, state, task)
     }
@@ -1434,9 +1335,10 @@ mod tests {
             .unwrap()
     }
     async fn sync_device(db: &Database, root: &str, uid: &str) -> Result<(), String> {
-        let cfg = account_config(db)?.ok_or("account statistics unavailable")?;
-        let base = format!("{root}/BiliMusic-sync-v1/{uid}/statistics-v1/");
-        exchange(
+        let mut cfg = account_config(db)?.ok_or("account statistics unavailable")?;
+        cfg.provider = "cloud".into();
+        let base = format!("{root}/{uid}/");
+        exchange_cloud(
             db,
             &cfg,
             &transport::Secret {
@@ -1450,12 +1352,12 @@ mod tests {
 
     #[tokio::test]
     async fn four_devices_share_account_totals_with_offline_catchup_and_no_duplicate_uploads() {
-        let (root, server, task) = dav_server().await;
+        let (root, server, task) = cloud_server().await;
         let devices: Vec<_> = (0..4).map(|_| device("42")).collect();
         for (i, db) in devices.iter().enumerate() {
             sample(db, "42", (i + 1) as f64 * 60.0);
         }
-        // Empty WebDAV has no library parents yet. Statistics must still initialize and sync.
+        // Each client has local statistics before its first cloud sync.
         for db in &devices {
             sync_device(db, &root, "42").await.unwrap();
         }
@@ -1482,7 +1384,7 @@ mod tests {
             sync_device(db, &root, "42").await.unwrap();
             assert!((total(db, "42") - 630.0).abs() < 0.001);
         }
-        // Another Bilibili account in the same WebDAV account is isolated.
+        // Another Bilibili account on the same server is isolated.
         let other = device("43");
         sample(&other, "43", 300.0);
         sync_device(&other, &root, "43").await.unwrap();
@@ -1498,7 +1400,7 @@ mod tests {
     #[tokio::test]
     async fn failed_index_retries_without_readding_month_and_library_pause_does_not_block_statistics()
      {
-        let (root, server, task) = dav_server().await;
+        let (root, server, task) = cloud_server().await;
         let a = device("42");
         let b = device("42");
         sample(&a, "42", 60.0);
@@ -1528,7 +1430,7 @@ mod tests {
 
     #[tokio::test]
     async fn listening_during_upload_stays_pending_until_its_revision_is_published() {
-        let (root, server, task) = dav_server().await;
+        let (root, server, task) = cloud_server().await;
         let a = Arc::new(device("42"));
         let b = device("42");
         sample(&a, "42", 60.0);

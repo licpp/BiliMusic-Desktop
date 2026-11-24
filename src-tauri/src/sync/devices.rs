@@ -9,15 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tauri::{AppHandle, State};
 
-#[derive(Clone, Debug)]
-pub struct Observation {
-    pub writer: String,
-    pub source: String,
-    pub hash: String,
-    pub has_data: bool,
-    pub modified: Option<u64>,
-    pub server_time: Option<u64>,
-}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Capability {
@@ -95,29 +86,6 @@ fn load(c: &rusqlite::Connection, target: &str, id: &str) -> Result<Device, Stri
 fn save(c: &rusqlite::Connection, target: &str, d: &Device) -> Result<(), String> {
     c.execute("INSERT INTO sync_devices VALUES(?1,?2,?3) ON CONFLICT(target,writer) DO UPDATE SET json=excluded.json",params![target,d.id,serde_json::to_string(d).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
     Ok(())
-}
-pub fn observe(
-    c: &rusqlite::Connection,
-    target: &str,
-    observations: &[Observation],
-) -> Result<(), String> {
-    init(c)?;
-    let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
-    for o in observations {
-        let mut d = load(c, target, &o.writer)?;
-        let changed = d.sources.get(&o.source) != Some(&o.hash);
-        d.sources.insert(o.source.clone(), o.hash.clone());
-        d.has_data |= o.has_data;
-        if let Some(server) = o.server_time {
-            put_meta(c, target, "server_time", &server.to_string())?;
-            if changed {
-                let time = o.modified.filter(|t| *t <= server).unwrap_or(server);
-                d.last_activity = Some(d.last_activity.unwrap_or(0).max(time));
-            }
-        }
-        save(c, target, &d)?;
-    }
-    tx.commit().map_err(|e| e.to_string())
 }
 pub fn list(c: &rusqlite::Connection, target: &str, current: &str) -> Result<Vec<Row>, String> {
     let now = meta(c, target, "server_time")?
@@ -368,35 +336,6 @@ pub async fn sync_retire_device(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn refreshing_an_unchanged_source_does_not_extend_its_week() {
-        let c = rusqlite::Connection::open_in_memory().unwrap();
-        let id = uuid::Uuid::new_v4().to_string();
-        let first = Observation {
-            writer: id.clone(),
-            source: "legacy".into(),
-            hash: "a".repeat(64),
-            has_data: true,
-            modified: Some(100),
-            server_time: Some(101),
-        };
-        observe(&c, "t", &[first.clone()]).unwrap();
-        let mut later = first.clone();
-        later.server_time = Some(100 + super::super::device_policy::DORMANT_SECONDS);
-        later.modified = None;
-        observe(&c, "t", &[later.clone()]).unwrap();
-        assert_eq!(list(&c, "t", "").unwrap()[0].status, Status::Dormant);
-        let mut d = load(&c, "t", &id).unwrap();
-        d.retired = true;
-        save(&c, "t", &d).unwrap();
-        later.hash = "b".repeat(64);
-        observe(&c, "t", &[later]).unwrap();
-        assert_eq!(list(&c, "t", "").unwrap()[0].status, Status::Retired);
-        assert_eq!(
-            load(&c, "t", &id).unwrap().sources["legacy"],
-            "b".repeat(64)
-        );
-    }
     #[tokio::test]
     async fn retirement_reaches_another_installation_without_removing_legacy_files() {
         let (cfg, secret, store, server) = super::super::test_dav::server().await;

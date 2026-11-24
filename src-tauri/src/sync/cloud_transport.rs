@@ -2,10 +2,17 @@
 use super::{
     Config,
     model::{MAX_BYTES, Snapshot},
-    transport::{Remote, Secret, client},
+    transport::{Secret, client},
 };
 use reqwest::StatusCode;
-use serde::Deserialize;
+pub(super) struct Remote {
+    pub snapshot: Snapshot,
+    pub version: Option<String>,
+    pub legacy_cloud: bool,
+    pub track_positions: bool,
+    pub creators: bool,
+    pub creator_groups: bool,
+}
 pub fn endpoint(_c: &Config) -> Result<String, String> {
     Ok(format!("{}/vault", cloud()))
 }
@@ -86,8 +93,6 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
         return Ok(Remote {
             snapshot: Snapshot::empty(&c.uid),
             version: None,
-            dav: None,
-            conflicts: vec![],
             legacy_cloud,
             track_positions,
             creators,
@@ -110,8 +115,6 @@ pub async fn read(c: &Config, s: &Secret) -> Result<Remote, String> {
     Ok(Remote {
         snapshot,
         version: Some(version),
-        dav: None,
-        conflicts: vec![],
         legacy_cloud,
         track_positions,
         creators,

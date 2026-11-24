@@ -30,16 +30,16 @@ pub fn target_key(
     Ok(format!("target-v1-{:x}", md5::compute(identity)))
 }
 
-/// Claim the old baseline once, while its original settings/credentials are still available.
-pub fn bind_legacy(c: &Connection, provider: &str, target: &str) -> Result<(), String> {
+/// Claim the original BiliMusic Cloud baseline once, before replacing its credentials.
+pub(super) fn bind_cloud_baseline(c: &Connection, target: &str) -> Result<(), String> {
     init(c)?;
     let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
     c.execute(
-        "INSERT OR IGNORE INTO sync_legacy_binding(provider,target) VALUES(?1,?2)",
-        params![provider, target],
+        "INSERT OR IGNORE INTO sync_legacy_binding(provider,target) VALUES('cloud',?1)",
+        [target],
     )
     .map_err(|e| e.to_string())?;
-    c.execute("INSERT OR IGNORE INTO sync_target_base(target,json) SELECT ?2,b.json FROM sync_base b JOIN sync_legacy_binding l ON l.provider=b.provider WHERE b.provider=?1 AND l.target=?2",params![provider,target]).map_err(|e|e.to_string())?;
+    c.execute("INSERT OR IGNORE INTO sync_target_base(target,json) SELECT ?1,b.json FROM sync_base b JOIN sync_legacy_binding l ON l.provider=b.provider WHERE b.provider='cloud' AND l.target=?1",[target]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
 pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, String> {
@@ -522,19 +522,19 @@ mod tests {
     fn target_baselines_do_not_follow_provider_reconnections() {
         let c = Connection::open_in_memory().unwrap();
         init(&c).unwrap();
-        c.execute("INSERT INTO sync_base VALUES('webdav','old')", [])
+        c.execute("INSERT INTO sync_base VALUES('cloud','old')", [])
             .unwrap();
-        let a = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a/", "one").unwrap();
-        let same = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a", "one").unwrap();
-        let b = target_key("webdav", "42", "https://dav.jianguoyun.com/dav/b/", "one").unwrap();
+        let a = target_key("cloud", "42", "https://bilimusic.cn/a/", "one").unwrap();
+        let same = target_key("cloud", "42", "https://bilimusic.cn/a", "one").unwrap();
+        let b = target_key("cloud", "42", "https://bilimusic.cn/b/", "one").unwrap();
         assert_eq!(a, same);
         assert_ne!(a, b);
         assert_ne!(
             a,
-            target_key("webdav", "42", "https://dav.jianguoyun.com/dav/a/", "two").unwrap()
+            target_key("cloud", "42", "https://bilimusic.cn/a/", "two").unwrap()
         );
-        bind_legacy(&c, "webdav", &a).unwrap();
-        bind_legacy(&c, "webdav", &b).unwrap();
+        bind_cloud_baseline(&c, &a).unwrap();
+        bind_cloud_baseline(&c, &b).unwrap();
         assert_eq!(
             c.query_row(
                 "SELECT COUNT(*) FROM sync_target_base WHERE target=?1",
@@ -922,23 +922,6 @@ mod tests {
         let (merged, conflicts) = merge(&snapshot, &restarted, &snapshot, None);
         assert!(conflicts.is_empty());
         assert_eq!(text(&merged.records[&history], "resume"), "300:0");
-
-        let mut left = crate::sync::dav::Doc::empty("42");
-        left.update("first", &snapshot).unwrap();
-        let mut right = left.clone();
-        let mut seeked = snapshot.clone();
-        seeked
-            .records
-            .get_mut(&history)
-            .unwrap()
-            .fields
-            .insert("resume".into(), json!("250:123000"));
-        left.update("first", &seeked).unwrap();
-        right.update("second", &restarted).unwrap();
-        left.join(right).unwrap();
-        let (dav, conflicts) = left.materialize().unwrap();
-        assert!(conflicts.is_empty());
-        assert_eq!(text(&dav.records[&history], "resume"), "300:0");
 
         apply(&local, &merged, true).unwrap();
         assert_eq!(

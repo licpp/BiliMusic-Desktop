@@ -1,5 +1,5 @@
 //! Shared v2 executor. Network IO never holds a database lock; all local views and intents
-//! are committed together, and only the first account bootstrap may read the v1 cloud.
+//! are committed together through one versioned remote protocol.
 use super::{
     Config, Database, Outcome,
     actor::Lease,
@@ -173,6 +173,7 @@ struct Runtime {
     joined: bool,
     bootstrap: bool,
     anchor: Snapshot,
+    // Older V2 devices can have a first join in flight with this captured baseline.
     old_base: Option<Snapshot>,
     observed: View,
     contexts: BTreeMap<Domain, BTreeMap<String, Register>>,
@@ -884,7 +885,7 @@ fn outcome(view: &View, conflicts: Vec<Conflict>, changed: bool) -> Outcome {
         changed,
     }
 }
-/// Connection preview probes v2 first, and never creates a v1 file or v2 commit.
+/// Connection preview validates the target without creating any remote data.
 pub async fn probe(cfg: &Config, secret: &Secret) -> Result<(), String> {
     let net = Client::new(cfg, secret)?;
     let g = Genesis::for_config(cfg)?;
@@ -893,10 +894,10 @@ pub async fn probe(cfg: &Config, secret: &Secret) -> Result<(), String> {
         .values()
         .any(|h| h.domains.contains_key(&Domain::Library))
     {
+        net.verify_base().await?;
         if g.exists(&net).await? {
             return Err("新版同步库提交暂不可见".into());
         }
-        super::dav::read(cfg, secret).await?;
     }
     Ok(())
 }
@@ -973,9 +974,6 @@ pub async fn sync(
         if g.exists(&net).await? {
             return Err("新版同步库数据暂不可见，请重试".into());
         }
-        remote =
-            super::legacy_import::library(cfg, secret, &g, &db.1.join("sync-cache").join(&target))
-                .await?;
     } else {
         for d in LIBRARY_DOMAINS {
             remote.insert(
@@ -992,25 +990,13 @@ pub async fn sync(
         } else {
             read_anchor(&net, &g).await?
         };
-        let old_base = with(db, cfg, |c| {
-            storage::bind_legacy(c, &cfg.provider, &target)?;
-            c.query_row(
-                "SELECT json FROM sync_target_base WHERE target=?1",
-                [&target],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(err)?
-            .map(|s| serde_json::from_str::<Snapshot>(&s).map_err(err))
-            .transpose()
-        })?;
         let runtime = Runtime {
             instance: uuid::Uuid::new_v4().to_string(),
             genesis: g.clone(),
             joined: false,
             bootstrap: !has_library,
             anchor,
-            old_base,
+            old_base: None,
             observed: current.clone(),
             contexts: BTreeMap::new(),
             needs_seed: if !has_library {
@@ -1678,59 +1664,120 @@ mod tests {
         server.abort();
     }
     #[tokio::test]
-    async fn upgrading_old_synced_data_is_not_skipped_and_joined_devices_never_read_v1() {
+    async fn bootstrap_ignores_v1_cloud_files_and_old_sqlite_baselines() {
         let (cfg, secret, store, server) = super::super::test_dav::server().await;
-        let old = device(&cfg);
-        let first = device(&cfg);
+        let local = device(&cfg);
+        let cold = device(&cfg);
         change(
-            &old,
-            &format!("INSERT INTO playlists(id,name) VALUES('{LIST}','legacy initial')"),
+            &local,
+            &format!("INSERT INTO playlists(id,name) VALUES('{LIST}','local playlist')"),
         );
-        let initial = storage::export(&old.0.lock().unwrap(), &cfg.uid, false).unwrap();
-        let mut legacy = super::super::dav::Doc::empty(&cfg.uid);
-        let writer = uuid::Uuid::new_v4().to_string();
-        legacy.update(&writer, &initial).unwrap();
-        let path = format!("/dav/BiliMusic-sync-v1/42/{writer}.json");
-        store.lock().unwrap().files.insert(
-            path.clone(),
-            (serde_json::to_vec(&legacy).unwrap(), 1_700_000_000),
+        let target = target(&cfg, &secret);
+        change(
+            &local,
+            &format!(
+                "INSERT INTO sync_base VALUES('webdav','old');
+                 INSERT INTO sync_target_base VALUES('{target}','old');"
+            ),
         );
-        run(&first, &cfg, &secret).await;
-        assert_eq!(value(&first, "name"), "legacy initial");
-        // Old client changed AND successfully synced to v1 after v2 bootstrap.
-        change(&old, "UPDATE playlists SET name='old late edit'");
-        let late = storage::export(&old.0.lock().unwrap(), &cfg.uid, false).unwrap();
-        legacy.update(&writer, &late).unwrap();
-        store
-            .lock()
-            .unwrap()
-            .files
-            .insert(path, (serde_json::to_vec(&legacy).unwrap(), 1_700_000_001));
-        old.0
-            .lock()
-            .unwrap()
-            .execute(
-                "INSERT INTO sync_target_base VALUES(?1,?2)",
-                params![target(&cfg, &secret), serde_json::to_string(&late).unwrap()],
+        let v1_root = "/dav/BiliMusic-sync-v1/42/";
+        let old_file = format!("{v1_root}{}.json", uuid::Uuid::new_v4());
+        let old_link = format!("{v1_root}linked-folders-v1/{}.json", uuid::Uuid::new_v4());
+        {
+            let mut remote = store.lock().unwrap();
+            for path in [&old_file, &old_link] {
+                remote
+                    .files
+                    .insert(path.clone(), (b"old format".to_vec(), 1_700_000_000));
+            }
+        }
+
+        probe(&cfg, &secret).await.unwrap();
+        assert!(run(&local, &cfg, &secret).await.conflicts.is_empty());
+        assert!(run(&cold, &cfg, &secret).await.conflicts.is_empty());
+        assert_eq!(value(&cold, "name"), "local playlist");
+        {
+            let remote = store.lock().unwrap();
+            assert_eq!(remote.files[&old_file].0, b"old format");
+            assert_eq!(remote.files[&old_link].0, b"old format");
+            assert!(remote.requests.iter().all(|(method, path)| {
+                !path.starts_with(v1_root)
+                    || path.contains("/sync-v2/")
+                    || (method == "MKCOL" && path == v1_root)
+            }));
+        }
+        for db in [local, cold] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn v2_bootstrap_with_captured_legacy_dots_can_resume_and_restore() {
+        let (cfg, secret, store, server) = super::super::test_dav::server().await;
+        let upgrading = device(&cfg);
+        let cold = device(&cfg);
+        change(
+            &upgrading,
+            &format!("INSERT INTO playlists(id,name) VALUES('{LIST}','Migrated playlist')"),
+        );
+        let target = target(&cfg, &secret);
+        let genesis = Genesis::for_config(&cfg).unwrap();
+
+        // Model a persisted V2 first join prepared by a client that captured a V1 source.
+        // This V2 document is published and received by the same production paths as newer data.
+        sync(&upgrading, &cfg, &secret, None, true).await.unwrap();
+        with(&upgrading, &cfg, |c| {
+            let snapshot = storage::export(c, &cfg.uid, false)?;
+            let actor = "legacy:00000000-0000-4000-8000-000000000011".to_owned();
+            let dot = causal::Dot {
+                actor: actor.clone(),
+                seq: 7,
+            };
+            let mut docs: Docs = get(c, &target, "anchor-docs")?.unwrap();
+            let library = docs.get_mut(&Domain::Library).unwrap();
+            assert_eq!(library.scope, genesis.scope(Domain::Library));
+            for (field, cell) in projection::facts(&snapshot, Domain::Library) {
+                let seen = causal::Context(BTreeMap::from([(actor.clone(), vec![(1, dot.seq)])]));
+                let candidate = causal::Candidate {
+                    dot: dot.clone(),
+                    cell,
+                };
+                library.registers.insert(
+                    field,
+                    Register {
+                        seen,
+                        values: vec![candidate],
+                    },
+                );
+            }
+            c.execute(
+                "UPDATE sync_v2_documents SET confirmed=?1 WHERE target=?2 AND domain='library'",
+                params![serde_json::to_string(&library).unwrap(), target],
             )
             .unwrap();
-        store.lock().unwrap().requests.clear();
-        assert!(run(&old, &cfg, &secret).await.conflicts.is_empty());
-        run(&first, &cfg, &secret).await;
-        assert_eq!(value(&first, "name"), "legacy initial");
-        // The known cloud value wins an ambiguous legacy edit, with no dialog.
+            let mut runtime: Runtime = get(c, &target, "runtime")?.unwrap();
+            runtime.anchor = snapshot.clone();
+            runtime.old_base = Some(snapshot);
+            put(c, &target, "runtime", &runtime)?;
+            put(c, &target, "anchor-docs", &docs)
+        })
+        .unwrap();
+        store.lock().unwrap().fail_head_once = true;
+        assert!(sync(&upgrading, &cfg, &secret, None, false).await.is_err());
+        assert!(run(&upgrading, &cfg, &secret).await.conflicts.is_empty());
+        assert!(run(&cold, &cfg, &secret).await.conflicts.is_empty());
+        assert_eq!(value(&cold, "name"), "Migrated playlist");
+
+        let library = with(&cold, &cfg, |c| outbox::confirmed(c, &target, Domain::Library)).unwrap();
         assert!(
-            store
-                .lock()
-                .unwrap()
-                .requests
-                .iter()
-                .all(|(_, p)| p.contains("/sync-v2/")
-                    || p.ends_with("/42/")
-                    || p.ends_with("/BiliMusic-sync-v1/"))
+            library.registers[&causal::key(&format!("playlist:{LIST}"), "name")]
+                .seen
+                .0
+                .contains_key("legacy:00000000-0000-4000-8000-000000000011")
         );
-        for d in [old, first] {
-            std::fs::remove_dir_all(d.1).unwrap();
+        for db in [upgrading, cold] {
+            std::fs::remove_dir_all(db.1).unwrap();
         }
         server.abort();
     }

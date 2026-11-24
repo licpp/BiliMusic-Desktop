@@ -7,13 +7,10 @@ pub mod background;
 mod cache;
 pub mod causal;
 mod cloud_transport;
-mod dav;
 pub mod device_policy;
 pub mod devices;
 mod engine;
-mod legacy_import;
 pub mod migration;
-pub mod migration_material;
 pub mod model;
 pub mod outbox;
 mod projection;
@@ -313,7 +310,6 @@ pub async fn sync_connect(
     if !matches!(settings.provider.as_str(), "cloud" | "webdav") {
         return Err("无效的同步服务商".into());
     }
-    transport::endpoint(&settings)?;
     let credentials = if settings.provider == "cloud" {
         let cookie = {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
@@ -323,6 +319,7 @@ pub async fn sync_connect(
         };
         transport::authenticate(cookie, &settings.uid).await?
     } else {
+        transport::validate_nutstore(&settings)?;
         if username.trim().is_empty() || password.is_empty() {
             return Err("请输入坚果云账号和应用密码".into());
         }
@@ -331,32 +328,25 @@ pub async fn sync_connect(
             password,
         }
     };
-    // Bind the legacy provider-only baseline BEFORE replacing its credentials.
-    // Unidentifiable provenance stays quarantined, never attached to the new target.
+    // Keep the old BiliMusic Cloud baseline associated with its original credentials.
     let previous = config(&database)?;
-    let previous_target = secret(&app, &previous, None, false)
-        .ok()
-        .flatten()
-        .and_then(|value| serde_json::from_str::<transport::Secret>(&value).ok())
-        .and_then(|value| {
-            storage::target_key(
-                &previous.provider,
-                &previous.uid,
-                &previous.url,
-                &value.username,
-            )
+    if previous.provider == "cloud" {
+        let previous_target = secret(&app, &previous, None, false)
             .ok()
-        })
-        .unwrap_or_else(|| "unbound-legacy".into());
-    {
+            .flatten()
+            .and_then(|value| serde_json::from_str::<transport::Secret>(&value).ok())
+            .and_then(|value| {
+                storage::target_key("cloud", &previous.uid, &previous.url, &value.username).ok()
+            })
+            .unwrap_or_else(|| "unbound-legacy".into());
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        storage::bind_legacy(&c, &previous.provider, &previous_target)?;
+        storage::bind_cloud_baseline(&c, &previous_target)?;
     }
     // Read-only connection test. A new remote will only be created by explicit first sync.
     if settings.provider == "webdav" {
         engine::probe(&settings, &credentials).await?;
     } else {
-        transport::read(&settings, &credentials).await?;
+        cloud_transport::read(&settings, &credentials).await?;
     }
     secret(
         &app,
@@ -546,9 +536,12 @@ async fn sync_now_inner(
             Ok(outcome)
         }=>result};
     }
+    if cfg.provider != "cloud" {
+        return Err("未知的同步服务".into());
+    }
     let (initial, base) = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        storage::bind_legacy(&c, &cfg.provider, &target)?;
+        storage::bind_cloud_baseline(&c, &target)?;
         let current = storage::export(&c, &cfg.uid, cfg.history)?;
         let base = c
             .query_row(
@@ -564,7 +557,10 @@ async fn sync_now_inner(
         (current, base)
     };
     for _ in 0..3 {
-        let response = tokio::select! { _=cancellation.cancelled()=>return Err("同步已取消".into()),response=async { if cfg.provider == "webdav" { dav::read_cached(&cfg,&credentials,Some(&database.1.join("sync-cache").join(&target))).await } else { transport::read(&cfg,&credentials).await } }=>response };
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err("同步已取消".into()),
+            response = cloud_transport::read(&cfg, &credentials) => response,
+        };
         let remote = match response {
             Ok(r) => r,
             Err(e) => {
@@ -575,20 +571,12 @@ async fn sync_now_inner(
                 return Err(e);
             }
         };
-        if cfg.provider == "webdav" {
-            if let Some(dav) = &remote.dav {
-                let c = database.0.lock().map_err(|_| "数据库正忙")?;
-                devices::observe(&c, &target, &dav.observations)?;
-            }
-        }
         let mut initial = initial.clone();
         let mut baseline = base.clone();
-        if cfg.provider != "webdav" {
-            initial.omit_linked_folders();
-            baseline.omit_linked_folders();
-            initial.omit_followed_season_progress();
-            baseline.omit_followed_season_progress();
-        }
+        initial.omit_linked_folders();
+        baseline.omit_linked_folders();
+        initial.omit_followed_season_progress();
+        baseline.omit_followed_season_progress();
         if remote.legacy_cloud {
             initial.use_legacy_cloud_format();
             baseline.use_legacy_cloud_format();
@@ -609,31 +597,8 @@ async fn sync_now_inner(
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
         }
-        let effective_remote = if !remote.conflicts.is_empty() && resolution.is_some() {
-            let state = remote.dav.as_ref().ok_or("并发状态缺失")?;
-            let mut main = initial.clone();
-            main.omit_linked_folders();
-            let mut resolved = state
-                .doc
-                .resolved(&main, resolution.as_deref() == Some("local"))?;
-            if let Some(linked) = state.linked.as_ref() {
-                resolved.records.extend(
-                    linked
-                        .doc
-                        .resolved(
-                            &initial.linked_folders(),
-                            resolution.as_deref() == Some("local"),
-                        )?
-                        .records,
-                );
-            }
-            resolved
-        } else {
-            remote.snapshot.clone()
-        };
-        let (mut merged, mut conflicts) =
-            merge(&baseline, &local, &effective_remote, resolution.as_deref());
-        conflicts.extend(remote.conflicts.clone());
+        let (mut merged, conflicts) =
+            merge(&baseline, &local, &remote.snapshot, resolution.as_deref());
         merged.compact(true);
         merged.restore_missing_tracks();
         merged.validate(&cfg.uid)?;
@@ -660,14 +625,11 @@ async fn sync_now_inner(
             )
             .map_err(|e| e.to_string())?;
         }
-        if merged != remote.snapshot
-            || remote.version.is_none()
-            || !remote.conflicts.is_empty()
-            || remote.dav.as_ref().is_some_and(|d| {
-                d.needs_publish || d.linked.as_ref().is_some_and(|l| l.needs_publish)
-            })
-        {
-            let written = tokio::select! { _=cancellation.cancelled()=>return Err("同步已取消".into()),result=transport::write(&cfg,&credentials,&remote,&merged)=>result }?;
+        if merged != remote.snapshot || remote.version.is_none() {
+            let written = tokio::select! {
+                _ = cancellation.cancelled() => return Err("同步已取消".into()),
+                result = cloud_transport::write(&cfg, &credentials, &remote, &merged) => result,
+            }?;
             if !written {
                 continue;
             }
@@ -680,10 +642,8 @@ async fn sync_now_inner(
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
             let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
             let local_linked = current.linked_folders();
-            if cfg.provider != "webdav" {
-                current.omit_linked_folders();
-                current.omit_followed_season_progress();
-            }
+            current.omit_linked_folders();
+            current.omit_followed_season_progress();
             if remote.legacy_cloud {
                 current.use_legacy_cloud_format();
             }
@@ -715,9 +675,7 @@ async fn sync_now_inner(
             // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
             let (mut final_local, post_conflicts) =
                 merge(&initial, &current, &merged, Some("local"));
-            if cfg.provider != "webdav" {
-                final_local.records.extend(local_linked.records);
-            }
+            final_local.records.extend(local_linked.records);
             if !remote.creators {
                 final_local.records.extend(local_creators);
             }
@@ -743,14 +701,12 @@ async fn sync_now_inner(
         };
         cfg.initialized = true;
         save(&database, &cfg)?;
-        // Capability bookkeeping must not turn a successful library merge into a failed sync.
-        let _ = devices::after_sync(&database, &cfg, &credentials).await;
         return Ok(Outcome {
             skipped: false,
             conflicts: vec![],
             visibility_error: None,
             import_error: None,
-                chapters_error: None,
+            chapters_error: None,
             records: count,
             bytes,
             changed: initial != final_local,
