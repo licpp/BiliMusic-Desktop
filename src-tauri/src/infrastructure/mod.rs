@@ -1,6 +1,7 @@
 pub mod database;
 pub mod diagnostics;
 mod fragmented_mp4;
+mod legacy_avc;
 pub mod media_proxy;
 pub mod migrations;
 pub mod playback_cache;

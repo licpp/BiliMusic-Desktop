@@ -64,8 +64,9 @@ class BackgroundPlaybackTest {
         idle()
         assertEquals("playing", service.snapshot().getString("status"))
     }
-    private fun reply(request: Pair<Long, JSONObject>) {
-        service.resolved(request.first, JSONObject().put("url", url).put("track", request.second.getJSONObject("track")).put("position", request.second.optDouble("position", 0.0)))
+    private fun reply(request: Pair<Long, JSONObject>, source: String? = null) {
+        service.resolved(request.first, JSONObject().put("url", url).put("source", source)
+            .put("track", request.second.getJSONObject("track")).put("position", request.second.optDouble("position", 0.0)))
         idle()
     }
     @Before fun setup() {
@@ -299,6 +300,41 @@ class BackgroundPlaybackTest {
         assertEquals("error", failed.getString("status"))
         assertEquals("invalid_input", failed.getString("errorCode"))
         assertEquals("android_media:100:1", failed.getString("initialErrorCode"))
+    }
+    @Test fun repeatedCachedMediaServerDeathTriesOnlineCompatibleAudioOnce() {
+        load()
+        service.control("seek", 32.0)
+        idle()
+        val sessionId = service.snapshot().getString("sessionId")
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        val firstRecovery = requests.single()
+        assertFalse(firstRecovery.second.optBoolean("compatibleAudio"))
+        reply(firstRecovery, "cache")
+
+        val cached = player()
+        shadowOf(cached).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        assertEquals(2, requests.size)
+        val fallback = requests.last()
+        assertTrue(fallback.second.getBoolean("compatibleAudio"))
+        assertEquals(32.0, fallback.second.getDouble("position"), 0.1)
+        reply(fallback, "online")
+        assertNotSame(cached, player())
+        assertEquals("playing", service.snapshot().getString("status"))
+        assertEquals(sessionId, service.snapshot().getString("sessionId"))
+        assertEquals(32.0, service.snapshot().getDouble("position"), 0.1)
+
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        assertEquals(2, requests.size)
+        assertEquals("android_media:100:1", service.snapshot().getString("errorCode"))
+    }
+    @Test fun repeatedCachedMediaServerDeathDoesNotGoOnlineInOfflineMode() {
+        service.updateQueue(JSONObject(PlaybackService.queueData!!).put("offlineOnly", true).toString())
+        load()
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        reply(requests.single(), "cache")
+        shadowOf(player()).invokeErrorListener(MediaPlayer.MEDIA_ERROR_SERVER_DIED, 1)
+        assertFalse(requests.single().second.optBoolean("compatibleAudio"))
+        assertEquals("android_media:100:1", service.snapshot().getString("errorCode"))
     }
     @Test fun unrecognizedStreamRetriesWithCompatibleAudioWithoutLosingResumePosition() {
         val broken = "$url-broken"

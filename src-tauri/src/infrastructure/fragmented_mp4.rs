@@ -34,7 +34,7 @@ fn u64_at(b: &[u8], i: usize) -> Option<u64> {
     Some(u64::from_be_bytes(b.get(i..i + 8)?.try_into().ok()?))
 }
 
-fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8], &[u8], usize)> {
+pub(super) fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8], &[u8], usize)> {
     let mut at = 0;
     std::iter::from_fn(move || {
         let kind = bytes.get(at + 4..at + 8)?;

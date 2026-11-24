@@ -2,11 +2,30 @@ type VideoClock = Pick<HTMLVideoElement,
   'readyState' | 'seeking' | 'currentTime' | 'playbackRate' | 'paused' | 'pause' | 'play' | 'buffered'
 >
 
-function hasBufferedTarget(buffered: TimeRanges, target: number) {
+function hasBufferedTarget(buffered: TimeRanges, target: number, ahead = .15) {
   for (let index = 0; index < buffered.length; index += 1) {
-    if (buffered.start(index) <= target && target + .15 <= buffered.end(index)) return true
+    if (buffered.start(index) <= target && target + ahead <= buffered.end(index)) return true
   }
   return false
+}
+
+export function createBufferedFrameWatch() {
+  let sample: { frames: number; since: number; audioTime: number } | undefined
+  return {
+    reset() { sample = undefined },
+    stalled(buffered: TimeRanges, position: number, frames: number | undefined, audioTime: number, now: number) {
+      // A stationary decoded-frame count is meaningful only when there is
+      // media to decode at the requested position and audio keeps advancing.
+      if (!frames || !hasBufferedTarget(buffered, position, 1)) {
+        sample = undefined
+        return false
+      }
+      if (!sample || frames !== sample.frames || audioTime < sample.audioTime) {
+        sample = { frames, since: now, audioTime }
+      }
+      return now - sample.since >= 2200 && audioTime - sample.audioTime >= .5
+    },
+  }
 }
 
 type StartupAlignment = { waitForDecodedFrame: boolean }

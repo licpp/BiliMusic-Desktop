@@ -562,7 +562,7 @@ async fn resolve_inner(
     };
     #[cfg(not(target_os = "android"))]
     let lyrics = lyrics.as_ref().and_then(lyrics::saved_timeline);
-    let result = json!({"url":plan.url, "upgradeUrl":plan.upgrade_url, "loudnessGainDb":plan.loudness_gain_db, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts});
+    let result = json!({"url":plan.url, "source":plan.source, "upgradeUrl":plan.upgrade_url, "loudnessGainDb":plan.loudness_gain_db, "track":track, "position":position, "automaticResume":automatic_resume, "entryId":entry_id, "parts":parts});
     #[cfg(not(target_os = "android"))]
     let result = {
         let mut result = result;

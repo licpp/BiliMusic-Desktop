@@ -136,6 +136,8 @@ class PlaybackService : MediaSessionService() {
     private var playbackLyricsAccount = ""
     private var resolvingNative = false
     private var recoveryAttempted = false
+    private var cacheFallbackAttempted = false
+    private var cachedAudio = false
     private var resolveProfile: String? = null
     private var resolveAccount: String? = null
     private var transitionWakeLock: PowerManager.WakeLock? = null
@@ -251,7 +253,8 @@ class PlaybackService : MediaSessionService() {
         savePosition(force = true); accountListening(true); cancelResolution(); cancelSourceSwitch()
         pendingUpgradeUrl = null
         if (!refresh) {
-            recoveryAttempted = false; initialErrorCode = null; listeningSession = java.util.UUID.randomUUID().toString()
+            resetRecovery()
+            listeningSession = java.util.UUID.randomUUID().toString()
             diagnosticId = java.util.UUID.randomUUID().toString()
             diagnosticStarted = SystemClock.elapsedRealtime()
             diagnosticAccount = queue.accountSession
@@ -315,6 +318,7 @@ class PlaybackService : MediaSessionService() {
             .putExtra("coverUrl", track.mediaText("coverUrl"))
             .putExtra("durationSeconds", track.optDouble("durationSeconds", 0.0))
             .putExtra("url", url).putExtra("upgradeUrl", result.optString("upgradeUrl").takeIf { it.startsWith("http://127.0.0.1:") })
+            .putExtra("cachedAudio", result.optString("source") == "cache")
             .putExtra("loudnessGainDb", result.optDouble("loudnessGainDb", 0.0))
             .putExtra("position", result.optDouble("position", 0.0)).putExtra("volume", volume.toDouble())
             .putExtra("rate", playbackRate.toDouble()).putExtra("playing", true).putExtra("collectionRef", queue.collectionRef)
@@ -332,13 +336,25 @@ class PlaybackService : MediaSessionService() {
         }
         load(intent, waitingForFocus = focusResume.pending)
     }
-    private fun recover(compatibleAudio: Boolean = false): Boolean {
+    private fun resetRecovery() {
+        recoveryAttempted = false
+        cacheFallbackAttempted = false
+        initialErrorCode = null
+    }
+
+    private fun recover(compatibleAudio: Boolean = false, mediaServerDied: Boolean = false): Boolean {
         val track = nativeTrack ?: return false
-        if (recoveryAttempted || resolveListener == null) return false
-        if (compatibleAudio && (queue.offlineOnly || track.optJSONObject("source")?.optString("provider") != "bilibili")) return false
+        if (resolveListener == null) return false
+        // A fresh player may have retried the same cached bytes after the first server death.
+        val retryWithoutCache = mediaServerDied && recoveryAttempted && cachedAudio && !cacheFallbackAttempted &&
+            initialErrorCode?.startsWith("android_media:${MediaPlayer.MEDIA_ERROR_SERVER_DIED}:") == true
+        if (recoveryAttempted && !retryWithoutCache) return false
+        val useCompatibleAudio = compatibleAudio || retryWithoutCache
+        if (useCompatibleAudio && (queue.offlineOnly || track.optJSONObject("source")?.optString("provider") != "bilibili")) return false
         recoveryAttempted = true
-        diagnostic("recovery", "started", if (compatibleAudio) "compatible_audio" else null)
-        resolveTrack(track, refresh = true, position = if (prepared) lastPosition else requestedStartPosition, compatibleAudio = compatibleAudio)
+        if (retryWithoutCache) cacheFallbackAttempted = true
+        diagnostic("recovery", "started", if (useCompatibleAudio) "compatible_audio" else null)
+        resolveTrack(track, refresh = true, position = if (prepared) lastPosition else requestedStartPosition, compatibleAudio = useCompatibleAudio)
         return true
     }
 
@@ -528,7 +544,7 @@ class PlaybackService : MediaSessionService() {
                 pausedPlayback = null
                 mediaButtons.cancel()
                 playbackRevision += 1
-                cancelResolution(); recoveryAttempted = false
+                cancelResolution(); resetRecovery()
                 initialResumePolicy = null; resumeDuringResolution = null
                 pendingUpgradeUrl = null
                 if (focusResume.pending) abandonFocus()
@@ -592,8 +608,8 @@ class PlaybackService : MediaSessionService() {
     private fun load(intent: Intent, waitingForFocus: Boolean = false) {
         // Keep the transition wake lock until MediaPlayer has prepared and sought.
         nativeRequest = resolutionRequests.incrementAndGet(); resolvingNative = false
-        recoveryAttempted = intent.getBooleanExtra("nativeRecovery", false)
-        if (!recoveryAttempted) initialErrorCode = null
+        if (!intent.getBooleanExtra("nativeRecovery", false)) resetRecovery()
+        cachedAudio = intent.getBooleanExtra("cachedAudio", false)
         val nextDiagnostic = intent.getStringExtra("diagnosticId") ?: java.util.UUID.randomUUID().toString()
         if (nextDiagnostic != diagnosticId) {
             diagnosticId = nextDiagnostic
@@ -709,7 +725,7 @@ class PlaybackService : MediaSessionService() {
                         what == MediaPlayer.MEDIA_ERROR_UNSUPPORTED || extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED ||
                         (what == MediaPlayer.MEDIA_ERROR_UNKNOWN && !prepared)
                     when {
-                        serviceDied -> if (status == "paused" || !recover()) fail("Android 媒体服务已中断，请重新播放", code)
+                        serviceDied -> if (status == "paused" || !recover(mediaServerDied = true)) fail("Android 媒体服务已中断，请重新播放", code)
                         connectionFailed -> if (status == "paused" || !recover()) fail("无法连接音频服务，请重试", code)
                         incompatible -> if (status == "paused" || !recover(compatibleAudio = true)) {
                             fail(if (queue.offlineOnly) "本地音频无法播放，请联网后重新下载" else "当前音源无法解码，请尝试更换音质", code)
@@ -752,6 +768,7 @@ class PlaybackService : MediaSessionService() {
             }
             if (original.isPlaying) original.pause()
             player=candidate;sourceCandidate=null
+            cachedAudio = false
             sourceTimeout?.let{handler.removeCallbacks(it)};sourceTimeout=null
             prepared=true;seeking=false;playbackRevision+=1;listeningPosition=null
             lastPosition=candidate.currentPosition/1000.0;lastDuration=candidate.duration/1000.0
@@ -956,7 +973,7 @@ class PlaybackService : MediaSessionService() {
                 abandonFocus()
                 emitAction("resume")
             } else {
-                recoveryAttempted = false
+                resetRecovery()
                 resolveTrack(track, refresh = true, position = lastPosition)
             }
             return

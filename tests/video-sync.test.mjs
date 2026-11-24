@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 
 const output = await build({ entryPoints: ['src/features/lyrics/videoSync.ts'], bundle: true, write: false, format: 'esm' })
-const { synchronizeVideo } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`)
+const { createBufferedFrameWatch, synchronizeVideo } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`)
 function video(overrides = {}) { return { readyState: 4, seeking: false, currentTime: 10, playbackRate: 1, paused: true, buffered: { length: 0 }, plays: 0, pause() { this.paused = true }, async play() { this.paused = false; this.plays++ }, ...overrides } }
 
 test('initial sync seeks once after metadata is available', () => {
@@ -97,4 +97,17 @@ test('video follows audio at 2× without treating expected progress as a seek', 
   assert.equal(element.currentTime, 12)
   synchronizeVideo(element, 20, true, 12, false, .25, 2)
   assert.equal(element.currentTime, 20)
+})
+
+test('the old car decoder retry requires buffered video, stationary frames and advancing audio', () => {
+  const watch = createBufferedFrameWatch()
+  const buffered = { length: 1, start: () => 0, end: () => 54 }
+  assert.equal(watch.stalled(buffered, .6, 8, 1, 0), false)
+  assert.equal(watch.stalled(buffered, .6, 8, 1, 2500), false)
+  assert.equal(watch.stalled(buffered, 1.7, 8, 3.5, 2750), true)
+  watch.reset()
+  assert.equal(watch.stalled(buffered, 1.7, 8, 4, 3000), false)
+  assert.equal(watch.stalled(buffered, 5, 90, 6.5, 5500), false)
+  assert.equal(watch.stalled(buffered, 60, 90, 60, 8000), false)
+  assert.equal(watch.stalled(buffered, 1.7, undefined, 3, 10500), false)
 })

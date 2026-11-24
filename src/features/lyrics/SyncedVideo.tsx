@@ -1,7 +1,7 @@
 import { reportVideoIssue, videoDiagnosticTrace, videoSourceIssue, type VideoDiagnosticTrace } from './videoDiagnostics'
 import { memo, useEffect, useRef, useState } from 'react'
 import { playbackClock, usePlayerStore } from '../player/playerStore'
-import { synchronizeVideo } from './videoSync'
+import { createBufferedFrameWatch, synchronizeVideo } from './videoSync'
 import { VideoStartup } from './VideoStartup'
 import { createVideoRecovery } from './videoRecovery'
 import { isAndroid, isLargeScreen, needsDecodedFrameBeforeVideoSeek } from '../../services/platform'
@@ -20,7 +20,11 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
   const [frame, setFrame] = useState<{ src: string; attempt: number }>()
   const [slowIssue, setSlowIssue] = useState<PlaybackIssue | null>(null)
   const [retry, setRetry] = useState(0)
-  const visible = frame?.src === src && frame.attempt === retry
+  const [legacyAvcSource, setLegacyAvcSource] = useState<string>()
+  const legacyAvc = needsDecodedFrameBeforeVideoSeek && codecs?.startsWith('avc1.') && !src.includes('?')
+  const useLegacyAvc = legacyAvc && legacyAvcSource === src
+  const videoUrl = useLegacyAvc ? `${src}?legacy_avc=1` : src
+  const visible = frame?.src === videoUrl && frame.attempt === retry
   const [recovering, setRecovering] = useState(false)
   const reloadRef = useRef(onReload)
   reloadRef.current = onReload
@@ -56,6 +60,8 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
     let frameCallback: number | undefined
     let startupFrames = 0
     let frameWait: { since: number; position: number } | undefined
+    let stoppedForStall = false
+    const bufferedFrames = legacyAvc ? createBufferedFrameWatch() : undefined
     const canRevealFrame = () => {
       const status = usePlayerStore.getState().status
       return !disposed && !document.hidden && activeRef.current && !pendingAlignment &&
@@ -66,8 +72,8 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       if (firstFrameShown || !canRevealFrame()) return
       firstFrameShown = true
       trace.emit('start', 'succeeded')
-      if (retry > 0) trace.emit('recovery', 'succeeded')
-      setFrame({ src, attempt: retry }); setError(null)
+      if (retry > 0 || useLegacyAvc) trace.emit('recovery', 'succeeded')
+      setFrame({ src: videoUrl, attempt: retry }); setError(null)
       onReady(src)
     }
     const waitForFrame = () => {
@@ -80,7 +86,9 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       })
     }
     const sync = (force = false) => {
-      if (document.hidden || !activeRef.current) { video.pause(); stableSince = performance.now(); return }
+      if (document.hidden || !activeRef.current || stoppedForStall) {
+        video.pause(); stableSince = performance.now(); bufferedFrames?.reset(); return
+      }
       if (video.error) { if (force) void recovery.current?.recover(); return }
       const time = playbackClock()
       const now = performance.now()
@@ -102,6 +110,23 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       )
       previousTime = time
       previousCheck = now
+      if (player.status !== 'playing') bufferedFrames?.reset()
+      else if (bufferedFrames?.stalled(video.buffered, video.currentTime,
+        (video as HTMLVideoElement & { webkitDecodedFrameCount?: number }).webkitDecodedFrameCount, time, now)) {
+        stoppedForStall = true
+        video.pause()
+        setFrame(undefined)
+        const issue = reportVideoIssue(trace, playbackIssue('video-decode', null,
+          '当前视频画面无法解码，声音会继续播放', 'video_stalled'))
+        if (useLegacyAvc) {
+          trace.emit('recovery', 'failed', { code: issue.code })
+          setError(issue)
+        } else {
+          trace.emit('recovery', 'started')
+          setLegacyAvcSource(src)
+        }
+        return
+      }
       if (player.status !== 'playing' || video.seeking || video.currentTime <= lastFrameTime) stableSince = now
       else if (now - stableSince > 20_000) recovery.current?.healthy()
       lastFrameTime = video.currentTime
@@ -129,11 +154,11 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
     document.addEventListener('visibilitychange', visibility)
     for (const event of events) video.addEventListener(event, ready)
     video.addEventListener('error', failed)
-    video.src = src
+    video.src = videoUrl
     video.load()
     sync()
     const slowTimer = window.setTimeout(() => {
-      if (!firstFrameShown) setSlowIssue(reportVideoIssue(trace, playbackIssue('video-buffer', null, '视频缓冲较慢', 'video_stalled')))
+      if (!firstFrameShown && !stoppedForStall) setSlowIssue(reportVideoIssue(trace, playbackIssue('video-buffer', null, '视频缓冲较慢', 'video_stalled')))
     }, 5000)
     const timer = window.setInterval(ready, 250)
     const unsubscribe = usePlayerStore.subscribe((state, previous) => { if (state.status !== previous.status || state.rate !== previous.rate) sync() })
@@ -151,7 +176,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
       video.removeAttribute('src')
       video.load()
     }
-  }, [src, retry, onReady, diagnostic, codecs, track.source.bvid, track.source.cid])
+  }, [src, videoUrl, retry, onReady, diagnostic, codecs, legacyAvc, useLegacyAvc, track.source.bvid, track.source.cid])
   useEffect(() => {
     activeRef.current = active && !suspended
     if (activeRef.current) syncRef.current(true)
@@ -159,7 +184,7 @@ export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codec
   }, [active, suspended])
   return <>
     <video ref={ref} className={`${visible ? 'synced-video ready' : 'synced-video'}${waitForCompositor ? ' wait-for-video-frame' : ''}${active ? '' : ' inactive'}`} muted playsInline preload="auto" />
-    {active && <VideoStartup key={`${src}:${retry}`} poster={poster} ready={visible}
+    {active && <VideoStartup key={`${videoUrl}:${retry}`} poster={poster} ready={visible}
       message={error || suspended ? undefined : slowIssue ? '视频缓冲较慢，声音会继续播放' : '正在加载并同步视频…'}>
       {slowIssue && <><button disabled={recovering} onClick={() => { void recovery.current?.recover(true) }}>重试加载</button>
         <CopyPlaybackDiagnostics issue={slowIssue} track={track} codecs={codecs}/></>}
