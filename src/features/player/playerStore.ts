@@ -504,7 +504,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       oldSource?.title !== queueSource?.title || oldQueue.length !== queue.length || oldQueue.some((track, index) => track.id !== queue[index].id)
     set({
       queue: current ? queue.map(item => item.id === current.id ? { ...item, ...current, resolveParts: item.resolveParts } : item) : queue,
-      queueReversed: false, queueSource, queueBase, queueOrigins,
+      queueReversed: false, queueSource: queueSource && { ...queueSource }, queueBase, queueOrigins,
       ...(keepPlaying && changed ? { queueFeedback: { serial: ++queueFeedbackSerial, title: queueSource?.title } } : {}),
     })
     if (!keepPlaying || resumeCheckpoint) await get().play(selected, resumeCheckpoint ? undefined : startAt, false, resumeCheckpoint ? startAt : undefined,true)
@@ -939,6 +939,29 @@ function visibleQueueParts(track: Track, origins: PlayerState['queueOrigins'], r
 function projectQueue(base: Track[], origins: PlayerState['queueOrigins'], rules: ReturnType<typeof useContentVisibility.getState>['rules']) {
   return uniqueTracks(base.flatMap(track => visibleQueueParts(track, origins, rules)))
 }
+
+export function appendCreatorQueuePage(expected: { source: QueueSource; page: number; epoch: number }, tracks: Track[], total: number) {
+  const state = usePlayerStore.getState()
+  const source = state.queueSource
+  if (accountResetting || accountEpoch() !== expected.epoch || source !== expected.source || (source.creatorPage ?? 1) !== expected.page) return false
+
+  const base = state.queueBase ?? state.queue
+  const known = new Set(base.map(track => track.source.bvid))
+  const added = tracks.filter(track => {
+    if (known.has(track.source.bvid)) return false
+    known.add(track.source.bvid)
+    return true
+  })
+  const queueBase = added.length ? [...base, ...added] : base
+  const queueOrigins = added.length ? { ...state.queueOrigins, ...Object.fromEntries(added.map(track => [track.id, listVisibilityOrigins(track, source)])) } : state.queueOrigins
+  const queue = added.length ? projectQueue(queueBase, queueOrigins, useContentVisibility.getState().rules) : state.queue
+  usePlayerStore.setState({
+    queueBase, queueOrigins, queue,
+    queueSource: { ...source, creatorPage: expected.page + 1, creatorTotal: tracks.length ? total : known.size },
+  })
+  return true
+}
+
 const syncNativeQueue: typeof nativeQueueWriter = (tracks,mode,shuffled,threshold,source) => {
   const state = usePlayerStore.getState()
   const base = state.queueBase ?? tracks

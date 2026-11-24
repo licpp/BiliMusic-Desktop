@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { usePlayerStore } from '../features/player/playerStore'
+import { appendCreatorQueuePage, usePlayerStore, type QueueSource } from '../features/player/playerStore'
 import { creatorVideoRow } from './mediaSources'
 import { accountEpoch } from './accountScope'
 
@@ -7,12 +7,14 @@ import { accountEpoch } from './accountScope'
 // The subscription survives navigation away from the creator page.
 export function startCreatorQueue() {
   let pending = false
+  let retrySource: QueueSource | undefined
   let retryAfter = 0
-  usePlayerStore.subscribe(async (state) => {
+
+  async function loadNextPage(state: ReturnType<typeof usePlayerStore.getState>) {
     const source = state.queueSource
     if (
       pending ||
-      Date.now() < retryAfter ||
+      (source === retrySource && Date.now() < retryAfter) ||
       !source?.creatorMid ||
       !state.current
     )
@@ -20,12 +22,15 @@ export function startCreatorQueue() {
     const creatorMid = source.creatorMid
     const videos = [...new Set(state.queue.map((track) => track.source.bvid))]
     const at = videos.indexOf(state.current.source.bvid)
-    if (at < videos.length - 5 || videos.length >= (source.creatorTotal || 0))
+    if (at < videos.length - 5) return
+    const base = state.queueBase ?? state.queue
+    if (new Set(base.map(track => track.source.bvid)).size >= (source.creatorTotal || 0))
       return
+
+    const expected = { source, page: source.creatorPage ?? 1, epoch: accountEpoch() }
+    let applied = false
     pending = true
-    const scope = accountEpoch()
     try {
-      const next = (source.creatorPage || 1) + 1
       const result = await invoke<{
         data: {
           list: {
@@ -43,36 +48,21 @@ export function startCreatorQueue() {
         }
       }>('bili_creator_catalog', {
         action: 'videos',
-        mid: source.creatorMid,
-        page: next,
+        mid: creatorMid,
+        page: expected.page + 1,
         keyword: source.creatorKeyword || '',
       })
-      const current = usePlayerStore.getState()
-      if (
-        scope !== accountEpoch() ||
-        current.queueSource?.creatorMid !== source.creatorMid ||
-        current.queueSource.creatorPage !== source.creatorPage ||
-        (current.queueSource.creatorKeyword || '') !== (source.creatorKeyword || '')
-      )
-        return
-      const known = new Set(current.queue.map((track) => track.source.bvid))
-      const tracks = result.data.list.vlist
-        .filter((video) => !known.has(video.bvid))
-        .map(video => creatorVideoRow(video, creatorMid, source.title))
-      usePlayerStore.setState({
-        queue: [...current.queue, ...tracks],
-        queueSource: {
-          ...source,
-          creatorPage: next,
-          creatorTotal: result.data.list.vlist.length
-            ? result.data.page.count
-            : videos.length,
-        },
-      })
+      const tracks = result.data.list.vlist.map(video => creatorVideoRow(video, creatorMid, source.title))
+      applied = appendCreatorQueuePage(expected, tracks, result.data.page.count)
     } catch {
+      retrySource = source
       retryAfter = Date.now() + 30000
     } finally {
       pending = false
+      const current = usePlayerStore.getState()
+      if (!applied && current.queueSource !== source) void loadNextPage(current)
     }
-  })
+  }
+
+  usePlayerStore.subscribe(loadNextPage)
 }

@@ -12,14 +12,24 @@ const compiled = await build({
     builder.onResolve({ filter: /accountScope$/ }, () => ({ path: 'account', namespace: 'fixture' }))
     builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({path}) => ({contents: {
       invoke: 'export const invoke=(...args)=>globalThis.creatorQueueTest.invoke(...args)',
-      store: 'export const usePlayerStore={subscribe(fn){globalThis.creatorQueueTest.listener=fn},getState:()=>globalThis.creatorQueueTest.state,setState(next){globalThis.creatorQueueTest.state={...globalThis.creatorQueueTest.state,...next}}}',
+      store: `
+        export const usePlayerStore = {
+          subscribe(fn) { globalThis.creatorQueueTest.listener = fn },
+          getState: () => globalThis.creatorQueueTest.state,
+        }
+        export function appendCreatorQueuePage(expected, tracks, total) {
+          const fixture = globalThis.creatorQueueTest
+          fixture.commits.push({ expected, tracks, total })
+          return fixture.state.queueSource === expected.source
+        }
+      `,
       media: 'export const creatorVideoRow=v=>({id:v.bvid,source:{bvid:v.bvid}})',
       account: 'export const accountEpoch=()=>0',
     }[path]}))
   } }],
 })
 function setup(invoke) {
-  const fixture={state:{current:{source:{bvid:'first'}},queue:[{source:{bvid:'first'}}],queueSource:{creatorMid:42,creatorPage:1,creatorTotal:60,creatorKeyword:'钢琴',title:'UP'}},invoke}
+  const fixture={state:{current:{source:{bvid:'first'}},queue:[{source:{bvid:'first'}}],queueSource:{creatorMid:42,creatorPage:1,creatorTotal:60,creatorKeyword:'钢琴',title:'UP'}},invoke,commits:[]}
   globalThis.creatorQueueTest=fixture
   const module={exports:{}}
   new Function('require','module','exports',compiled.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports)
@@ -32,16 +42,21 @@ test('creator playback continues paging with the selected creator and search key
   const f=setup(async (command,input)=>{assert.equal(command,'bili_creator_catalog');args=input;return response})
   await f.listener(f.state)
   assert.deepEqual(args,{action:'videos',mid:42,page:2,keyword:'钢琴'})
-  assert.equal(f.state.queue.at(-1).id,'next')
-  assert.equal(f.state.queueSource.creatorKeyword,'钢琴')
-  assert.equal(f.state.queueSource.creatorPage,2)
+  assert.deepEqual(f.commits, [{ expected: { source: f.state.queueSource, page: 1, epoch: 0 }, tracks: [{ id: 'next', source: { bvid: 'next' } }], total: 60 }])
 })
-test('a previous keyword request cannot append videos after switching to another search queue', async () => {
-  let finish
-  const f=setup(()=>new Promise(resolve=>{finish=resolve}))
+test('a newly selected search queue starts its own request after the old request completes', async () => {
+  const requests = []
+  const f = setup((command, input) => new Promise(resolve => { requests.push({ input, resolve }) }))
+  const originalSource = f.state.queueSource
   const pending=f.listener(f.state)
   f.state={...f.state,queueSource:{...f.state.queueSource,creatorKeyword:'爵士'}}
-  finish(response);await pending
-  assert.equal(f.state.queue.length,1)
-  assert.equal(f.state.queueSource.creatorKeyword,'爵士')
+  await f.listener(f.state)
+  assert.equal(requests.length, 1)
+  requests[0].resolve(response)
+  await pending
+  assert.equal(f.commits[0].expected.source, originalSource)
+  assert.deepEqual(requests.map(({ input }) => input.keyword), ['钢琴', '爵士'])
+  requests[1].resolve(response)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.commits[1].expected.source, f.state.queueSource)
 })
