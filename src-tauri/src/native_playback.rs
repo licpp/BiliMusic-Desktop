@@ -7,10 +7,9 @@ use crate::infrastructure::{
     providers::bilibili::{BilibiliProvider, VideoParts},
     repositories::library::{LibraryRepository, TrackInput},
 };
-use crate::interface::commands::{
-    compatible_playback_plan, library_record_play, track_playback_plan, validate_track,
-};
+use crate::interface::commands::{library_record_play, validate_track};
 use crate::interface::error::CommandError;
+use crate::interface::playback::{compatible_playback_plan, track_playback_plan};
 use serde_json::{Value, json};
 use tauri::Manager;
 

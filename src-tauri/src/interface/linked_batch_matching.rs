@@ -1,6 +1,6 @@
 //! Profile-local batch matching checkpoints. One ordered selection is kept per
 //! linked folder, and only the current video needs to be expanded at a time.
-use super::{batch_matching, commands, error::CommandError};
+use super::{account, batch_matching, commands, error::CommandError};
 use crate::{
     infrastructure::{
         database::Database,
@@ -341,7 +341,7 @@ fn start(
     tracks: Option<Vec<TrackInput>>,
 ) -> Result<LinkedMatchJob, CommandError> {
     let tx = c.unchecked_transaction().map_err(CommandError::database)?;
-    commands::check_account_session(&tx, session)?;
+    account::check_account_session(&tx, session)?;
     let existing = load(&tx, folder_id)?;
     let mut job = if let Some(mut bvids) = bvids {
         if existing.is_some_and(|job| job.progress.state.pending()) {
@@ -454,7 +454,7 @@ fn update(
     operation: JobUpdate,
 ) -> Result<LinkedMatchJob, CommandError> {
     let tx = c.unchecked_transaction().map_err(CommandError::database)?;
-    commands::check_account_session(&tx, session)?;
+    account::check_account_session(&tx, session)?;
     let mut job = load(&tx, folder_id)?
         .filter(|job| job.progress.run_id == run_id)
         .ok_or_else(changed)?;
@@ -558,7 +558,7 @@ pub(super) fn commit(
     lyrics: &SaveLyricsInput,
 ) -> Result<bool, CommandError> {
     let tx = c.unchecked_transaction().map_err(CommandError::database)?;
-    commands::check_account_session(&tx, session)?;
+    account::check_account_session(&tx, session)?;
     let mut job = load(&tx, lease.folder_id)?
         .filter(|job| {
             job.session == session
@@ -601,7 +601,7 @@ pub fn linked_batch_match_job(
     expected_session: String,
 ) -> Result<Option<LinkedMatchJob>, CommandError> {
     let c = database.0.lock().map_err(CommandError::database)?;
-    commands::check_account_session(&c, &expected_session)?;
+    account::check_account_session(&c, &expected_session)?;
     load(&c, folder_id)?
         .map(|job| view(&c, folder_id, &expected_session, job))
         .transpose()

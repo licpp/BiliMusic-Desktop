@@ -1,10 +1,13 @@
+pub mod account;
 pub mod commands;
+pub mod downloads;
 pub mod error;
 pub mod linked_folders;
 
 #[cfg(all(desktop, not(target_env = "ohos")))]
 pub mod local_playlist;
 pub mod media;
+pub mod playback;
 pub mod playback_cache;
 pub mod playlist_import;
 

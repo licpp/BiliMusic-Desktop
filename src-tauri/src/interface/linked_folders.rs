@@ -153,7 +153,7 @@ async fn owned_folder(
 
 fn check_folder_session(database: &Database, active: &FolderSession) -> Result<(), CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    super::commands::check_account_session(&connection, &active.runtime)
+    super::account::check_account_session(&connection, &active.runtime)
 }
 
 fn continued_priority(priority: RequestPriority) -> RequestPriority {
@@ -169,7 +169,7 @@ fn ensure_active(
     folder_id: i64,
     uid: i64,
 ) -> Result<(), CommandError> {
-    super::commands::check_account_session(connection, &active.runtime)?;
+    super::account::check_account_session(connection, &active.runtime)?;
     let owner: Option<i64> = connection
         .query_row(
             "SELECT owner_uid FROM linked_bili_folders WHERE folder_id=?1",
@@ -227,7 +227,7 @@ pub fn bili_linked_folder(
     expected_account_session: String,
 ) -> Result<Option<LinkedFolder>, CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    super::commands::check_account_session(&connection, &expected_account_session)?;
+    super::account::check_account_session(&connection, &expected_account_session)?;
     read(&connection, folder_id)
 }
 
@@ -282,7 +282,7 @@ pub fn bili_linked_matched_covers(
     expected_account_session: String,
 ) -> Result<Vec<LinkedMatchedCover>, CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    super::commands::check_account_session(&connection, &expected_account_session)?;
+    super::account::check_account_session(&connection, &expected_account_session)?;
     matched_covers(&connection, &bvids)
 }
 
@@ -392,7 +392,7 @@ async fn refresh_folder(
     let _operation = update.lock.lock().await;
     let (active, link_order) = {
         let connection = database.0.lock().map_err(CommandError::database)?;
-        super::commands::check_account_session(&connection, expected_account_session)?;
+        super::account::check_account_session(&connection, expected_account_session)?;
         let matching_refresh_completed =
             update.completed_refreshes.load(Ordering::Relaxed) != requested_after;
         if !link {
@@ -462,7 +462,7 @@ pub(crate) async fn hydrate_synced_links(
 ) -> Result<usize, String> {
     let folders = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        super::commands::check_account_session(&c, expected_account_session)
+        super::account::check_account_session(&c, expected_account_session)
             .map_err(|e| e.message)?;
         let mut q=c.prepare("SELECT folder_id FROM linked_bili_folders WHERE refreshed_at=0 ORDER BY folder_id LIMIT 5").map_err(|e|e.to_string())?;
         q.query_map([], |r| r.get::<_, i64>(0))
@@ -504,7 +504,7 @@ pub async fn bili_linked_change(
     let _operation = update.lock.lock().await;
     let active = {
         let connection = database.0.lock().map_err(CommandError::database)?;
-        super::commands::check_account_session(&connection, &expected_account_session)?;
+        super::account::check_account_session(&connection, &expected_account_session)?;
         session(&connection)?
     };
     let priority = RequestPriority::Foreground;
@@ -582,14 +582,14 @@ pub async fn bili_linked_remove_selected(
     let _operation = update.lock.lock().await;
     let active = {
         let connection = database.0.lock().map_err(CommandError::database)?;
-        super::commands::check_account_session(&connection, &expected_account_session)?;
+        super::account::check_account_session(&connection, &expected_account_session)?;
         session(&connection)?
     };
     let priority = RequestPriority::Foreground;
     let (provider, uid, folder) = owned_folder(&database, folder_id, &active, priority).await?;
     let cached = {
         let connection = database.0.lock().map_err(CommandError::database)?;
-        super::commands::check_account_session(&connection, &expected_account_session)?;
+        super::account::check_account_session(&connection, &expected_account_session)?;
         ensure_active(&connection, &active, folder_id, uid)?;
         read(&connection, folder_id)?.ok_or_else(|| CommandError::validation("请先关联此收藏夹"))?
     };
@@ -611,7 +611,7 @@ pub async fn bili_linked_remove_selected(
         }
         {
             let connection = database.0.lock().map_err(CommandError::database)?;
-            super::commands::check_account_session(&connection, &expected_account_session)?;
+            super::account::check_account_session(&connection, &expected_account_session)?;
             ensure_active(&connection, &active, folder_id, uid)?;
             if read(&connection, folder_id)?.is_none() {
                 return Err(CommandError::validation("收藏夹已解除关联"));
@@ -648,7 +648,7 @@ pub async fn bili_linked_remove_selected(
             .ok()
     };
     let connection = database.0.lock().map_err(CommandError::database)?;
-    super::commands::check_account_session(&connection, &expected_account_session)?;
+    super::account::check_account_session(&connection, &expected_account_session)?;
     ensure_active(&connection, &active, folder_id, uid)?;
     let current = read(&connection, folder_id)?
         .ok_or_else(|| CommandError::validation("收藏夹已解除关联"))?;

@@ -59,7 +59,7 @@ pub fn lyric_match_version(
     track_id: String,
 ) -> Result<String, CommandError> {
     let c = database.0.lock().map_err(CommandError::database)?;
-    super::commands::check_account_session(&c, &expected_account_session)?;
+    super::account::check_account_session(&c, &expected_account_session)?;
     pair_version(&c, &track_id)
 }
 
