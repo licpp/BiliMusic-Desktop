@@ -870,15 +870,31 @@ pub fn lyrics_set_bias(
     track_id: String,
     bias_ms: i64,
     expected: StoredLyrics,
-) -> Result<StoredLyrics, CommandError> {
+) -> Result<LyricBiasWrite, CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     check_account_session(&connection, &expected_account_session)?;
-    LyricsRepository::set_bias_if_current(&connection, &track_id, bias_ms, &expected)
-        .map_err(CommandError::database)?
-        .ok_or_else(|| CommandError::validation("歌词已变化，请重新调整偏移"))
+    check_account_session(&connection, &expected.account_session)?;
+    if expected.track_id != track_id {
+        return Err(CommandError::validation("歌词与当前曲目不一致"));
+    }
+    if let Some(lyrics) =
+        LyricsRepository::set_bias_if_current(&connection, &track_id, bias_ms, &expected)
+            .map_err(CommandError::database)?
+    {
+        return Ok(LyricBiasWrite::Saved { lyrics });
+    }
+    let lyrics = LyricsRepository::get(&connection, &track_id).map_err(CommandError::database)?;
+    Ok(LyricBiasWrite::Conflict { lyrics })
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum LyricBiasWrite {
+    Saved { lyrics: StoredLyrics },
+    Conflict { lyrics: Option<StoredLyrics> },
 }
 
 #[tauri::command]

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Track } from '../../domain/track'
-import type { LyricLine, StoredLyrics } from '../../domain/lyrics'
+import { LyricBiasConflict, type LyricLine, type StoredLyrics } from '../../domain/lyrics'
 import { accountEpoch } from '../../services/accountScope'
 import { commandErrorMessage, setStoredLyricsBias } from '../../services/desktopApi'
 import { usePlayerStore } from '../player/playerStore'
@@ -9,6 +9,7 @@ import { automaticLyricBias } from './autoAlignment'
 type Options = {
   track: Track | null; stored: StoredLyrics | null | undefined; lines: readonly LyricLine[]; enabled: boolean
   beforeAlign?: () => Promise<void>; onAligned: (saved: StoredLyrics) => void
+  onConflict?: (latest: StoredLyrics | null) => void
 }
 export function useAutoLyricAlignment(options: Options) {
   const latest = useRef(options); latest.current = options
@@ -40,7 +41,10 @@ export function useAutoLyricAlignment(options: Options) {
       window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: saved }))
       setState({ busy: false, message: '歌词已自动对齐', failed: false })
     } catch (error) {
-      if (valid()) setState({ busy: false, message: commandErrorMessage(error), failed: true })
+      if (valid()) {
+        if (error instanceof LyricBiasConflict) latest.current.onConflict?.(error.lyrics)
+        setState({ busy: false, message: commandErrorMessage(error), failed: true })
+      }
     } finally {
       if (mounted.current && operation === generation.current) { running.current = false; setState(value => ({ ...value, busy: false })) }
     }

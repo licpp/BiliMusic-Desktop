@@ -272,7 +272,8 @@ class PlaybackService : MediaSessionService() {
         artist = track.mediaText("artist"); album = track.mediaText("album")
         metadataDuration = track.optDouble("durationSeconds", 0.0)
         requestedStartPosition = position ?: 0.0
-        lastPosition = 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
+        lastPosition = if (resumeDuringResolution == null) requestedStartPosition else 0.0
+        lastDuration = track.optDouble("durationSeconds", 0.0)
         playbackRevision += 1; resolveProfile = scope; resolveAccount = account; resolvingNative = true; status = "buffering"; error = null
         prepareArtwork(track.mediaText("coverUrl")); updateMetadata(); updateSessionPlaybackState()
         startPlaybackForeground()
@@ -646,7 +647,9 @@ class PlaybackService : MediaSessionService() {
         outputGain.plan(intent.getDoubleExtra("loudnessGainDb",0.0))
         prepareArtwork(intent.getStringExtra("coverUrl"))
         requestedStartPosition = intent.getDoubleExtra("position", 0.0)
-        lastPosition = 0.0; lastDuration = 0.0
+        val automaticResume = intent.getBooleanExtra("automaticResume", false)
+        lastPosition = if (automaticResume) 0.0 else requestedStartPosition
+        lastDuration = 0.0
         pendingUpgradeUrl = intent.getStringExtra("upgradeUrl")
         upgradeAfterPosition = intent.getDoubleExtra("position", 0.0) + 0.75
         val playWhenReady = intent.getBooleanExtra("playing", true)
@@ -662,7 +665,7 @@ class PlaybackService : MediaSessionService() {
             media.setAudioAttributes(playbackAttributes)
             media.setWakeMode(this, PowerManager.PARTIAL_WAKE_LOCK)
             applyOutput()
-            val resumePolicy = if (intent.getBooleanExtra("automaticResume", false)) AutomaticResumePolicy().apply {
+            val resumePolicy = if (automaticResume) AutomaticResumePolicy().apply {
                 enabled = intent.getBooleanExtra("resumeEnabled", true)
                 thresholdSeconds = intent.getDoubleExtra("resumeThreshold", 0.0)
                 collection = intent.getBooleanExtra("resumeCollection", false)
@@ -974,7 +977,8 @@ class PlaybackService : MediaSessionService() {
                 emitAction("resume")
             } else {
                 resetRecovery()
-                resolveTrack(track, refresh = true, position = lastPosition)
+                val position = if (initialResumePolicy != null) requestedStartPosition else lastPosition
+                resolveTrack(track, refresh = true, position = position)
             }
             return
         }

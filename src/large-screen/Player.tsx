@@ -32,7 +32,7 @@ import { useAutoLyricAlignment } from '../features/lyrics/useAutoLyricAlignment'
 import { clampBias } from '../features/lyrics/biasWriter'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { commandErrorMessage, getStoredLyrics, enrichStoredLyricLines, setStoredLyricsBias } from '../services/desktopApi'
-import type { StoredLyrics, LyricLine } from '../domain/lyrics'
+import { LyricBiasConflict, type StoredLyrics, type LyricLine } from '../domain/lyrics'
 import { accountEpoch } from '../services/accountScope'
 import { controlMobileAudio } from '../features/player/mobileAudio'
 import { isAndroid } from '../services/platform'
@@ -217,7 +217,13 @@ function LargeLyrics({ track, toolsHost, density }: { track: Track; toolsHost: H
   const timed = Boolean(captions.lines) || timedMatch
   const Line = timed ? 'button' : 'p'
   const canAdjustBias = timedMatch && !captions.lines
-  const autoAlignment = useAutoLyricAlignment({ track, stored: stored.data, lines, enabled: biasOpen && canAdjustBias && !biasBusy, onAligned: () => setBiasError('') })
+  const applyBiasConflict = (latest: StoredLyrics | null) => {
+    if (client.getQueryData(key) !== stored.data) return
+    client.setQueryData(key, latest)
+    if (latest) window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias', { detail: latest }))
+  }
+  const autoAlignment = useAutoLyricAlignment({ track, stored: stored.data, lines, enabled: biasOpen && canAdjustBias && !biasBusy,
+    onAligned: () => setBiasError(''), onConflict: applyBiasConflict })
   const [supplementPreference, setSupplementPreference] = useState<LyricSupplement>(() => {
     const saved = localStorage.getItem('lyrics-supplement')
     return saved === 'romanization' || saved === 'translation' ? saved : 'off'
@@ -267,7 +273,10 @@ function LargeLyrics({ track, toolsHost, density }: { track: Track; toolsHost: H
       const next = await setStoredLyricsBias(track.id, clampBias(stored.data.biasMs + delta), stored.data)
       if (valid()) window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: next }))
     } catch (error) {
-      if (valid()) setBiasError(commandErrorMessage(error))
+      if (valid()) {
+        if (error instanceof LyricBiasConflict) applyBiasConflict(error.lyrics)
+        setBiasError(commandErrorMessage(error))
+      }
     } finally { setBiasBusy(false) }
   }
   const rowHeight = Math.max(44, (viewportHeight - (rows - 1) * 6) / rows)

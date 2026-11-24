@@ -152,6 +152,44 @@ mod tests {
     }
 
     #[test]
+    fn synchronized_bias_rejects_a_stale_write_and_accepts_the_new_base() {
+        let connection = database();
+        let track_id = "bilibili:BV1test12345:42";
+        let original = LyricsRepository::save(
+            &connection,
+            track_id,
+            &SaveLyricsInput {
+                provider: "netease".into(),
+                provider_lyric_id: "42".into(),
+                raw_text: "[00:01]歌词".into(),
+                parsed_json: "[]".into(),
+            },
+            true,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE lyrics SET bias_ms=900 WHERE track_id=?1",
+                [track_id],
+            )
+            .unwrap();
+        assert!(
+            LyricsRepository::set_bias_if_current(&connection, track_id, 500, &original)
+                .unwrap()
+                .is_none()
+        );
+        let current = LyricsRepository::get(&connection, track_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.write_token, original.write_token);
+        assert_eq!(current.bias_ms, 900);
+        let saved = LyricsRepository::set_bias_if_current(&connection, track_id, 1150, &current)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.bias_ms, 1150);
+    }
+
+    #[test]
     fn automatic_alignment_checks_selection_bias_content_and_account() {
         let c = database();
         let id = "bilibili:BV1test12345:42";

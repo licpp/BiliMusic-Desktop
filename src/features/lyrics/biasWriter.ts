@@ -1,6 +1,6 @@
-import type { StoredLyrics } from '../../domain/lyrics'
+import { LyricBiasConflict, type StoredLyrics } from '../../domain/lyrics'
 
-type Adjustment = { expected: StoredLyrics; biasMs: number }
+type Adjustment = { expected: StoredLyrics; biasMs: number; applies?: () => boolean }
 const selectionKey = ({ trackId, accountSession, writeToken }: StoredLyrics) =>
   JSON.stringify([trackId, accountSession, writeToken])
 
@@ -30,10 +30,19 @@ export function createBiasWriter(
           const saved = await save(adjustment.expected, adjustment.biasMs)
           if (attempt.generation !== generation) continue
           const next = pending.get(key)
-          if (next) next.expected = saved
-          onResult(adjustment.expected, adjustment.biasMs)
+          if (next?.expected === adjustment.expected) next.expected = saved
+          else if (adjustment.applies?.() !== false) onResult(adjustment.expected, adjustment.biasMs)
         } catch (error) {
-          if (attempt.generation === generation) onResult(adjustment.expected, adjustment.biasMs, error)
+          if (attempt.generation !== generation) continue
+          const next = pending.get(key)
+          if (error instanceof LyricBiasConflict) {
+            // Pending values for this selection were also based on the stale bias.
+            const latest = next?.expected === adjustment.expected ? next : adjustment
+            if (latest === next) pending.delete(key)
+            if (latest.applies?.() !== false) onResult(adjustment.expected, latest.biasMs, error)
+          } else if (!next && adjustment.applies?.() !== false) {
+            onResult(adjustment.expected, adjustment.biasMs, error)
+          }
         } finally {
           active = undefined
         }
@@ -42,10 +51,12 @@ export function createBiasWriter(
     return running
   }
   return {
-    set(expected: StoredLyrics, biasMs: number) {
+    set(expected: StoredLyrics, biasMs: number, applies?: () => boolean) {
       const key = selectionKey(expected)
       const writing = active?.key === key && active.generation === generation ? active.adjustment : undefined
-      pending.set(key, { expected: pending.get(key)?.expected ?? writing?.expected ?? expected, biasMs })
+      const previous = pending.get(key) ?? writing
+      const base = previous?.biasMs === expected.biasMs ? previous.expected : expected
+      pending.set(key, { expected: base, biasMs, applies })
       clearTimeout(timer)
       timer = setTimeout(() => { void flush() }, delay)
     },

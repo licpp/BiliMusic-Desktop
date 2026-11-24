@@ -225,6 +225,8 @@ fn safe_code(value: &str) -> bool {
             | "profile_unavailable"
             | "native_not_ready"
             | "native_request_failed"
+            | "native_observation_failed"
+            | "native_loudness_unavailable"
             | "source_timeout"
             | "source_unavailable"
             | "source_expired"
@@ -791,6 +793,12 @@ mod tests {
         assert_eq!(sanitized.requested_quality, Some(30280));
         assert!(sanitized.bvid.is_none() && sanitized.cid.is_none());
         assert!(sanitized.codec.is_none() && sanitized.http.is_none() && sanitized.code.is_none());
+        for code in ["native_observation_failed", "native_loudness_unavailable"] {
+            let mut failure =
+                Input::new(&operation(), Area::Playback, Step::Control, Outcome::Failed);
+            failure.code = Some(code.into());
+            assert_eq!(failure.sanitized().unwrap().code.as_deref(), Some(code));
+        }
         let mut focus = Input::new(
             &operation(),
             Area::Playback,

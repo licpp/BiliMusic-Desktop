@@ -1047,9 +1047,11 @@ async fn proxy_media(
         }
     }
     if uri.query() == Some("legacy_avc=1") && entry.content_type == "video/mp4" {
-        if let Some(response) = serve_legacy_avc(&state, &media_id, &entry, &request_headers).await
-        {
-            return response;
+        match serve_legacy_avc(&state, &media_id, &entry, &request_headers).await {
+            Ok(Some(response)) => return response,
+            // A complete prefix confirmed that no compatibility patch applies.
+            Ok(None) => {}
+            Err(status) => return status_response(status),
         }
     }
     let patch = if uri.query() == Some("legacy_mp4=1") && entry.content_type == "audio/mp4" {
@@ -1073,12 +1075,13 @@ async fn proxy_media(
     }
 }
 
+const LEGACY_MP4_PREFIX_LIMIT: usize = 64 * 1024;
+
 async fn legacy_mp4_prefix(
     state: &ProxyState,
     id: &str,
     entry: &MediaEntry,
 ) -> Result<(axum::body::Bytes, u64), ()> {
-    const LIMIT: usize = 64 * 1024;
     let mut headers = HeaderMap::new();
     headers.insert(header::RANGE, HeaderValue::from_static("bytes=0-65535"));
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -1086,7 +1089,7 @@ async fn legacy_mp4_prefix(
         let (0, _, total) = response_span(response.headers()).ok_or(())? else {
             return Err(());
         };
-        let bytes = axum::body::to_bytes(response.into_body(), LIMIT)
+        let bytes = axum::body::to_bytes(response.into_body(), LEGACY_MP4_PREFIX_LIMIT)
             .await
             .map_err(|_| ())?;
         Ok((bytes, total))
@@ -1100,41 +1103,48 @@ async fn serve_legacy_avc(
     id: &str,
     entry: &MediaEntry,
     headers: &HeaderMap,
-) -> Option<Response<Body>> {
-    let (total, patch) = entry
+) -> Result<Option<Response<Body>>, StatusCode> {
+    let compatibility = entry
         .legacy_avc
         .get_or_try_init(|| async {
             let (prefix, total) = legacy_mp4_prefix(state, id, entry).await?;
+            if prefix.len() as u64 != total.min(LEGACY_MP4_PREFIX_LIMIT as u64) {
+                return Err(());
+            }
             Ok::<_, ()>(AvcPatch::from_init(&prefix).map(|patch| (total, Arc::new(patch))))
         })
         .await
-        .ok()?
-        .as_ref()?;
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let Some((total, patch)) = compatibility else {
+        return Ok(None);
+    };
     let range = headers
         .get(header::RANGE)
         .map(|value| value.to_str())
         .transpose()
-        .ok()?;
-    let (start, end) = byte_range(range, *total)?;
+        .map_err(|_| StatusCode::RANGE_NOT_SATISFIABLE)?;
+    let (start, end) = byte_range(range, *total).ok_or(StatusCode::RANGE_NOT_SATISFIABLE)?;
     let mut position = start.saturating_sub(patch.context());
+    let last = end.saturating_add(patch.context()).min(total - 1);
     let mut request = headers.clone();
     if range.is_some() {
         // Keep enough context to patch an SPS even when a range starts or ends inside it.
-        let last = (end + patch.context()).min(total - 1);
         request.insert(
             header::RANGE,
-            format!("bytes={position}-{last}").parse().ok()?,
+            format!("bytes={position}-{last}")
+                .parse()
+                .expect("numeric byte range"),
         );
     }
     let response = serve_media_entry(state, id, entry.clone(), &request).await;
     if range.is_some() {
-        if response_span(response.headers())
-            != Some((position, (end + patch.context()).min(total - 1), *total))
+        if response.status() != StatusCode::PARTIAL_CONTENT
+            || response_span(response.headers()) != Some((position, last, *total))
         {
-            return None;
+            return Err(StatusCode::BAD_GATEWAY);
         }
     } else if response.status() != StatusCode::OK {
-        return Some(response);
+        return Err(StatusCode::BAD_GATEWAY);
     }
     let (mut parts, body) = response.into_parts();
     if range.is_some() {
@@ -1143,7 +1153,9 @@ async fn serve_legacy_avc(
             .insert(header::CONTENT_LENGTH, (end - start + 1).into());
         parts.headers.insert(
             header::CONTENT_RANGE,
-            format!("bytes {start}-{end}/{total}").parse().ok()?,
+            format!("bytes {start}-{end}/{total}")
+                .parse()
+                .expect("numeric byte range"),
         );
     }
     let patch = patch.clone();
@@ -1172,7 +1184,7 @@ async fn serve_legacy_avc(
             position = next;
             Ok::<_, axum::Error>(visible)
         });
-    Some(Response::from_parts(parts, Body::from_stream(chunks)))
+    Ok(Some(Response::from_parts(parts, Body::from_stream(chunks))))
 }
 
 fn neutralize_legacy_edit(response: Response<Body>, offset: u64) -> Response<Body> {
@@ -1695,20 +1707,40 @@ mod tests {
     #[tokio::test]
     async fn legacy_avc_route_preserves_byte_ranges_including_splits_inside_the_sps() {
         use super::*;
-        let (original, flag) = super::super::legacy_avc::fixture();
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (mut original, flag) = super::super::legacy_avc::fixture();
+        let (_, _, mdat_body) = super::super::fragmented_mp4::boxes(&original)
+            .find(|(kind, _, _)| *kind == b"mdat")
+            .unwrap();
+        // Keep the test SPS outside the proxy's in-memory prefix.
+        let media = original.split_off(mdat_body - 8);
+        let padding = PREFIX_LIMIT + 4096;
+        original.extend_from_slice(&(padding as u32).to_be_bytes());
+        original.extend_from_slice(b"free");
+        original.resize(original.len() + padding - 8, 0);
+        original.extend(media);
+        let flag = flag + padding;
         let total = original.len();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let upstream = format!("http://{}/video", listener.local_addr().unwrap());
         let fixture = original.clone();
+        let capped = Arc::new(AtomicBool::new(true));
+        let upstream_cap = capped.clone();
         let app = Router::new().route(
             "/video",
             get(move |heads: HeaderMap| {
                 let bytes = fixture.clone();
+                let capped = upstream_cap.load(Ordering::Relaxed);
                 async move {
                     let range = heads
                         .get(header::RANGE)
                         .map(|value| value.to_str().unwrap());
-                    let (start, end) = byte_range(range, bytes.len() as u64).unwrap();
+                    let (start, mut end) = byte_range(range, bytes.len() as u64).unwrap();
+                    let prefix = start == 0 && end == LEGACY_MP4_PREFIX_LIMIT as u64 - 1;
+                    let widened = start > 0 && start < flag as u64 && end > flag as u64;
+                    if capped && (prefix || widened) {
+                        end -= 1;
+                    }
                     let mut response = Response::builder()
                         .header(header::CONTENT_LENGTH, end - start + 1)
                         .header(header::ACCEPT_RANGES, "bytes");
@@ -1733,6 +1765,16 @@ mod tests {
         let client = reqwest::Client::new();
         let mut expected = original.clone();
         expected[flag] = 0x50;
+        let read_flag = || {
+            client
+                .get(&compatibility)
+                .header(header::RANGE, format!("bytes={flag}-{flag}"))
+                .send()
+        };
+        // Neither a partial initialization probe nor a partial widened request
+        // may let the original SPS through at the compatibility URL.
+        assert_eq!(read_flag().await.unwrap().status(), StatusCode::BAD_GATEWAY);
+        capped.store(false, Ordering::Relaxed);
         for (request, start, end) in [
             (format!("bytes={flag}-{flag}"), flag, flag),
             (format!("bytes={}-", flag - 2), flag - 2, total - 1),
@@ -1758,6 +1800,13 @@ mod tests {
         let response = client.get(&compatibility).send().await.unwrap();
         assert_eq!(response.content_length(), Some(total as u64));
         assert_eq!(response.bytes().await.unwrap().as_ref(), expected);
+        capped.store(true, Ordering::Relaxed);
+        assert_eq!(read_flag().await.unwrap().status(), StatusCode::BAD_GATEWAY);
+        capped.store(false, Ordering::Relaxed);
+        assert_eq!(
+            read_flag().await.unwrap().bytes().await.unwrap().as_ref(),
+            &[0x50]
+        );
         assert_eq!(
             client
                 .get(&url)

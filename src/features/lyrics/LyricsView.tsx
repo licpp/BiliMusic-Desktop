@@ -46,7 +46,7 @@ import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { playbackClock, playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getDanmaku, getStoredLyrics, enrichStoredLyricLines, getVideoParts, lyricMatchVersion, saveLyricsWithMetadata, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
 import { metadataForLyric } from '../../services/batchMatching'
-import type { LyricCandidate, LyricLine, StoredLyrics } from '../../domain/lyrics'
+import { LyricBiasConflict, type LyricCandidate, type LyricLine, type StoredLyrics } from '../../domain/lyrics'
 import { candidateLines, hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, parseLrc, type LyricSupplement } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
 import { MobilePartsPage } from '../library/MobilePartsPage'
@@ -202,13 +202,22 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
   storedRef.current = stored
   const mounted = useRef(false)
   const [biasSaveError, setBiasSaveError] = useState(false)
+  const applyBiasConflict = (latest: StoredLyrics | null) => {
+    const previous = storedRef.current
+    storedRef.current = latest
+    setStored(latest)
+    if (latest?.writeToken !== previous?.writeToken || latest?.parsedJson !== previous?.parsedJson) {
+      setLines(latest ? storedLyricLines(latest) : [])
+    }
+    if (latest) window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias', { detail: latest }))
+  }
   const [biasWriter] = useState(() => {
-    return createBiasWriter((expected, value) => setStoredLyricsBias(expected.trackId, value, expected), (expected, value, error) => {
+    return createBiasWriter((expected, value) => setStoredLyricsBias(expected.trackId, value, expected), (expected, _, error) => {
       const current = storedRef.current
-      if (!mounted.current || current?.trackId !== expected.trackId || current.writeToken !== expected.writeToken
-        || current.accountSession !== expected.accountSession || current.biasMs !== value) return
-      setBiasSaveError(Boolean(error))
-      if (error) {
+      setBiasSaveError(Boolean(error) && !(error instanceof LyricBiasConflict))
+      if (error instanceof LyricBiasConflict) {
+        applyBiasConflict(error.lyrics)
+      } else if (error && current) {
         const restored = { ...current, biasMs: expected.biasMs }
         storedRef.current = restored
         setStored(restored)
@@ -400,6 +409,7 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
 
   const syncedLyrics = useMemo(() => hasTimedLyrics(stored?.rawText), [stored?.rawText])
   const autoAlignment = useAutoLyricAlignment({ track: current, stored, lines, enabled: biasOpen && syncedLyrics && !subtitles.lines,
+    onConflict: latest => { if (storedRef.current === stored) applyBiasConflict(latest) },
     beforeAlign: () => biasWriter.flush(), onAligned: saved => {
       storedRef.current = saved; setStored(saved); setBiasSaveError(false); setBiasActivity(Date.now())
     },
@@ -516,11 +526,13 @@ export function LyricsView({ open = true, chapters, fullscreenRequested, setVide
   function adjustBias(delta: number) {
     const lyrics = storedRef.current
     if (!current || !lyrics || lyrics.trackId !== current.id || autoAlignment.busy) return
+    const epoch = accountEpoch(), playback = usePlayerStore.getState().current
     const next = { ...lyrics, biasMs: clampBias(lyrics.biasMs + delta) }
     storedRef.current = next
     window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias',{detail:next}))
     setStored(next); setBiasSaveError(false); setError(''); setBiasActivity(Date.now())
-    biasWriter.set(lyrics, next.biasMs)
+    biasWriter.set(lyrics, next.biasMs, () => mounted.current && epoch === accountEpoch()
+      && playback === usePlayerStore.getState().current && storedRef.current === next)
   }
 
   function alignLine(timeMs: number) {

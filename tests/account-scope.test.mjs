@@ -29,6 +29,43 @@ test('late lyric download cannot write into a newly selected account library', a
   } finally { clearMocks() }
 })
 
+test('lyric bias conflicts return the synchronized selection without announcing a local edit', async () => {
+  const events = []
+  globalThis.window = { crypto: webcrypto, dispatchEvent: event => events.push(event.type) }
+  const initial = { trackId: 'bilibili:BV1:1', provider: 'lrclib', biasMs: 0, writeToken: 'selected', accountSession: 'one' }
+  let persisted = { ...initial, biasMs: 900 }
+  mockIPC((command, args) => {
+    if (command === 'account_session') return 'one'
+    assert.equal(command, 'lyrics_set_bias')
+    assert.equal(args.expectedAccountSession, 'one')
+    if (args.expected.biasMs !== persisted.biasMs) return { status: 'conflict', lyrics: persisted }
+    persisted = { ...persisted, biasMs: args.biasMs }
+    return { status: 'saved', lyrics: persisted }
+  })
+  try {
+    const compiled = await build({
+      stdin: {
+        contents: "export { setStoredLyricsBias } from './src/services/desktopApi'; export { LyricBiasConflict } from './src/domain/lyrics'",
+        resolveDir: process.cwd(),
+      },
+      bundle: true, format: 'cjs', platform: 'node', write: false,
+    })
+    const module = { exports: {} }
+    new Function('require', 'module', 'exports', compiled.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports)
+    const { setStoredLyricsBias, LyricBiasConflict } = module.exports
+    let current
+    await assert.rejects(setStoredLyricsBias(initial.trackId, 500, initial), error => {
+      assert.ok(error instanceof LyricBiasConflict)
+      current = error.lyrics
+      return true
+    })
+    assert.equal(current.biasMs, 900)
+    assert.deepEqual(events, [])
+    assert.equal((await setStoredLyricsBias(initial.trackId, 1150, current)).biasMs, 1150)
+    assert.deepEqual(events, ['bilimusic-data-changed'])
+  } finally { clearMocks() }
+})
+
 test('late sync metadata refresh cannot overwrite the next account player', async () => {
   globalThis.window = { crypto: webcrypto, dispatchEvent() {} }
   let finish, updates = 0

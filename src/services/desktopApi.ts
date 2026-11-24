@@ -11,6 +11,7 @@ export type { DownloadRecord } from '../domain/downloads'
 import type { StoredTrack, MetadataPatch, Playlist, CatalogSource, CatalogCandidate } from '../domain/library'
 export type { StoredTrack, MetadataPatch, Playlist, CatalogSource, CatalogCandidate } from '../domain/library'
 import type { LyricWord, LyricLine, LyricCandidate, LyricSearchResult, StoredLyrics } from '../domain/lyrics'
+import { LyricBiasConflict } from '../domain/lyrics'
 export type { LyricWord, LyricLine, LyricCandidate, LyricSearchResult, StoredLyrics } from '../domain/lyrics'
 import type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
 export type { BiliSearchItem, BiliSearchPage, BiliVideoPart, BiliVideoParts, PlaybackSource, VideoSource, DanmakuItem, FavoriteFolder, FavoriteVideo, FavoritePage, LinkedFolder } from '../domain/bilibili'
@@ -190,8 +191,15 @@ export async function saveLyricsWithMetadata(trackId: string, candidate: LyricCa
   return { stored, track: fromStoredTrack(track) }
 }
 
-export const setStoredLyricsBias = (trackId: string, biasMs: number, expected: StoredLyrics) =>
-  write<StoredLyrics>('lyrics_set_bias', { trackId, biasMs, expected })
+export async function setStoredLyricsBias(trackId: string, biasMs: number, expected: StoredLyrics): Promise<StoredLyrics> {
+  type Result = { status: 'saved'; lyrics: StoredLyrics } | { status: 'conflict'; lyrics: StoredLyrics | null }
+  const result = await scopedInvoke<Result>('lyrics_set_bias', { trackId, biasMs, expected })
+  if (result.status === 'conflict') {
+    throw new LyricBiasConflict(result.lyrics?.provider === 'bilibili' ? null : result.lyrics)
+  }
+  window.dispatchEvent(new Event('bilimusic-data-changed'))
+  return result.lyrics
+}
 
 export async function listPlaylists(): Promise<Playlist[]> {
   if (!inDesktopShell) return [{ ...FAVORITES_PLAYLIST }]
