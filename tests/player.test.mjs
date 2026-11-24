@@ -52,6 +52,50 @@ function setup(snapshot) {
 const track = id => ({ id, source: { provider: 'bilibili', bvid: 'BVTEST00001', cid: Number(id), page: 1 }, title: id, durationSeconds: 120, liked: false })
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 
+test('progress updates coalesce full queue serialization before storage, with immediate queue and exit flushes', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { store, listeners, storage } = setup()
+  const queue = Array.from({ length: 1500 }, (_, index) => track(String(index + 1)))
+  store.getState().enqueue(queue)
+  const key = 'resonance-player-v1'
+  const stringify = JSON.stringify
+  const serialized = []
+  t.mock.method(JSON, 'stringify', (value, ...args) => {
+    if (value?.version === 2 && value?.state?.queueOrder?.length === queue.length) serialized.push(value.state)
+    return stringify(value, ...args)
+  })
+
+  for (let tick = 1; tick <= 4; tick++) store.setState({ progressSeconds: tick / 4 })
+  assert.equal(serialized.length, 0)
+  t.mock.timers.tick(1000)
+  assert.equal(serialized.length, 1)
+  assert.equal(JSON.parse(storage.get(key)).state.progressSeconds, 1)
+
+  store.setState({ progressSeconds: 1.25 })
+  listeners.pagehide()
+  assert.equal(serialized.length, 2)
+  assert.equal(JSON.parse(storage.get(key)).state.progressSeconds, 1.25)
+  store.setState({ progressSeconds: 1.5 })
+  store.getState().reverseQueue()
+  assert.equal(serialized.length, 3)
+  const saved = JSON.parse(storage.get(key)).state
+  assert.equal(saved.progressSeconds, 1.5)
+  assert.equal(saved.queueOrder[0], '1500')
+  assert.equal('queueBase' in saved, false)
+  assert.equal('offlineQueue' in saved, false)
+})
+
+test('a pending progress write cannot restore a cleared player snapshot', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { store, storage, listeners } = setup()
+  store.getState().enqueue([track('1')])
+  store.setState({ progressSeconds: 8 })
+  store.persist.clearStorage()
+  t.mock.timers.tick(1000)
+  listeners.pagehide()
+  assert.equal(storage.has('resonance-player-v1'), false)
+})
+
 test('creator pages preserve raw and hidden queue entries across a visibility reprojection', async () => {
   const { store, module, listeners } = setup()
   const first = track('1')

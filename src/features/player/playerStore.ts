@@ -16,7 +16,7 @@ import { observeMobileAudio, setMobileCollection, prepareMobileAudio, playMobile
 import { syncAndroidQueue } from './androidAudio'
 import { iosListenerAge, playIOSAudio, restartIOSAudioObservation, syncIOSQueue, type IOSAudioState } from './iosAudio'
 import { create } from 'zustand'
-import { createJSONStorage, persist } from 'zustand/middleware'
+import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware'
 import type { Track } from '../../domain/track'
 import { getTrackPlaybackPlan, inDesktopShell, recordPlayedTrack } from '../../services/desktopApi'
 import { videoDetailFromTrack } from '../../services/mediaSources'
@@ -247,18 +247,55 @@ export function resetPlayerForAccount() {
   return accountReset
 }
 export function playbackClock() { if (isMobile) return mobilePlaybackClock(); return audio && loadedTrackId === usePlayerStore.getState().current?.id ? audio.currentTime : usePlayerStore.getState().progressSeconds }
+
+type PlayerSnapshotDraft = Pick<PlayerState,
+  'queueBase' | 'queueOrigins' | 'shuffleState' | 'current' | 'queue' | 'queueSource' | 'queueReversed' |
+  'progressSeconds' | 'durationSeconds' | 'volume' | 'shuffled' | 'repeatMode' | 'resumeThresholdSeconds'
+> & { offlineQueue?: boolean }
+
 let persistTimer: ReturnType<typeof setTimeout> | undefined
-let pendingSnapshot: { key: string; value: string } | undefined
+let pendingSnapshot: { key: string; value: StorageValue<PlayerSnapshotDraft> } | undefined
 let snapshotQueue: Track[] | undefined
 let snapshotCurrent: string | undefined
-let urgentSnapshot = false
+
 function flushPlayerSnapshot() {
-  if (pendingSnapshot) { try { localStorage.setItem(pendingSnapshot.key, pendingSnapshot.value) } catch { /* Playback remains usable when storage is full. */ } pendingSnapshot = undefined }
+  clearTimeout(persistTimer)
+  persistTimer = undefined
+  const pending = pendingSnapshot
+  pendingSnapshot = undefined
+  if (!pending) return
+
+  const { queueBase, offlineQueue, ...state } = pending.value.state
+  const base = queueBase ?? state.queue
+  const queue = offlineQueue ? queueForOfflineSnapshot(state.queue, base) : state.queue
+  const saved = { ...state, ...packQueueBase(queue, base), queue }
+  try {
+    localStorage.setItem(pending.key, JSON.stringify({ state: saved, version: pending.value.version }))
+  } catch { /* Playback remains usable when storage is full. */ }
 }
-const playerStorage = {
-  getItem: (key: string) => localStorage.getItem(key),
-  setItem: (key: string, value: string) => { pendingSnapshot = { key, value }; if (urgentSnapshot) { urgentSnapshot = false; flushPlayerSnapshot(); return }; if (!persistTimer) persistTimer = setTimeout(() => { persistTimer = undefined; flushPlayerSnapshot() }, 1000) },
-  removeItem: (key: string) => localStorage.removeItem(key),
+
+const playerStorage: PersistStorage<PlayerSnapshotDraft> = {
+  getItem(key) {
+    const value = localStorage.getItem(key)
+    return value === null ? null : JSON.parse(value)
+  },
+  setItem(key, value) {
+    const { queue, current } = value.state
+    const urgent = queue !== snapshotQueue || current?.id !== snapshotCurrent
+    snapshotQueue = queue
+    snapshotCurrent = current?.id
+    pendingSnapshot = { key, value }
+    if (urgent) flushPlayerSnapshot()
+    else persistTimer ??= setTimeout(flushPlayerSnapshot, 1000)
+  },
+  removeItem(key) {
+    if (pendingSnapshot?.key === key) {
+      clearTimeout(persistTimer)
+      persistTimer = undefined
+      pendingSnapshot = undefined
+    }
+    localStorage.removeItem(key)
+  },
 }
 window.addEventListener('pagehide', () => { flushPosition(); flushPlayerSnapshot() })
 window.addEventListener('blur', () => { flushPosition(); flushPlayerSnapshot() })
@@ -664,7 +701,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     return { queueBase:queueBase?.map(update), current:current ? update(current) : null, queue:queue.map(update) }
   }),
 }), {
-  name: 'resonance-player-v1', storage: createJSONStorage(() => playerStorage),
+  name: 'resonance-player-v1', storage: playerStorage,
   version: 2,
   migrate: (persisted, version) => {
     const saved = persisted as PlayerState
@@ -689,13 +726,10 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       ...(retiredCurrent ? { progressSeconds: 0, durationSeconds: 0 } : {}),
     }
   },
-  partialize: ({ queueBase,queueOrigins,shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => {
-    urgentSnapshot = queue !== snapshotQueue || current?.id !== snapshotCurrent
-    snapshotQueue = queue; snapshotCurrent = current?.id
-    const base = queueBase ?? queue
-    const storedQueue = useOfflinePlayback.getState().offline ? queueForOfflineSnapshot(queue, base) : queue
-    return { ...packQueueBase(storedQueue,base),queueOrigins,shuffleState:isMobile ? undefined : shuffleState, current, queue: storedQueue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }
-  },
+  partialize: ({ queueBase, queueOrigins, shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => ({
+    queueBase, queueOrigins, shuffleState: isMobile ? undefined : shuffleState, current, queue, queueSource, queueReversed,
+    progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds, offlineQueue: useOfflinePlayback.getState().offline,
+  }),
 }))
 
 const desktopSleep = createDesktopSleepTimer(
