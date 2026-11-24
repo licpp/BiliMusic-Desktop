@@ -40,7 +40,7 @@
 
 [iOS 自签安装](https://bilimusic.cn/ios.html) · [鸿蒙签名与安装](https://bilimusic.cn/harmony.html)
 
-**0.4.3 已发布。** 修复启动闪退，改进播放恢复，支持复制本机环境和浏览全部下载记录。[查看更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.3)。
+**0.4.4 已发布。** 新增播放章节，支持关联收藏夹批量匹配、合集续播和队列拖动。[查看更新记录](https://github.com/licpp/BiliMusic-Desktop/releases/tag/v0.4.4)。
 
 ## 功能
 
