@@ -119,6 +119,15 @@ test('desktop lyrics use the same transport spacing as the main dock',()=>{
  assert.match(lyrics,sharedRows)
 })
 
+test('Android tablet browsing keeps its top inset during the lyrics fade',()=>{
+ const css=readFileSync(new URL('../src/styles/tablet.css',import.meta.url),'utf8')
+ const shell=':root[data-android-tablet-insets] .app-shell'
+ assert.ok(css.includes(`${shell} {\n  padding-top: var(--native-safe-top, 0px);`))
+ assert.ok(css.includes(`${shell} > .content-stage { padding-top: 0; }`))
+ assert.ok(css.includes(`${shell} > .rail { padding-top: 18px; }`))
+ assert.ok(css.includes(`${shell} > .library-panel { padding-top: 22px; }`))
+})
+
 test('mobile chapter sheets use the resting comments height and respect the safe area',()=>{
  const chapters=readFileSync(new URL('../src/features/chapters/chapters.css',import.meta.url),'utf8')
  const comments=readFileSync(new URL('../src/styles/components/comments.css',import.meta.url),'utf8')
