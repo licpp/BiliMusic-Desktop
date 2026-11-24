@@ -11,7 +11,7 @@ import { playbackIssue, type PlaybackIssue } from '../player/playbackIssue'
 
 const waitForCompositor = isAndroid && isLargeScreen
 
-export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codecs, diagnostic, active, suspended = false, onReady, onReload }: { src: string; poster?: string; track: Track; codecs?: string; diagnostic?: VideoDiagnosticTrace; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: (compatible: boolean) => Promise<void> }) {
+export const SyncedVideo = memo(function SyncedVideo({ src, poster, track, codecs, diagnostic, active, suspended = false, onReady, onReload }: { src: string; poster?: string; track: Track; codecs?: string; diagnostic?: VideoDiagnosticTrace; active: boolean; suspended?: boolean; onReady: (src: string) => void; onReload: (compatible: boolean) => Promise<boolean | void> }) {
   const ref = useRef<HTMLVideoElement>(null)
   const activeRef = useRef(active && !suspended)
   const syncRef = useRef<(force?: boolean) => void>(() => {})

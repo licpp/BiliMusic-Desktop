@@ -14,13 +14,14 @@ import { progressKeyAction } from './playerNavigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Captions, Expand, Heart, ListVideo, LoaderCircle, MonitorPlay, Music2, Pause, Play, Settings2, SkipBack, SkipForward, Sparkles, Search, SlidersHorizontal, Timer, MessageSquareText, RefreshCw, X } from 'lucide-react'
-import { usePlayerStore, playbackClock, playbackRates, reloadCurrentAudioSource } from '../features/player/playerStore'
+import { usePlayerStore, logicalPlaybackIdentity, playbackClock, playbackRates, reloadCurrentAudioSource } from '../features/player/playerStore'
 import { PlaybackModeButton } from '../features/player/PlaybackModeButton'
 import { PlaybackSettings } from '../features/lyrics/PlaybackSettings'
 import { DanmakuCanvas } from '../features/lyrics/DanmakuCanvas'
 import { useLargeDanmaku, LargeDanmakuSettings } from './danmaku'
 import { SyncedVideo } from '../features/lyrics/SyncedVideo'
 import { getDiagnosticVideoSource, videoSourceIssue } from '../features/lyrics/videoDiagnostics'
+import { createVideoRefreshScope } from '../features/lyrics/videoRecovery'
 import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { VideoStartup } from '../features/lyrics/VideoStartup'
 import { WordLyric } from '../features/lyrics/WordLyric'
@@ -118,19 +119,26 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
     if (!shown) document.querySelector<HTMLElement>('.large-video-surface')?.focus({ preventScroll: true })
     else if (!document.activeElement?.closest('.large-video-controls')) document.querySelector<HTMLElement>('.large-video-controls button')?.focus({ preventScroll: true })
   }, [fullscreen, shown, settings])
-  const [readyUrl, setReadyUrl] = useState('')
-  const ready = useCallback((url: string) => setReadyUrl(url), [])
-  const source = useQuery({ queryKey: accountQueryKey('large-video', current?.id, revision), queryFn: () => getDiagnosticVideoSource(current!.source.bvid, current!.source.cid), enabled: video && Boolean(current && current.source.cid > 0), retry: false })
-  const videoIntent = useRef('')
-  videoIntent.current = JSON.stringify([accountEpoch(), current?.id, revision, video])
-  const reloadVideo = useCallback(async (compatible: boolean) => {
-    const epoch = accountEpoch(), intent = videoIntent.current
-    const fresh = await getDiagnosticVideoSource(current!.source.bvid, current!.source.cid, true, compatible || isAndroid, source.data?.diagnostic)
-    if (epoch !== accountEpoch() || intent !== videoIntent.current) return
-    sourceClient.setQueryData(accountKeyAt(epoch, 'large-video', current!.id, revision), fresh)
-    setReadyUrl('')
-  }, [current?.id, revision, sourceClient, source.data?.diagnostic])
-  const videoReady = video && Boolean(source.data && readyUrl === source.data.videoUrl)
+  const epoch = accountEpoch(), playbackSession = usePlayerStore(logicalPlaybackIdentity)
+  const trackId = current?.id, bvid = current?.source.bvid || '', cid = current?.source.cid || 0
+  const videoRefresh = useMemo(createVideoRefreshScope, [epoch, playbackSession, trackId, bvid, cid, revision, video])
+  useLayoutEffect(videoRefresh.activate, [videoRefresh])
+  const [readyFrame, setReadyFrame] = useState<{ scope: typeof videoRefresh; url: string }>()
+  const ready = useCallback((url: string) => setReadyFrame({ scope: videoRefresh, url }), [videoRefresh])
+  const source = useQuery({
+    queryKey: accountKeyAt(epoch, 'large-video', trackId, revision),
+    queryFn: () => getDiagnosticVideoSource(bvid, cid),
+    enabled: video && Boolean(trackId && cid > 0), retry: false,
+  })
+  const reloadVideo = useCallback((compatible: boolean) => videoRefresh.refresh(
+    () => video && epoch === accountEpoch() && playbackSession === logicalPlaybackIdentity(),
+    () => getDiagnosticVideoSource(bvid, cid, true, compatible || isAndroid, source.data?.diagnostic),
+    fresh => {
+      setReadyFrame(undefined)
+      sourceClient.setQueryData(accountKeyAt(epoch, 'large-video', trackId, revision), fresh)
+    },
+  ), [videoRefresh, video, epoch, playbackSession, bvid, cid, source.data?.diagnostic, sourceClient, trackId, revision])
+  const videoReady = video && readyFrame?.scope === videoRefresh && readyFrame.url === source.data?.videoUrl
   const danmaku = useLargeDanmaku(current?.source.cid || 0, videoReady)
   useEffect(() => { if (!fullscreen || !isAndroid) return; void controlMobileAudio('videoFullscreen', 1).catch(() => undefined); return () => { void controlMobileAudio('videoFullscreen', 0).catch(() => undefined) } }, [fullscreen])
   useEffect(() => {
