@@ -1,6 +1,11 @@
 /* Tablet & unfolded foldable adaptation for native mobile shells (iPadOS, Android tablets, HarmonyOS tablets). */
 .mobile-page-scrim { display: none; }
 
+/* The Android tablet viewport reaches the status bar in both player states. */
+:root[data-android-tablet-insets] .app-shell:not(.lyrics-immersive) {
+  padding-top: var(--native-safe-top, 0px);
+}
+
 /* Keep the home playback card on one row in both tablet layouts. */
 @media (min-width: 640px) {
   :root[data-layout="mobile"] .hero {
@@ -311,6 +316,9 @@
     padding-top: var(--native-safe-top, env(safe-area-inset-top, 0px));
     padding-right: var(--native-safe-right, env(safe-area-inset-right, 0px));
   }
+  :root[data-android-tablet-insets] .app-shell:not(.lyrics-immersive) > .content-stage { padding-top: 0; }
+  :root[data-android-tablet-insets] .app-shell:not(.lyrics-immersive) > .rail { padding-top: 18px; }
+  :root[data-android-tablet-insets] .app-shell:not(.lyrics-immersive) > .library-panel { padding-top: 22px; }
   :root[data-layout="mobile"] .topbar {
     grid-template-columns: auto minmax(260px, 440px) 1fr;
     height: 70px;

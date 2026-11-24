@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.graphics.Insets
 import android.webkit.WebView
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -57,6 +58,15 @@ class ControlArgs {
     var durationSeconds: Double = 0.0
     var coverUrl: String? = null
 }
+
+internal fun playbackWindowMargins(bars: Insets, immersive: Boolean, keepSystemInsets: Boolean): Insets =
+    when {
+        // Reserve the tablet's top inset in CSS so its backdrop can continue
+        // behind the status bar without resizing the WebView on open or close.
+        keepSystemInsets -> Insets.of(bars.left, 0, bars.right, bars.bottom)
+        immersive -> Insets.NONE
+        else -> bars
+    }
 
 @InvokeArg
 class SecretArgs {
@@ -262,6 +272,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private var immersive = false
     private var keepSystemInsets = false
     private val drawsUnderSystemBars get() = immersive && !keepSystemInsets
+    private val drawsUnderStatusBar get() = immersive || keepSystemInsets
     private var largeScreen = false
 
     private fun setVideoFullscreen(enabled: Boolean) {
@@ -285,7 +296,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
         activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
         if (android.os.Build.VERSION.SDK_INT >= 29) {
-            activity.window.isStatusBarContrastEnforced = !immersive
+            activity.window.isStatusBarContrastEnforced = !drawsUnderStatusBar
             activity.window.isNavigationBarContrastEnforced = !immersive
         }
     }
@@ -300,13 +311,11 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
             val params = view.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-            // Tablet lyrics use the same viewport as browsing so the WebView
-            // does not resize during a crossfade.
-            val drawUnderBars = drawsUnderSystemBars
-            val left = if (drawUnderBars) 0 else bars.left
-            val top = if (drawUnderBars) 0 else bars.top
-            val right = if (drawUnderBars) 0 else bars.right
-            val bottom = if (drawUnderBars) 0 else bars.bottom
+            val margins = playbackWindowMargins(bars, immersive, keepSystemInsets)
+            val left = margins.left
+            val top = margins.top
+            val right = margins.right
+            val bottom = margins.bottom
             params?.let {
                 if (it.leftMargin != left || it.topMargin != top || it.rightMargin != right || it.bottomMargin != bottom) {
                     it.setMargins(left, top, right, bottom)
@@ -314,13 +323,15 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 }
             }
             val density = activity.resources.displayMetrics.density
-            val safeTop = if (drawUnderBars) bars.top / density else 0f
-            val safeBottom = if (drawUnderBars && keyboard.bottom == 0) bars.bottom / density else 0f
-            val safeLeft = if (drawUnderBars) bars.left / density else 0f
-            val safeRight = if (drawUnderBars) bars.right / density else 0f
+            val safeTop = (bars.top - top) / density
+            val safeBottom = if (keyboard.bottom == 0) (bars.bottom - bottom) / density else 0f
+            val safeLeft = (bars.left - left) / density
+            val safeRight = (bars.right - right) / density
             val keyboardOverlap = (keyboard.bottom - bottom).coerceAtLeast(0) / density
             val layoutHeight = (view.rootView.height - top - bottom).coerceAtLeast(0) / density
-            webView.evaluateJavascript("document.documentElement.style.setProperty('--native-layout-height','${layoutHeight}px');" +
+            val tabletInsetAttribute = if (keepSystemInsets) "setAttribute('data-android-tablet-insets','')" else "removeAttribute('data-android-tablet-insets')"
+            webView.evaluateJavascript("document.documentElement.$tabletInsetAttribute;" +
+                "document.documentElement.style.setProperty('--native-layout-height','${layoutHeight}px');" +
                 "document.documentElement.style.setProperty('--native-keyboard','${keyboardOverlap}px');" +
                 "window.dispatchEvent(new Event('bilimusic-keyboard'));" +
                 "document.documentElement.style.setProperty('--native-safe-top','${safeTop}px');" +
@@ -416,10 +427,11 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 setVideoFullscreen(args.value > 0)
             } else if (args.action == "immersive") {
                 val drewUnderSystemBars = drawsUnderSystemBars
+                val drewUnderStatusBar = drawsUnderStatusBar
                 immersive = args.value > 0
                 keepSystemInsets = args.keepSystemInsets
                 updateSystemBars()
-                if (drewUnderSystemBars != drawsUnderSystemBars) {
+                if (drewUnderSystemBars != drawsUnderSystemBars || drewUnderStatusBar != drawsUnderStatusBar) {
                     managedWebView?.let { androidx.core.view.ViewCompat.requestApplyInsets(it) }
                 }
             } else if (args.action == "theme") {
