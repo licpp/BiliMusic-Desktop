@@ -1,9 +1,62 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+const runtimeGraph = build({
+  entryPoints: ['src/main.tsx', 'src/large-screen/main.tsx'],
+  outdir: 'artifacts/architecture-checks',
+  bundle: true,
+  write: false,
+  metafile: true,
+  loader: { '.css': 'empty' },
+  logLevel: 'silent',
+})
+
+const existingServiceFeatureImports = new Set([
+  'updates.ts -> player/playerStore.ts',
+  'floatingLyrics.ts -> player/playerStore.ts',
+  'floatingLyrics.ts -> lyrics/useBiliSubtitles.ts',
+  'listeningStatistics.ts -> player/playerStore.ts',
+  'sync.ts -> player/playerStore.ts',
+  'sourceTitles.ts -> player/playerStore.ts',
+  'importedPlayback.ts -> player/playerStore.ts',
+  'shortcuts.ts -> player/shortcuts.ts',
+  'globalShortcuts.ts -> player/shortcuts.ts',
+])
+
+test('runtime entry points cannot add service dependencies on features', async () => {
+  const { metafile } = await runtimeGraph
+  const serviceRoot = 'src/services/'
+  const featureRoot = 'src/features/'
+  for (const [file, input] of Object.entries(metafile.inputs)) {
+    if (!file.startsWith(serviceRoot)) continue
+    for (const dependency of input.imports) {
+      if (dependency.external || !dependency.path.startsWith(featureRoot)) continue
+      const edge = file.slice(serviceRoot.length) + ' -> ' + dependency.path.slice(featureRoot.length)
+      assert.ok(existingServiceFeatureImports.has(edge), `Move feature-dependent logic out of services: ${edge}`)
+    }
+  }
+})
+
+test('Rust repositories do not depend on the IPC interface', async () => {
+  async function checkDirectory(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const file = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        await checkDirectory(file)
+      } else if (file.endsWith('.rs')) {
+        const source = await readFile(file, 'utf8')
+        assert.doesNotMatch(source, /\binterface\s*::/, `Map repository errors at the IPC boundary: ${file}`)
+      }
+    }
+  }
+  await checkDirectory('src-tauri/src/infrastructure/repositories')
+})
 
 test('application runtime imports contain no cycles between feature modules',async()=>{
- const {metafile}=await build({entryPoints:['src/main.tsx','src/large-screen/main.tsx'],outdir:'artifacts/architecture-checks',bundle:true,write:false,metafile:true,loader:{'.css':'empty'},logLevel:'silent'})
+ const {metafile}=await runtimeGraph
  const graph=new Map(Object.entries(metafile.inputs).filter(([k])=>k.startsWith('src/')).map(([k,v])=>[k,v.imports.filter(i=>!i.external&&i.path.startsWith('src/')).map(i=>i.path)]))
  const visiting=new Set(),done=new Set()
  function visit(v,path=[]){

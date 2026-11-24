@@ -1,5 +1,4 @@
 use super::library::{LibraryRepository, TrackRecord};
-use crate::interface::error::CommandError;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -157,6 +156,19 @@ mod tests {
 
 pub struct DownloadRepository;
 
+#[derive(Debug)]
+pub enum RemoveDownloadError {
+    Database(rusqlite::Error),
+    InProgress,
+    FileUnavailable,
+}
+
+impl From<rusqlite::Error> for RemoveDownloadError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
 impl DownloadRepository {
     // Resolve by download identity, not the 500 most recently updated library tracks.
     pub fn list_with_tracks(connection: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
@@ -203,46 +215,38 @@ impl DownloadRepository {
         Ok(())
     }
 
-    pub fn remove(connection: &Connection, id: &str) -> Result<(), CommandError> {
+    pub fn remove(connection: &Connection, id: &str) -> Result<(), RemoveDownloadError> {
         let Some((path, status)) = connection
             .query_row(
                 "SELECT target_path,status FROM downloads WHERE id=?1",
                 [id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
-            .optional()
-            .map_err(CommandError::database)?
+            .optional()?
         else {
             return Ok(());
         };
         if status == "failed" {
-            connection
-                .execute("DELETE FROM downloads WHERE id=?1", [id])
-                .map_err(CommandError::database)?;
+            connection.execute("DELETE FROM downloads WHERE id=?1", [id])?;
             return Ok(());
         }
         let busy = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM downloads WHERE target_path=?1 AND status IN ('queued','downloading'))",
             [&path], |row| row.get::<_, bool>(0),
-        ).map_err(CommandError::database)?;
+        )?;
         if status != "completed" || busy {
-            return Err(CommandError::validation("文件正在下载，请完成后再删除"));
+            return Err(RemoveDownloadError::InProgress);
         }
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {
-                return Err(CommandError::validation(
-                    "无法删除下载文件，请确认文件未被占用并重试",
-                ));
-            }
+            Err(_) => return Err(RemoveDownloadError::FileUnavailable),
         }
         connection
             .execute(
                 "DELETE FROM downloads WHERE target_path=?1 AND status='completed'",
                 [&path],
-            )
-            .map_err(CommandError::database)?;
+            )?;
         Ok(())
     }
 

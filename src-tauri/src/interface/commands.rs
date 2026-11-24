@@ -11,7 +11,9 @@ use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
 use crate::infrastructure::repositories::auth::AuthRepository;
 use crate::infrastructure::repositories::collections::{self, Collection};
-use crate::infrastructure::repositories::downloads::{DownloadRecord, DownloadRepository};
+use crate::infrastructure::repositories::downloads::{
+    DownloadRecord, DownloadRepository, RemoveDownloadError,
+};
 use crate::infrastructure::repositories::library::{
     LibraryRepository, MetadataPatch, TrackInput, TrackRecord,
 };
@@ -1076,7 +1078,13 @@ pub fn download_remove(
     download_id: String,
 ) -> Result<(), CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    DownloadRepository::remove(&connection, &download_id)
+    DownloadRepository::remove(&connection, &download_id).map_err(|error| match error {
+        RemoveDownloadError::Database(error) => CommandError::database(error),
+        RemoveDownloadError::InProgress => CommandError::validation("文件正在下载，请完成后再删除"),
+        RemoveDownloadError::FileUnavailable => {
+            CommandError::validation("无法删除下载文件，请确认文件未被占用并重试")
+        }
+    })
 }
 
 #[derive(Serialize)]
