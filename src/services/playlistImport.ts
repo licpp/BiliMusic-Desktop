@@ -12,6 +12,7 @@ import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedE
 import { loadImportedEntries, seedImportedEntries, bindImportedEntries, replaceImportedEntry, importTrackInput, importAccountSession } from './importedEntries'
 import { ImportRequestPolicy, isImportRateLimit, isUnavailableImportCandidate, validImportBvid } from './playlistImportPolicy'
 import { biliPauseMessage, biliRequestPause, type BiliPause } from './biliRequestStatus'
+import { requireRandomUuid } from '../shared/randomUuid'
 
 export type ImportRow = { entry?:ImportedEntry; order?:number; song: ImportSong; status:'pending'|'matched'|'missing'|'saved'; candidates:ImportChoice[]; chosen?:ImportChoice; message?:string }
 export type ImportJob = { session?:string; id:string; scope:string; name:string; source:string; rows:ImportRow[]; playlistId:string; state:'ready'|'matching'|'paused'|'waiting'|'saving'|'done'; message:string; retries:number; retryAt?:number; biliPause?:BiliPause }
@@ -87,7 +88,7 @@ export function newPlaylistImport(playlist:ImportPlaylist,name:string) {
   pausePlaylistImport()
   const scope=usePlaylistImport.getState().scope
   if(!scope)throw new Error('导入页面尚未准备好，请重试')
-  const id=crypto.randomUUID()
+  const id=requireRandomUuid()
   const job:ImportJob={id,scope,name:name.trim().slice(0,80)||playlist.name.slice(0,80),source:playlist.source,playlistId:`import:${id}`,rows:playlist.songs.map((song,order)=>({song,order,status:'pending',candidates:[]})),state:'ready',message:'',retries:0}
   publish(job,true)
 }
@@ -288,7 +289,7 @@ export async function retryMissingImportedPlaylist(playlist:Playlist,entryId?:st
   valid()
   const scope=usePlaylistImport.getState().scope
   const job=reviewFromEntries(playlist,tracks,scope,snapshot)
-  job.id=`retry:${playlist.id}:${crypto.randomUUID()}`
+  job.id=`retry:${playlist.id}:${requireRandomUuid()}`
   for(const row of job.rows)if(!row.entry?.trackId&&(!entryId||row.entry?.entryId===entryId))row.status='pending'
   if(!job.rows.some(row=>row.status==='pending'))return
   publish(job,true)

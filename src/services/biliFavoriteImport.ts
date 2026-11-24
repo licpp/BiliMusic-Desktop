@@ -4,6 +4,7 @@ import { toTrack } from './collectionTrack'
 import type { Track } from '../domain/track'
 import { biliRequestPause } from './biliRequestStatus'
 import { commandErrorMessage, isConnectionError } from './userErrors'
+import { requireRandomUuid } from '../shared/randomUuid'
 
 export type FolderImportResult = { folderId: number; name: string; id?: string; count: number; error?: string }
 type ImportOptions = {
@@ -36,7 +37,7 @@ export async function importFavoriteFolders(options: ImportOptions) {
         cancelled()
         id = `bili-folder:${folder.id}`
       } else {
-        const target = options.copyIds.get(folder.id) ?? `import:${crypto.randomUUID()}`
+        const target = options.copyIds.get(folder.id) ?? `import:${requireRandomUuid()}`
         options.copyIds.set(folder.id, target)
         const seen = new Set<string>()
         for (let page = 1; ; page++) {

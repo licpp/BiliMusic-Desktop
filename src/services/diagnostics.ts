@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { accountEpoch } from './accountScope'
 import { isAndroid, isIOS, isOHOS } from './platform'
+import { randomUuid } from '../shared/randomUuid'
 
 export type DiagnosticArea = 'playback' | 'video' | 'sync' | 'download' | 'startup'
 export type DiagnosticStep =
@@ -32,14 +33,7 @@ export type DiagnosticRecord = { at: number; build?: string; event: DiagnosticEv
 export const audioDiagnosticEngine = (): DiagnosticEngine =>
   isAndroid ? 'android-media-player' : isIOS ? 'av-player' : isOHOS ? 'ohos-avplayer' : 'web-audio'
 
-export function diagnosticId() {
-  if (typeof crypto === 'undefined' || !crypto.getRandomValues) return undefined
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  bytes[6] = (bytes[6] & 15) | 64
-  bytes[8] = (bytes[8] & 63) | 128
-  const hex = Array.from(bytes, byte => ('0' + byte.toString(16)).slice(-2)).join('')
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
-}
+export const diagnosticId = randomUuid
 
 async function scoped<T>(command: string, args: Record<string, unknown> = {}) {
   const epoch = accountEpoch()

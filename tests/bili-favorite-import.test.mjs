@@ -19,6 +19,17 @@ test('multiselection processes each linked folder once, reports failures, and co
 test('copy import preserves folder boundaries, expands parts and commits the account scope',async()=>{
  const h=setup(),result=await h.run();assert.deepEqual(result.map(r=>r.count),[2,2]);assert.equal(h.saved.size,2);assert.equal(h.writes[0].scope,'account-1');assert.equal(h.writes[1].name,'午后');assert.notEqual(h.writes[0].id,h.writes[1].id)
 })
+test('copy import creates a local playlist on a WebView with getRandomValues only', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: bytes => webcrypto.getRandomValues(bytes) } })
+  try {
+    const h = setup({ folders: [folders[0]] })
+    const [result] = await h.run()
+    assert.match(result.id, /^import:[0-9a-f-]{36}$/)
+    assert.equal(result.count, 2)
+    assert.equal(h.writes[0].id, result.id)
+  } finally { Object.defineProperty(globalThis, 'crypto', original) }
+})
 test('copy import lets the native layer own transport recovery',async()=>{
  let calls=0;const h=setup({folders:[folders[0]],detail:async()=>{calls++;throw Error('网络连接中断')}})
  assert.match((await h.run())[0].error,/无法连接/);assert.equal(calls,1)

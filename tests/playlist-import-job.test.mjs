@@ -1,6 +1,7 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
+import { webcrypto } from 'node:crypto'
 import {importEntryCommand} from './fixtures/import-entry-store.mjs'
 
 globalThis.window=new EventTarget()
@@ -51,6 +52,18 @@ test('一键匹配与保存，无需人工确认，且保存真实CID与来源�
   assert.equal(job.state,'done');assert.equal(job.rows[0].status,'saved')
   const entry=globalThis.__importTest.commits[0].entries[0]
   assert.equal(entry.track.cid,123);assert.equal(entry.metadata,undefined,'origin metadata belongs to the entry, not the Track');assert.equal(entry.track.uploaderName,'UP')
+})
+test('a playlist import can start without crypto.randomUUID', async () => {
+  await reset()
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: bytes => webcrypto.getRandomValues(bytes) } })
+  try {
+    api.newPlaylistImport({ source: 'text', name: '歌单', songs: [source] }, '歌单')
+    const job = api.usePlaylistImport.getState().job
+    assert.match(job.id, /^[0-9a-f-]{36}$/)
+    assert.equal(job.playlistId, `import:${job.id}`)
+    assert.equal(job.state, 'ready')
+  } finally { Object.defineProperty(globalThis, 'crypto', original) }
 })
 test('暂停后旧请求不会覆盖新任务或写入歌单',async()=>{
   await reset()
