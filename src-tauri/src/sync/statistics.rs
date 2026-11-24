@@ -1099,7 +1099,8 @@ async fn exchange_cloud(
     if !response.status().is_success() {
         return Err("云端统计接口暂不可用，请更新同步服务".into());
     }
-    let sources: Vec<String> = serde_json::from_slice(&response_bytes(response).await?).map_err(err)?;
+    let sources: Vec<String> =
+        serde_json::from_slice(&response_bytes(response).await?).map_err(err)?;
     if sources.len() > 100 {
         return Err("统计来源超过100个".into());
     }
@@ -1243,8 +1244,7 @@ mod tests {
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer pass")
-        {
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer pass") {
             return StatusCode::UNAUTHORIZED.into_response();
         }
         let path = uri.path().to_owned();
@@ -1294,7 +1294,11 @@ mod tests {
         }
         StatusCode::METHOD_NOT_ALLOWED.into_response()
     }
-    async fn cloud_server() -> (String, Arc<Mutex<CloudFixture>>, tokio::task::JoinHandle<()>) {
+    async fn cloud_server() -> (
+        String,
+        Arc<Mutex<CloudFixture>>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let state = Arc::new(Mutex::new(CloudFixture::default()));
         let router = Router::new()
             .fallback(cloud_request)

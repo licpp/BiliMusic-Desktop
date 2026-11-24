@@ -242,11 +242,10 @@ impl DownloadRepository {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(RemoveDownloadError::FileUnavailable),
         }
-        connection
-            .execute(
-                "DELETE FROM downloads WHERE target_path=?1 AND status='completed'",
-                [&path],
-            )?;
+        connection.execute(
+            "DELETE FROM downloads WHERE target_path=?1 AND status='completed'",
+            [&path],
+        )?;
         Ok(())
     }
 

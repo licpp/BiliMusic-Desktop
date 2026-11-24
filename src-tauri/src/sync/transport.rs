@@ -1,6 +1,6 @@
 //! Provider routing and shared HTTP resources; provider formats live in their own modules.
-pub use super::cloud_transport::{authenticate, cloud_delete};
 use super::Config;
+pub use super::cloud_transport::{authenticate, cloud_delete};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

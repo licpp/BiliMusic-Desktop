@@ -749,8 +749,24 @@ pub async fn sync_hydrate_sources(
         .source_hydration
         .run(&database, &expected_account_session, async {
             match title_ids {
-                Some(ids) => source_titles::hydrate_titles(&database, &provider, &expected_account_session, ids).await,
-                None => source_titles::hydrate_placeholders(&database, &provider, &expected_account_session, track_ids).await,
+                Some(ids) => {
+                    source_titles::hydrate_titles(
+                        &database,
+                        &provider,
+                        &expected_account_session,
+                        ids,
+                    )
+                    .await
+                }
+                None => {
+                    source_titles::hydrate_placeholders(
+                        &database,
+                        &provider,
+                        &expected_account_session,
+                        track_ids,
+                    )
+                    .await
+                }
             }
         })
         .await

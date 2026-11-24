@@ -1,5 +1,8 @@
 use super::error::CommandError;
-use crate::infrastructure::{database::{Database, account_session}, providers::bilibili::*};
+use crate::infrastructure::{
+    database::{Database, account_session},
+    providers::bilibili::*,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -231,7 +234,10 @@ pub fn listening_scope(database: State<'_, Database>) -> Result<String, CommandE
     account_session(&connection).map_err(CommandError::database)
 }
 
-pub(crate) fn playback_account_matches(connection: &Connection, expected_session: &str) -> rusqlite::Result<bool> {
+pub(crate) fn playback_account_matches(
+    connection: &Connection,
+    expected_session: &str,
+) -> rusqlite::Result<bool> {
     Ok(account_session(connection)? == expected_session)
 }
 
@@ -342,9 +348,15 @@ mod playback_account_tests {
 
     #[test]
     fn returning_to_the_same_profile_rejects_samples_from_the_first_visit() {
-        let dir = std::env::temp_dir().join(format!("bilimusic-playback-account-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "bilimusic-playback-account-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir(&dir).unwrap();
-        let db = Database(std::sync::Mutex::new(Connection::open_in_memory().unwrap()), dir.clone());
+        let db = Database(
+            std::sync::Mutex::new(Connection::open_in_memory().unwrap()),
+            dir.clone(),
+        );
         db.switch(Some(42), Some("SESSDATA=first")).unwrap();
         let first = account_session(&db.0.lock().unwrap()).unwrap();
         db.switch(Some(43), Some("SESSDATA=second")).unwrap();

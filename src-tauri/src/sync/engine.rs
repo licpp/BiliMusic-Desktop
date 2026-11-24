@@ -1769,7 +1769,10 @@ mod tests {
         assert!(run(&cold, &cfg, &secret).await.conflicts.is_empty());
         assert_eq!(value(&cold, "name"), "Migrated playlist");
 
-        let library = with(&cold, &cfg, |c| outbox::confirmed(c, &target, Domain::Library)).unwrap();
+        let library = with(&cold, &cfg, |c| {
+            outbox::confirmed(c, &target, Domain::Library)
+        })
+        .unwrap();
         assert!(
             library.registers[&causal::key(&format!("playlist:{LIST}"), "name")]
                 .seen

@@ -16,9 +16,7 @@ pub use extras::*;
 use reqwest::{
     Client, Url,
     cookie::{CookieStore, Jar},
-    header::{
-        ACCEPT, ACCEPT_LANGUAGE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER,
-    },
+    header::{ACCEPT, ACCEPT_LANGUAGE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -2544,13 +2542,13 @@ mod tests {
     #[tokio::test]
     async fn search_initializes_visitor_cookie_and_does_not_retry_412() {
         use super::{Arc, BilibiliProvider, COOKIE, HeaderMap, Url};
-        use reqwest::header::SET_COOKIE;
         use axum::{
             Router,
             body::Body,
             http::{Response, StatusCode},
             routing::get,
         };
+        use reqwest::header::SET_COOKIE;
         use std::sync::atomic::{AtomicUsize, Ordering};
         for failures in [0usize, 1] {
             let homes = Arc::new(AtomicUsize::new(0));
