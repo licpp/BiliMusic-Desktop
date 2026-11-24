@@ -10,7 +10,7 @@ type Hint = 'tick' | 'data' | 'foreground' | 'online' | 'statistics' | 'configur
 type Report = { library?: SyncOutcome; libraryError?: string; statistics: boolean; statisticsError?: string }
 
 // Lifecycle bridge only. Rust owns cadence, dirty deadlines, backoff and both domains.
-export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: SyncOutcome) => Promise<void> = async () => {}) {
+export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: SyncOutcome, epoch: number) => Promise<void> = async () => {}) {
   let stopped = false, switching = false
   const run = async (hint: Hint) => {
     if (stopped || switching || document.hidden) return
@@ -24,9 +24,9 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
       if (report.statisticsError) reportSyncError('statistics', true, report.statisticsError)
       if (report.library) {
         reportSyncOutcome(report.library)
-        await onLibrary(report.library)
-        window.dispatchEvent(new Event('bilimusic-library-synced'))
+        await onLibrary(report.library, epoch)
         if (stopped || switching || epoch !== accountEpoch()) return
+        window.dispatchEvent(new Event('bilimusic-library-synced'))
         await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
         if (stopped || switching || epoch !== accountEpoch()) return
         if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: report.library.importError || report.library.visibilityError || report.library.chaptersError ? '部分资料待同步' : '' }))

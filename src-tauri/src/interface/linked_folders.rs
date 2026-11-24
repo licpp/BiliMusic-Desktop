@@ -456,22 +456,24 @@ fn read_link_order(connection: &Connection, folder_id: i64) -> Result<Option<f64
 
 // A newly synced link initially has no Bilibili cache. Hydrate a bounded batch
 // after sync; failed/offline folders remain linked and can be retried on opening.
-pub(crate) async fn hydrate_synced_links(database: &Database) -> Result<usize, String> {
-    let (active, folders) = {
+pub(crate) async fn hydrate_synced_links(
+    database: &Database,
+    expected_account_session: &str,
+) -> Result<usize, String> {
+    let folders = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        let active = session(&c).map_err(|e| e.message)?;
+        super::commands::check_account_session(&c, expected_account_session)
+            .map_err(|e| e.message)?;
         let mut q=c.prepare("SELECT folder_id FROM linked_bili_folders WHERE refreshed_at=0 ORDER BY folder_id LIMIT 5").map_err(|e|e.to_string())?;
-        let ids = q
-            .query_map([], |r| r.get::<_, i64>(0))
+        q.query_map([], |r| r.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|e| e.to_string())?;
-        (active.runtime, ids)
+            .map_err(|e| e.to_string())?
     };
     let mut count = 0;
     for id in folders {
         // Do not start a new request against an account selected mid-hydration.
-        match refresh_folder(database, id, false, &active, true, |_| {}).await {
+        match refresh_folder(database, id, false, expected_account_session, true, |_| {}).await {
             Ok(_) => count += 1,
             Err(error)
                 if matches!(

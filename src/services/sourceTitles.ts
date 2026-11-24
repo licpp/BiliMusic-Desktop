@@ -9,6 +9,7 @@ import { usePlayerStore } from '../features/player/playerStore'
 import { inDesktopShell, fromStoredTrack, getVideoParts } from './desktopApi'
 import type { StoredTrack } from '../domain/library'
 import { accountEpoch } from './accountScope'
+import { hydrateSources } from './sourceHydration'
 const attempted = new Map<string, number>()
 export async function hydrateSourceTitles(ids: string[], client: QueryClient, cacheOnly = false) {
   if (!inDesktopShell) return
@@ -24,7 +25,7 @@ export async function hydrateSourceTitles(ids: string[], client: QueryClient, ca
   if (attempted.size > 1000) for (const [key, time] of attempted) if (time < now - 300_000) attempted.delete(key)
   let changed = 0
   for (let i = 0; !cacheOnly && i < pending.length && epoch === accountEpoch(); i += 8) {
-    try { changed += await invoke<number>('sync_hydrate_sources', { titleIds: pending.slice(i, i + 8) }) }
+    try { changed += await hydrateSources(epoch, { titleIds: pending.slice(i, i + 8) }) }
     catch { break } // Metadata failure never blocks playback or hides the cached name.
   }
   if (epoch === accountEpoch()) {

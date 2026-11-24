@@ -1,12 +1,58 @@
 //! Local source metadata cache; never part of personal sync or listening totals.
-use super::*;
-use crate::infrastructure::providers::bilibili::VideoParts;
+use crate::infrastructure::{
+    database::{Database, account_session},
+    providers::bilibili::{
+        BilibiliProvider, ProviderError, RequestPriority, VideoPart, VideoParts,
+    },
+};
+use rusqlite::{Connection, params};
+use std::{collections::BTreeSet, future::Future, sync::Mutex};
+use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-fn display_title(
-    video: &VideoParts,
-    part: &crate::infrastructure::providers::bilibili::VideoPart,
-) -> String {
+#[derive(Default)]
+pub(super) struct Hydration {
+    gate: tokio::sync::Mutex<()>,
+    generation: Mutex<CancellationToken>,
+}
+
+impl Hydration {
+    pub(super) fn cancel(&self) {
+        if let Ok(mut generation) = self.generation.lock() {
+            std::mem::take(&mut *generation).cancel();
+        }
+    }
+
+    pub(super) async fn run(
+        &self,
+        database: &Database,
+        expected_session: &str,
+        work: impl Future<Output = Result<usize, String>>,
+    ) -> Result<usize, String> {
+        let generation = self.generation.lock().map_err(|_| "资料补全正忙")?.clone();
+        tokio::select! {
+            biased;
+            _ = generation.cancelled() => Ok(0),
+            result = async {
+                let _gate = self.gate.lock().await;
+                {
+                    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+                    if !matches_session(&c, expected_session)? {
+                        return Ok(0);
+                    }
+                }
+                work.await
+            } => result,
+        }
+    }
+}
+
+fn matches_session(c: &Connection, expected_session: &str) -> Result<bool, String> {
+    account_session(c)
+        .map(|session| session == expected_session)
+        .map_err(|e| e.to_string())
+}
+
+fn display_title(video: &VideoParts, part: &VideoPart) -> String {
     crate::domain::source_title::source_title(
         &video.title,
         &part.title,
@@ -18,7 +64,6 @@ fn display_title(
             .map(|s| s.title.as_str())
             .unwrap_or(""),
     )
-    .to_owned()
 }
 
 pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize, String> {
@@ -30,10 +75,12 @@ pub(crate) fn save(c: &rusqlite::Connection, video: &VideoParts) -> Result<usize
     for part in &video.parts {
         let id = format!("bilibili:{}:{}", video.bvid, part.cid);
         if part.duration_seconds > 0 {
-            changed += c.execute(
-                "UPDATE tracks SET duration_seconds=?2 WHERE id=?1 AND duration_seconds<=0",
-                params![id, part.duration_seconds],
-            ).map_err(|error| error.to_string())?;
+            changed += c
+                .execute(
+                    "UPDATE tracks SET duration_seconds=?2 WHERE id=?1 AND duration_seconds<=0",
+                    params![id, part.duration_seconds],
+                )
+                .map_err(|error| error.to_string())?;
         }
         changed += crate::infrastructure::repositories::source_artwork::remember(
             c,
@@ -96,9 +143,10 @@ fn cache_is_fresh(c: &rusqlite::Connection, bvid: &str) -> bool {
     ).unwrap_or(false)
 }
 
-pub(super) async fn hydrate(
+pub(super) async fn hydrate_titles(
     database: &Database,
     provider: &BilibiliProvider,
+    expected_session: &str,
     ids: Vec<String>,
 ) -> Result<usize, String> {
     let videos = ids
@@ -116,30 +164,142 @@ pub(super) async fn hydrate(
             }
             Some(bvid.to_owned())
         })
-        .collect::<std::collections::BTreeSet<_>>();
-    let session = {
-        let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?
-    };
+        .collect::<BTreeSet<_>>();
     let mut changed = 0;
     for bvid in videos {
         let fresh = {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
+            if !matches_session(&c, expected_session)? {
+                return Ok(0);
+            }
             cache_is_fresh(&c, &bvid)
         };
         if fresh {
             continue;
         }
-        let Ok(video) = provider.video_parts(&bvid).await else {
-            continue;
-        };
-        let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        if crate::infrastructure::database::account_session(&c).map_err(|e| e.to_string())?
-            != session
+        match provider
+            .video_parts_with_priority(&bvid, RequestPriority::Background)
+            .await
         {
+            Ok(video) => {
+                let Some(count) = save_for_session(database, expected_session, &video, save)?
+                else {
+                    return Ok(0);
+                };
+                changed += count;
+            }
+            Err(error)
+                if error.is_request_restricted()
+                    || matches!(
+                        error,
+                        ProviderError::AccountChanged | ProviderError::NotAuthenticated
+                    ) =>
+            {
+                break;
+            }
+            Err(_) => continue,
+        }
+    }
+    Ok(changed)
+}
+
+fn save_for_session(
+    database: &Database,
+    expected_session: &str,
+    video: &VideoParts,
+    save: impl FnOnce(&Connection, &VideoParts) -> Result<usize, String>,
+) -> Result<Option<usize>, String> {
+    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    if !matches_session(&c, expected_session)? {
+        return Ok(None);
+    }
+    save(&c, video).map(Some)
+}
+
+fn save_placeholders(c: &Connection, video: &VideoParts) -> Result<usize, String> {
+    let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut changed = 0;
+    for part in &video.parts {
+        let id = format!("bilibili:{}:{}", video.bvid, part.cid);
+        let title = display_title(video, part);
+        tx.execute(
+            "UPDATE source_items SET aid=?2,page=?3,source_title=?4,uploader_id=?5,uploader_name=?6
+             WHERE id=?1 AND (source_title='' OR source_title='B站歌曲（待加载）')",
+            params![
+                id,
+                video.aid,
+                part.page,
+                title,
+                video.uploader_id,
+                video.uploader_name
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        changed += tx
+            .execute(
+                "UPDATE tracks SET title=?2,cover_url=?3,duration_seconds=?4
+             WHERE id=?1 AND title='B站歌曲（待加载）'",
+                params![id, title, part.cover_url, part.duration_seconds],
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(changed)
+}
+
+pub(super) async fn hydrate_placeholders(
+    database: &Database,
+    provider: &BilibiliProvider,
+    expected_session: &str,
+    track_ids: Option<Vec<String>>,
+) -> Result<usize, String> {
+    let videos = {
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        if !matches_session(&c, expected_session)? {
             return Ok(0);
         }
-        changed += save(&c, &video)?;
+        let mut q = c.prepare(
+            "SELECT id,bvid FROM source_items WHERE source_title='' OR source_title='B站歌曲（待加载）'
+             ORDER BY bvid LIMIT 5000",
+        ).map_err(|e| e.to_string())?;
+        let rows = q
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .filter(|(id, _)| track_ids.as_ref().is_none_or(|ids| ids.contains(id)))
+            .map(|(_, bvid)| bvid)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .take(10)
+            .collect::<Vec<_>>()
+    };
+    let mut changed = if track_ids.is_none() {
+        crate::interface::linked_folders::hydrate_synced_links(database, expected_session)
+            .await
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    for bvid in videos {
+        {
+            let c = database.0.lock().map_err(|_| "数据库正忙")?;
+            if !matches_session(&c, expected_session)? {
+                return Ok(0);
+            }
+        }
+        let Ok(video) = provider
+            .video_parts_with_priority(&bvid, RequestPriority::Background)
+            .await
+        else {
+            break;
+        };
+        let Some(count) = save_for_session(database, expected_session, &video, save_placeholders)?
+        else {
+            return Ok(0);
+        };
+        changed += count;
     }
     Ok(changed)
 }
@@ -150,6 +310,136 @@ mod tests {
     use crate::infrastructure::repositories::library::{
         LibraryRepository, MetadataPatch, TrackInput,
     };
+
+    #[tokio::test]
+    async fn stalled_hydration_does_not_lock_sync_or_account_and_can_be_interrupted() {
+        use tokio::sync::oneshot;
+        let sync = super::super::SyncState::default();
+        let database = Database(
+            Mutex::new(Connection::open_in_memory().unwrap()),
+            Default::default(),
+        );
+        let expected_session = account_session(&database.0.lock().unwrap()).unwrap();
+        let (started, request_started) = oneshot::channel();
+        let blocked = sync
+            .source_hydration
+            .run(&database, &expected_session, async {
+                started.send(()).unwrap();
+                std::future::pending().await
+            });
+        let account_change = async {
+            request_started.await.unwrap();
+            let _sync = sync.gate.try_lock().expect("hydration cannot block sync");
+            let _account = sync
+                .account_gate
+                .try_lock()
+                .expect("hydration cannot block profile changes");
+            sync.interrupt();
+        };
+        let (result, ()) = tokio::join!(blocked, account_change);
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(
+            sync.source_hydration
+                .run(&database, &expected_session, async { Ok(1) })
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_hydration_response_cannot_write_after_a_session_aba() {
+        use tokio::sync::oneshot;
+        let connection = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
+        let bvid = "BV1na4y1V7so";
+        let id = format!("bilibili:{bvid}:1");
+        connection
+            .execute(
+                "INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili',?2,1)",
+                params![id, bvid],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'B站歌曲（待加载）')",
+                [&id],
+            )
+            .unwrap();
+        let video = VideoParts {
+            bvid: bvid.into(),
+            aid: 1,
+            title: "新标题".into(),
+            cover_url: "https://bili.test/cover.jpg".into(),
+            uploader_id: 1,
+            uploader_name: "音乐".into(),
+            access: None,
+            play_count: Some(100),
+            published_at: Some(1),
+            season: None,
+            parts: vec![VideoPart {
+                cid: 1,
+                page: 1,
+                title: "第一集".into(),
+                duration_seconds: 100,
+                cover_url: "https://bili.test/cover.jpg".into(),
+                first_frame_url: String::new(),
+            }],
+        };
+        let expected_session = account_session(&connection).unwrap();
+        let database = Database(Mutex::new(connection), Default::default());
+        let hydration = Hydration::default();
+        let (started, request_started) = oneshot::channel();
+        let (finish, response) = oneshot::channel();
+        let stale = hydration.run(&database, &expected_session, async {
+            started.send(()).unwrap();
+            response.await.unwrap();
+            for write in [
+                save as fn(&Connection, &VideoParts) -> Result<usize, String>,
+                save_placeholders,
+            ] {
+                assert_eq!(
+                    save_for_session(&database, &expected_session, &video, write)?,
+                    None
+                );
+            }
+            Ok(0)
+        });
+        let switched = async {
+            request_started.await.unwrap();
+            let c = database.0.lock().unwrap();
+            for _ in 0..2 {
+                c.execute(
+                    "UPDATE account_session SET token=lower(hex(randomblob(16)))",
+                    [],
+                )
+                .unwrap();
+            }
+            finish.send(()).unwrap();
+        };
+        let (result, ()) = tokio::join!(stale, switched);
+        assert_eq!(result.unwrap(), 0);
+        let current_session = {
+            let c = database.0.lock().unwrap();
+            assert!(!cache_is_fresh(&c, bvid));
+            assert_eq!(
+                c.query_row("SELECT title FROM tracks WHERE id=?1", [&id], |r| r
+                    .get::<_, String>(0))
+                    .unwrap(),
+                "B站歌曲（待加载）"
+            );
+            account_session(&c).unwrap()
+        };
+        assert_eq!(
+            save_for_session(&database, &current_session, &video, save_placeholders).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            save_for_session(&database, &current_session, &video, save_placeholders).unwrap(),
+            Some(0)
+        );
+    }
+
     #[test]
     fn legacy_metadata_cache_refreshes_artwork_once_and_keeps_its_expiry() {
         let c = rusqlite::Connection::open_in_memory().unwrap();
@@ -206,7 +496,10 @@ mod tests {
             Some("https://bili.test/cover.jpg")
         );
         assert_eq!(
-            LibraryRepository::get(&c, &id).unwrap().unwrap().duration_seconds,
+            LibraryRepository::get(&c, &id)
+                .unwrap()
+                .unwrap()
+                .duration_seconds,
             17325
         );
         assert_eq!(save(&c, &video).unwrap(), 0);

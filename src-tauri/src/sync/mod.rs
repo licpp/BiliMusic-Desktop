@@ -46,12 +46,14 @@ pub struct SyncState {
     pub gate: tokio::sync::Mutex<()>,
     pub statistics_gate: tokio::sync::Mutex<()>,
     statistics_active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
+    source_hydration: source_titles::Hydration,
     // Playback only waits for actual account mutations, never sync HTTP requests.
     pub account_gate: tokio::sync::Mutex<()>,
     active: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
 }
 impl SyncState {
     pub fn interrupt(&self) {
+        self.source_hydration.cancel();
         if let Ok(active) = self.statistics_active.lock() {
             if let Some(token) = active.as_ref() {
                 token.cancel();
@@ -739,60 +741,19 @@ pub async fn sync_hydrate_sources(
     database: State<'_, Database>,
     provider: State<'_, BilibiliProvider>,
     state: State<'_, SyncState>,
+    expected_account_session: String,
     track_ids: Option<Vec<String>>,
     title_ids: Option<Vec<String>>,
 ) -> Result<usize, String> {
-    let _gate = state.gate.lock().await;
-    if let Some(ids) = title_ids {
-        return source_titles::hydrate(&database, &provider, ids).await;
-    }
-    let videos: Vec<String> = {
-        let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        let mut q=c.prepare("SELECT id,bvid FROM source_items WHERE source_title='' OR source_title='B站歌曲（待加载）' ORDER BY bvid LIMIT 5000").map_err(|e|e.to_string())?;
-        let rows = q
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        rows.into_iter()
-            .filter(|(id, _)| track_ids.as_ref().is_none_or(|ids| ids.contains(id)))
-            .map(|(_, bvid)| bvid)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .take(10)
-            .collect()
-    };
-    let mut count = if track_ids.is_none() {
-        crate::interface::linked_folders::hydrate_synced_links(&database)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    for bvid in videos {
-        if let Ok(video) = provider.video_parts(&bvid).await {
-            let c = database.0.lock().map_err(|_| "数据库正忙")?;
-            for part in &video.parts {
-                let id = format!("bilibili:{bvid}:{}", part.cid);
-                let title = crate::domain::source_title::source_title(
-                    &video.title,
-                    &part.title,
-                    video.parts.len(),
-                    video.season.is_some(),
-                    video
-                        .season
-                        .as_ref()
-                        .map(|s| s.title.as_str())
-                        .unwrap_or(""),
-                );
-                c.execute("UPDATE source_items SET aid=?2,page=?3,source_title=?4,uploader_id=?5,uploader_name=?6 WHERE id=?1 AND (source_title='' OR source_title='B站歌曲（待加载）')",params![id,video.aid,part.page,title,video.uploader_id,video.uploader_name]).map_err(|e|e.to_string())?;
-                count += c.execute("UPDATE tracks SET title=?2,cover_url=?3,duration_seconds=?4 WHERE id=?1 AND title='B站歌曲（待加载）'",params![id,title,part.cover_url,part.duration_seconds]).map_err(|e|e.to_string())?;
+    state
+        .source_hydration
+        .run(&database, &expected_account_session, async {
+            match title_ids {
+                Some(ids) => source_titles::hydrate_titles(&database, &provider, &expected_account_session, ids).await,
+                None => source_titles::hydrate_placeholders(&database, &provider, &expected_account_session, track_ids).await,
             }
-        } else {
-            break;
-        }
-    }
-    Ok(count)
+        })
+        .await
 }
 
 #[tauri::command]

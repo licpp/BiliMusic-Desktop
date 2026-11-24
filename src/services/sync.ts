@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { inDesktopShell, fromStoredTrack } from './desktopApi'
 import type { QueryClient } from '@tanstack/react-query'
 import { usePlayerStore } from '../features/player/playerStore'
+import { hydrateSources } from './sourceHydration'
 export type SyncConfig = { enabled: boolean; provider: 'cloud' | 'webdav'; uid: string; url: string; history: boolean; statistics: boolean; initialized: boolean; deviceId: string }
 export type TrackRepairPreview = {
   revision: string
@@ -63,16 +64,16 @@ export function startCloudSync(client: QueryClient) {
     finally {refreshing=false}
   }
   window.addEventListener('bilimusic-refresh-requested',manualRefresh)
-  const stop = startBackgroundSync(client, async outcome => {
+  const stop = startBackgroundSync(client, async (outcome, epoch) => {
     if (outcome.conflicts.length) {
       window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: '有同步冲突，请到设置中处理' }))
       return
     }
     if (outcome.changed) {
       await refreshSyncedLibrary(client)
-      const epoch = accountEpoch()
-      const loaded = await invoke<number>('sync_hydrate_sources')
-      if (loaded && epoch === accountEpoch()) await refreshSyncedLibrary(client)
+      void hydrateSources(epoch)
+        .then(loaded => { if (loaded && epoch === accountEpoch()) return refreshSyncedLibrary(client) })
+        .catch(() => undefined)
     }
   })
   return () => {stop();window.removeEventListener('bilimusic-refresh-requested',manualRefresh)}
@@ -82,6 +83,7 @@ export async function hydrateVisibleTracks(tracks: import('../domain/track').Tra
   if (!inDesktopShell || !tracks?.length) return
   const ids = tracks.filter((t) => t.source.provider === 'bilibili' && !t.durationSeconds).slice(0, 10).map((t) => t.id)
   if (!ids.length) return
-  const changed = await invoke<number>('sync_hydrate_sources', { trackIds: ids })
-  if (changed) await refreshSyncedLibrary(client)
+  const epoch = accountEpoch()
+  const changed = await hydrateSources(epoch, { trackIds: ids })
+  if (changed && epoch === accountEpoch()) await refreshSyncedLibrary(client)
 }

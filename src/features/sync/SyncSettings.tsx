@@ -12,6 +12,7 @@ import { SyncRecovery, type IssueArea } from './SyncRecovery'
 import { describeSyncIssue, type SyncIssue } from '../../services/syncIssues'
 import { accountEpoch } from '../../services/accountScope'
 import { inDesktopShell } from '../../services/desktopApi'
+import { hydrateSources } from '../../services/sourceHydration'
 import { defaultSyncConfig, refreshSyncedLibrary, syncNow, syncStatus, type SyncConfig, type SyncOutcome, type TrackRepairPreview } from '../../services/sync'
 
 function syncTime(value?: string) {
@@ -98,8 +99,9 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
     }
     notify()
     await syncStatistics(session)
-    if (session === accountEpoch()) void invoke<number>('sync_hydrate_sources')
-      .then(() => { if (session === accountEpoch()) return refreshSyncedLibrary(client) }).catch(() => undefined)
+    void hydrateSources(session)
+      .then(loaded => { if (loaded && session === accountEpoch()) return refreshSyncedLibrary(client) })
+      .catch(() => undefined)
   }
   const connect = () => action(async session => {
     setOutcome(null)
