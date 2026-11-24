@@ -372,7 +372,7 @@ impl Diagnostics {
         let worker_directory = directory.clone();
         let _ = std::thread::Builder::new()
             .name("diagnostics".into())
-            .spawn(move || run(&worker_directory, receiver));
+            .spawn(move || run(&worker_directory, receiver, flush));
         Self {
             sender,
             startup,
@@ -562,7 +562,11 @@ fn flush(path: &Path, records: &VecDeque<(usize, Stored)>) -> bool {
     )
     .is_ok()
 }
-fn run(directory: &Path, receiver: Receiver<Message>) {
+fn run(
+    directory: &Path,
+    receiver: Receiver<Message>,
+    flush: impl Fn(&Path, &VecDeque<(usize, Stored)>) -> bool,
+) {
     let path = directory.join("events.json");
     let mut records: VecDeque<_> = read_limited::<Vec<Stored>>(&path, MAX_BYTES)
         .unwrap_or_default()
@@ -658,8 +662,7 @@ fn run(directory: &Path, receiver: Receiver<Message>) {
         trim(&mut records, &mut bytes, now_ms());
         dirty |= before != bytes;
         if dirty && last_flush.elapsed() >= FLUSH_INTERVAL {
-            let _ = flush(&path, &records);
-            dirty = false;
+            dirty = !flush(&path, &records);
             last_flush = Instant::now();
         }
     }
@@ -736,6 +739,41 @@ mod tests {
     }
 
     #[test]
+    fn timed_flush_retries_after_the_destination_becomes_writable() {
+        let directory = Temp::new();
+        let path = directory.0.join("events.json");
+        fs::create_dir_all(&path).unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let (report, writes) = mpsc::channel();
+        let worker_directory = directory.0.clone();
+        let worker = std::thread::spawn(move || {
+            run(&worker_directory, receiver, |path, records| {
+                let written = flush(path, records);
+                let _ = report.send(written);
+                written
+            });
+        });
+        let id = operation();
+        sender
+            .send(Message::Record(Stored {
+                profile: None,
+                record: Record {
+                    at: now_ms(),
+                    build: version(),
+                    event: event(&id, Area::Playback, Step::Source),
+                },
+            }))
+            .unwrap();
+        assert!(!writes.recv_timeout(Duration::from_secs(3)).unwrap());
+        fs::remove_dir(&path).unwrap();
+        assert!(writes.recv_timeout(Duration::from_secs(3)).unwrap());
+        let records = read_limited::<Vec<Stored>>(&path, MAX_BYTES).unwrap();
+        assert_eq!(records[0].record.event.operation, id);
+        drop(sender);
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn only_allowlisted_diagnostic_fields_reach_the_journal() {
         let mut event = event(&operation(), Area::Playback, Step::Source);
         event.code = Some("Bearer abc https://test.invalid/?sign=secret".into());
@@ -753,7 +791,12 @@ mod tests {
         assert_eq!(sanitized.requested_quality, Some(30280));
         assert!(sanitized.bvid.is_none() && sanitized.cid.is_none());
         assert!(sanitized.codec.is_none() && sanitized.http.is_none() && sanitized.code.is_none());
-        let mut focus = Input::new(&operation(), Area::Playback, Step::AudioFocus, Outcome::Started);
+        let mut focus = Input::new(
+            &operation(),
+            Area::Playback,
+            Step::AudioFocus,
+            Outcome::Started,
+        );
         focus.code = Some("focus_delayed".into());
         assert_eq!(
             focus.sanitized().unwrap().code.as_deref(),
