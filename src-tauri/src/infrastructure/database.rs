@@ -16,14 +16,17 @@ impl Database {
         let data_dir = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
         crate::sync::request_budget::initialize(&data_dir);
-        let profile = std::fs::read_to_string(data_dir.join("active-profile")).unwrap_or_default();
-        let path = if !profile.is_empty() && profile.bytes().all(|c| c.is_ascii_digit()) {
-            data_dir.join(format!("profile-{profile}.sqlite3"))
-        } else {
-            data_dir.join("resonance.sqlite3")
-        };
-        let connection = Connection::open(&path)?;
+        let marker = data_dir.join("active-profile");
+        let pending = data_dir.join("active-profile.tmp");
+        let profile = std::fs::read_to_string(&marker).unwrap_or_default();
+        let mut path = profile_path(&data_dir, &profile);
+        let mut connection = Connection::open(&path)?;
         super::migrations::migrate(&connection)?;
+        if finish_interrupted_logout(&connection, &profile, &marker, &pending)? {
+            path = profile_path(&data_dir, "");
+            connection = Connection::open(&path)?;
+            super::migrations::migrate(&connection)?;
+        }
         connection.execute("UPDATE downloads SET status='failed',error_message='上次下载被中断，可以重新下载' WHERE status IN ('queued','downloading')", [])?;
         #[cfg(unix)]
         {
@@ -61,11 +64,7 @@ impl Database {
             .filter(|n| *n > 0)
             .map(|n| n.to_string())
             .unwrap_or_default();
-        let path = if profile.is_empty() {
-            self.1.join("resonance.sqlite3")
-        } else {
-            self.1.join(format!("profile-{profile}.sqlite3"))
-        };
+        let path = profile_path(&self.1, &profile);
         let next = Connection::open(&path).map_err(|e| e.to_string())?;
         super::migrations::migrate(&next).map_err(|e| e.to_string())?;
         crate::sync::storage::init(&next)?;
@@ -76,33 +75,58 @@ impl Database {
                 .map_err(|e| e.to_string())?;
         }
         std::fs::write(&temporary, &profile).map_err(|e| e.to_string())?;
-        {
-            let transaction = match cookie {
-                Some(_) => next.unchecked_transaction(),
-                None => {
-                    if !previous.is_empty() {
-                        AuthRepository::clear(&next, "bilibili").map_err(|e| e.to_string())?;
-                    }
-                    current.unchecked_transaction()
+        let auth = match cookie {
+            Some(_) => &next,
+            None => {
+                if !previous.is_empty() {
+                    AuthRepository::clear(&next, "bilibili").map_err(|e| e.to_string())?;
                 }
+                &current
             }
-            .map_err(|e| e.to_string())?;
-            match cookie {
-                Some(cookie) => AuthRepository::save_cookie(&transaction, "bilibili", cookie),
-                None => AuthRepository::clear(&transaction, "bilibili"),
-            }
-            .map_err(|e| e.to_string())?;
-            std::fs::rename(&temporary, &marker).map_err(|e| e.to_string())?;
-            if let Err(error) = transaction.commit() {
-                std::fs::write(&temporary, &previous)
-                    .and_then(|()| std::fs::rename(&temporary, &marker))
-                    .map_err(|restore| format!("{error}，恢复账号标记失败：{restore}"))?;
-                return Err(error.to_string());
-            }
+        };
+        let old_cookie = AuthRepository::get_cookie(auth, "bilibili").map_err(|e| e.to_string())?;
+        set_bilibili_cookie(auth, cookie).map_err(|e| e.to_string())?;
+        if let Err(error) = std::fs::rename(&temporary, &marker) {
+            set_bilibili_cookie(auth, old_cookie.as_deref())
+                .map_err(|restore| format!("{error}，恢复账号凭据失败：{restore}"))?;
+            return Err(error.to_string());
         }
         *current = next;
         Ok(())
     }
+}
+
+fn profile_path(directory: &std::path::Path, profile: &str) -> std::path::PathBuf {
+    if !profile.is_empty() && profile.bytes().all(|c| c.is_ascii_digit()) {
+        directory.join(format!("profile-{profile}.sqlite3"))
+    } else {
+        directory.join("resonance.sqlite3")
+    }
+}
+
+fn set_bilibili_cookie(connection: &Connection, cookie: Option<&str>) -> rusqlite::Result<()> {
+    match cookie {
+        Some(cookie) => AuthRepository::save_cookie(connection, "bilibili", cookie),
+        None => AuthRepository::clear(connection, "bilibili"),
+    }
+}
+
+// A logout stages the empty marker before removing credentials from the active
+// database. If the app stops after that removal, startup finishes the switch.
+fn finish_interrupted_logout(
+    connection: &Connection,
+    profile: &str,
+    marker: &std::path::Path,
+    pending: &std::path::Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if profile.is_empty()
+        || !std::fs::metadata(pending).is_ok_and(|entry| entry.is_file() && entry.len() == 0)
+        || AuthRepository::get_cookie(connection, "bilibili")?.is_some()
+    {
+        return Ok(false);
+    }
+    std::fs::rename(pending, marker)?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -215,6 +239,28 @@ mod tests {
             Some("SESSDATA=new")
         );
         drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_finishes_a_logout_interrupted_after_the_cookie_removal() {
+        let dir =
+            std::env::temp_dir().join(format!("bilimusic-profile-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let profile = Connection::open(profile_path(&dir, "42")).unwrap();
+        super::super::migrations::migrate(&profile).unwrap();
+        let marker = dir.join("active-profile");
+        let pending = dir.join("active-profile.tmp");
+        std::fs::write(&marker, "42").unwrap();
+        std::fs::write(&pending, "").unwrap();
+        set_bilibili_cookie(&profile, Some("SESSDATA=original")).unwrap();
+        assert!(!finish_interrupted_logout(&profile, "42", &marker, &pending).unwrap());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "42");
+        set_bilibili_cookie(&profile, None).unwrap();
+        assert!(finish_interrupted_logout(&profile, "42", &marker, &pending).unwrap());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "");
+        assert!(!pending.exists());
+        drop(profile);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
