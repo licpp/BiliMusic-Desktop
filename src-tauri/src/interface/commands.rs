@@ -150,7 +150,7 @@ pub fn playback_position(
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
     if let (Some(seconds), Some(observed_at), Some(scope)) = (seconds, observed_at, scope) {
-        if super::media::profile(&database) != scope {
+        if !super::media::playback_account_matches(&connection, &scope).map_err(CommandError::database)? {
             return Ok(0.0);
         }
         LibraryRepository::save_playback_position(&connection, &track_id, seconds, observed_at)

@@ -432,13 +432,13 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       const updatedBase = base.map(item => item.id === storedTrack.id && !(offline && isOfflineVideoRow(item)) ? storedTrack : item)
       const queueBase = uniqueTracks(representedByVideo ? updatedBase : [...updatedBase, storedTrack])
       set({ current: storedTrack, queue, queueBase, durationSeconds: storedTrack.durationSeconds, progressSeconds: desktopSeekRevision !== seekRevision ? get().progressSeconds : 0 })
-      const [plan] = await Promise.all([
+      const [plan, accountSession] = await Promise.all([
         getTrackPlaybackPlan(storedTrack, refreshing || previous.status === 'error', false, useOfflinePlayback.getState().offline),
         isMobile ? ensureNativeReady().then(async () => {
-          if (!isMobile || request !== playRequest) return
+          if (request !== playRequest) return undefined
           const state = get()
-          await syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
-        }) : Promise.resolve(),
+          return syncNativeQueue(state.queue, state.repeatMode, state.shuffled, state.resumeThresholdSeconds, state.queueSource)
+        }) : undefined,
       ])
       if (request !== playRequest) return
       if (!refreshing && !eligible(storedTrack)) { reprojectVisibility(); await get().next(); return }
@@ -453,7 +453,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       if (isMobile) {
         loadedTrackId = storedTrack.id
         initialPositionPending = position > 0
-        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy, plan.loudnessGainDb, trace.operation)
+        await playMobileAudio(storedTrack, plan.url, position, get().volume, true, loadedCollectionRef, get().rate, false, plan.upgradeUrl, resumePolicy, plan.loudnessGainDb, trace.operation, accountSession)
         return
       }
       const element = playerAudio()

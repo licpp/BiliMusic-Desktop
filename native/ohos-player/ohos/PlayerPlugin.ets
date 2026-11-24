@@ -8,7 +8,6 @@ import { image } from '@kit.ImageKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { preferences } from '@kit.ArkData';
 import { asset } from '@kit.AssetStoreKit';
-import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
@@ -25,7 +24,7 @@ interface Args {
   album?: string; coverUrl?: string; durationSeconds?: number;
   loudnessGainDb?: number; loudnessEnabled?: boolean; loudnessRevision?: number; settingsRevision?: number;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
-  rate?: number; seamless?: boolean; action?: string; value?: number | string; profilePath?: string;
+  rate?: number; seamless?: boolean; action?: string; value?: number | string; accountSession?: string;
   key?: string; remove?: boolean;
   automaticResume?: AutomaticResumePolicy; preserveSession?: boolean; request?: number;
 }
@@ -55,7 +54,7 @@ interface PlaybackDiagnosticEvent {
 }
 interface PlaybackDiagnosticPayload { accountSession: string; event: PlaybackDiagnosticEvent }
 interface ListeningSample {
-  scope: string; trackId: string; seconds?: number; position?: number;
+  accountSession: string; trackId: string; seconds?: number; position?: number;
   observedAt: number; sessionId?: string; collectionRef?: string;
 }
 
@@ -101,6 +100,8 @@ export class PlayerPlugin {
     const track = override ?? this.queue.target(this.id, direction, ended);
     if (remote && (!track || track.id === this.id)) return;
     if (!track) { await this.control({action:'pause'}); return; }
+    const accountSession = this.playbackAccount || this.queue.accountSession;
+    if (accountSession !== this.queue.accountSession) { await this.control({action:'pause'}); return; }
     this.cancelResolution(); this.cancelSourceSwitch?.(); this.cancelPreparation?.();
     this.accountListening(true);
     this.sessionId = util.generateRandomUUID(true);
@@ -120,13 +121,14 @@ export class PlayerPlugin {
         this.pendingResolve = resolve;
         this.resolveTimer = setTimeout(()=>{ if(request===this.nativeRequest) {native.bilimusicOhosCancelResolve();this.receiveResolution({request,data:JSON.stringify({error:'后台加载超时，请重新播放',errorCode:'source_timeout'} as ResolveResult)});} },25000);
         const payload = this.queue.payload(track, ended);
+        payload.accountSession = accountSession;
         payload.diagnosticId = this.diagnosticId;
         payload.subtitles = this.subtitlesEnabled;
         payload.subtitleLanguage = this.subtitleLanguage;
         payload.subtitleRevision = this.subtitleRevision;
         native.bilimusicOhosResolve(request, JSON.stringify(payload));
       });
-      if (request !== this.nativeRequest || !this.queue.find(track.id) || !this.desiredPlaying || this.destroyed) return;
+      if (request !== this.nativeRequest || accountSession !== this.queue.accountSession || !this.queue.find(track.id) || !this.desiredPlaying || this.destroyed) return;
       if (result.skip && result.entryId) {
         const next=this.queue.skip(result.entryId);
         if(next) {await this.advance(1,false,next);} else {await this.control({action:'pause'});}
@@ -142,7 +144,7 @@ export class PlayerPlugin {
         this.applyLyricTimeline({action:'update',id:result.track.id,lines:result.lyrics.lines,biasMs:result.lyrics.biasMs,lrc:result.lyrics.rawText,subtitles:result.lyrics.subtitles}, true);
       }
       await this.play({id:result.track.id,title:result.track.title,artist:result.track.artist,album:result.track.album,durationSeconds:result.track.durationSeconds,coverUrl:result.track.coverUrl,url:result.url,upgradeUrl:result.upgradeUrl,position:result.position,
-        loudnessGainDb:result.loudnessGainDb,automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true});
+        loudnessGainDb:result.loudnessGainDb,automaticResume:result.automaticResume,collectionRef:this.queue.collectionRef,rate:this.rate,volume:this.volume,playing:true,preserveSession:true,accountSession});
     } catch(error) {
       if(request!==this.nativeRequest || !this.desiredPlaying) return;
       if (this.status !== 'error' || !this.error) {
@@ -194,8 +196,9 @@ export class PlayerPlugin {
   private volume: number = 1;
   private rate: number = 1;
   private collectionRef: string = '';
-  private profilePath: string = '';
-  private previousScope: string = '';
+  private listeningObserved: boolean = false;
+  private playbackAccount: string = '';
+  private previousAccount: string = '';
   private previousId: string = '';
   private previousPosition: number = -1;
   private previousAt: number = 0;
@@ -398,7 +401,7 @@ export class PlayerPlugin {
     if (command === 'lyrics') return this.lyrics(JSON.parse(args.data ?? '{}') as LyricsPayload);
     if (command === 'snapshot') return this.snapshot();
     if (command === 'secret') return this.secret(args);
-    if (command === 'observe_listening') { this.profilePath = args.profilePath ?? ''; return new EmptyResult(); }
+    if (command === 'observe_listening') { this.listeningObserved = true; return new EmptyResult(); }
     if (command === 'open_url') {
       if (!args.url?.startsWith('https://bilimusic.cn/')) throw new Error('Unsupported URL');
       await this.context.startAbility({ action: 'ohos.want.action.viewData', uri: args.url }); return new EmptyResult();
@@ -690,6 +693,7 @@ export class PlayerPlugin {
     this.pendingUpgradeUrl = /^http:\/\/127\.0\.0\.1:\d+\//.test(args.upgradeUrl ?? '') ? args.upgradeUrl! : '';
     this.upgradeAfterPosition = (args.position ?? 0) * 1000 + 750;
     this.accountListening(true);
+    this.playbackAccount = args.accountSession ?? this.queue.accountSession;
     this.pendingSeek = -1;
     this.initialPositionPending = true;
     const previous = this.player; this.player = null;
@@ -852,6 +856,7 @@ export class PlayerPlugin {
     switch (args.action) {
       case 'prepare': {
         this.cancelResolution(); this.cancelPreparation?.(); this.accountListening(true);
+        this.playbackAccount = ''; this.initialPositionPending = true;
         this.desiredPlaying = false;
         const previous = this.player; this.player = null;
         const revision = ++this.mediaRevision;
@@ -905,36 +910,35 @@ export class PlayerPlugin {
   }
 
   private accountListening(flush: boolean = false): void {
-    if (!this.profilePath) return;
-    let scope = '';
-    try { scope = fileIo.readTextSync(this.profilePath); } catch (_) { return; }
+    const accountSession = this.playbackAccount;
+    if (!this.listeningObserved || !accountSession) return;
     const now = Date.now();
     const position = this.status === 'playing' ? Math.max(0, (this.player?.currentTime ?? 0) / 1000) : -1;
-    if (scope === this.previousScope && this.id === this.previousId && position >= 0 && this.previousPosition >= 0) {
+    if (accountSession === this.previousAccount && this.id === this.previousId && position >= 0 && this.previousPosition >= 0) {
       const elapsed = Math.max(0, (now - this.previousAt) / 1000);
       const advanced = Math.max(0, (position - this.previousPosition) / this.rate);
       // Ignore seeks and large scheduling gaps; listening time never counts a jump.
       if (elapsed <= 5 && advanced <= elapsed + 0.5) this.listeningSeconds += Math.min(advanced, elapsed);
     } else {
-      this.flushListening(this.previousScope, this.previousId, now);
+      this.flushListening(this.previousAccount, this.previousId, now);
       this.sessionId = util.generateRandomUUID(true);
     }
-    this.previousScope = scope; this.previousId = this.id; this.previousPosition = position; this.previousAt = now;
-    if (flush || this.listeningSeconds >= 15) this.flushListening(scope, this.id, now);
-    if (!this.initialPositionPending && (flush || now - this.positionSavedAt >= 15000) && scope && this.id) {
+    this.previousAccount = accountSession; this.previousId = this.id; this.previousPosition = position; this.previousAt = now;
+    if (flush || this.listeningSeconds >= 15) this.flushListening(accountSession, this.id, now);
+    if (!this.initialPositionPending && (flush || now - this.positionSavedAt >= 15000) && this.id) {
       this.positionSavedAt = now;
       const state = this.snapshot();
       const saved = state.position < 1 || (state.duration > 0 && state.position >= state.duration - 1) ? 0 : state.position;
-      const sample: ListeningSample = { scope, trackId: this.id, position: saved,
+      const sample: ListeningSample = { accountSession, trackId: this.id, position: saved,
         observedAt: now, collectionRef: this.collectionRef || undefined };
       native.bilimusicOhosListening(JSON.stringify(sample));
     }
   }
 
-  private flushListening(scope: string, id: string, now: number): void {
+  private flushListening(accountSession: string, id: string, now: number): void {
     const seconds = this.listeningSeconds; this.listeningSeconds = 0;
-    if (!scope || !id || seconds <= 0) return;
-    const sample: ListeningSample = { scope, trackId: id, seconds, observedAt: now, sessionId: this.sessionId };
+    if (!accountSession || !id || seconds <= 0) return;
+    const sample: ListeningSample = { accountSession, trackId: id, seconds, observedAt: now, sessionId: this.sessionId };
     native.bilimusicOhosListening(JSON.stringify(sample));
   }
 

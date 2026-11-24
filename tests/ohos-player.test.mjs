@@ -147,8 +147,8 @@ test('listening samples count elapsed playback, exclude seeks and pauses, and re
   const h = setup(), originalNow = Date.now
   let now = 100_000; Date.now = () => now
   try {
-    await h.command('observe_listening', { profilePath: '/sandbox/active-profile' })
-    await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/media' })
+    await h.command('observe_listening')
+    await h.command('play', { id: 'song', url: 'http://127.0.0.1:1234/media', accountSession: 'account-A-first' })
     h.plugin.accountListening()
     for (let i = 0; i < 16; i++) { now += 1000; h.player.currentTime += 1000; h.plugin.accountListening() }
     assert.equal(h.samples.filter(s => s.seconds).reduce((sum, s) => sum + s.seconds, 0), 15)
@@ -158,7 +158,31 @@ test('listening samples count elapsed playback, exclude seeks and pauses, and re
     assert.equal(counted, 16)
     now += 30_000; h.plugin.accountListening(true)
     assert.equal(h.samples.filter(s => s.seconds).reduce((sum, s) => sum + s.seconds, 0), counted)
-    assert.ok(h.samples.every(s => s.scope === '123' && s.trackId === 'song'))
+    assert.ok(h.samples.every(s => s.accountSession === 'account-A-first' && s.trackId === 'song'))
+  } finally { await h.plugin.destroy(); Date.now = originalNow }
+})
+
+test('Harmony samples keep the admitted account generation through account queue changes and same-track resume', async () => {
+  const h = setup(), originalNow = Date.now
+  let now = 100_000; Date.now = () => now
+  const [track] = nativeTracks
+  try {
+    await h.command('observe_listening')
+    await h.command('queue', mirror([track], 'off', 1, { accountSession: 'account-A-first' }))
+    await h.command('play', { ...track, url: 'http://127.0.0.1:1234/media', accountSession: 'account-A-first' })
+    await h.command('queue', mirror([track], 'off', 2, { accountSession: 'account-B' }))
+    await h.command('queue', mirror([track], 'off', 3, { accountSession: 'account-A-second' }))
+    await h.command('control', { action: 'pause' })
+    await h.command('control', { action: 'seek', value: 10 })
+    await h.command('control', { action: 'resume' })
+    now += 16_000
+    h.plugin.accountListening(true)
+    assert.ok(h.samples.length > 0)
+    assert.ok(h.samples.every(s => s.accountSession === 'account-A-first'))
+
+    await h.command('play', { ...track, url: 'http://127.0.0.1:1234/media', accountSession: 'account-A-second' })
+    h.plugin.accountListening(true)
+    assert.equal(h.samples.at(-1).accountSession, 'account-A-second')
   } finally { await h.plugin.destroy(); Date.now = originalNow }
 })
 

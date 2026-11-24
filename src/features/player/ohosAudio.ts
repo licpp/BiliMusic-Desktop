@@ -1,4 +1,4 @@
-import { nativeQueueEnvelope } from './nativeQueue'
+import { writeNativeQueue } from './nativeQueue'
 import type { Track } from '../../domain/track'
 import type { RepeatMode, QueueSource } from './playerStore'
 import type { ResumeThreshold } from './resumePolicy'
@@ -13,4 +13,4 @@ const audio = createNativeAudio('ohos-player', async callback => {
 })
 export const { observe: observeOHOSAudio, play: playOHOSAudio, setCollection: setOHOSCollection, control: controlOHOSAudio, snapshot: snapshotOHOSAudio, playbackClock: ohosPlaybackClock, prepare: prepareOHOSAudio } = audio
 
-export const syncOHOSQueue = async (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, threshold: ResumeThreshold = 0, source?: QueueSource) => invoke('plugin:ohos-player|queue', await nativeQueueEnvelope(tracks,repeatMode,shuffled,threshold,source))
+export const syncOHOSQueue = (tracks: Track[], repeatMode: RepeatMode, shuffled: boolean, threshold: ResumeThreshold = 0, source?: QueueSource) => writeNativeQueue('ohos-player', tracks, repeatMode, shuffled, threshold, source)

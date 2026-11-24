@@ -39,6 +39,7 @@ class PlayArgs {
     var collectionRef: String? = null
     var automaticResume: AutomaticResumePolicy? = null
     var diagnosticId: String? = null
+    var accountSession: String? = null
 }
 @InvokeArg
 class LyricsArgs { var data: String = "{}" }
@@ -374,7 +375,7 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         val intent = Intent(activity, PlaybackService::class.java).setAction("load")
-            .putExtra("url", args.url).putExtra("id", args.id).putExtra("diagnosticId", args.diagnosticId)
+            .putExtra("url", args.url).putExtra("id", args.id).putExtra("diagnosticId", args.diagnosticId).putExtra("accountSession", args.accountSession)
             .putExtra("upgradeUrl", args.upgradeUrl?.takeIf { it.matches(Regex("^http://127\\.0\\.0\\.1:[0-9]+/.*")) })
             .putExtra("title", args.title).putExtra("artist", args.artist).putExtra("album", args.album)
             .putExtra("durationSeconds", args.durationSeconds)

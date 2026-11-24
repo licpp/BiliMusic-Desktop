@@ -17,7 +17,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
   // through the subclass's compatibility registry leaves real iOS listeners silent.
   assert.match(swift, /trigger\("state", data: state\)/)
   globalThis.window = { crypto: webcrypto }
-  let handler; const calls = [], queuePayloads = []
+  let handler, playbackPayload; const calls = [], queuePayloads = []
   mockIPC((full, payload) => {
     if(full==='account_session')return 'session-test'
     const command = full.split('|')[1]
@@ -26,6 +26,7 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     assert.ok(new RegExp(`@objc public func ${command}\\(`).test(swift), `${command} has no exported Swift selector`)
     calls.push(command)
     if (command === 'queue') queuePayloads.push(payload)
+    if (command === 'play') playbackPayload = payload
     if (command === 'register_listener') handler = payload.handler
     if (command === 'snapshot') return {id:'test',status:'playing',position:8,revision:3}
   })
@@ -39,8 +40,10 @@ test('iOS SDK listener, queue and playback calls satisfy ACL and discard stale n
     assert.equal(states.length,1); assert.equal(states[0].position,5)
     const track = {id:'test',title:'song'}
     await audio.prepareIOSAudio(track)
-    await audio.syncIOSQueue([track],'all',false)
-    await audio.playIOSAudio(track,'http://127.0.0.1:1234/token/media',0,.7)
+    const accountSession = await audio.syncIOSQueue([track],'all',false)
+    await audio.playIOSAudio(track,'http://127.0.0.1:1234/token/media',0,.7,true,undefined,1,false,undefined,undefined,0,undefined,accountSession)
+    assert.equal(playbackPayload.accountSession, 'session-test')
+    assert.equal(playbackPayload.accountSession, queuePayloads[0].accountSession)
     await audio.snapshotIOSAudio(); emit(2,2,1); assert.equal(states.length,1); assert.ok(audio.iosPlaybackClock() >= 8); await subscription.unregister()
     assert.deepEqual(calls,['register_listener','control','queue','play','snapshot','remove_listener'])
     assert.ok(!commands.has('secret'), 'Keychain access must remain Rust-only')

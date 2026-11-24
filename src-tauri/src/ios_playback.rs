@@ -101,7 +101,7 @@ pub unsafe extern "C" fn bilimusic_ios_listen(raw: *const c_char) {
     };
     tauri::async_runtime::spawn(async move {
         if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-            if let (Some(scope), Some(id)) = (value["profile"].as_str(), value["id"].as_str()) {
+            if let (Some(scope), Some(id)) = (value["accountSession"].as_str(), value["id"].as_str()) {
                 if let Some(seconds) = value["seconds"].as_f64() {
                     let _ = crate::interface::media::record(
                         &app,

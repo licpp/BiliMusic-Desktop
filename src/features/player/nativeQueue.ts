@@ -15,3 +15,9 @@ export async function nativeQueueEnvelope(tracks: Track[], repeatMode: string, s
     ...(source?.offlineOnly ? { offlineOnly: true } : {}),
     accountSession, version: currentVersion, owner }
 }
+
+export async function writeNativeQueue(plugin: 'android-player' | 'ios-player' | 'ohos-player', ...args: Parameters<typeof nativeQueueEnvelope>) {
+  const envelope = await nativeQueueEnvelope(...args)
+  await invoke(`plugin:${plugin}|queue`, plugin === 'android-player' ? { data: JSON.stringify(envelope) } : envelope)
+  return envelope.accountSession
+}

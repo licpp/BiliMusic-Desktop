@@ -120,6 +120,7 @@ class PlaybackService : MediaSessionService() {
     private var prepared = false
     private var seeking = false
     private var listeningProfile: String? = null
+    private var listeningAccount: String? = null
     private var listeningPosition: Double? = null
     private var listeningAt = 0L
     private var listeningSession = java.util.UUID.randomUUID().toString()
@@ -136,6 +137,7 @@ class PlaybackService : MediaSessionService() {
     private var resolvingNative = false
     private var recoveryAttempted = false
     private var resolveProfile: String? = null
+    private var resolveAccount: String? = null
     private var transitionWakeLock: PowerManager.WakeLock? = null
     private var requestedStartPosition = 0.0
     private var initialResumePolicy: AutomaticResumePolicy? = null
@@ -258,6 +260,8 @@ class PlaybackService : MediaSessionService() {
         val resolver = resolveListener ?: run { fail("后台播放器尚未就绪，请重新播放", "native_not_ready"); return }
         val scope = currentProfile() ?: run { fail("无法读取当前播放账号，请重新播放", "profile_unavailable"); return }
         if (listeningProfile != null && scope != listeningProfile) { fail("播放账号已变更，请重新播放", "account_changed"); return }
+        val account = listeningAccount ?: queue.accountSession
+        if (account != queue.accountSession) { fail("播放账号已变更，请重新播放", "account_changed"); return }
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false; seeking = false
         nativeTrack = track; id = track.getString("id"); title = track.mediaText("title").ifBlank { "BiliMusic" }
         lyricRequests.supersede()
@@ -266,7 +270,7 @@ class PlaybackService : MediaSessionService() {
         metadataDuration = track.optDouble("durationSeconds", 0.0)
         requestedStartPosition = position ?: 0.0
         lastPosition = 0.0; lastDuration = track.optDouble("durationSeconds", 0.0)
-        playbackRevision += 1; resolveProfile = scope; resolvingNative = true; status = "buffering"; error = null
+        playbackRevision += 1; resolveProfile = scope; resolveAccount = account; resolvingNative = true; status = "buffering"; error = null
         prepareArtwork(track.mediaText("coverUrl")); updateMetadata(); updateSessionPlaybackState()
         startPlaybackForeground()
         // MediaPlayer's wake lock does not cover the gap between two tracks.
@@ -293,7 +297,7 @@ class PlaybackService : MediaSessionService() {
         }
         if (request != nativeRequest || !resolvingNative) return
         val scope = currentProfile() ?: run { fail("无法读取当前播放账号，请重新播放", "profile_unavailable"); return }
-        if (resolveProfile != scope) { fail("播放账号已变更，请重新播放", "account_changed"); return }
+        if (resolveProfile != scope || resolveAccount != queue.accountSession) { fail("播放账号已变更，请重新播放", "account_changed"); return }
         if (result.optBoolean("skip")) {
             val next = queue.skip(result.optString("entryId"))
             if (next == null) { control("pause"); cancelResolution() } else resolveTrack(next)
@@ -314,7 +318,7 @@ class PlaybackService : MediaSessionService() {
             .putExtra("loudnessGainDb", result.optDouble("loudnessGainDb", 0.0))
             .putExtra("position", result.optDouble("position", 0.0)).putExtra("volume", volume.toDouble())
             .putExtra("rate", playbackRate.toDouble()).putExtra("playing", true).putExtra("collectionRef", queue.collectionRef)
-            .putExtra("nativeRecovery", recoveryAttempted).putExtra("diagnosticId", diagnosticId)
+            .putExtra("nativeRecovery", recoveryAttempted).putExtra("diagnosticId", diagnosticId).putExtra("accountSession", resolveAccount)
         val automatic = result.optJSONObject("automaticResume")?.let {
             AutomaticResumePolicy().apply {
                 enabled = it.optBoolean("enabled", true); thresholdSeconds = it.optDouble("thresholdSeconds", 0.0)
@@ -339,7 +343,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun savePosition(force: Boolean = false) {
-        val scope = listeningProfile ?: return
+        val account = listeningAccount ?: return
         val media = player ?: return
         if (!prepared || seeking || id.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
@@ -348,7 +352,7 @@ class PlaybackService : MediaSessionService() {
         val duration = runCatching { media.duration / 1000.0 }.getOrDefault(0.0)
         val saved = if (didFinishTrack || position < 1.0 || (duration > 0 && position >= duration - 1.0)) 0.0 else position
         positionSavedAt = now
-        listeningListener?.invoke(JSObject().put("scope", scope).put("trackId", id)
+        listeningListener?.invoke(JSObject().put("accountSession", account).put("trackId", id)
             .put("position", saved).put("observedAt", System.currentTimeMillis()).put("collectionRef", collectionRef))
     }
 
@@ -370,11 +374,11 @@ class PlaybackService : MediaSessionService() {
         }
         listeningPosition = position
         listeningAt = now
-        val profile = listeningProfile
-        if ((flush || listeningSeconds >= 15.0) && profile != null && id.isNotEmpty() && listeningSeconds > 0.0) {
+        val account = listeningAccount
+        if ((flush || listeningSeconds >= 15.0) && account != null && id.isNotEmpty() && listeningSeconds > 0.0) {
             val seconds = listeningSeconds
             listeningSeconds = 0.0
-            listeningListener?.invoke(JSObject().put("scope", profile).put("trackId", id).put("seconds", seconds).put("observedAt", System.currentTimeMillis()).put("sessionId", listeningSession))
+            listeningListener?.invoke(JSObject().put("accountSession", account).put("trackId", id).put("seconds", seconds).put("observedAt", System.currentTimeMillis()).put("sessionId", listeningSession))
         }
     }
     private var playbackRevision = SystemClock.elapsedRealtime()
@@ -523,7 +527,7 @@ class PlaybackService : MediaSessionService() {
             "prepare" -> {
                 pausedPlayback = null
                 mediaButtons.cancel()
-                listeningSession = java.util.UUID.randomUUID().toString(); playbackRevision += 1
+                playbackRevision += 1
                 cancelResolution(); recoveryAttempted = false
                 initialResumePolicy = null; resumeDuringResolution = null
                 pendingUpgradeUrl = null
@@ -531,6 +535,8 @@ class PlaybackService : MediaSessionService() {
                 cancelSourceSwitch()
                 savePosition(force = true)
                 accountListening(true)
+                listeningSession = java.util.UUID.randomUUID().toString()
+                listeningAccount = null
                 seeking = false
                 handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
                 id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title").orEmpty().ifBlank { "BiliMusic" }
@@ -570,6 +576,7 @@ class PlaybackService : MediaSessionService() {
         playbackRate = resume.rate
         outputGain = resume.gain
         listeningProfile = resume.profile
+        listeningAccount = queue.accountSession.takeIf { it.isNotEmpty() }
         diagnosticAccount = queue.accountSession
         android.util.Log.i("BiliMusicPlayback", "restarting paused playback from media button")
         resolveTrack(queue.find(resume.track.getString("id")) ?: resume.track, refresh = true, position = resume.position)
@@ -608,6 +615,7 @@ class PlaybackService : MediaSessionService() {
         listeningPosition = null
         listeningSeconds = 0.0
         listeningProfile = currentProfile()
+        listeningAccount = (intent.getStringExtra("accountSession") ?: queue.accountSession).takeIf { it.isNotEmpty() }
         playbackLyricsAccount = queue.accountSession
         handler.removeCallbacks(ticker); player?.release(); player = null; prepared = false
         id = intent.getStringExtra("id") ?: ""; title = intent.getStringExtra("title").orEmpty().ifBlank { "BiliMusic" }
@@ -1174,7 +1182,7 @@ class PlaybackService : MediaSessionService() {
         val profile = listeningProfile
         val track = nativeTrack
         if (status == "paused" && prepared && profile != null && track != null && track.optString("id") == id &&
-            profile == currentProfile() && playbackLyricsAccount == queue.accountSession) {
+            profile == currentProfile() && playbackLyricsAccount == queue.accountSession && listeningAccount == queue.accountSession) {
             samplePlaybackPosition()
             pausedPlayback = PausedPlayback(profile, queue, track, if (didFinishTrack) 0.0 else lastPosition,
                 playbackRate, volume, outputGain)

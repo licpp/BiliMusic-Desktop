@@ -18,7 +18,7 @@ const output = await build({
       export const getTrackPlaybackUrl = t => globalThis.nativeTest.resolve(t);
       export const getTrackPlaybackPlan = async (t,r) => globalThis.iosTest?.plan ? globalThis.iosTest.plan(t,r) : ({url:await getTrackPlaybackUrl(t,r)});
     ` : path === 'platform' ? 'export const isOHOS = false; export const isAndroid = true; export const isMobile = true; export const isIOS = false' : `
-      export const syncAndroidQueue = async (...args) => globalThis.nativeTest.queues.push(args);
+      export const syncAndroidQueue = async (...args) => { globalThis.nativeTest.queues.push(args); return 'account-A1' };
       export const setAndroidCollection = async () => {};
       export const observeAndroidAudio = cb => { globalThis.nativeTest.event = state => { globalThis.nativeTest.state = state; cb(state) }; return Promise.resolve() };
       export const snapshotAndroidAudio = async () => globalThis.nativeTest.snapshot ? globalThis.nativeTest.snapshot() : globalThis.nativeTest.state || ({});
@@ -201,6 +201,7 @@ test('Android hands queue and resume policy to its service before playback', asy
  const s=setup(),second={...track,id:'bilibili:BV123:2',source:{...track.source,cid:2,page:2}}
  await s.getState().playFromList([track,second],track.id)
  assert.deepEqual(nativeTest.queues.at(-1)[0].map(t=>t.id),[track.id,second.id])
+ assert.equal(nativeTest.plays.at(-1)[12], 'account-A1')
  s.getState().setResumeThreshold(600);await Promise.resolve();await Promise.resolve()
  assert.equal(nativeTest.queues.at(-1)[3],600)
 })

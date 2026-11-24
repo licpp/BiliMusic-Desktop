@@ -14,6 +14,7 @@ struct PlayArgs: Decodable {
     let upgradeUrl: String?
     let automaticResume: AutomaticResumePolicy?
     let diagnosticId: String?
+    let accountSession: String?
 }
 struct ControlArgs: Decodable {
     let settingsRevision: Double?
@@ -103,7 +104,8 @@ class PlayerPlugin: Plugin {
     private var listeningAt = ProcessInfo.processInfo.systemUptime
     private var listeningActive = false
     private var listeningID: String?
-    private var listeningProfile = ""
+    private var listeningAccount: String?
+    private var playbackAccount: String?
     private let engineInstanceId = UUID().uuidString
     private var nativeResolutionPending = false
     private var queueSession: String?
@@ -393,6 +395,7 @@ class PlayerPlugin: Plugin {
             guard state.id == args.id else { invoke.reject("歌曲已切换"); return }
             beginPlaybackDiagnostic(args.diagnosticId)
             savePosition(force: true)
+            playbackAccount = args.accountSession ?? queueSession
             collectionRef = args.collectionRef
             cancelPlaybackWatchdog()
             backgroundPlaybackWanted = false
@@ -462,6 +465,7 @@ class PlayerPlugin: Plugin {
                 listeningSession = UUID().uuidString
                 guard let raw = currentProfile() else { invoke.reject("无法读取当前播放账号，请重新播放", code: "profile_unavailable"); return }
                 profile = String(cString: raw); freeProfile(raw)
+                playbackAccount = nil
                 generation += 1; seekPending = false; hasMediaAdvanced = false; lastMediaPosition = -1; desiredPlaying = false; itemStatus = nil
                 player.pause(); player.replaceCurrentItem(with: nil)
                 endBackgroundTask()
@@ -955,15 +959,15 @@ class PlayerPlugin: Plugin {
         let now = ProcessInfo.processInfo.systemUptime
         if listeningActive { listeningSeconds += max(0, min(300, now - listeningAt)) }
         listeningAt = now
-        if flush || listeningID != state.id || listeningProfile != profile || listeningSeconds >= 15 {
-            if let id = listeningID, listeningSeconds > 0, let data = try? JSONSerialization.data(withJSONObject: ["profile": listeningProfile, "id": id, "seconds": min(300, listeningSeconds), "observedAt": Int64(Date().timeIntervalSince1970 * 1000), "sessionId": listeningSession]), let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
+        if flush || listeningID != state.id || listeningAccount != playbackAccount || listeningSeconds >= 15 {
+            if let id = listeningID, let account = listeningAccount, listeningSeconds > 0, let data = try? JSONSerialization.data(withJSONObject: ["accountSession": account, "id": id, "seconds": min(300, listeningSeconds), "observedAt": Int64(Date().timeIntervalSince1970 * 1000), "sessionId": listeningSession]), let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
             listeningSeconds = 0
         }
-        listeningID = state.id; listeningProfile = profile
+        listeningID = state.id; listeningAccount = playbackAccount
         listeningActive = player.timeControlStatus == .playing
     }
     private func savePosition(force: Bool = false, completed: Bool = false) {
-        guard let id = state.id, player.currentItem?.status == .readyToPlay, !initialSeekPending, !seekPending, !playbackRecovery.seekFailed else { return }
+        guard let id = state.id, let account = playbackAccount, player.currentItem?.status == .readyToPlay, !initialSeekPending, !seekPending, !playbackRecovery.seekFailed else { return }
         let now = ProcessInfo.processInfo.systemUptime
         if !force && now - positionSavedAt < 15 { return }
         let position = player.currentTime().seconds
@@ -972,7 +976,7 @@ class PlayerPlugin: Plugin {
         let saved = completed || didFinishTrack || position < 1 || (duration > 0 && position >= duration - 1) ? 0 : position
         positionSavedAt = now
         let millis = Int64(Date().timeIntervalSince1970 * 1000)
-        var sample: [String: Any] = ["profile": profile, "id": id, "position": saved, "observedAt": millis]
+        var sample: [String: Any] = ["accountSession": account, "id": id, "position": saved, "observedAt": millis]
         if let collectionRef { sample["collectionRef"] = collectionRef }
         if let data = try? JSONSerialization.data(withJSONObject: sample),
            let json = String(data: data, encoding: .utf8) { json.withCString { recordNativeListening($0) } }
@@ -1114,6 +1118,10 @@ class PlayerPlugin: Plugin {
         else if ended { pause() }
     }
     private func resolve(_ track: QueueTrack, restart: Bool = false, refresh: Bool = false, position: Double? = nil) {
+        guard playbackAccount == nil || playbackAccount == queueSession else {
+            fail("播放账号已变更，请重新播放", code: "account_changed"); return
+        }
+        let account = playbackAccount ?? queueSession
         cancelInterruptionResume()
         if !refresh { recoveryResumePolicy = nil; playbackRecovery.prepare(policy: nil) }
         pendingUpgrade=nil;cancelSourceSwitch()
@@ -1121,6 +1129,7 @@ class PlayerPlugin: Plugin {
         if !refresh { recoveryAttempted = false }
         if state.id != track.id { savePosition(force: true) }
         accountListening(flush: true)
+        playbackAccount = account
         if !refresh { listeningSession = UUID().uuidString; beginPlaybackDiagnostic(nil) }
         else {
             diagnosticPlaying = false
@@ -1141,7 +1150,7 @@ class PlayerPlugin: Plugin {
         nativeResolutionPending = true
         publish()
         let collection = collectionPlayback || (track.partCount ?? 0) > 1 || track.source.page > 1 || tracks.contains { $0.id != track.id && $0.source.bvid == track.source.bvid }
-        guard let data = try? JSONEncoder().encode(ResolveRequest(diagnosticId: state.diagnosticId, initialErrorCode: diagnosticInitialError, offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:queueSession, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
+        guard let data = try? JSONEncoder().encode(ResolveRequest(diagnosticId: state.diagnosticId, initialErrorCode: diagnosticInitialError, offlineOnly: offlineOnly, visibilityScopes:entryOrigins[track.id] ?? [],accountSession:account, profile: profile, track: track, restart: restart, autoResume: autoResume, resumeThresholdSeconds: resumeThresholdSeconds, collectionPlayback: collection, refresh: refresh, position: position, subtitles: notificationLyrics.subtitlesEnabled, subtitleLanguage: notificationLyrics.subtitleLanguage, subtitleRevision: notificationLyrics.subtitleRevision)),
               let json = String(data: data, encoding: .utf8) else { fail("无法读取歌曲信息", code: "invalid_input"); return }
         json.withCString { resolveTrack(generation, $0) }
     }
