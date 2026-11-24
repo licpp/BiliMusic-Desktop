@@ -4,12 +4,12 @@ import { spawnSync } from 'node:child_process'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { androidLargeScreenTarget } from './android-target.mjs'
+import { verifyFrontendBuild } from './verify-frontend-build.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const selected = androidLargeScreenTarget(process.argv.slice(2))
 const workspace = join(root, 'artifacts/build/large-screen/source', selected.label)
 const cache = join(root, 'artifacts/build/large-screen/cargo')
-const config = 'src-tauri/tauri.large-screen.conf.json'
 const env = { ...process.env, CARGO_TARGET_DIR: cache }
 const excluded = new Set(['.git', '.env', 'node_modules', 'target', 'gen', 'build', '.gradle', '.build', '.swiftpm', '.tauri', '.android-icons', '.ios-icons', '.DS_Store'])
 function run(command, args) {
@@ -24,8 +24,10 @@ for (const name of ['package.json', 'package-lock.json', 'tsconfig.json', 'vite.
 }
 await symlink(join(root, 'node_modules'), join(workspace, 'node_modules'), 'dir')
 run('node', ['scripts/mobile-version.mjs', 'large-screen'])
+// Each Gradle ABI task starts Tauri with the platform configuration.
+await cp(join(workspace, 'src-tauri/tauri.large-screen.conf.json'), join(workspace, 'src-tauri/tauri.android.conf.json'))
 run('npm', ['run', 'tauri', '--', 'icon', 'assets/android/icon.json', '--output', 'src-tauri/.android-icons'])
-run('npm', ['run', 'tauri', '--', 'android', 'init', '--ci', '--skip-targets-install', '--config', config])
+run('npm', ['run', 'tauri', '--', 'android', 'init', '--ci', '--skip-targets-install'])
 run('node', ['scripts/android-prepare.mjs', '--large-screen'])
 const debug = selected.args.includes('--debug') || selected.args.includes('-d')
 // Tauri's build script writes Kotlin into the generated project. A cached
@@ -33,7 +35,11 @@ const debug = selected.args.includes('--debug') || selected.args.includes('-d')
 for (const rust of selected.rust) {
   run('cargo', ['clean', '--manifest-path', 'src-tauri/Cargo.toml', '-p', 'tauri', '--target', rust, ...(debug ? [] : ['--release'])])
 }
-run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', ...selected.targets, '--config', config, ...selected.args])
+run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', ...selected.targets, ...selected.args])
+const { edition, platform, target: browserTarget, files } = await verifyFrontendBuild(
+  join(workspace, 'dist-large-screen'), 'large-screen', 'chrome66', 'android',
+)
+console.log(`${edition} · ${platform} · ${browserTarget} · ${Object.keys(files).length} assets verified`)
 const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const outputs = join(workspace, 'src-tauri/gen/android/app/build/outputs/apk/universal', debug ? 'debug' : 'release')
 const apks = (await readdir(outputs)).filter(name => name.endsWith('.apk'))
