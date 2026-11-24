@@ -1,4 +1,6 @@
+use super::repositories::auth::AuthRepository;
 use rusqlite::Connection;
+use std::io::ErrorKind;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -33,7 +35,28 @@ impl Database {
     }
 
     pub fn switch(&self, uid: Option<i64>, cookie: Option<&str>) -> Result<(), String> {
+        self.switch_profile(uid, cookie, None)
+    }
+
+    pub fn switch_profile(
+        &self,
+        uid: Option<i64>,
+        cookie: Option<&str>,
+        expected_session: Option<&str>,
+    ) -> Result<(), String> {
         let mut current = self.0.lock().map_err(|_| "数据库正忙")?;
+        if let Some(expected) = expected_session {
+            if account_session(&current).map_err(|e| e.to_string())? != expected {
+                return Err("B 站账号已变更，请重试".into());
+            }
+        }
+        let marker = self.1.join("active-profile");
+        let temporary = self.1.join("active-profile.tmp");
+        let previous = match std::fs::read_to_string(&marker) {
+            Ok(profile) => profile,
+            Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.to_string()),
+        };
         let profile = uid
             .filter(|n| *n > 0)
             .map(|n| n.to_string())
@@ -46,27 +69,37 @@ impl Database {
         let next = Connection::open(&path).map_err(|e| e.to_string())?;
         super::migrations::migrate(&next).map_err(|e| e.to_string())?;
         crate::sync::storage::init(&next)?;
-        if let Some(cookie) = cookie {
-            crate::infrastructure::repositories::auth::AuthRepository::save_cookie(
-                &next, "bilibili", cookie,
-            )
-            .map_err(|e| e.to_string())?;
-        } else {
-            crate::infrastructure::repositories::auth::AuthRepository::clear(&next, "bilibili")
-                .map_err(|e| e.to_string())?;
-        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
                 .map_err(|e| e.to_string())?;
         }
-        std::fs::write(self.1.join("active-profile.tmp"), &profile).map_err(|e| e.to_string())?;
-        std::fs::rename(
-            self.1.join("active-profile.tmp"),
-            self.1.join("active-profile"),
-        )
-        .map_err(|e| e.to_string())?;
+        std::fs::write(&temporary, &profile).map_err(|e| e.to_string())?;
+        {
+            let transaction = match cookie {
+                Some(_) => next.unchecked_transaction(),
+                None => {
+                    if !previous.is_empty() {
+                        AuthRepository::clear(&next, "bilibili").map_err(|e| e.to_string())?;
+                    }
+                    current.unchecked_transaction()
+                }
+            }
+            .map_err(|e| e.to_string())?;
+            match cookie {
+                Some(cookie) => AuthRepository::save_cookie(&transaction, "bilibili", cookie),
+                None => AuthRepository::clear(&transaction, "bilibili"),
+            }
+            .map_err(|e| e.to_string())?;
+            std::fs::rename(&temporary, &marker).map_err(|e| e.to_string())?;
+            if let Err(error) = transaction.commit() {
+                std::fs::write(&temporary, &previous)
+                    .and_then(|()| std::fs::rename(&temporary, &marker))
+                    .map_err(|restore| format!("{error}，恢复账号标记失败：{restore}"))?;
+                return Err(error.to_string());
+            }
+        }
         *current = next;
         Ok(())
     }
@@ -133,6 +166,53 @@ mod tests {
                 .query_row("SELECT name FROM playlists", [], |r| r.get::<_, String>(0))
                 .unwrap(),
             "Guest data"
+        );
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_profile_switch_leaves_the_active_cookie_and_session_intact() {
+        let dir =
+            std::env::temp_dir().join(format!("bilimusic-profile-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let guest = Connection::open(dir.join("resonance.sqlite3")).unwrap();
+        super::super::migrations::migrate(&guest).unwrap();
+        let db = Database(Mutex::new(guest), dir.clone());
+        db.switch(Some(42), Some("SESSDATA=original")).unwrap();
+        let original = account_session(&db.0.lock().unwrap()).unwrap();
+        std::fs::create_dir(dir.join("active-profile.tmp")).unwrap();
+        assert!(
+            db.switch_profile(Some(42), Some("SESSDATA=candidate"), Some(&original))
+                .is_err()
+        );
+        assert!(db.switch(None, None).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("active-profile")).unwrap(),
+            "42"
+        );
+        {
+            let connection = db.0.lock().unwrap();
+            assert_eq!(account_session(&connection).unwrap(), original);
+            assert_eq!(
+                AuthRepository::get_cookie(&connection, "bilibili")
+                    .unwrap()
+                    .as_deref(),
+                Some("SESSDATA=original")
+            );
+        }
+        std::fs::remove_dir(dir.join("active-profile.tmp")).unwrap();
+        db.switch(None, None).unwrap();
+        db.switch(Some(42), Some("SESSDATA=new")).unwrap();
+        assert!(
+            db.switch_profile(Some(42), Some("SESSDATA=stale"), Some(&original))
+                .is_err()
+        );
+        assert_eq!(
+            AuthRepository::get_cookie(&db.0.lock().unwrap(), "bilibili")
+                .unwrap()
+                .as_deref(),
+            Some("SESSDATA=new")
         );
         drop(db);
         std::fs::remove_dir_all(dir).unwrap();

@@ -826,9 +826,19 @@ impl BilibiliProvider {
     }
 
     pub async fn set_session_cookie(&self, cookie: Option<String>) {
+        let _: Result<(), std::convert::Infallible> =
+            self.commit_session_cookie(cookie, || Ok(())).await;
+    }
+
+    pub async fn commit_session_cookie<E>(
+        &self,
+        cookie: Option<String>,
+        commit: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
         let mut cache = self.dash_cache.write().await;
         {
             let mut session = self.session_cookie.write().await;
+            commit()?;
             *session = cookie;
             self.catalog_epoch.fetch_add(1, Ordering::Relaxed);
         }
@@ -837,6 +847,7 @@ impl BilibiliProvider {
         self.pages.write().await.clear();
         self.details.write().await.clear();
         self.player_metadata.write().await.clear();
+        Ok(())
     }
 
     pub async fn qr_login_generate(&self) -> Result<QrLogin, ProviderError> {
@@ -884,9 +895,6 @@ impl BilibiliProvider {
         } else {
             None
         };
-        if let Some(cookie) = &cookie_header {
-            self.set_session_cookie(Some(cookie.clone())).await;
-        }
         Ok(QrLoginStatus {
             status: status.into(),
             message: data.message,

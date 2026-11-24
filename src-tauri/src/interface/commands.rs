@@ -632,18 +632,18 @@ pub async fn bili_qr_login_poll(
     key: String,
     sync: State<'_, crate::sync::SyncState>,
 ) -> Result<QrLoginStatus, CommandError> {
-    let _gate = sync.gate.lock().await;
-    let _account = sync.account_gate.lock().await;
     if key.trim().is_empty() {
         return Err(CommandError::validation("二维码登录标识为空"));
     }
-    let status = provider
+    let expected_session = account_session(database.clone())?;
+    let candidate = BilibiliProvider::new().map_err(CommandError::provider)?;
+    let status = candidate
         .qr_login_poll(&key)
         .await
         .map_err(CommandError::bilibili)?;
     if let Some(cookie) = &status.cookie_header {
-        sync.interrupt();
-        let profile = provider
+        candidate.set_session_cookie(Some(cookie.clone())).await;
+        let profile = candidate
             .account_profile()
             .await
             .map_err(CommandError::bilibili)?;
@@ -651,8 +651,17 @@ pub async fn bili_qr_login_poll(
             .user_id
             .filter(|_| profile.logged_in)
             .ok_or_else(|| CommandError::validation("无法验证登录账号"))?;
-        database
-            .switch(Some(uid), Some(cookie))
+        let _gate = sync.gate.lock().await;
+        let _account = sync.account_gate.lock().await;
+        if account_session(database.clone())? != expected_session {
+            return Err(CommandError::validation("B 站账号已变更，请重试"));
+        }
+        sync.interrupt();
+        provider
+            .commit_session_cookie(Some(cookie.clone()), || {
+                database.switch_profile(Some(uid), Some(cookie), Some(&expected_session))
+            })
+            .await
             .map_err(CommandError::database)?;
     }
     Ok(status)
@@ -726,14 +735,10 @@ pub async fn bili_logout(
     sync.interrupt();
     let _gate = sync.gate.lock().await;
     let _account = sync.account_gate.lock().await;
-    provider.set_session_cookie(None).await;
-    let connection = database
-        .0
-        .lock()
-        .map_err(|_| CommandError::database("数据库正忙"))?;
-    AuthRepository::clear(&connection, "bilibili").map_err(CommandError::database)?;
-    drop(connection);
-    database.switch(None, None).map_err(CommandError::database)
+    provider
+        .commit_session_cookie(None, || database.switch(None, None))
+        .await
+        .map_err(CommandError::database)
 }
 
 #[tauri::command]
