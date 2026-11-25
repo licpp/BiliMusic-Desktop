@@ -119,23 +119,23 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_android-build2_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_android-build2_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.4.5_build1_Android_arm64.apk",
-      "size": 18387156,
-      "sha256": "3dae832a255bbb49bc7d31ed901ebf5da44899da53c7234429b7aafbfc62486c",
+      "file": "BiliMusic_0.4.5_android-build2_Android_arm64.apk",
+      "size": 18395348,
+      "sha256": "3dcfcdff7ca51c9099acb787f12234b2a7ad945caf6a84eedbbefdded5bcc98c",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk",
       "version": "0.4.5",
-      "build": 1,
-      "sourceCommit": "8f53989a98e3f02d1bbde708c98f84f8a977a99b"
+      "build": 2,
+      "sourceCommit": "43e698773aa215ee50c566461e342e526bc4fd3b"
     },
     {
       "id": "android-large",
@@ -361,6 +361,7 @@
       "publishedAt": "2026-11-25T14:26:26.595980+00:00",
       "kind": "release",
       "changes": [
+        "Android 手机和平板可在悬浮歌词上直接切换原文、译文和双语，并记住选择。",
         "歌单和「我喜欢」支持拖动排序、更换视频和自动查重，顺序可跨端同步。",
         "自动记住播放倍速。桌面歌词支持原文、译文和双语。",
         "优化电脑和平板歌词页动效，修复手机拖动排序、弹窗遮挡和桌面「我喜欢」列表加载。",
