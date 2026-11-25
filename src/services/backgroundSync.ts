@@ -29,7 +29,7 @@ export function startBackgroundSync(client: QueryClient, onLibrary: (outcome: Sy
         window.dispatchEvent(new Event('bilimusic-library-synced'))
         await client.invalidateQueries({ queryKey: accountQueryKey('sync-status') })
         if (stopped || switching || epoch !== accountEpoch()) return
-        if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: report.library.importError || report.library.visibilityError || report.library.chaptersError ? '部分资料待同步' : '' }))
+        if (!report.library.conflicts.length) window.dispatchEvent(new CustomEvent('bilimusic-sync-status', { detail: report.library.importError || report.library.visibilityError || report.library.chaptersError || report.library.favoriteOrderError ? '部分资料待同步' : '' }))
       }
       if (report.libraryError) {
         reportSyncError('library', true, report.libraryError)

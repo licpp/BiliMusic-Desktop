@@ -758,6 +758,51 @@ mod tests {
         );
     }
     #[test]
+    fn custom_playlist_order_reuses_item_positions_and_preserves_members_across_sync() {
+        use crate::infrastructure::repositories::playlists::PlaylistRepository;
+        let mut a = Connection::open_in_memory().unwrap();
+        let b = Connection::open_in_memory().unwrap();
+        for c in [&a, &b] {
+            crate::infrastructure::migrations::migrate(c).unwrap();
+        }
+        let playlist = "8076ad4b-2861-4be1-8b08-a6a0fb0b0579";
+        let order = |c: &Connection| {
+            PlaylistRepository::tracks(c, playlist).unwrap().into_iter().map(|t| t.id).collect::<Vec<_>>()
+        };
+        PlaylistRepository::create(&a, playlist, "Custom").unwrap();
+        let ids = (1..=4).map(|n| format!("bilibili:BV123:{n}")).collect::<Vec<_>>();
+        for (index, id) in ids.iter().enumerate() {
+            a.execute("INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV123',?2)", params![id, index + 1]).unwrap();
+            a.execute("INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'Track')", [id]).unwrap();
+        }
+        PlaylistRepository::add_tracks(&a, playlist, &ids, true).unwrap();
+        let baseline = export(&a, "42", false).unwrap();
+        apply(&b, &baseline, false).unwrap();
+        let mut reordered = ids.clone();
+        reordered.swap(0, 1);
+        assert!(PlaylistRepository::reorder(&mut a, std::path::Path::new("."), playlist, &ids, &reordered).unwrap());
+        assert!(!PlaylistRepository::reorder(&mut a, std::path::Path::new("."), playlist, &ids, &reordered).unwrap());
+        assert_eq!(order(&a), reordered);
+        PlaylistRepository::remove_track(&b, playlist, &ids[3]).unwrap();
+        let (synced, conflicts) = merge(&baseline, &export(&a, "42", false).unwrap(), &export(&b, "42", false).unwrap(), None);
+        assert!(conflicts.is_empty());
+        for c in [&a, &b] {
+            apply(c, &synced, false).unwrap();
+            assert_eq!(order(c), reordered[..3]);
+        }
+
+        // Two edits can leave two rows with the same numeric position. Every
+        // device must project the same order regardless of when it added them.
+        let item = format!("item:{playlist}|{}", ids[2]);
+        let mut tied = synced;
+        let pos = tied.records[&format!("item:{playlist}|{}", ids[0])].fields["position"].clone();
+        tied.records.get_mut(&item).unwrap().fields.insert("position".into(), pos);
+        apply(&a, &tied, false).unwrap();
+        apply(&b, &tied, false).unwrap();
+        assert_eq!(order(&a), order(&b));
+    }
+
+    #[test]
     fn imported_playlists_and_members_round_trip_without_changing_identity() {
         let c = Connection::open_in_memory().unwrap();
         crate::infrastructure::migrations::migrate(&c).unwrap();

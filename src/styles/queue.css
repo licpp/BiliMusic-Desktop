@@ -13,7 +13,7 @@
 .queue-tree .queue-row-number { display: grid; justify-items: center; font-size: 11px; font-variant-numeric: tabular-nums; }
 .queue-tree .queue-entry > .action-menu-trigger { display: grid; place-items: center; width: 32px; height: 36px; color: var(--muted); }
 .queue-tree .queue-entry > .queue-drag-handle {
-  display: grid; place-items: center; width: 28px; height: 36px; padding: 0;
+  padding: 0;
   border-radius: 8px; color: var(--muted); cursor: grab; touch-action: none; user-select: none;
 }
 .queue-tree .queue-drag-handle:is(:hover,:focus-visible) { color: var(--cyan); }
@@ -38,7 +38,6 @@
 :root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry { min-height: 49px; padding: 2px 7px; border: 0; }
 :root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry > button.queue-row-main { min-height: 45px; grid-template-columns: 26px minmax(0, 1fr) auto; }
 :root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry > .action-menu-trigger { width: 42px; min-height: 44px; }
-:root[data-layout="mobile"] .queue-drawer.queue-sheet .queue-tree .queue-entry > .queue-drag-handle { width: 40px; height: 44px; }
 @media (prefers-reduced-motion: reduce) { .queue-tree .queue-row-main > svg:last-child { transition: none; } }
 .queue-drawer > header { gap: 8px; }
 .queue-drawer > header > div:first-child { min-width: 0; }

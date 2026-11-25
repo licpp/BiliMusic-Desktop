@@ -1,21 +1,17 @@
 //! Account-scoped chapter lists, published through an optional WebDAV extension.
 use super::{
     Config,
-    actor::Lease,
-    causal::{self, Candidate, Cell, Dot, Register},
-    engine::{get as read_state, put as write_state},
-    migration::Genesis,
+    causal::{self, Cell, Register},
     model::{self, Snapshot},
-    protocol_v2::{self, ObjectRef},
+    register_extension::{self, RegisterExtension},
     transport::Secret,
-    v2_net::Client,
 };
 use crate::infrastructure::database::{Database, account_session};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const NAMESPACE: &str = "chapters-v1";
+#[cfg(test)]
 const PREFIX: &str = "ext-chapters-v1-";
 const MAX_CHAPTERS: usize = 200;
 const MAX_TITLE_CHARS: usize = 160;
@@ -106,7 +102,9 @@ fn revision(register: &Register) -> Result<String, String> {
 
 fn snapshot(session: String, register: &Register) -> Result<SavedChapters, String> {
     let chapters = match selected(register) {
-        Some(Cell::Value(value)) => Some(serde_json::from_value(value.clone()).map_err(err)?),
+        Some(Cell::Value(value)) => {
+            Some(serde_json::from_value::<Vec<SavedChapter>>(value.clone()).map_err(err)?)
+        }
         Some(Cell::Missing) | None => None,
     };
     Ok(SavedChapters {
@@ -125,27 +123,6 @@ pub fn get(db: &Database, bvid: &str, cid: i64) -> Result<SavedChapters, String>
         account_session(&c).map_err(err)?,
         &read_register(&c, bvid, cid)?,
     )
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct Writer {
-    instance: String,
-    sequence: u64,
-    revision: u64,
-}
-
-fn writer(c: &Connection) -> Result<Writer, String> {
-    let raw: Option<String> = c
-        .query_row(
-            "SELECT value FROM sync_info WHERE key='chapters-writer'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(err)?;
-    raw.map(|json| serde_json::from_str(&json).map_err(err))
-        .transpose()
-        .map(Option::unwrap_or_default)
 }
 
 pub fn save(
@@ -181,86 +158,11 @@ pub fn save(
         return snapshot(session, &register);
     }
 
-    let mut state = writer(&tx)?;
-    if state.instance.is_empty() {
-        state.instance = uuid::Uuid::new_v4().to_string();
-    }
-    let installation = super::engine::installation(&db.1)?;
-    let open = |instance: &str| {
-        Lease::open(
-            &db.1
-                .join("chapters-writer")
-                .join(format!("{installation}-{instance}")),
-            instance,
-        )
-    };
-    let mut lease = open(&state.instance)?;
-    if !lease.consistent(&BTreeMap::from([(NAMESPACE.into(), state.sequence)])) {
-        state.instance = uuid::Uuid::new_v4().to_string();
-        state.sequence = 0;
-        lease = open(&state.instance)?;
-    }
-    let next = state.sequence.checked_add(1).ok_or("章节操作序号耗尽")?;
-    lease.reserve(NAMESPACE, state.sequence, next)?;
-    let dot = Dot {
-        actor: lease.actor().into(),
-        seq: next,
-    };
-    register.seen.insert(&dot);
-    register.values = vec![Candidate { dot, cell }];
+    register_extension::edit_register(&tx, &db.1, &EXTENSION, &mut register, cell)?;
     write_register(&tx, bvid, cid, &register)?;
-
-    state.sequence = next;
-    state.revision = state.revision.checked_add(1).ok_or("章节版本耗尽")?;
-    tx.execute(
-        "INSERT INTO sync_info(key,value) VALUES('chapters-writer',?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [serde_json::to_string(&state).map_err(err)?],
-    )
-    .map_err(err)?;
     let result = snapshot(session, &register)?;
     tx.commit().map_err(err)?;
     Ok(result)
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Packet {
-    schema: u32,
-    namespace: String,
-    uid: String,
-    vault: String,
-    seed: String,
-    actor: String,
-    generation: u64,
-    registers: BTreeMap<String, Register>,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct Head {
-    generation: u64,
-    hash: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Pending {
-    actor: String,
-    head: Head,
-    revision: u64,
-    bytes: Vec<u8>,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct ExchangeState {
-    heads: BTreeMap<String, Head>,
-    published_revision: u64,
-    pending: Option<Pending>,
-    #[serde(default)]
-    observed: Option<String>,
-    #[serde(default)]
-    dirty: bool,
-    #[serde(default)]
-    deferred: BTreeMap<String, BTreeSet<String>>,
 }
 
 fn packet_keys(key: &str) -> Result<(&str, i64), String> {
@@ -270,87 +172,6 @@ fn packet_keys(key: &str) -> Result<(&str, i64), String> {
         return Err("章节同步键无效".into());
     }
     Ok((bvid, number))
-}
-
-fn validate_packet(
-    packet: &Packet,
-    genesis: &Genesis,
-    actor: &str,
-    head: &Head,
-) -> Result<(), String> {
-    if packet.schema != 1
-        || packet.namespace != NAMESPACE
-        || packet.uid != genesis.uid
-        || packet.vault != genesis.vault
-        || packet.seed != genesis.seed
-        || uuid::Uuid::parse_str(actor).is_err()
-        || packet.actor != actor
-        || packet.generation == 0
-        || packet.generation != head.generation
-        || packet.registers.len() > 20_000
-    {
-        return Err("章节同步身份或版本无效".into());
-    }
-    for (key, register) in &packet.registers {
-        packet_keys(key)?;
-        if register.values.is_empty() {
-            return Err("章节同步操作无效".into());
-        }
-        for candidate in &register.values {
-            if let Cell::Value(value) = &candidate.cell {
-                validate_list(
-                    &serde_json::from_value::<Vec<SavedChapter>>(value.clone()).map_err(err)?,
-                )?;
-            }
-        }
-        Register::default().merge(register)?;
-    }
-    Ok(())
-}
-
-fn decode_packet(
-    bytes: &[u8],
-    genesis: &Genesis,
-    actor: &str,
-    head: &Head,
-) -> Result<Packet, String> {
-    let packet = protocol_v2::decode(
-        bytes,
-        &ObjectRef {
-            hash: head.hash.clone(),
-            bytes: bytes.len() as u64,
-            first_seq: 0,
-            last_seq: 0,
-        },
-    )?;
-    validate_packet(&packet, genesis, actor, head)?;
-    Ok(packet)
-}
-
-fn object(genesis: &Genesis, hash: &str) -> String {
-    format!(
-        "sync-v2/{}/extensions/{NAMESPACE}/{hash}.json.gz",
-        genesis.vault
-    )
-}
-
-fn head_name(head: &Head) -> String {
-    format!("{PREFIX}{:020}-{}.head", head.generation, head.hash)
-}
-
-fn parse_head(name: &str) -> Option<Head> {
-    let (seq, hash) = name
-        .strip_prefix(PREFIX)?
-        .strip_suffix(".head")?
-        .split_once('-')?;
-    let generation = seq.parse::<u64>().ok().filter(|value| *value > 0)?;
-    if seq.len() != 20 || !causal::valid_hash(hash) {
-        return None;
-    }
-    Some(Head {
-        generation,
-        hash: hash.into(),
-    })
 }
 
 fn scope(library: &Snapshot) -> BTreeSet<String> {
@@ -393,40 +214,21 @@ fn project(c: &Connection, scope: &BTreeSet<String>) -> Result<BTreeMap<String, 
     Ok(registers)
 }
 
-fn projection_digest(registers: &BTreeMap<String, Register>) -> Result<String, String> {
-    Ok(causal::hash(&serde_json::to_vec(registers).map_err(err)?))
-}
-
-fn freeze(
-    registers: BTreeMap<String, Register>,
-    genesis: &Genesis,
-    owner: &str,
-    generation: u64,
-    revision: u64,
-) -> Result<Pending, String> {
-    let packet = Packet {
-        schema: 1,
-        namespace: NAMESPACE.into(),
-        uid: genesis.uid.clone(),
-        vault: genesis.vault.clone(),
-        seed: genesis.seed.clone(),
-        actor: owner.into(),
-        generation,
-        registers,
-    };
-    let bytes = protocol_v2::encode(&packet)?;
-    let head = Head {
-        generation,
-        hash: causal::hash(&bytes),
-    };
-    validate_packet(&packet, genesis, owner, &head)?;
-    Ok(Pending {
-        actor: owner.into(),
-        head,
-        revision,
-        bytes,
-    })
-}
+const EXTENSION: RegisterExtension = RegisterExtension {
+    namespace: "chapters-v1",
+    writer_key: "chapters-writer",
+    cache_dir: "chapter-sync-cache",
+    validate_key: |key| packet_keys(key).map(|_| ()),
+    validate_value: |value| {
+        validate_list(&serde_json::from_value::<Vec<SavedChapter>>(value.clone()).map_err(err)?)
+    },
+    project,
+    write: |c, key, register| {
+        let (bvid, cid) = packet_keys(key)?;
+        write_register(c, bvid, cid, register)
+    },
+    selected,
+};
 
 pub(super) async fn exchange(
     db: &Database,
@@ -436,222 +238,15 @@ pub(super) async fn exchange(
     session: &str,
     library: &Snapshot,
 ) -> Result<bool, String> {
-    let scope = scope(library);
-    let target = super::storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &secret.username)?;
-    let genesis = Genesis::for_config(cfg)?;
-    let net = Client::cached(cfg, secret, db.1.join("chapter-sync-cache").join(&target))?;
-    let with =
-        |operation: &mut dyn FnMut(&Connection) -> Result<(), String>| -> Result<(), String> {
-            let c = db.0.lock().map_err(|_| "数据库正忙")?;
-            super::active(db, &cfg.uid)?;
-            let config = super::config_from_connection(&c)?.ok_or("同步连接已改变")?;
-            let active_target: String = c
-                .query_row(
-                    "SELECT value FROM sync_info WHERE key='active_target'",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(err)?;
-            if account_session(&c).map_err(err)? != session
-                || config.provider != cfg.provider
-                || config.uid != cfg.uid
-                || config.url != cfg.url
-                || config.history != cfg.history
-                || active_target != target
-            {
-                return Err("同步连接或账号已切换".into());
-            }
-            let tx = c.unchecked_transaction().map_err(err)?;
-            operation(&tx)?;
-            tx.commit().map_err(err)
-        };
-    let mut state = ExchangeState::default();
-    with(&mut |c| {
-        state = read_state(c, &target, NAMESPACE)?.unwrap_or_default();
-        Ok(())
-    })?;
-
-    let control = format!("sync-v2/{}/control/", genesis.vault);
-    let (owners, _) = net.list(&control).await?;
-    if state.heads.keys().any(|actor| !owners.contains(actor)) {
-        return Err("已确认的章节同步设备暂不可见".into());
-    }
-
-    let mut incoming = Vec::new();
-    for actor in owners
-        .into_iter()
-        .filter(|a| uuid::Uuid::parse_str(a).is_ok())
-    {
-        let path = format!("{control}{actor}/");
-        let heads = net.list(&path).await?.0;
-        let mut heads = heads
-            .iter()
-            .filter_map(|name| parse_head(name))
-            .collect::<Vec<_>>();
-        heads.sort_unstable_by_key(|head| head.generation);
-        let known = state.heads.get(&actor);
-        let Some(head) = heads.pop() else {
-            if known.is_some() {
-                return Err("章节同步提交暂不可见".into());
-            }
-            continue;
-        };
-        if heads
-            .last()
-            .is_some_and(|previous| previous.generation == head.generation)
-            || known.is_some_and(|old| {
-                old.generation > head.generation
-                    || (old.generation == head.generation && old.hash != head.hash)
-            })
-        {
-            return Err("章节同步提交发生回退或分叉".into());
-        }
-        if known == Some(&head) {
-            if state
-                .deferred
-                .get(&actor)
-                .is_none_or(|keys| keys.is_disjoint(&scope))
-            {
-                continue;
-            }
-        } else {
-            let marker = net
-                .get(&format!("{path}{}", head_name(&head)))
-                .await?
-                .ok_or("章节同步提交暂不可见")?;
-            if marker.body != head.hash.as_bytes() {
-                return Err("章节同步提交摘要不符".into());
-            }
-        }
-        let body = net
-            .get(&object(&genesis, &head.hash))
-            .await?
-            .ok_or("章节同步对象暂不可见")?;
-        let packet = decode_packet(&body.body, &genesis, &actor, &head)?;
-        incoming.push((actor, head, packet));
-    }
-
-    let mut changed = false;
-    with(&mut |c| {
-        let mut registers = project(c, &scope)?;
-        let before = projection_digest(&registers)?;
-        let local_revision = writer(c)?.revision;
-        let owner_has_head = state.heads.contains_key(owner);
-        // Compare against the last observation made after merging remote data.
-        // Only a local edit or a change in library membership can make it dirty.
-        state.dirty |= match &state.observed {
-            Some(observed) => observed != &before && (local_revision > 0 || owner_has_head),
-            None => (local_revision > 0 && !registers.is_empty()) || owner_has_head,
-        };
-        for (actor, head, packet) in &incoming {
-            let mut deferred = BTreeSet::new();
-            for (key, remote) in &packet.registers {
-                if !scope.contains(key) {
-                    deferred.insert(key.clone());
-                    continue;
-                }
-                let (bvid, cid) = packet_keys(key)?;
-                let local = registers.entry(key.clone()).or_default();
-                let old = selected(local).cloned();
-                local.merge(remote)?;
-                changed |= old.as_ref() != selected(local);
-                write_register(c, bvid, cid, local)?;
-            }
-            if deferred.is_empty() {
-                state.deferred.remove(actor);
-            } else {
-                state.dirty |= actor == owner;
-                state.deferred.insert(actor.clone(), deferred);
-            }
-            state.heads.insert(actor.clone(), head.clone());
-        }
-        let observed = if incoming.is_empty() {
-            before
-        } else {
-            projection_digest(&registers)?
-        };
-        let mut superseded_generation = 0;
-        if let Some(pending) = &state.pending {
-            if state.heads.get(&pending.actor) == Some(&pending.head) {
-                state.published_revision = pending.revision;
-                state.pending = None;
-            } else if state
-                .heads
-                .get(&pending.actor)
-                .is_some_and(|head| head.generation >= pending.head.generation)
-                || decode_packet(&pending.bytes, &genesis, &pending.actor, &pending.head)?
-                    .registers
-                    .keys()
-                    .any(|key| !scope.contains(key))
-            {
-                if pending.actor == owner {
-                    superseded_generation = pending.head.generation;
-                }
-                state.pending = None;
-                state.dirty = true;
-            }
-        }
-        if incoming.is_empty() && !state.dirty && state.observed.as_ref() == Some(&observed) {
-            return Ok(());
-        }
-        state.observed = Some(observed);
-        if state.pending.is_none() && state.dirty {
-            if !registers.is_empty() || state.heads.contains_key(owner) || superseded_generation > 0
-            {
-                // A PUT that failed may still become visible. Advance the head
-                // instead of reusing that generation with another payload.
-                let generation = state
-                    .heads
-                    .get(owner)
-                    .map_or(0, |head| head.generation)
-                    .max(superseded_generation)
-                    .checked_add(1)
-                    .ok_or("章节同步提交序号耗尽")?;
-                state.pending = Some(freeze(
-                    registers,
-                    &genesis,
-                    owner,
-                    generation,
-                    local_revision,
-                )?);
-            }
-            state.dirty = false;
-        }
-        write_state(c, &target, NAMESPACE, &state)
-    })?;
-
-    if let Some(pending) = state.pending.take() {
-        let directory = format!("sync-v2/{}/extensions/{NAMESPACE}/", genesis.vault);
-        net.mkdir(&directory).await?;
-        net.mkdir(&format!("{control}{}/", pending.actor)).await?;
-        with(&mut |_| Ok(()))?;
-        net.put(&object(&genesis, &pending.head.hash), pending.bytes)
-            .await?;
-        with(&mut |_| Ok(()))?;
-        let marker = format!("{control}{}/{}", pending.actor, head_name(&pending.head));
-        net.put(&marker, pending.head.hash.as_bytes().to_vec())
-            .await?;
-        if net
-            .get(&marker)
-            .await?
-            .is_none_or(|object| object.body != pending.head.hash.as_bytes())
-        {
-            return Err("章节同步提交尚未确认".into());
-        }
-        with(&mut |c| {
-            state.published_revision = pending.revision;
-            state
-                .heads
-                .insert(pending.actor.clone(), pending.head.clone());
-            write_state(c, &target, NAMESPACE, &state)
-        })?;
-    }
-    Ok(changed)
+    EXTENSION
+        .exchange(db, cfg, secret, owner, session, scope(library))
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::{migration::Genesis, v2_net::Client};
     use std::{fs, sync::Mutex};
 
     const BV: &str = "BV1qFuQz2EVx";
@@ -831,16 +426,17 @@ mod tests {
                 .unwrap()
                 .0
                 .iter()
-                .filter_map(|name| parse_head(name))
+                .filter_map(|name| EXTENSION.parse_head(name))
                 .max_by_key(|head| head.generation)
                 .unwrap();
             let body = net
-                .get(&object(&g, &head.hash))
+                .get(&EXTENSION.object(&g, &head.hash))
                 .await
                 .unwrap()
                 .unwrap()
                 .body;
-            decode_packet(&body, &g, &owner, &head)
+            EXTENSION
+                .decode_packet(&body, &g, &owner, &head)
                 .unwrap()
                 .registers
                 .into_keys()

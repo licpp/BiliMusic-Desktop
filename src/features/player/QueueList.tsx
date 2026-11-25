@@ -78,7 +78,7 @@ function QueueVideo({ id, tracks, activeId, expanded, onToggle, index, count, st
   const title = withoutSeriesPrefix(first.videoTitle || first.title, first.sourceTitleContext?.season?.title)
   const ids = tracks.map(track => track.id)
   return <div className="queue-video" data-queue-block={first.id}>
-    <div className="queue-entry queue-video-heading playing-row" onContextMenu={menu.onContextMenu} data-current-row={!expanded && activeId ? id : undefined}>
+    <div className="queue-entry queue-video-heading playing-row" onContextMenu={startDrag ? undefined : menu.onContextMenu} data-current-row={!expanded && activeId ? id : undefined}>
       <button type="button" className="queue-row-main" aria-current={!expanded && activeId ? 'true' : undefined} onClick={() => void usePlayerStore.getState().play(first)}>
         <span className="queue-row-number">{!expanded && activeId ? <PlayingMark/> : index + 1}</span>
         <strong>{title}</strong>
@@ -110,7 +110,7 @@ function QueueTrack({ track, active, label, groupIndex, groupCount, startDrag, c
   const play = () => void usePlayerStore.getState().play(track)
   return <div ref={ref} className={`queue-entry queue-track-row playing-row${child ? ' queue-part-row' : ''}`} data-current-row={active ? track.id : undefined}
     data-queue-block={child ? undefined : track.id} data-queue-part={child ? track.id : undefined}
-    onContextMenu={menu.onContextMenu}>
+    onContextMenu={startDrag ? undefined : menu.onContextMenu}>
     <button type="button" className="queue-row-main" aria-current={active ? 'true' : undefined} aria-label={`播放 ${title}`} onClick={play}>
       <span className="queue-row-number">{active ? <PlayingMark/> : label}</span>
       <strong className="queue-track-title">{title}{subtitle && <small>{subtitle}</small>}</strong><small className="queue-row-duration">{formatTrackDuration(track.durationSeconds)}</small>
@@ -128,21 +128,19 @@ function QueueActions({ contextPosition, title, ids, tracks, onPlay, group, flat
     if (flat) state.moveInQueue(ids[0], direction)
     else state.moveQueueRows(ids, direction, group)
   }
-  return <>
-    {startDrag && (canUp || canDown) && <button type="button" className="queue-drag-handle" title="拖动调整顺序" aria-label={`调整 ${title} 的顺序`} aria-keyshortcuts="ArrowUp ArrowDown"
+  if (startDrag && (canUp || canDown)) return <button type="button" className="action-menu-trigger queue-drag-handle" title="拖动调整顺序" aria-label={`调整 ${title} 的顺序`} aria-keyshortcuts="ArrowUp ArrowDown"
       onPointerDown={event => startDrag(event, ids, group ? 'group' : flat ? 'track' : 'part')}
       onKeyDown={event => {
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
         event.preventDefault()
         const up = event.key === 'ArrowUp'
         if (up ? canUp : canDown) move(up ? -1 : 1)
-      }}><GripVertical size={18}/></button>}
-    <ActionMenu sheet={isMobile} contextPosition={contextPosition} label={`队列操作：${title}`}>{close => <>
+      }}><GripVertical size={18}/></button>
+  return <ActionMenu sheet={isMobile} contextPosition={contextPosition} label={`队列操作：${title}`}>{close => <>
       <button onClick={() => { close(); onPlay() }}><Play size={16}/>播放</button>
       <button onClick={() => { close(); chooseTrackPlaylist(tracks) }}><ListMusic size={16}/>加入歌单…</button>
       <button disabled={!canUp} onClick={() => { close(); move(-1) }}><ArrowUp size={16}/>上移</button>
       <button disabled={!canDown} onClick={() => { close(); move(1) }}><ArrowDown size={16}/>下移</button>
       <button onClick={() => { close(); usePlayerStore.getState().removeQueueRows(ids) }}><Trash2 size={16}/>{ids.length > 1 ? '移出这一组' : '移出队列'}</button>
-    </>}</ActionMenu>
-  </>
+  </>}</ActionMenu>
 }

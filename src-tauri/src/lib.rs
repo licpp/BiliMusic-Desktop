@@ -254,6 +254,8 @@ pub fn run() {
             interface::commands::playlists_list,
             interface::commands::playlist_create,
             interface::commands::playlist_tracks,
+            interface::commands::playlist_reorder,
+            interface::commands::playlist_replace_video,
             interface::commands::playlist_add_track,
             interface::commands::playlist_add_tracks,
             interface::commands::playlist_remove_track,

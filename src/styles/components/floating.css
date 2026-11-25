@@ -16,6 +16,7 @@ html[data-window="lyrics"][data-theme],html[data-window="lyrics"] body,html[data
 .floating-lyrics-window button:hover { background:rgb(255 255 255 / .18); }
 .floating-lyrics-window button:focus-visible { outline:2px solid currentColor;outline-offset:2px; }
 .floating-lyrics-window button:disabled { opacity:.35;cursor:default; }
+.floating-lyrics-window .floating-lyric-language { width:auto;min-width:26px;gap:4px;padding-inline:5px;white-space:nowrap; }
 .floating-lyrics-window .floating-controls { position:absolute;display:flex;align-items:center;gap:4px;visibility:hidden;opacity:0;pointer-events:none;height:28px;margin:0;color:var(--floating-tool-ink);font-size:11px;transition:opacity 120ms ease; }
 .floating-lyrics-window:not([data-locked="true"]):is(:hover,:has(:focus-visible),[data-colors-open="true"]) .floating-controls { visibility:visible;opacity:1;pointer-events:auto; }
 .floating-lyrics-window > header { top:5px;left:14px;right:14px; }

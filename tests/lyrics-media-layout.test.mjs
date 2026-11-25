@@ -145,3 +145,11 @@ test('mobile chapter sheets use the resting comments height and respect the safe
  assert.match(comments,/height:var\(--comments-collapsed-height,var\(--bottom-sheet-resting-height\)\)/)
  assert.match(comments,/\[data-chapter-editor\]\s*\{ height:var\(--bottom-sheet-resting-height\)/)
 })
+
+test('the replacement sheet caps its resting and keyboard heights below the native safe area', () => {
+ const css = readFileSync(new URL('../src/styles/components/import-matching.css', import.meta.url), 'utf8')
+ const rule = css.match(/^\.collection-dialog-sheet-layer > \.collection-dialog\.replacement-dialog\.collection-dialog-mobile-sheet\s*\{([^}]+)\}/m)?.[1] ?? ''
+ assert.match(rule, /--replacement-safe-height:[^;]*--native-safe-top[^;]*--visible-top/)
+ assert.match(rule, /max-height:min\(var\(--bottom-sheet-resting-height,[^;]+var\(--replacement-safe-height\)/)
+ assert.match(css, /\[data-keyboard-open\][^{}]*\.replacement-dialog\.collection-dialog-mobile-sheet\s*\{[^}]*max-height:var\(--replacement-safe-height\)/)
+})

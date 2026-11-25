@@ -10,7 +10,10 @@ import type { LyricLine } from '../domain/lyrics'
 import type { SubtitleChoice } from '../domain/subtitleLanguage'
 import type { Collection } from './collections'
 export type QualityPreferences = { audioId:number; videoHeight:number }
-export type MediaOptions = { audio:{id:number;label:string}[]; video:{id:number;label:string}[] }
+export type MediaOptions = {
+  audio: { id: number; label: string; audioQuality?: { lossless: boolean; bitrate: number } }[]
+  video: { id: number; label: string }[]
+}
 export function seasonCollection(season: SeasonSummary): Collection {
   return {
     bvid: `season:${season.uploaderId}:${season.id}`,
@@ -50,7 +53,8 @@ export function seasonTracks(season: Season): Track[] {
 export const getSubtitles = (bvid:string,cid:number) => invoke<SubtitleChoice[]>('bili_subtitles',{bvid,cid})
 export const getSubtitleLines = (bvid: string, cid: number, language: string) =>
   invoke<LyricLine[]>('bili_subtitle_lines', { bvid, cid, language })
-export const getMediaOptions = (bvid:string,cid:number) => invoke<MediaOptions>('bili_media_options',{bvid,cid})
+export const getMediaOptions = (bvid: string, cid: number, background = false) =>
+  invoke<MediaOptions>('bili_media_options', { bvid, cid, background })
 export const getMediaPreferences = () => invoke<QualityPreferences>('media_preferences')
 export const setMediaPreferences = (value:Partial<QualityPreferences>) => invoke<QualityPreferences>('media_set_preferences',value)
 

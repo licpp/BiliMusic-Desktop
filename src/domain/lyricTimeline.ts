@@ -47,6 +47,26 @@ export function floatingLineSlots(lines: LyricLine[], timeMs: number, subtitles 
   })
 }
 
+export type FloatingLanguage = 'original' | 'translation' | 'bilingual'
+
+export function translatedLyricLine(line: LyricLine | undefined): LyricLine | undefined {
+  const text = line?.translation?.trim()
+  return text && line ? { timeMs: line.timeMs, endTimeMs: line.endTimeMs, text } : undefined
+}
+
+export function floatingDisplaySlots(lines: LyricLine[], timeMs: number, subtitles: boolean, language: FloatingLanguage) {
+  const slots = floatingLineSlots(lines, timeMs, subtitles)
+  if (language === 'original') return slots
+  if (language === 'translation') {
+    return slots.map(slot => ({ ...slot, line: translatedLyricLine(slot.line) ?? slot.line }))
+  }
+  const current = slots.find(slot => slot.active) ?? (!subtitles && timeMs < (lines[0]?.timeMs ?? 0) ? slots[0] : undefined)
+  return [
+    { line: current?.line, index: current?.index ?? -1, active: current?.active ?? false },
+    { line: translatedLyricLine(current?.line), index: current?.index ?? -1, active: false },
+  ]
+}
+
 // Text position follows the same media clock as highlighting, including pauses,
 // seeks and gaps between timed words. Untimed lines interpolate until the next.
 export function lyricScrollProgress(line: LyricLine, timeMs: number, nextTimeMs?: number) {

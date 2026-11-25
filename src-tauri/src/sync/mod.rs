@@ -1,4 +1,6 @@
 pub mod chapters;
+pub(crate) mod favorite_order;
+mod register_extension;
 mod source_titles;
 pub mod visibility;
 pub(crate) use source_titles::save as cache_source_titles;
@@ -109,6 +111,7 @@ pub struct Status {
     pub visibility_error: Option<String>,
     pub import_error: Option<String>,
     pub chapters_error: Option<String>,
+    pub favorite_order_error: Option<String>,
     pub local_error: Option<String>,
     pub track_repair: Option<repair::Preview>,
     pub config: Config,
@@ -124,6 +127,7 @@ pub struct Outcome {
     pub visibility_error: Option<String>,
     pub import_error: Option<String>,
     pub chapters_error: Option<String>,
+    pub favorite_order_error: Option<String>,
     pub records: usize,
     pub bytes: usize,
     pub changed: bool,
@@ -133,6 +137,7 @@ impl Outcome {
         self.import_error.is_some()
             || self.visibility_error.is_some()
             || self.chapters_error.is_some()
+            || self.favorite_order_error.is_some()
     }
 }
 fn config(db: &Database) -> Result<Config, String> {
@@ -250,6 +255,7 @@ pub fn sync_status(database: State<'_, Database>) -> Result<Status, String> {
         visibility_error: sync_area_error(&c, "visibility-error")?,
         import_error: sync_area_error(&c, "import-error")?,
         chapters_error: sync_area_error(&c, "chapters-error")?,
+        favorite_order_error: sync_area_error(&c, "favorite-order-error")?,
         local_error,
         config: cfg,
         track_repair,
@@ -501,6 +507,7 @@ pub async fn sync_now(
             visibility_error: None,
             import_error: None,
             chapters_error: None,
+            favorite_order_error: None,
             records: 0,
             bytes: 0,
             changed: false,
@@ -618,6 +625,7 @@ async fn sync_now_inner(
                 visibility_error: None,
                 import_error: None,
                 chapters_error: None,
+                favorite_order_error: None,
                 records: count,
                 bytes,
                 changed: merged != remote.snapshot,
@@ -714,6 +722,7 @@ async fn sync_now_inner(
             visibility_error: None,
             import_error: None,
             chapters_error: None,
+            favorite_order_error: None,
             records: count,
             bytes,
             changed: initial != final_local,

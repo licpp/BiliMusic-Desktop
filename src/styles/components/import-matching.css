@@ -55,3 +55,19 @@
 
 :root .dialog-backdrop.collection-dialog-layer:has(>.import-match-dialog){z-index:350}
 .import-match-notice{flex-shrink:0;margin:2px 0 10px;font-size:12px;line-height:1.6;color:var(--cyan)}
+
+.collection-dialog-sheet-layer > .collection-dialog.replacement-dialog.collection-dialog-mobile-sheet {
+  --replacement-safe-height:calc(100% - max(0px,calc(var(--native-safe-top,env(safe-area-inset-top,0px)) - var(--visible-top,0px))) - 8px);
+  max-height:min(var(--bottom-sheet-resting-height,min(74%,680px)),var(--replacement-safe-height));
+  padding:0 16px max(14px,var(--native-safe-bottom,env(safe-area-inset-bottom,0px)));
+}
+.replacement-dialog.collection-dialog-mobile-sheet .import-match-content { overflow:auto;overscroll-behavior:contain; }
+.replacement-dialog.collection-dialog-mobile-sheet .import-match-origin { flex-shrink:0; }
+:root[data-keyboard-open] .collection-dialog-sheet-layer > .collection-dialog.replacement-dialog.collection-dialog-mobile-sheet {
+  max-height:var(--replacement-safe-height);
+  padding-bottom:12px;
+}
+:root[data-keyboard-open] .replacement-dialog.collection-dialog-mobile-sheet .import-match-origin { display:none; }
+:root[data-keyboard-open] .replacement-dialog.collection-dialog-mobile-sheet .import-match-results {
+  min-height:100px;
+}

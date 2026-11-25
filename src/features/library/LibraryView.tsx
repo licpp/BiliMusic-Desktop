@@ -10,14 +10,16 @@ import { useQuery,useQueryClient } from '@tanstack/react-query'
 import { Heart,Library,ListPlus,Play } from 'lucide-react'
 import { useEffect,useMemo,useRef,useState } from 'react'
 import type { Track } from '../../domain/track'
-import { commandErrorMessage, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, toggleStoredFavorite } from '../../services/desktopApi'
+import { commandErrorMessage, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, reorderPlaylist, toggleStoredFavorite } from '../../services/desktopApi'
 import type { Playlist } from '../../domain/library'
-import { sortTracks } from '../../services/listOrdering'
+import { playlistTrackTitle, sortPlaylistTracks, sortTracks } from '../../services/listOrdering'
 import { playlistEntity } from '../../services/listPreferences'
 import { hydrateSourceTitles } from '../player/sourceTitles'
 import { hydrateVisibleTracks } from '../sync/librarySync'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { Artwork } from '../../shared/Artwork'
+import { ListBackToTop } from '../../shared/ListBackToTop'
+import { useOrganizer } from '../../shared/useOrganizer'
 import { ListSearch,matchesTrackSearch } from '../../shared/ListSearch'
 import { ListSort,useListSort } from '../../shared/ListSort'
 import { PlayingMark } from '../../shared/PlayingMark'
@@ -34,6 +36,7 @@ import { TrackMenuButton } from './TrackMenuButton'
 import { BatchTrackActions,useTrackSelection } from './useTrackSelection'
 import { useImportedPlaylist } from './useImportedPlaylist'
 import { ReplacementDialog } from './ReplacementDialog'
+import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from './PlaylistDuplicates'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
 
 export type LibraryTab = 'saved' | 'recent' | 'downloads'
@@ -46,7 +49,10 @@ export function MusicLibraryView({ tab, onTabChange, fill, active = true }: { ta
   </div>
 }
 
-export function LibraryView({ recent = false, active = true, playlist, onPlaylistDeleted, onRematchImported }: { recent?: boolean; active?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void; onRematchImported?:(playlist:Playlist)=>void }) {
+export function LibraryView({ recent = false, active = true, playlist, onPlaylistDeleted, onRematchImported, onPreviewLyrics, lyricsPresent }: {
+  recent?: boolean; active?: boolean; playlist?: Playlist; onPlaylistDeleted?: () => void
+  onRematchImported?: (playlist: Playlist) => void; onPreviewLyrics?: () => void; lyricsPresent?: boolean
+}) {
   const client = useQueryClient()
   const compact = useCompactLayout()
   const play = usePlayerStore((state) => state.playFromList)
@@ -59,22 +65,27 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   const loadingTracks = tracks.isLoading || Boolean(tracks.data && !trackRows)
   const imported = useImportedPlaylist(playlist)
   const [replacement,setReplacement] = useState<ImportedEntry>()
+  const [replaceTrack,setReplaceTrack] = useState<Track>()
   const currentId = usePlayerStore(state => state.current?.id)
   const grid = useRef<HTMLDivElement>(null)
   const [filter, setFilter] = useState('')
   const sortEntity=playlist?playlistEntity(playlist):'view:saved'
   const listSort=useListSort(sortEntity)
+  const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
+  const editable = Boolean(playlist && !playlist.biliFolderId && (!playlist.isSystem || isFavorites))
+  const reorderable = editable && !playlist!.id.startsWith('import:')
   const visibleTracks = useMemo(() => {
-    const sorted = sortTracks(trackRows || [], recent ? 'source:asc' : listSort.rule, listSort.dates, listSort.playCounts)
+    const sorted = playlist
+      ? sortPlaylistTracks(trackRows || [], listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, reorderable)
+      : sortTracks(trackRows || [], recent ? 'source:asc' : listSort.rule, listSort.dates, listSort.playCounts)
     if (!filter.trim()) return sorted
     return sorted.filter(track => {
       const song = imported.byTrack.get(track.id)?.song
       return matchesTrackSearch(track, filter) || Boolean(song &&
         `${song.title} ${song.artists.join(' ')} ${song.album || ''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
     })
-  }, [trackRows, recent, listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, filter])
+  }, [trackRows, playlist, recent, listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, filter, reorderable])
   const playingIndex = playlist ? visibleTracks.findIndex(track => track.id === currentId) : -1
-  const rendered = useListRows(visibleTracks, sortEntity, { active, through: playingIndex })
   useLocateCurrentRow(grid, Boolean(playlist) && active, playingIndex >= 0 ? currentId : undefined)
   useListReveal(grid, loadingTracks, visibleTracks.length > 0, active)
   const selection = useTrackSelection(visibleTracks)
@@ -91,8 +102,24 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
       void hydrateVisibleTracks(trackRows, client).catch(() => undefined)
     })
   }, [trackRows, client, active])
-  const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
   const refresh = () => Promise.all([client.invalidateQueries({ queryKey: accountQueryKey('library') }), client.invalidateQueries({ queryKey: accountQueryKey('playlists') }), client.invalidateQueries({ queryKey: accountQueryKey('home-recent') })])
+  const organizer = useOrganizer(
+    reorderable && !filter.trim() ? visibleTracks.map(track => ({ id: track.id, name: playlistTrackTitle(track) })) : [],
+    '整理曲目',
+    {
+      expected: trackRows?.map(track => track.id),
+      saveOrder: async (expected, ordered) => {
+        const epoch = accountEpoch()
+        await reorderPlaylist(playlist!.id, expected, ordered)
+        if (epoch !== accountEpoch()) return
+        await Promise.all([refresh(), client.invalidateQueries({ queryKey: accountQueryKey('list-preferences') })])
+      },
+    },
+  )
+  const displayTracks = organizer.order(visibleTracks, track => track.id)
+  const rendered = useListRows(displayTracks, sortEntity, { active, through: playingIndex, manualFallback: true })
+  const duplicates = usePlaylistDuplicateNotice(editable && active ? playlist!.id : undefined, trackRows ?? [])
+  useEffect(() => { organizer.cancel(); setReplaceTrack(undefined) }, [playlist?.id])
   const replaced = (snapshot:ImportedEntriesSnapshot) => {
     const epoch=accountEpoch(),entryId=replacement?.entryId
     client.setQueryData(accountQueryKey('imported-entries',playlist?.id),snapshot)
@@ -122,46 +149,55 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   return <section className={`library-view${playlist ? '' : ' library-tab-content'}`}>
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (recent ? '最近播放' : '已收藏')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
-    {selection.selecting ? <BatchTrackActions allowAutoMatch selection={selection} total={visibleTracks.length} onRemove={playlist ? async selected => {
+    {selection.selecting ? <BatchTrackActions allowAutoMatch selection={selection} total={visibleTracks.length} onMatched={ids => { void duplicates.review(ids).catch(() => undefined) }} onRemove={playlist ? async selected => {
       await removeTracksFromPlaylist(playlist.id, selected.map(track => track.id))
       if (isFavorites) selected.forEach(track => updatePlayerTrack({ ...track, liked: false }))
       await refresh()
     } : undefined} /> : <div className={`library-list-toolbar${compact ? ' library-list-toolbar-compact' : ''}`}><div className="collection-actions">
-      {!compact && <button disabled={!visibleTracks.length} onClick={selection.enter}>多选</button>}
+      {!compact && <button disabled={organizer.editing || !visibleTracks.length} onClick={selection.enter}>多选</button>}
       <button className="collection-primary" disabled={!visibleTracks.some(track => !offlineUnavailable(track, offline))} onClick={() => void playAll(visibleTracks)}><Play size={16}/>{filter.trim() ? '播放搜索结果' : '播放全部'}</button>
       {!compact && <button disabled={!visibleTracks.length} onClick={() => enqueue(visibleTracks)}><ListPlus size={16}/>全部加入队列</button>}
     </div><div className="library-toolbar-icons">
-      {!recent && <ListSort entity={sortEntity}/>}
-      <ListSearch query={filter} onChange={setFilter} count={visibleTracks.length}/>
-      {playlist ? <PlaylistMenu playlist={playlist} onRemoved={onPlaylistDeleted} missingCount={imported.missing.length} onRematch={imported.missing.length && onRematchImported ? () => onRematchImported(playlist) : undefined}
+      {!recent && !organizer.editing && <ListSort entity={sortEntity} customOrder={reorderable}/>}
+      {reorderable && organizer.controls}
+      <ListSearch query={filter} onChange={setFilter} count={visibleTracks.length} disabled={organizer.editing}/>
+      {playlist ? <PlaylistMenu playlist={playlist} disabled={organizer.editing} onRemoved={onPlaylistDeleted} missingCount={imported.missing.length} onRematch={imported.missing.length && onRematchImported ? () => onRematchImported(playlist) : undefined}
+        onFindDuplicates={editable ? () => duplicates.setOpen(true) : undefined}
         listActions={compact ? {select: selection.enter, play: () => { void playAll(visibleTracks) }, enqueue: () => enqueue(visibleTracks), disabled: !visibleTracks.length} : undefined}/> : compact && <ActionMenu sheet label="列表操作">{close => <>
         <button disabled={!visibleTracks.length} onClick={() => { close(); selection.enter() }}>多选歌曲</button>
         <button disabled={!visibleTracks.length} onClick={() => { close(); enqueue(visibleTracks) }}><ListPlus size={16}/>全部加入队列</button>
       </>}</ActionMenu>}
     </div></div>}
+    {duplicates.count > 0 && <button type="button" className="collection-flat-button playlist-duplicate-notice" disabled={organizer.editing} onClick={() => duplicates.setOpen(true)}>可能重复 · 查看 {duplicates.count} 组</button>}
 
     {filter.trim() && !visibleTracks.length && Boolean(tracks.data?.length) && <p className="collection-empty">没有匹配的音乐</p>}
     {favoriteError && <p className="inline-error">{favoriteError}</p>}
+    {organizer.error && <p className="inline-error" role="alert">{organizer.error}</p>}
     <div>
     {loadingTracks && <ListSkeleton label="正在读取歌曲" />}
     {tracks.isError && <LibraryEmpty title="资料库读取失败" detail={commandErrorMessage(tracks.error)} />}
     {trackRows?.length === 0 && <LibraryEmpty title={isFavorites ? '还没有喜欢的歌曲' : playlist ? '歌单还是空的' : recent ? '还没有播放记录' : '还没有收藏的歌曲'} detail={isFavorites ? '点击歌曲旁的红心，或通过“加入歌单”添加到我喜欢。' : playlist ? '通过歌曲菜单把歌曲加入这里。' : recent ? '播放过的歌曲会出现在这里。' : '点击红心，或把歌曲加入歌单后，它会出现在这里。'} />}
-    {Boolean(trackRows?.length) && <div className="library-grid" ref={grid}>{rendered.rows.map((source, index) => { const track = favoriteOverrides[source.id] === undefined ? source : { ...source, liked: favoriteOverrides[source.id] }; const unavailable = offlineUnavailable(track, offline); const entry=imported.byTrack.get(track.id); const originalSong=track.titleOverridden?undefined:entry?.song; const rowActions=entry?{replaceVideo:()=>setReplacement(entry)}:undefined; return <article className={selection.selecting ? 'library-track selecting' : 'library-track playing-row'} data-offline-unavailable={unavailable || undefined} data-import-entry={entry?.entryId} data-current-row={currentId === track.id ? track.id : undefined} key={track.id} onDoubleClick={(event) => { if (selection.selecting || unavailable || (event.target as Element).closest('button, a, input, label, [role="button"]')) return; void play(visibleTracks, track.id) }} onContextMenu={(event) => { if (!selection.selecting) showTrackMenu(event, track, playlist?.id, visibleTracks, rowActions) }}>
+    {Boolean(trackRows?.length) && <div className="library-grid" ref={grid} {...organizer.listProps}>{rendered.rows.map((source, index) => { const track = favoriteOverrides[source.id] === undefined ? source : { ...source, liked: favoriteOverrides[source.id] }; const unavailable = offlineUnavailable(track, offline); const entry=imported.byTrack.get(track.id); const originalSong=track.titleOverridden?undefined:entry?.song; const rowActions=editable?{replaceVideo:()=>entry ? setReplacement(entry) : setReplaceTrack(track)}:undefined; return <article className={selection.selecting ? 'library-track selecting' : 'library-track playing-row'} {...organizer.rowProps(track.id)} data-offline-unavailable={unavailable || undefined} data-import-entry={entry?.entryId} data-current-row={currentId === track.id ? track.id : undefined} key={track.id} onDoubleClick={(event) => { if (selection.selecting || unavailable || (event.target as Element).closest('button, a, input, label, [role="button"]')) return; void play(visibleTracks, track.id) }} onContextMenu={(event) => { if (!selection.selecting && !organizer.editing) showTrackMenu(event, track, playlist?.id, visibleTracks, rowActions) }}>
       {selection.selecting ? <label className="library-art-select"><input className="track-select" type="checkbox" aria-label={`选择 ${track.title}`} checked={selection.ids.has(track.id)} onChange={() => selection.toggle(track.id)} /><span className="library-art">{originalSong?.coverUrl || track.coverUrl ? <Artwork src={originalSong?.coverUrl || track.coverUrl} adaptAspect /> : <span className={`tone-${index % 4}`} />}</span></label> :
       <button className="library-art" disabled={unavailable} onClick={() => void play(visibleTracks, track.id)} aria-label={`播放 ${track.title}`}>
         {originalSong?.coverUrl || track.coverUrl ? <Artwork src={originalSong?.coverUrl || track.coverUrl} adaptAspect /> : <span className={`tone-${index % 4}`} />}
         <i><Play fill="currentColor" /></i>
         {currentId === track.id && <PlayingMark/>}
       </button>}
-      <div className="library-copy" role={selection.selecting ? undefined : 'button'} aria-current={currentId === track.id ? 'true' : undefined} aria-disabled={!selection.selecting && unavailable || undefined} tabIndex={selection.selecting || unavailable ? undefined : 0} onClick={() => { if (selection.selecting) selection.toggle(track.id); else if (!unavailable) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!unavailable && !selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{originalSong?.title || track.displayTitle || track.title}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
+      <div className="library-copy" role={selection.selecting ? undefined : 'button'} aria-current={currentId === track.id ? 'true' : undefined} aria-disabled={!selection.selecting && unavailable || undefined} tabIndex={selection.selecting || unavailable ? undefined : 0} onClick={() => { if (selection.selecting) selection.toggle(track.id); else if (!unavailable) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!unavailable && !selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{playlistTrackTitle(track, entry?.song)}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
       <span className="library-duration">{formatTrackDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>
-      <TrackMenuButton track={track} playlistId={playlist?.id} tracks={visibleTracks} actions={rowActions}/>
+      {organizer.handle(track.id, 'icon-action') ?? <TrackMenuButton track={track} playlistId={playlist?.id} tracks={visibleTracks} actions={rowActions}/>}
       </div>}
-    </article>})}{rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}</div>}
+    </article>})}{rendered.manualMore ? <div className="library-load-more" ref={rendered.tail}><button type="button" className="collection-flat-button" onClick={rendered.manualMore}>加载更多</button></div> : rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}</div>}
     </div>
+    {active && playlist && <ListBackToTop key={playlist.id}/>}
     {replacement&&imported.data&&<ReplacementDialog entry={replacement} session={imported.data.session} currentTrack={tracks.data?.find(t=>t.id===replacement.trackId)} onSaved={replaced} onClose={()=>setReplacement(undefined)}/>}
+    {replaceTrack && playlist && <ReplacementDialog playlistId={playlist.id} currentTrack={replaceTrack} onSaved={() => { setReplaceTrack(undefined); void refresh() }} onClose={() => setReplaceTrack(undefined)}/>}
+    {duplicates.open && active && playlist && <PlaylistDuplicateReview playlistId={playlist.id}
+      hidden={lyricsPresent} onPreviewLyrics={onPreviewLyrics} onClose={() => duplicates.setOpen(false)}
+      onRemoved={() => { duplicates.clear(); void refresh() }}/>}
 
   </section>
 }

@@ -44,7 +44,7 @@ export function startFloatingLyrics() {
       displayLines=displaySource.map(line=>({...line,text:lyricDisplayText(line.text),words:line.words?.map(word=>({...word,text:lyricDisplayText(word.text)}))}))
     }
     const timeline={...sourceTimeline,lines:displayLines}
-    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,alignment:style.alignment,capturedAt:Date.now()}
+    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,alignment:style.alignment,language:style.language,capturedAt:Date.now()}
     if (isMobile) {
       // Native renderers read their own player's clock, even with JS suspended.
       const session = isAndroid ? nativeLyricPlaybackSession(frame.id) : undefined
@@ -98,7 +98,7 @@ export function startFloatingLyrics() {
       isIOS && state.status === 'playing' && previous.status !== 'playing' ||
       !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   }))
-  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
+  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment,language}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment,language}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
   stop.push(useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()}))
   onWindow('bilimusic-floating-lyrics-change',configure)
   configure()

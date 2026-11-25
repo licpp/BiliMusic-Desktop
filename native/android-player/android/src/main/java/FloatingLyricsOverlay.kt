@@ -20,6 +20,7 @@ import android.view.View
 import android.os.Build
 import android.hardware.input.InputManager
 import android.widget.LinearLayout
+import org.json.JSONArray
 import org.json.JSONObject
 
 // The service owns the renderer and reads the same MediaPlayer clock. No
@@ -45,6 +46,7 @@ object FloatingLyricsOverlay {
         private set
     private var showUnlockButton = true
     private var centerAlignment = false
+    private var language = "original"
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
@@ -53,6 +55,7 @@ object FloatingLyricsOverlay {
     private var controls: LinearLayout? = null
     private val controlVisibility = FloatingLyricsControls()
     private var data = JSONObject()
+    private var translations = JSONArray()
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() { if (enabled) { render(); syncControls();syncUnlock();handler.postDelayed(this,33) } }
@@ -60,6 +63,7 @@ object FloatingLyricsOverlay {
     fun attach(service: PlaybackService) {
         owner = service
         centerAlignment = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("centerAlignment", false)
+        language = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("language", "original") ?: "original"
         SystemTitleLyrics.attach(service)
         if (enabled) show()
     }
@@ -71,6 +75,16 @@ object FloatingLyricsOverlay {
         data.optString("session") == session && (data.optJSONArray("lines")?.length() ?: 0) > 0
     internal fun setTimeline(timeline: JSONObject) {
         data = timeline
+        translations = JSONArray()
+        val lines = timeline.optJSONArray("lines")
+        for (index in 0 until (lines?.length() ?: 0)) {
+            val line = lines?.optJSONObject(index) ?: continue
+            val translation = line.opt("translation") as? String ?: continue
+            if (translation.isBlank()) continue
+            val translated = JSONObject().put("timeMs", line.optDouble("timeMs")).put("text", translation.trim())
+            if (line.has("endTimeMs")) translated.put("endTimeMs", line.optDouble("endTimeMs"))
+            translations.put(index, translated)
+        }
         SystemTitleLyrics.update(timeline)
         render()
     }
@@ -89,6 +103,11 @@ object FloatingLyricsOverlay {
                         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                             .putBoolean("centerAlignment", centered).apply()
                     }
+                }
+                val nextLanguage = args.optString("language", language)
+                if (nextLanguage != language && nextLanguage in setOf("original", "translation", "bilingual")) {
+                    language = nextLanguage
+                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("language", language).apply()
                 }
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
                 text?.centerSlot = 0.takeIf { centerAlignment }
@@ -287,15 +306,25 @@ object FloatingLyricsOverlay {
         val time=position.second*1000-data.optDouble("biasMs",0.0)
         val lines=data.optJSONArray("lines")
         val activeIndex=nativeLyricIndex(lines,time)
+        val subtitles = data.optBoolean("subtitles")
         val current=activeIndex.coerceAtLeast(0)
         val other=if(current+1<(lines?.length() ?: 0))current+1 else current-1
         for(slot in 0..1) {
             val target=if(slot==0)output else nextText ?: continue
-            val index=if(current%2==slot)current else other
-            val line=if(index>=0)lines?.optJSONObject(index) else null
-            val active=index==activeIndex && line!=null && (!data.optBoolean("subtitles") || !line.has("endTimeMs") || time<line.optDouble("endTimeMs"))
+            val bilingual = language == "bilingual"
+            val index=if (bilingual || current%2==slot) current else other
+            val original=lines?.optJSONObject(index)
+            val inside = index==activeIndex && original!=null && (!subtitles || !original.has("endTimeMs") || time<original.optDouble("endTimeMs"))
+            val translated = translations.optJSONObject(index)
+            val line = when {
+                bilingual && subtitles && !inside -> null
+                bilingual && slot == 1 -> translated
+                language == "translation" -> translated ?: original
+                else -> original
+            }
+            val active = inside && line != null && (!bilingual || slot == 0)
             target.setTextColor(if(active)activeColor else inactiveColor)
-            val key="${position.first}:$index:${line?.optDouble("timeMs")}"
+            val key="${position.first}:$language:$slot:$index:${line?.optDouble("timeMs")}"
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
             val scroll=lyricScrollPosition(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"),target)

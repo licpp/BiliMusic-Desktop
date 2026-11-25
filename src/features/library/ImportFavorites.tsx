@@ -28,10 +28,10 @@ const sources: {id:Source;title:string;description:string;Icon:LucideIcon}[] = [
   ...(inDesktopShell&&!isMobile ? [{id:'local' as const,title:'本地音乐文件夹',description:'读取歌曲信息，匹配 B 站音源',Icon:FolderOpen}] : []),
 ]
 
-export function ImportPlaylistButton({onClick,sidebar=false}:{onClick:()=>void;sidebar?:boolean}) {
+export function ImportPlaylistButton({onClick,sidebar=false,disabled}:{onClick:()=>void;sidebar?:boolean;disabled?:boolean}) {
   const state=usePlaylistImport(value=>value.job?.state)
   const running=state==='matching'||state==='waiting'||state==='saving'
-  return <button type="button" className={`playlist-import-trigger library-import-action${sidebar?' sidebar-import-trigger':''}`} aria-label="导入歌单" title="导入歌单" onClick={onClick}>
+  return <button type="button" className={`playlist-import-trigger library-import-action${sidebar?' sidebar-import-trigger':''}`} aria-label="导入歌单" title="导入歌单" disabled={disabled} onClick={onClick}>
     {running?<LoaderCircle size={16} className="spin"/>:<ListPlus size={17}/>}<span>{running?'导入中':'导入'}</span>
   </button>
 }

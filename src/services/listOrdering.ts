@@ -1,6 +1,8 @@
 export type SortRule = 'source:asc'|'source:desc'|'name:asc'|'name:desc'|'date:asc'|'date:desc'|'plays:asc'|'plays:desc'
 export type ListPreference = { entity:string; displayRank?:string|null; sortRule?:SortRule|null }
 export type ListPreferences = {preferences:ListPreference[];dates:Record<string,number>;playCounts?:Record<string,number>}
+import type { Track } from '../domain/track'
+import type { ImportSong } from '../domain/importedEntry'
 const collator = new Intl.Collator('zh-Hans-CN-u-co-pinyin',{numeric:true,sensitivity:'base'})
 export function sortList<T>(items:T[],rule:SortRule,info:(item:T)=>{id:string;name:string;date?:number;playCount?:number}) {
  const [mode,direction]=rule.split(':'),sign=direction==='desc'?-1:1
@@ -56,4 +58,21 @@ export function sortTracks<T extends {id:string;title:string;videoTitle?:string;
  const groups=new Map<string,T[]>()
  for(const item of items){const group=groups.get(item.source.bvid)||[];group.push(item);groups.set(item.source.bvid,group)}
  return sortList([...groups.values()],rule,group=>({id:group[0].source.bvid,name:group[0].videoTitle||group[0].title,date:group[0].publishedAt||dates[group[0].source.bvid],playCount:playCounts[group[0].source.bvid]??group.find(t=>t.playCount!==undefined)?.playCount})).flatMap(group=>[...group].sort((a,b)=>a.source.page-b.source.page||a.id.localeCompare(b.id)))
+}
+
+export function playlistTrackTitle(track: Track, song?: ImportSong) {
+  const original = track.titleOverridden ? undefined : song ?? track.importedEntry?.song
+  return original?.title || track.displayTitle || track.title
+}
+
+export function sortPlaylistTracks(
+  tracks: Track[], rule: SortRule, dates: Record<string, number>, playCounts: Record<string, number>,
+  songs: ReadonlyMap<string, { song: ImportSong }>, customOrder = false,
+) {
+  if (customOrder && rule === 'source:desc') return [...tracks].reverse()
+  if (rule !== 'name:asc' && rule !== 'name:desc') return sortTracks(tracks, rule, dates, playCounts)
+  const sign = rule === 'name:asc' ? 1 : -1
+  return tracks.map((track, index) => ({ track, index, title: playlistTrackTitle(track, songs.get(track.id)?.song) }))
+    .sort((a, b) => sign * collator.compare(a.title, b.title) || a.index - b.index)
+    .map(row => row.track)
 }

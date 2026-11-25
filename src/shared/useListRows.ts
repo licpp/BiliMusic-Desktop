@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState } from 'react'
+import { startTransition, useEffect, useState } from 'react'
 import { accountEpoch } from '../services/accountScope'
 import { afterListMotion } from './navigationListMotion'
 
@@ -26,13 +26,13 @@ export function useListRows<T>(rows: T[], scope: string, { active = true, throug
   const observed = typeof IntersectionObserver !== 'undefined'
   const more = rows.length > count && (observed || manualFallback)
   const loadMore = () => startTransition(() => setBatch({ key, count: count + rowsPerBatch }))
-  const tail = useRef<HTMLDivElement>(null)
+  // A retained list can replace its tail without changing how many rows it shows.
+  const [target, tail] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
     if (through < rowsPerBatch) return
     setBatch(current => current.key === key && current.count > through ? current : { key, count: Math.max(renderedCounts.get(key) ?? rowsPerBatch, through + 1) })
   }, [key, through])
   useEffect(() => {
-    const target = tail.current
     if (!active || !more || !target) return
     let cancel: (() => void) | undefined
     const root = target.closest('.swipe-pages-fill .swipe-pane-content, .stage-scroll, .mobile-page-content, .collection-dialog, .library-panel, .large-main')
@@ -71,6 +71,6 @@ export function useListRows<T>(rows: T[], scope: string, { active = true, throug
       cancelAnimationFrame(frame)
       cancel?.()
     }
-  }, [active, count, key, more, observed])
+  }, [active, count, key, more, observed, target])
   return { rows: more ? rows.slice(0, count) : rows, more, tail, manualMore: more && !observed ? loadMore : undefined }
 }

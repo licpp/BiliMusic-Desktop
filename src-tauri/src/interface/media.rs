@@ -59,9 +59,15 @@ pub async fn bili_media_options(
     provider: State<'_, BilibiliProvider>,
     bvid: String,
     cid: i64,
+    background: Option<bool>,
 ) -> Result<MediaOptions, CommandError> {
+    let priority = if background.unwrap_or(false) {
+        RequestPriority::Background
+    } else {
+        RequestPriority::Foreground
+    };
     provider
-        .media_options(&bvid, cid)
+        .media_options(&bvid, cid, priority)
         .await
         .map_err(CommandError::bilibili)
 }
