@@ -805,7 +805,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (!state.action) nativeLyricsScope = session && state.id ? { id: state.id, session } : undefined
   if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
-  if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
+  if (state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision > floatingStyleRevision) {
+    floatingStyleRevision = state.floatingLyricsStyleRevision
+    window.dispatchEvent(new CustomEvent('bilimusic-floating-style', { detail: {
+      fontSize: state.floatingLyricsFontSize,
+      locked: state.floatingLyricsLocked,
+      language: state.floatingLyricsLanguage,
+    } }))
+  }
   if (state.sleepDeadline !== undefined) {
     const sleep = usePlayerStore.getState().sleep
     const next = { deadline: state.sleepDeadline, duration: state.sleepDuration ?? 0, expired: Boolean(state.sleepExpired) }

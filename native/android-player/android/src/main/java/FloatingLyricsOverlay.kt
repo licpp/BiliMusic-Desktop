@@ -29,6 +29,7 @@ object FloatingLyricsOverlay {
     private const val PREFS = "bilimusic-lyrics-style"
     private const val POSITION_X = "positionX"
     private const val POSITION_Y = "positionY"
+    private const val LANGUAGE = "language"
     private const val SUBTITLES = "preferBilibiliSubtitles"
     private const val SUBTITLE_LANGUAGE = "bilibiliSubtitleLanguage"
     private val languageTag = Regex("[a-zA-Z0-9_-]{1,48}")
@@ -46,13 +47,14 @@ object FloatingLyricsOverlay {
         private set
     private var showUnlockButton = true
     private var centerAlignment = false
-    private var language = "original"
+    internal var language = FloatingLyricsLanguage.ORIGINAL
+        private set
     private var activeColor=0xFFB4F3E9.toInt()
     private var inactiveColor=0xFF91A6B5.toInt()
     private var layout: WindowManager.LayoutParams? = null
     private var unlock: FloatingLyricsUnlockButton? = null
     private var unlockLayout: WindowManager.LayoutParams? = null
-    private var controls: LinearLayout? = null
+    private var controls: FloatingLyricsToolbar? = null
     private val controlVisibility = FloatingLyricsControls()
     private var data = JSONObject()
     private var translations = JSONArray()
@@ -63,7 +65,7 @@ object FloatingLyricsOverlay {
     fun attach(service: PlaybackService) {
         owner = service
         centerAlignment = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("centerAlignment", false)
-        language = service.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("language", "original") ?: "original"
+        language = savedLanguage(service) ?: FloatingLyricsLanguage.ORIGINAL
         SystemTitleLyrics.attach(service)
         if (enabled) show()
     }
@@ -104,12 +106,12 @@ object FloatingLyricsOverlay {
                             .putBoolean("centerAlignment", centered).apply()
                     }
                 }
-                val nextLanguage = args.optString("language", language)
-                if (nextLanguage != language && nextLanguage in setOf("original", "translation", "bilingual")) {
-                    language = nextLanguage
-                    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("language", language).apply()
-                }
+                val nextLanguage = FloatingLyricsLanguage.parse(args.optString("language"))
+                    ?: savedLanguage(context)
+                    ?: FloatingLyricsLanguage.parse(args.optString("initialLanguage"))
+                if (nextLanguage != null) setLanguage(context, nextLanguage)
                 text?.textSize=fontSize;nextText?.textSize=fontSize;text?.setTextColor(activeColor);nextText?.setTextColor(inactiveColor)
+                controls?.displayFontSize(fontSize)
                 text?.centerSlot = 0.takeIf { centerAlignment }
                 nextText?.centerSlot = 1.takeIf { centerAlignment }
                 applyLock(context);owner?.notifyLyricsChanged()
@@ -144,7 +146,19 @@ object FloatingLyricsOverlay {
         }
         return status(context)
     }
-    private fun status(context: Context)=JSONObject().put("supported",true).put("enabled",enabled).put("permissionRequired",!Settings.canDrawOverlays(context))
+    private fun status(context: Context)=JSONObject().put("supported",true).put("enabled",enabled)
+        .put("permissionRequired",!Settings.canDrawOverlays(context)).put("language",savedLanguage(context)?.value)
+    private fun savedLanguage(context: Context) = FloatingLyricsLanguage.parse(
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(LANGUAGE, null)
+    )
+    private fun setLanguage(context: Context, next: FloatingLyricsLanguage) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(LANGUAGE, null) != next.value) prefs.edit().putString(LANGUAGE, next.value).apply()
+        if (language == next) return
+        language = next
+        controls?.displayLanguage(next)
+        render()
+    }
     private fun hide() {
         handler.removeCallbacks(tick)
         val context=owner
@@ -171,13 +185,25 @@ object FloatingLyricsOverlay {
         val tools=FloatingLyricsToolbar(context){action->
             controlVisibility.reveal(android.os.SystemClock.uptimeMillis())
             when(action) {
+                FloatingLyricsToolbar.Action.LANGUAGE -> {
+                    setLanguage(context, language.next())
+                    saveStyle(context)
+                }
                 FloatingLyricsToolbar.Action.SMALLER->{fontSize=(fontSize-2).coerceAtLeast(18f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
                 FloatingLyricsToolbar.Action.LARGER->{fontSize=(fontSize+2).coerceAtMost(48f);label.textSize=fontSize;next.textSize=fontSize;saveStyle(context)}
                 FloatingLyricsToolbar.Action.LOCK->{locked=true;controlVisibility.hide();applyLock(context);saveStyle(context)}
                 FloatingLyricsToolbar.Action.CLOSE->{enabled=false;hide();owner?.notifyLyricsChanged()}
             }
-        }.apply{visibility=View.INVISIBLE};controls=tools
-        row.addView(tools,LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT))
+        }.apply {
+            visibility = View.INVISIBLE
+            displayLanguage(language)
+            displayFontSize(fontSize)
+        }
+        controls = tools
+        row.addView(tools, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.END
+            topMargin = (4 * density).toInt()
+        })
         val metrics=context.resources.displayMetrics
         val width = (metrics.widthPixels * .9).toInt()
         row.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -251,6 +277,7 @@ object FloatingLyricsOverlay {
     private fun saveStyle(context: Context) {
         styleRevision=maxOf(styleRevision+1,android.os.SystemClock.elapsedRealtime())
         context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putFloat("fontSize",fontSize).putBoolean("locked",locked).apply()
+        controls?.displayFontSize(fontSize)
         owner?.notifyLyricsChanged()
     }
     private fun windowAlpha(context: Context): Float {
@@ -311,7 +338,7 @@ object FloatingLyricsOverlay {
         val other=if(current+1<(lines?.length() ?: 0))current+1 else current-1
         for(slot in 0..1) {
             val target=if(slot==0)output else nextText ?: continue
-            val bilingual = language == "bilingual"
+            val bilingual = language == FloatingLyricsLanguage.BILINGUAL
             val index=if (bilingual || current%2==slot) current else other
             val original=lines?.optJSONObject(index)
             val inside = index==activeIndex && original!=null && (!subtitles || !original.has("endTimeMs") || time<original.optDouble("endTimeMs"))
@@ -319,12 +346,12 @@ object FloatingLyricsOverlay {
             val line = when {
                 bilingual && subtitles && !inside -> null
                 bilingual && slot == 1 -> translated
-                language == "translation" -> translated ?: original
+                language == FloatingLyricsLanguage.TRANSLATION -> translated ?: original
                 else -> original
             }
             val active = inside && line != null && (!bilingual || slot == 0)
             target.setTextColor(if(active)activeColor else inactiveColor)
-            val key="${position.first}:$language:$slot:$index:${line?.optDouble("timeMs")}"
+            val key="${position.first}:${language.value}:$slot:$index:${line?.optDouble("timeMs")}"
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
             val scroll=lyricScrollPosition(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"),target)

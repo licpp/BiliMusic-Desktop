@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager.LayoutParams
 import android.widget.LinearLayout
+import android.widget.TextView
 import java.io.File
 import java.time.Duration
 import org.junit.Assert.*
@@ -140,18 +141,54 @@ class FloatingLyricsRendererTest {
         assertEquals(shown or LayoutParams.FLAG_NOT_TOUCHABLE, hidden)
     }
     @Test fun renderActualRowsAndToolbarInBothBackgrounds() {
-        val actions=mutableListOf<FloatingLyricsToolbar.Action>()
+        val density = context.resources.displayMetrics.density
         for((name,background)in listOf("light" to 0xFFF4F7FA.toInt(),"dark" to 0xFF14212B.toInt())) {
-            val first=label("第一行歌词 · 正在播放").apply{setTextColor(0xFFB4F3E9.toInt());setShadowLayer(2f,0f,1f,0x66000000)}
-            val second=label("第二行歌词 · 等待下一句",true).apply{setTextColor(0xFF91A6B5.toInt())}
-            val toolbar=FloatingLyricsToolbar(context){actions.add(it)}
-            val rows=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;setPadding(14,10,14,10);setBackgroundColor(background);addView(first,LinearLayout.LayoutParams(-1,-2));addView(second,LinearLayout.LayoutParams(-1,-2));addView(toolbar,LinearLayout.LayoutParams(-1,-2))}
-            arrange(rows,520)
+            val first=label("The wind rises").apply{setTextColor(0xFFB4F3E9.toInt());setShadowLayer(2f,0f,1f,0x66000000)}
+            val second=label("又起风了",true).apply{setTextColor(0xFF91A6B5.toInt())}
+            var language = FloatingLyricsLanguage.ORIGINAL
+            val actions = mutableListOf<FloatingLyricsToolbar.Action>()
+            val toolbar = FloatingLyricsToolbar(context) { actions += it }
+            val rows = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding((12 * density).toInt(), (8 * density).toInt(), (4 * density).toInt(), (8 * density).toInt())
+                setBackgroundColor(background)
+                addView(first, LinearLayout.LayoutParams(-1, -2)); addView(second, LinearLayout.LayoutParams(-1, -2))
+                addView(toolbar, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END; topMargin = (4 * density).toInt() })
+            }
+            arrange(rows, ((if (name == "light") 288 else 520) * density).toInt())
+            val languageButton = toolbar.getChildAt(0) as LinearLayout
+            val languageLabel = languageButton.getChildAt(1) as TextView
+            for (label in listOf("原文", "译文", "双语")) {
+                toolbar.displayLanguage(language)
+                assertEquals(label, languageLabel.text.toString())
+                assertTrue(languageButton.performClick())
+                assertEquals(FloatingLyricsToolbar.Action.LANGUAGE, actions.last())
+                language = language.next()
+            }
+            assertEquals(FloatingLyricsLanguage.ORIGINAL, language)
+            toolbar.displayLanguage(FloatingLyricsLanguage.BILINGUAL)
+            val hitTargets = (0 until toolbar.childCount).map(toolbar::getChildAt).filter { it.isClickable }
+            assertEquals(5, hitTargets.size)
+            assertTrue(hitTargets.all { it.width >= (44*density).toInt() && it.right <= toolbar.width - toolbar.paddingRight })
+            assertEquals(rows.width - rows.paddingRight, toolbar.right)
+            toolbar.displayFontSize(18f)
+            assertFalse(hitTargets[1].isEnabled)
+            toolbar.displayFontSize(48f)
+            assertFalse(hitTargets[2].isEnabled)
+            toolbar.displayFontSize(28f)
+            hitTargets[3].performClick()
+            assertEquals(FloatingLyricsToolbar.Action.LOCK,actions.last())
+            arrange(rows, rows.width)
             val path=File("build/reports/lyric-previews/android-lyrics-$name.png");path.parentFile.mkdirs()
             path.outputStream().use{pixels(rows).compress(Bitmap.CompressFormat.PNG,100,it)}
-            toolbar.getChildAt(2).performClick()
-            assertEquals(FloatingLyricsToolbar.Action.LOCK,actions.last())
         }
+    }
+    @Test fun savedLanguageSurvivesConfigurationFromAnOlderWebViewState() {
+        fun configure(data: String) = FloatingLyricsOverlay.command(context, data).optString("language")
+        assertEquals("translation", configure("""{"action":"configure","initialLanguage":"translation"}"""))
+        assertEquals("bilingual", configure("""{"action":"configure","language":"bilingual"}"""))
+        assertEquals("bilingual", configure("""{"action":"configure","initialLanguage":"original"}"""))
+        assertEquals("bilingual", configure("""{"action":"status"}"""))
     }
     @Test fun centeredRowsBorrowWidthBeforeScrolling() {
         assertEquals(112f, centeredLyricOffset(0, 400f, 80f), 0f)

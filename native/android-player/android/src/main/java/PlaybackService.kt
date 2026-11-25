@@ -1069,7 +1069,8 @@ class PlaybackService : MediaSessionService() {
         }
         if (lastFloatingStyle != FloatingLyricsOverlay.styleRevision.toLong()) {
             lastFloatingStyle = FloatingLyricsOverlay.styleRevision.toLong()
-            snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize).put("floatingLyricsLocked",FloatingLyricsOverlay.locked)
+            snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize)
+                .put("floatingLyricsLocked",FloatingLyricsOverlay.locked).put("floatingLyricsLanguage",FloatingLyricsOverlay.language.value)
         }
         return snapshot
     }
