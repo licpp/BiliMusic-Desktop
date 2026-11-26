@@ -4,7 +4,7 @@ import {build} from 'esbuild'
 import {createRequire} from 'node:module'
 const out=await build({entryPoints:['src/services/listOrdering.ts'],bundle:true,write:false,platform:'node',format:'cjs'}),module={exports:{}}
 new Function('require','module','exports',out.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports)
-const {rankChanges,rankList,sortList,sortTracks}=module.exports
+const {rankChanges,rankList,sortList,sortTracks,sortPlaylistTracks}=module.exports
 const pad=n=>BigInt(n).toString().padStart(20,'0')
 test('one drag changes one rank after initial setup; repeated saves are no-ops',()=>{
  const ids=Array.from({length:500},(_,i)=>`folder:${i}`)
@@ -32,6 +32,16 @@ test('dates use actual timestamps, missing dates stay last in both directions an
 test('multipart videos remain grouped with ascending P numbers when reversing or sorting a playlist',()=>{
  const rows=[{id:'a2',title:'P2',source:{bvid:'a',page:2}},{id:'a1',title:'P1',source:{bvid:'a',page:1}},{id:'b',title:'B',source:{bvid:'b',page:1}}]
  assert.deepEqual(sortTracks(rows,'source:desc',{}).map(x=>x.id),['b','a1','a2'])
+})
+test('playlist names use edited or imported titles, preserve equal titles in custom order, and sort parts individually',()=>{
+ const rows=[
+  {id:'a',title:'Alpha',displayTitle:'晚风来信',titleOverridden:true,source:{bvid:'A',page:1}},
+  {id:'b',title:'Beta',displayTitle:'雨爱',source:{bvid:'A',page:2}},
+  {id:'c',title:'Zulu',source:{bvid:'C',page:1}},
+ ]
+ const entries=new Map([['c',{song:{title:'晚风来信'}}],['a',{song:{title:'Should not override'}}]])
+ assert.deepEqual(sortPlaylistTracks(rows,'name:asc',{},{},entries).map(t=>t.id),['a','c','b'])
+ assert.deepEqual(sortPlaylistTracks(rows,'name:desc',{},{},entries).map(t=>t.id),['b','a','c'])
 })
 
 test('play counts sort numerically, zero is known, unknown/non-finite counts stay last in both directions',()=>{

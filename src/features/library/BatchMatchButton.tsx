@@ -8,7 +8,7 @@ import { commandErrorMessage } from '../../services/userErrors'
 import { accountQueryKey } from '../../services/queryKeys'
 import { usePlayerStore } from '../player/playerStore'
 
-function useBatchMatch(tracks: Track[]) {
+function useBatchMatch(tracks: Track[], onMatched?: (ids: ReadonlySet<string>) => void) {
   const client = useQueryClient()
   const abort = useRef<AbortController | null>(null)
   const [busy, setBusy] = useState(false)
@@ -37,9 +37,13 @@ function useBatchMatch(tracks: Track[]) {
     setBusy(true)
     setState(undefined)
     setMessage('')
+    const matched = new Set<string>()
     try {
       await matchTracksAutomatically(tracks, controller.signal, setState, track => {
-        if (current()) usePlayerStore.getState().updateTrack(track)
+        if (current()) {
+          matched.add(track.id)
+          usePlayerStore.getState().updateTrack(track)
+        }
       })
     } catch (cause) {
       if (current()) setMessage(commandErrorMessage(cause))
@@ -50,6 +54,7 @@ function useBatchMatch(tracks: Track[]) {
           setBusy(false)
           void client.invalidateQueries({ queryKey: accountQueryKey('library') })
           void client.invalidateQueries({ queryKey: accountQueryKey('playlists') })
+          if (matched.size) onMatched?.(matched)
         }
       }
     }
@@ -67,8 +72,8 @@ function useBatchMatch(tracks: Track[]) {
   return { busy, feedback, run, stop: () => abort.current?.abort() }
 }
 
-export function BatchMatchButton({ tracks }: { tracks: Track[] }) {
-  const matching = useBatchMatch(tracks)
+export function BatchMatchButton({ tracks, onMatched }: { tracks: Track[]; onMatched?: (ids: ReadonlySet<string>) => void }) {
+  const matching = useBatchMatch(tracks, onMatched)
   return <span className="batch-match-control">
     <button type="button" disabled={!matching.busy && !tracks.length} onClick={matching.busy ? matching.stop : () => void matching.run()} title="同时匹配歌曲信息与歌词">
       {matching.busy ? <Square size={16}/> : <Sparkles size={16}/>}<span>{matching.busy ? '停止匹配' : '自动匹配'}</span>

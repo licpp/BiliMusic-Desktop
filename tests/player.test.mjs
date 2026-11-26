@@ -441,6 +441,20 @@ test('playback rate changes in place and carries to the next song', async () => 
   listeners.pagehide()
 })
 
+test('chosen playback rate is restored on restart and used at the first play', async () => {
+  const first = setup()
+  await first.store.getState().setRate(1.75)
+  const saved = JSON.parse(first.storage.get('resonance-player-v1'))
+  assert.equal(saved.state.rate, 1.75)
+  const restored = setup(saved)
+  assert.equal(restored.store.getState().rate, 1.75)
+  await restored.store.getState().play(track('1'))
+  assert.equal(restored.audio[0].playbackRate, 1.75)
+  await restored.store.getState().setRate(1)
+  assert.equal(setup(JSON.parse(restored.storage.get('resonance-player-v1'))).store.getState().rate, 1)
+  assert.equal(setup({version:2,state:{rate:9}}).store.getState().rate, 1)
+})
+
 test('resume slider defaults to all, persists disabled, and permits explicit positions', async () => {
   const initial = setup()
   assert.equal(initial.store.getState().resumeThresholdSeconds, 0)

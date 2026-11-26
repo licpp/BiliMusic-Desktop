@@ -1,4 +1,5 @@
 import { primarySongTitle, recognizeSong, songEditions, songTextIdentity as normalized } from '../domain/songIdentity'
+import type { ExternalSong } from '../domain/songIdentity'
 import { rankImportSongCandidates, type SongCandidate } from './externalSongMatch'
 import type { Track } from '../domain/track'
 
@@ -30,7 +31,7 @@ export function parseSongList(text: string): ImportPlaylist {
   return { name:'导入的歌单',source:'text',songs,reportedCount:songs.length,unavailableCount:0 }
 }
 
-export function importKeyword(song: ImportSong, simple = false) {
+export function importKeyword(song: ExternalSong, simple = false) {
   const primary = (recognizeSong(song).queries[0]?.title || primarySongTitle(song.title))
     .replace(/[（(][^）)]*\b(?:inst|orch)\b\.?[^）)]*[）)]/giu,'')
     .replace(/[（(]([A-Za-z.\s]+)[）)]/g,(whole,label: string) => songEditions(label).size ? whole : '')

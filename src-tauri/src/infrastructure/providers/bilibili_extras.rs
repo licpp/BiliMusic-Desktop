@@ -61,6 +61,14 @@ pub struct VideoChapter {
 pub struct QualityOption {
     pub id: u32,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_quality: Option<AudioQuality>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioQuality {
+    pub lossless: bool,
+    pub bitrate: u64,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -853,8 +861,13 @@ impl BilibiliProvider {
         })?;
         Ok(parse_subtitle_lines(&value))
     }
-    pub async fn media_options(&self, bvid: &str, cid: i64) -> Result<MediaOptions, ProviderError> {
-        let dash = self.play_dash(bvid, cid, true).await?;
+    pub async fn media_options(
+        &self,
+        bvid: &str,
+        cid: i64,
+        priority: RequestPriority,
+    ) -> Result<MediaOptions, ProviderError> {
+        let dash = self.play_dash_with_priority(bvid, cid, true, priority).await?;
         let audio = audio_options(&dash);
         let mut video: Vec<_> = dash
             .video
@@ -866,6 +879,7 @@ impl BilibiliProvider {
             })
             .map(|s| QualityOption {
                 id: s.height,
+                audio_quality: None,
                 label: if s.height == 2160 {
                     "4K".into()
                 } else {

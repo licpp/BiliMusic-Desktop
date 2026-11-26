@@ -8,7 +8,7 @@ const require=createRequire(import.meta.url)
 const {QueryClient,QueryClientProvider}=require('@tanstack/react-query')
 const result=await build({stdin:{contents:`export {LibraryView} from './src/features/library/LibraryView';export {PlaylistMenu} from './src/features/library/PlaylistEntry';export {ReplacementSearch,formatMatchPlayCount} from './src/features/library/ReplacementDialog';export {ImportedPlaylistCompletionContent} from './src/features/library/ImportedPlaylistCompletion';export {accountQueryKey} from './src/services/queryKeys'`,resolveDir:process.cwd()},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react/jsx-runtime','@tanstack/react-query'],loader:{'.css':'empty'},plugins:[{name:'ui-boundaries',setup(b){
 const mocks={
- playerStore:`export const playbackIntent=()=>0;export const usePlayerStore=fn=>fn({current:null});usePlayerStore.getState=()=>({});`,
+ playerStore:`export const updatePlaybackFavorites=()=>{};export const playbackIntent=()=>0;export const usePlayerStore=fn=>fn({current:null});usePlayerStore.getState=()=>({});`,
  playlistImport:`export const usePlaylistImport=fn=>fn({job:globalThis.importUiJob||null});export const pausePlaylistImport=()=>{};export const retryMissingImportedPlaylist=async()=>{};export const searchReplacementVideos=async()=>({items:[],page:1,pageSize:20,total:0});export const resolveReplacementVideo=async()=>[];`,
  importedEntries:`export const loadImportedEntries=async()=>({session:'test',entries:[]});export const replaceImportedEntry=async()=>({session:'test',entries:[]});export const removeUnmatchedImportedEntry=async()=>({session:'test',entries:[]});`,
  useCompactLayout:`export const useCompactLayout=()=>false`,
@@ -40,18 +40,25 @@ function render(Component,props={},entries=[saved,missing],tracks=[track,ordinar
  client.setQueryData(accountQueryKey('imported-entries',playlist.id),{session:'test',entries})
  return renderToStaticMarkup(createElement(QueryClientProvider,{client},createElement(Component,props)))
 }
-test('only external provenance entries expose replacement, not ordinary songs sharing the import playlist',()=>{
+test('both editable playlist entries expose replacement while retaining catalog presentation',()=>{
  const html=render(LibraryView,{playlist,onRematchImported(){}})
- assert.equal((html.match(/data-can-replace="true"/g)||[]).length,1)
- assert.equal((html.match(/data-can-replace="false"/g)||[]).length,1)
+ assert.equal((html.match(/data-can-replace="true"/g)||[]).length,2)
  assert.ok(html.includes('SOURCE_SONG'));assert.ok(html.includes('SOURCE_ARTIST'));assert.ok(html.includes('https://example.test/original.jpg'))
  assert.ok(html.includes('MANUALLY_ADDED_VIDEO'))
  assert.equal(track.title,'VIDEO_RAW_TITLE');assert.equal(track.artist,'VIDEO_RAW_ARTIST');assert.equal(track.coverUrl,'https://example.test/raw.jpg')
 })
-test('Bilibili copies have no replacement or completion entry merely because their ID has an import prefix',()=>{
+test('Bilibili copies can replace a video while completion still requires import provenance',()=>{
  const html=render(LibraryView,{playlist,onRematchImported(){}},[])
- assert.equal(html.includes('data-can-replace="true"'),false)
+ assert.equal(html.includes('data-can-replace="true"'),true)
  assert.equal(html.includes('补全未匹配'),false)
+})
+test('system and linked playlists do not expose editing actions',()=>{
+ for(const special of [{isSystem:true},{biliFolderId:42}]){
+  const html=render(LibraryView,{playlist:{...playlist,...special}})
+  assert.equal(html.includes('data-can-replace="true"'),false)
+  assert.equal(html.includes('aria-label="整理曲目"'),false)
+  assert.equal(html.includes('查找重复'),false)
+ }
 })
 test('completion entry remains usable even if no matched song exists yet',()=>{
  const html=render(PlaylistMenu,{playlist:{...playlist,trackCount:0},onRematch(){},missingCount:822})

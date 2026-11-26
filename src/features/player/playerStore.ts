@@ -169,6 +169,16 @@ export function seasonPlaybackQueue(tracks: Track[], selected: Track, parts: Tra
   return [...tracks.slice(0, index), ...parts, ...(end < 0 ? [] : tracks.slice(end))]
 }
 
+export function updatePlaybackFavorites(changes: ReadonlyMap<string, boolean>) {
+  usePlayerStore.setState(({ current, queue, queueBase }) => {
+    const update = (track: Track) => {
+      const liked = changes.get(track.id)
+      return liked !== undefined && liked !== track.liked ? { ...track, liked } : track
+    }
+    return { current: current && update(current), queue: queue.map(update), queueBase: queueBase?.map(update) }
+  })
+}
+
 export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Track[], title: string, collectionRef?: string, visibilityManaged?: boolean) {
   const state = usePlayerStore.getState()
   if (intent !== queueIntent || state.current?.id !== selectedId || !tracks.some(track => track.id === selectedId)) return
@@ -185,12 +195,16 @@ export function adoptSeasonQueue(intent: number, selectedId: string, tracks: Tra
 }
 
 async function resumeAndroidPlayback(track: Track, valid: () => boolean, position: number | undefined) {
+  const trace = diagnosticTrace(track, usePlayerStore.getState().queueSource)
+  trace.emit('control', 'started', { code: 'resume_ui' })
   usePlayerStore.setState({ status: 'buffering', error: null })
   try {
     await controlMobileAudio('resume')
+    if (valid()) trace.emit('control', 'succeeded', { code: 'resume_delivered' })
   } catch (error) {
     if (!valid() || usePlayerStore.getState().status === 'playing') return
     const issue = playbackIssue('audio-control', error, '恢复播放失败')
+    trace.emit('control', 'failed', { code: issue.code })
     if (issue.code === 'native_not_ready') {
       loadedTrackId = null
       await usePlayerStore.getState().play(track, position, false, undefined, true)
@@ -236,7 +250,7 @@ export function resetPlayerForAccount() {
   recoveryAttempted = false
   if (!isMobile) desktopSleep.cancel()
   if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
-  usePlayerStore.setState({ shuffleState:undefined, sleep: noSleep, current: null, queue: [],queueBase:[],queueOrigins:{}, queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, rate: 1, error: null })
+  usePlayerStore.setState({ shuffleState:undefined, sleep: noSleep, current: null, queue: [],queueBase:[],queueOrigins:{}, queueSource: undefined, queueFeedback: undefined, queueOpen: false, queueReversed: false, status: 'paused', progressSeconds: 0, durationSeconds: 0, error: null })
   flushPlayerSnapshot()
   accountReset = (async () => {
     // Stop native playback immediately, even if saving the old position fails.
@@ -251,7 +265,7 @@ export function playbackClock() { if (isMobile) return mobilePlaybackClock(); re
 
 type PlayerSnapshotDraft = Pick<PlayerState,
   'queueBase' | 'queueOrigins' | 'shuffleState' | 'current' | 'queue' | 'queueSource' | 'queueReversed' |
-  'progressSeconds' | 'durationSeconds' | 'volume' | 'shuffled' | 'repeatMode' | 'resumeThresholdSeconds'
+  'progressSeconds' | 'durationSeconds' | 'volume' | 'rate' | 'shuffled' | 'repeatMode' | 'resumeThresholdSeconds'
 > & { offlineQueue?: boolean }
 
 const { storage: playerStorage, flush: flushPlayerSnapshot } = createPlayerSnapshotStorage<PlayerSnapshotDraft>()
@@ -649,6 +663,8 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       else if (audio) audio.playbackRate = rate
     } catch {
       if (valid()) set({ rate: previous, error: playbackIssue('audio-control', null, '当前无法调整播放速度，请重试') })
+    } finally {
+      if (valid()) flushPlayerSnapshot()
     }
   },
   toggleShuffle: () => set(({ shuffled }) => ({ shuffled: !shuffled, repeatMode: 'all' })),
@@ -676,6 +692,7 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
     const queueBase=Array.isArray(saved.queueBase)?saved.queueBase.filter(track=>!track.id.startsWith('local:')).map(normalize):unpackQueueBase(queue,queueOrder,hiddenQueueTracks?.map(normalize))
     return {
       ...initial, ...restored,
+      rate: playbackRates.find(option => option === saved.rate) ?? initial.rate,
       resumeThresholdSeconds: saved.resumeThresholdSeconds !== undefined ? normalizeResumeThreshold(saved.resumeThresholdSeconds) : legacyAutoResume === false ? null : initial.resumeThresholdSeconds,
       repeatMode: saved.shuffled ? 'all' : saved.repeatMode || initial.repeatMode,
       current: saved.current && !retiredCurrent ? normalize(saved.current) : initial.current,
@@ -684,9 +701,9 @@ export const usePlayerStore = create<PlayerState>()(persist((set, get) => ({
       ...(retiredCurrent ? { progressSeconds: 0, durationSeconds: 0 } : {}),
     }
   },
-  partialize: ({ queueBase, queueOrigins, shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds }) => ({
+  partialize: ({ queueBase, queueOrigins, shuffleState, current, queue, queueSource, queueReversed, progressSeconds, durationSeconds, volume, rate, shuffled, repeatMode, resumeThresholdSeconds }) => ({
     queueBase, queueOrigins, shuffleState: isMobile ? undefined : shuffleState, current, queue, queueSource, queueReversed,
-    progressSeconds, durationSeconds, volume, shuffled, repeatMode, resumeThresholdSeconds, offlineQueue: useOfflinePlayback.getState().offline,
+    progressSeconds, durationSeconds, volume, rate, shuffled, repeatMode, resumeThresholdSeconds, offlineQueue: useOfflinePlayback.getState().offline,
   }),
 }))
 
@@ -788,7 +805,14 @@ function onNativeState(state: Awaited<ReturnType<typeof snapshotMobileAudio>> & 
   if (!state.action) nativeLyricsScope = session && state.id ? { id: state.id, session } : undefined
   if (session && session !== nativeSession) { controlScope.invalidate(); nativeSession = session }
   if (state.floatingLyricsEnabled !== undefined) window.dispatchEvent(new CustomEvent('bilimusic-native-floating',{detail:state.floatingLyricsEnabled}))
-  if(state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision>floatingStyleRevision){floatingStyleRevision=state.floatingLyricsStyleRevision;window.dispatchEvent(new CustomEvent('bilimusic-floating-style',{detail:{fontSize:state.floatingLyricsFontSize,locked:state.floatingLyricsLocked}}))}
+  if (state.floatingLyricsStyleRevision && state.floatingLyricsStyleRevision > floatingStyleRevision) {
+    floatingStyleRevision = state.floatingLyricsStyleRevision
+    window.dispatchEvent(new CustomEvent('bilimusic-floating-style', { detail: {
+      fontSize: state.floatingLyricsFontSize,
+      locked: state.floatingLyricsLocked,
+      language: state.floatingLyricsLanguage,
+    } }))
+  }
   if (state.sleepDeadline !== undefined) {
     const sleep = usePlayerStore.getState().sleep
     const next = { deadline: state.sleepDeadline, duration: state.sleepDuration ?? 0, expired: Boolean(state.sleepExpired) }

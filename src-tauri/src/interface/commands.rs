@@ -253,6 +253,45 @@ pub fn playlist_tracks(
 }
 
 #[tauri::command]
+pub fn playlist_reorder(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    playlist_id: String,
+    expected: Vec<String>,
+    ordered: Vec<String>,
+) -> Result<(), CommandError> {
+    let mut connection = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&connection, &expected_account_session)?;
+    if !PlaylistRepository::reorder(&mut connection, &database.1, &playlist_id, &expected, &ordered)
+        .map_err(CommandError::database)?
+    {
+        return Err(CommandError::validation("歌单顺序已变化，请重新整理"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn playlist_replace_video(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    playlist_id: String,
+    previous: String,
+    track: TrackInput,
+    keep_existing: Option<bool>,
+) -> Result<bool, CommandError> {
+    validate_track(&track)?;
+    let mut connection = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&connection, &expected_account_session)?;
+    match PlaylistRepository::replace_video(&mut connection, &database.1, &playlist_id, &previous, &track, keep_existing)
+        .map_err(CommandError::database)?
+    {
+        None => Ok(true),
+        Some("duplicate") => Ok(false),
+        Some(_) => Err(CommandError::validation("歌单条目已变化，请重新打开歌曲操作")),
+    }
+}
+
+#[tauri::command]
 pub fn playlist_add_track(
     database: State<'_, Database>,
     expected_account_session: String,
@@ -1009,7 +1048,7 @@ pub fn collections_change(
     expected_account_session: Option<String>,
 ) -> Result<(), String> {
     let mut c = database.0.lock().map_err(|_| "数据库正忙")?;
-    if action == "cache" {
+    if matches!(action.as_str(), "cache" | "importCreator") {
         let expected = expected_account_session
             .as_deref()
             .ok_or("账号已切换，请重试")?;

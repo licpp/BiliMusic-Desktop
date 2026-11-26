@@ -10,9 +10,9 @@ const compiled=await build({stdin:{contents:`export {ReplacementSearch} from './
  playlistImport:`export const searchReplacementVideos=(...args)=>globalThis.panelApi.search(...args);export const resolveReplacementVideo=(...args)=>globalThis.panelApi.resolve(...args)`,
  importedEntries:`export const replaceImportedEntry=(...args)=>globalThis.panelApi.bind(...args);export const loadImportedEntries=(...args)=>globalThis.panelApi.load(...args)`,
  accountScope:`export const accountEpoch=()=>globalThis.panelEpoch||0`,
- desktopApi:`export const commandErrorMessage=e=>e.message||String(e)`,
+ desktopApi:`export const FAVORITES_PLAYLIST_ID='system:favorites';export const commandErrorMessage=e=>e.message||String(e);export const replacePlaylistVideo=(...args)=>globalThis.panelApi.replace(...args)`,
  importedPlayback:`export const refreshImportedPlayback=()=>{}`,
- playerStore:`export const playbackIntent=()=>0;export const usePlayerStore={getState:()=>({play:(...args)=>globalThis.panelApi.play(...args)})}`,
+ playerStore:`export const playbackIntent=()=>0;export const updatePlaybackFavorites=changes=>globalThis.panelApi.updateFavorites(changes);export const usePlayerStore={getState:()=>({play:(...args)=>globalThis.panelApi.play(...args)})}`,
  Artwork:`export const Artwork='artwork'`,CollectionDialog:`export const CollectionDialog='dialog'`,
  }
  b.onResolve({filter:/^react$/},()=>({path:'react',namespace:'panel'}))
@@ -89,4 +89,28 @@ test('account ABA invalidates late write failures and does not refresh canonical
  globalThis.panelEpoch=2
  fail(Error('OLD_ACCOUNT_WRITE'));await pending;await tick();h.render()
  assert.equal(loads,0);assert.equal(h.text().includes('OLD_ACCOUNT_WRITE'),false)
+})
+test('ordinary playlist replacement waits for an explicit choice when the target already exists',async()=>{
+ const calls=[]
+ const currentTrack={ ...choice.track, id:'old-source', title:'原来的歌' }
+ let saved=0
+ const h=await ready({entry:undefined,playlistId:'my-playlist',currentTrack,onSaved(){saved++}})
+ globalThis.panelApi.replace=async (...args)=>{calls.push(args);return args[3]===true}
+ await h.get(`选择视频 ${item.title}`).props.onClick();await tick();h.render()
+ assert.match(h.text(),/要保留哪个位置/)
+ assert.equal(saved,0)
+ await h.all(node=>node.type==='button' && node.props.children==='保留已有位置')[0].props.onClick()
+ await tick()
+ assert.deepEqual(calls.map(([playlist,id,,keep])=>[playlist,id,keep]),[['my-playlist','old-source',undefined],['my-playlist','old-source',true]])
+ assert.equal(saved,1)
+})
+test('favorites replacement clears the old heart and sets the new heart after saving',async()=>{
+ const currentTrack={ ...choice.track, id:'old-source', title:'原来的歌' }
+ const updates=[]
+ const h=await ready({entry:undefined,playlistId:'system:favorites',currentTrack})
+ globalThis.panelApi.replace=async()=>true
+ globalThis.panelApi.updateFavorites=changes=>updates.push(...changes)
+ await h.get(`选择视频 ${item.title}`).props.onClick()
+ await tick()
+ assert.deepEqual(updates,[[currentTrack.id,false],[choice.track.id,true]])
 })

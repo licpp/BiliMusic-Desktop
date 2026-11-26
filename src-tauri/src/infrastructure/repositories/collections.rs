@@ -317,12 +317,13 @@ pub fn change(
                 )?;
                 execute("DELETE FROM collection_folders WHERE id=?1", &[&id])?;
             }
-            "save" => {
+            "save" | "importCreator" => {
                 let i = item.ok_or("缺少合集信息")?;
-                if !valid_reference(&i.bvid) {
+                let creator = i.bvid.starts_with("up:");
+                if !valid_reference(&i.bvid) || action == "importCreator" && !creator {
                     return Err("收藏标识无效".into());
                 }
-                if !folder_exists(&i.folder_id, i.bvid.starts_with("up:"))? {
+                if !folder_exists(&i.folder_id, creator)? {
                     return Err("文件夹不存在或类型不匹配".into());
                 }
                 validate_metadata(&i)?;
@@ -337,7 +338,15 @@ pub fn change(
                 {
                     return Err(format!("最多收藏 {MAX_COLLECTIONS} 个合集"));
                 }
-                tx.execute("INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name,created_at) VALUES(?1,?2,?3,?4,?5,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(bvid) DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,cover_url=excluded.cover_url,uploader_name=excluded.uploader_name,created_at=excluded.created_at",params![i.bvid,i.folder_id,i.title,i.cover_url,i.uploader_name]).map_err(|e|e.to_string())?;
+                let on_conflict = if action == "importCreator" {
+                    "DO NOTHING"
+                } else {
+                    "DO UPDATE SET folder_id=excluded.folder_id,title=excluded.title,cover_url=excluded.cover_url,uploader_name=excluded.uploader_name,created_at=excluded.created_at"
+                };
+                tx.execute(
+                    &format!("INSERT INTO collections(bvid,folder_id,title,cover_url,uploader_name,created_at) VALUES(?1,?2,?3,?4,?5,strftime('%Y-%m-%d %H:%M:%f','now')) ON CONFLICT(bvid) {on_conflict}"),
+                    params![i.bvid, i.folder_id, i.title, i.cover_url, i.uploader_name],
+                ).map_err(|e|e.to_string())?;
             }
             "cache" => {
                 let i = item.ok_or("缺少合集信息")?;
@@ -438,6 +447,29 @@ mod tests {
                 .folder_id
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn importing_an_existing_creator_preserves_its_group_and_name() {
+        let mut c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        change(&mut c, "createCreator", "", "已有分组", None).unwrap();
+        let folder = list(&c).unwrap().folders.remove(0).id;
+        let creator = |title: &str, folder_id: &str| Collection {
+            bvid: "up:42".into(),
+            folder_id: folder_id.into(),
+            title: title.into(),
+            cover_url: String::new(),
+            uploader_name: title.into(),
+            note: String::new(),
+        };
+        change(&mut c, "importCreator", "", "", Some(creator("原标题", &folder))).unwrap();
+        change(&mut c, "importCreator", "", "", Some(creator("来源标题", ""))).unwrap();
+        let items = list(&c).unwrap().items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].folder_id, folder);
+        assert_eq!(items[0].title, "原标题");
+        assert!(change(&mut c, "importCreator", "", "", Some(season(1, "合集", ""))).is_err());
     }
 
     #[test]

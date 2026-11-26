@@ -146,10 +146,22 @@ export function DiagnosticsSettings({ large = false }: { large?: boolean }) {
       setCopied('设备环境已复制')
     } catch { setCopied('复制失败，请重试') }
   }
+  const copyPlayback = async () => {
+    if (!environment) return
+    const epoch = accountEpoch()
+    try {
+      const records = await diagnosticsRecent(undefined, 'playback')
+      if (epoch !== accountEpoch()) return
+      if (!records.length) { setCopied('暂无播放诊断记录'); return }
+      await copyText(JSON.stringify({ schemaVersion: 1, version: currentDisplayVersion, environment, exportedAt: new Date().toISOString(), records: records.slice().reverse() }, null, 2))
+      if (epoch === accountEpoch()) setCopied('播放诊断已复制')
+    } catch { if (epoch === accountEpoch()) setCopied('复制失败，请重试') }
+  }
   return <section className="settings-card" aria-label="诊断记录">
     <div className="settings-icon"><Activity/></div><div><strong>诊断记录</strong><small>播放、下载、同步与启动</small></div>
     <div className="diagnostics-settings-actions">
       <button type="button" onClick={() => setOpen(true)}>查看记录</button>
+      <button type="button" disabled={!environment} onClick={() => void copyPlayback()}>复制播放诊断</button>
       <button type="button" disabled={!environment} onClick={() => void copyEnvironment()}>复制设备环境</button>
     </div>
     {copied && <small className="diagnostics-settings-feedback" role="status">{copied}</small>}

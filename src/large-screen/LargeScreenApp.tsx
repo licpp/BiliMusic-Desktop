@@ -106,7 +106,8 @@ export function LargeScreenApp() {
   }
   const favoriteCurrent = () => { if (current) void favorite(current).catch(e => setActionError(commandErrorMessage(e))) }
   const showMenu = (track: Track, visibilityScope?:string, replaceVideo?:()=>void) => setMenu({ track, visibilityScope, replaceVideo })
-  const filterKey = route.kind === 'folder' ? `folder:${route.id}` : route.kind === 'playlist' ? `playlist:${route.playlist.id}` : route.kind === 'collection' ? `collection:${route.item.bvid}` : `library:${tab}`
+  const activePlaylist = route.kind === 'playlist' ? route.playlist : route.kind === 'player' ? route.previewFrom : undefined
+  const filterKey = route.kind === 'folder' ? `folder:${route.id}` : activePlaylist ? `playlist:${activePlaylist.id}` : route.kind === 'collection' ? `collection:${route.item.bvid}` : `library:${tab}`
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
   const active = ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
   return <div onSubmitCapture={dismissLargeKeyboard} className={`large-shell${route.kind === 'player' ? ' player-open' : route.kind === 'home' ? ' home-open' : ''}`}>
@@ -116,13 +117,16 @@ export function LargeScreenApp() {
       {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}
       {route.kind === 'library' && <LargeLibrary filterState={filterState} tab={tab} setTab={setTab} navigate={navigate}/>}
       {route.kind === 'folder' && <LargeLibrary filterState={filterState} key={route.id} tab={tab} setTab={setTab} navigate={navigate} folder={route}/>}
-      {route.kind === 'playlist' && <LargePlaylist filterState={filterState} key={route.playlist.id} playlist={route.playlist} onMore={(track,replaceVideo)=>showMenu(track,undefined,replaceVideo)} navigate={navigate}/>}
+      {activePlaylist && <div hidden={route.kind === 'player'}>
+        <LargePlaylist filterState={filterState} key={activePlaylist.id} playlist={activePlaylist} previewing={route.kind === 'player'}
+          onMore={(track, replaceVideo) => showMenu(track, undefined, replaceVideo)} navigate={navigate}/>
+      </div>}
       {route.kind === 'collection' && <LargeCollection filterState={filterState} key={route.item.bvid} item={route.item} resumeRequest={route.resume} parentRef={route.parentRef} onMore={showMenu} navigate={navigate}/>}
       {route.kind === 'creator' && <LargeCreator route={route} navigate={navigate} replace={setRoute}/>}
       {route.kind === 'search' && <LargeSearch kind={searchKind} setKind={setSearchKind} query={query} setQuery={setQuery} navigate={navigate}/>}
       {route.kind === 'offline' && <LargeOffline/>}
       {route.kind === 'settings' && <LargeSettings/>}
-      {route.kind === 'player' && <LargePlayer onSleep={() => setSleep(true)} onBack={() => back()} onQueue={() => setQueueOpen(true)} onFavorite={favoriteCurrent} onMore={showMenu} navigate={navigate}/>}
+      {route.kind === 'player' && <LargePlayer duplicatePreview={Boolean(route.previewFrom)} onSleep={() => setSleep(true)} onBack={() => back()} onQueue={() => setQueueOpen(true)} onFavorite={favoriteCurrent} onMore={showMenu} navigate={navigate}/>}
     </main>
     {route.kind !== 'player' && <footer className="large-dock"><button className="large-dock-song" data-focus="dock-song" disabled={!current} onClick={() => navigate({ kind: 'player' })}><Artwork adaptAspect src={current?.coverUrl}/><span><strong>{current?.displayTitle || current?.title || '让音乐开始'}</strong><small>{current?.artist || current?.source.uploaderName || '选择一首喜欢的歌'}</small></span></button><LargeControls/><div className="large-dock-actions"><button aria-label="定时暂停" onClick={() => setSleep(true)} disabled={!current}>定时</button><button onClick={() => setQueueOpen(true)} aria-label={`播放队列，${queue.length}首`}><ListMusic/><span>队列</span><small>{queue.length}</small></button></div></footer>}
     {queueOpen && <LargeQueue onClose={() => setQueueOpen(false)} onMore={track => setMenu({ track, queue: true })}/>}

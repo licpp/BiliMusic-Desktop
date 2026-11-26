@@ -69,7 +69,13 @@ class PlaybackService : MediaSessionService() {
     private var upgradeAfterPosition = 0.0
     private var session: MediaSession? = null
     private var controller: MediaController? = null
-    private val sessionPlayer = SystemSessionPlayer(::controlFromMediaSession, { control("seek", it / 1000.0) }) { id ->
+    private val sessionPlayer = SystemSessionPlayer({ action ->
+        val activeSession = session
+        val controller = activeSession?.controllerForCurrentRequest
+        val notification = controller != null &&
+            (controller.packageName == "com.android.systemui" || activeSession.isMediaNotificationController(controller))
+        controlFromMediaSession(action, notification)
+    }, { control("seek", it / 1000.0) }) { id ->
         if (!expireSleepIfNeeded()) queue.find(id)?.let {
             mediaButtons.cancel()
             resolveTrack(it)
@@ -81,7 +87,7 @@ class PlaybackService : MediaSessionService() {
     private val playbackAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private val handler = Handler(Looper.getMainLooper())
-    private val mediaButtons = MediaButtons(handler, ::hasOtherTracks, ::controlFromMediaSession)
+    private val mediaButtons = MediaButtons(handler, ::hasOtherTracks) { controlFromMediaSession(it) }
     private var sleepEndsAt = 0L
     private var sleepDeadline = 0L
     private var sleepDuration = 0.0
@@ -231,9 +237,10 @@ class PlaybackService : MediaSessionService() {
         return handled
     }
 
-    private fun controlFromMediaSession(action: String) {
+    private fun controlFromMediaSession(action: String, notification: Boolean = false) {
         if (action == "next" || action == "previous" || action == "resume" || action == "pause") {
-            diagnostic("media-key", "started", action)
+            val code = if (notification && (action == "resume" || action == "pause")) "notification_$action" else action
+            diagnostic("media-key", "started", code)
         }
         mediaButtons.cancel()
         when (action) {
@@ -571,7 +578,7 @@ class PlaybackService : MediaSessionService() {
                 startPlaybackForeground()
             }
             "load" -> { pausedPlayback = null; mediaButtons.cancel(); load(intent) }
-            "next", "previous", "toggle", "resume", "pause", "stop" -> controlFromMediaSession(intent.action!!)
+            "next", "previous", "toggle", "resume", "pause", "stop" -> controlFromMediaSession(intent.action!!, notification = true)
         }
         // Never restart silently after Android kills the process: saved URLs are temporary.
         return START_NOT_STICKY
@@ -1062,7 +1069,8 @@ class PlaybackService : MediaSessionService() {
         }
         if (lastFloatingStyle != FloatingLyricsOverlay.styleRevision.toLong()) {
             lastFloatingStyle = FloatingLyricsOverlay.styleRevision.toLong()
-            snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize).put("floatingLyricsLocked",FloatingLyricsOverlay.locked)
+            snapshot.put("floatingLyricsStyleRevision",lastFloatingStyle).put("floatingLyricsFontSize",FloatingLyricsOverlay.fontSize)
+                .put("floatingLyricsLocked",FloatingLyricsOverlay.locked).put("floatingLyricsLanguage",FloatingLyricsOverlay.language.value)
         }
         return snapshot
     }

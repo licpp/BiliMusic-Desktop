@@ -30,7 +30,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -221,6 +221,12 @@ export const addTracksToPlaylist = (playlistId: string, trackIds: string[], appe
 export const addTrackToPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_add_track', { playlistId, trackId })
 export const removeTrackFromPlaylist = (playlistId: string, trackId: string) => write<void>('playlist_remove_track', { playlistId, trackId })
 export const removeTracksFromPlaylist = (playlistId: string, trackIds: string[]) => write<void>('playlist_remove_tracks', { playlistId, trackIds })
+export const reorderPlaylist = (playlistId: string, expected: string[], ordered: string[]) => write<void>('playlist_reorder', { playlistId, expected, ordered })
+export async function replacePlaylistVideo(playlistId: string, previous: string, track: Track, keepExisting?: boolean) {
+  const saved = await scopedInvoke<boolean>('playlist_replace_video', { playlistId, previous, track: toTrackInput(track), keepExisting })
+  if (saved) window.dispatchEvent(new Event('bilimusic-data-changed'))
+  return saved
+}
 export const deletePlaylist = (playlistId: string) => write<void>('playlist_delete', { playlistId })
 export const renamePlaylist = (playlistId: string, name: string) => write<void>('playlist_rename', { playlistId, name })
 export async function searchMetadataCatalog(title: string, artist: string, source: CatalogSource = 'auto', context?: { uploaderName?: string }): Promise<CatalogCandidate[]> {

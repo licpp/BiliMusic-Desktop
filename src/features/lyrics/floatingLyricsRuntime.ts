@@ -44,7 +44,7 @@ export function startFloatingLyrics() {
       displayLines=displaySource.map(line=>({...line,text:lyricDisplayText(line.text),words:line.words?.map(word=>({...word,text:lyricDisplayText(word.text)}))}))
     }
     const timeline={...sourceTimeline,lines:displayLines}
-    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,alignment:style.alignment,capturedAt:Date.now()}
+    const frame: FloatingFrame = {id:current?.id || '',title:current?.title || 'BiliMusic',artist:current?.artist || '',position:playbackClock(),rate:state.rate,playing:state.status === 'playing',theme:useThemeStore.getState().theme,...timeline,fontSize:style.fontSize,locked:style.locked,activeColor:style.activeColor,inactiveColor:style.inactiveColor,alignment:style.alignment,language:style.language,capturedAt:Date.now()}
     if (isMobile) {
       // Native renderers read their own player's clock, even with JS suspended.
       const session = isAndroid ? nativeLyricPlaybackSession(frame.id) : undefined
@@ -98,15 +98,55 @@ export function startFloatingLyrics() {
       isIOS && state.status === 'playing' && previous.status !== 'playing' ||
       !isMobile && (state.status !== previous.status || state.rate !== previous.rate)) void publish()
   }))
-  const configure = () => { if(isIOS||isOHOS)return;const {fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}=useFloatingPreferences.getState();void (isMobile ? nativeLyrics({action:'configure',fontSize,locked,showUnlockButton,activeColor,inactiveColor,alignment}) : invoke('floating_lyrics_configure',{locked})).catch(()=>undefined) }
-  stop.push(useFloatingPreferences.subscribe(()=>{configure();lastNative='';void publish()}))
-  onWindow('bilimusic-floating-lyrics-change',configure)
+  type NativeStyle = Partial<Pick<FloatingPreferences, 'fontSize' | 'locked' | 'language'>>
+  let preferenceRequest = 0
+  let applyingNativeStyle = false
+  const applyNativeStyle = ({ fontSize, locked, language }: NativeStyle) => {
+    const current = useFloatingPreferences.getState()
+    const patch: NativeStyle = {}
+    if (fontSize !== undefined && current.fontSize !== fontSize) patch.fontSize = fontSize
+    if (locked !== undefined && current.locked !== locked) patch.locked = locked
+    if (language !== undefined && current.language !== language) patch.language = language
+    if (!Object.keys(patch).length) return
+    applyingNativeStyle = true
+    try { current.update(patch) } finally { applyingNativeStyle = false }
+  }
+  const readNativeLanguage = (command: object) => {
+    const request = ++preferenceRequest
+    void nativeLyrics<NativeStyle>(command).then(({ language }) => {
+      if (!disposed && request === preferenceRequest) applyNativeStyle({ language })
+    }).catch(() => undefined)
+  }
+  const configure = (languageChanged = false) => {
+    if (isIOS || isOHOS) return
+    const { fontSize, locked, showUnlockButton, activeColor, inactiveColor, alignment, language } = useFloatingPreferences.getState()
+    if (isAndroid) {
+      readNativeLanguage({ action: 'configure', fontSize, locked, showUnlockButton, activeColor, inactiveColor, alignment,
+        ...(languageChanged ? { language } : { initialLanguage: language }) })
+    } else void invoke('floating_lyrics_configure', { locked }).catch(() => undefined)
+  }
+  stop.push(useFloatingPreferences.subscribe((value, previous) => {
+    if (!applyingNativeStyle) configure(value.language !== previous.language)
+    lastNative = ''
+    void publish()
+  }))
+  onWindow('bilimusic-floating-lyrics-change', () => configure())
   configure()
+  if (isAndroid) {
+    const restoreNativeLanguage = () => {
+      if (document.visibilityState === 'visible') readNativeLanguage({ action: 'status' })
+    }
+    document.addEventListener('visibilitychange', restoreNativeLanguage)
+    stop.push(() => document.removeEventListener('visibilitychange', restoreNativeLanguage))
+  }
   stop.push(useThemeStore.subscribe(() => { void publish() }))
   stop.push(useSubtitleState.subscribe(() => { void publish() }))
   onWindow('bilimusic-lyrics-updated',updated)
   onWindow('bilimusic-lyric-bias',updated)
-  onWindow('bilimusic-floating-style',event=>{const value=(event as CustomEvent<{fontSize?:number;locked?:boolean}>).detail,current=useFloatingPreferences.getState();const patch:Partial<{fontSize:number;locked:boolean}>={};if(value.fontSize!==undefined&&value.fontSize!==current.fontSize)patch.fontSize=value.fontSize;if(value.locked!==undefined&&value.locked!==current.locked)patch.locked=value.locked;if(Object.keys(patch).length)current.update(patch)})
+  onWindow('bilimusic-floating-style', event => {
+    preferenceRequest++
+    applyNativeStyle((event as CustomEvent<NativeStyle>).detail)
+  })
   onWindow('bilimusic-native-floating',event=>useFloatingLyrics.setState({enabled:(event as CustomEvent<boolean>).detail}))
   onWindow('bilimusic-floating-lyrics-change',()=>{lastNative='';void publish()})
   onWindow('bilimusic-account-changing',()=>{++revision;stored=null;lines=[];lastNative='';void setFloatingLyrics(false);void publish()})

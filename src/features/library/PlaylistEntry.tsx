@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Album, ListChecks, FolderOpen, Heart, Link2, ListPlus, Pencil, Play, RefreshCw, Trash2, Unlink2 } from 'lucide-react'
+import { Album, ListChecks, FolderOpen, Heart, Link2, ListPlus, Pencil, Play, RefreshCw, ScanSearch, Trash2, Unlink2 } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
 import { commandErrorMessage, deletePlaylist, listPlaylistTracks, renamePlaylist, unlinkBiliFolder } from '../../services/desktopApi'
 import type { Playlist } from '../../domain/library'
@@ -11,15 +11,17 @@ import type { MenuPosition } from '../../shared/useRowContextMenu'
 import { usePlayerStore } from '../player/playerStore'
 import { LibraryArtworkEntry } from './LibraryArtworkEntry'
 
-export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch, missingCount, contextPosition, listActions }: {
+export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch, onFindDuplicates, missingCount, contextPosition, listActions, disabled }: {
   playlist: Playlist
   listActions?: { select: () => void; play: () => void; enqueue: () => void; disabled: boolean }
   onOpen?: () => void
   onRemoved?: () => void
   onRefresh?: () => Promise<unknown>
   onRematch?: () => void
+  onFindDuplicates?: () => void
   missingCount?: number
   contextPosition?: MenuPosition
+  disabled?: boolean
 }) {
   const client = useQueryClient()
   const [action, setAction] = useState<'rename' | 'delete' | 'unlink'>()
@@ -50,7 +52,7 @@ export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch
     else await player.playAll(tracks)
   })
   return <>
-    <ActionMenu sheet label={`${label}操作：${playlist.name}`} contextPosition={contextPosition}>{close => <>
+    <ActionMenu sheet label={`${label}操作：${playlist.name}`} contextPosition={contextPosition} disabled={disabled}>{close => <>
       {listActions && <button role="menuitem" disabled={busy || listActions.disabled} onClick={() => { close(); listActions.select() }}><ListChecks size={16}/>多选歌曲</button>}
       {onOpen && <button role="menuitem" onClick={() => { close(); onOpen() }}><FolderOpen size={16}/>打开{label}</button>}
       {folderId ? <>
@@ -60,6 +62,7 @@ export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch
         <button role="menuitem" disabled={busy || (listActions ? listActions.disabled : !playlist.trackCount)} onClick={() => { close(); if (listActions) listActions.play(); else void play(false) }}><Play size={16}/>播放全部</button>
         <button role="menuitem" disabled={busy || (listActions ? listActions.disabled : !playlist.trackCount)} onClick={() => { close(); if (listActions) listActions.enqueue(); else void play(true) }}><ListPlus size={16}/>全部加入队列</button>
         {onRematch&&<button role="menuitem" disabled={busy} onClick={()=>{close();onRematch()}}><RefreshCw size={16}/>补全未匹配{missingCount ? ` · ${missingCount}` : ''}</button>}
+        {onFindDuplicates && <button role="menuitem" disabled={busy} onClick={() => { close(); onFindDuplicates() }}><ScanSearch size={16}/>查找重复</button>}
         {!playlist.isSystem && <>
           <button role="menuitem" disabled={busy} onClick={() => { close(); prepare('rename') }}><Pencil size={16}/>重命名歌单</button>
           <button role="menuitem" disabled={busy} onClick={() => { close(); prepare('delete') }}><Trash2 size={16}/>删除歌单</button>
@@ -95,11 +98,12 @@ export function PlaylistMenu({ playlist, onOpen, onRemoved, onRefresh, onRematch
   </>
 }
 
-export function PlaylistEntry({ playlist, sidebar = false, gallery = false, active = false, onOpen, onRemoved }: {
+export function PlaylistEntry({ playlist, sidebar = false, gallery = false, active = false, order, onOpen, onRemoved }: {
   playlist: Playlist
   sidebar?: boolean
   gallery?: boolean
   active?: boolean
+  order?: ComponentProps<typeof LibraryArtworkEntry>['order']
   onOpen: () => void
   onRemoved?: () => void
 }) {
@@ -108,7 +112,7 @@ export function PlaylistEntry({ playlist, sidebar = false, gallery = false, acti
     className: playlist.isSystem ? 'favorites-playlist-artwork' : undefined,
     fallback: playlist.isSystem ? <Heart size={17} fill="currentColor"/> : playlist.biliFolderId ? <Link2 aria-hidden="true"/> : <Album size={17}/>,
     imageOverlay: playlist.isSystem ? <span className="favorites-heart-overlay" aria-hidden="true"><Heart fill="none" strokeWidth={2.2}/></span> : undefined,
-  }} title={playlist.name} coverBadge={playlist.biliFolderId ? 'linked' : undefined} subtitle={subtitle} sidebar={sidebar} active={active} onOpen={onOpen}
+  }} title={playlist.name} coverBadge={playlist.biliFolderId ? 'linked' : undefined} subtitle={subtitle} sidebar={sidebar} active={active} order={order} onOpen={onOpen}
     coverClassName={playlist.isSystem ? 'favorites-cover' : undefined}
     menu={position => <PlaylistMenu playlist={playlist} contextPosition={position} onOpen={onOpen} onRemoved={onRemoved}/>}/>
 }

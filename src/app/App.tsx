@@ -202,6 +202,7 @@ export function App() {
   const searchScroll = useRef<HTMLDivElement>(null)
   useEffect(() => { if (searchScroll.current) searchScroll.current.scrollTop = 0 }, [submittedQuery])
   const [lyricsOpen, setLyricsOpen] = useState(false)
+  const [duplicatePreview, setDuplicatePreview] = useState(false)
   const [miniMode,setMiniMode]=useState(false)
   const chapters = usePlaybackChapters(lyricsOpen && !miniMode)
   const [fullscreenLayout, setFullscreenLayout] = useState<'compact' | 'wide' | null>(null)
@@ -218,6 +219,9 @@ export function App() {
   const mobilePlayer = useMobilePlayerSurface(compactPlayer, lyricsOpen && !miniMode, tabletPlayer)
   const immersivePresent = usePanelPresence(lyricsOpen && !miniMode && !compactPlayer, tabletPlayer ? 224 : isMobile ? 160 : 210)
   const lyricsPresent = compactPlayer ? mobilePlayer.present : immersivePresent
+  useEffect(() => {
+    if (!lyricsOpen && !lyricsPresent) setDuplicatePreview(false)
+  }, [lyricsOpen, lyricsPresent])
   const desktopLyrics = !isMobile && immersivePresent
   const desktopLyricsSurface = useRef<HTMLDivElement>(null)
   usePanelReveal(desktopLyricsSurface, lyricsOpen && !miniMode)
@@ -275,7 +279,7 @@ export function App() {
   const createList = useMutation({ mutationFn: (name: string) => createLinked ? createLinkedPlaylist(name) : createPlaylist(name), onSuccess: (playlist) => { queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); setActiveNav(`playlist:${playlist.id}`); setCreatingPlaylist(false); setPlaylistName(''); setCreateLinked(false) } })
   const displayPreferences=useListPreferences()
   const allPlaylists = rankList(playlists.data || [FAVORITES_PLAYLIST],displayPreferences.data?.preferences||[],playlistEntity)
-  const sidebarOrganizer = useOrganizer(allPlaylists.map(item => ({id:playlistEntity(item),name:item.name,coverUrl:item.coverUrl,kind:item.biliFolderId?'linked' as const:'playlist' as const})), '整理歌单')
+  const sidebarOrganizer = useOrganizer(allPlaylists.map(item => ({ id: playlistEntity(item), name: item.name })), '整理歌单')
   const activePlaylist = allPlaylists.find(playlist => activeNav === `playlist:${playlist.id}`)
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
@@ -561,7 +565,7 @@ export function App() {
   const browseInert = lyricsPresent
   const wideTabletDock = tabletPlayer && !compactPlayer
   const renderLyrics = () => (
-      <LyricsView open={lyricsOpen} chapters={chapters} fullscreenRequested={fullscreenLayout !== null} setVideoFullscreen={setVideoFullscreen} motionSurface={compactPlayer ? mobilePlayer.ref : undefined} onSwipeRelease={compactPlayer ? mobilePlayer.releaseDismiss : undefined} inert={queueSheet && queueOpen} onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />
+      <LyricsView open={lyricsOpen} duplicatePreview={duplicatePreview} chapters={chapters} fullscreenRequested={fullscreenLayout !== null} setVideoFullscreen={setVideoFullscreen} motionSurface={compactPlayer ? mobilePlayer.ref : undefined} onSwipeRelease={compactPlayer ? mobilePlayer.releaseDismiss : undefined} inert={queueSheet && queueOpen} onMiniPlayer={miniPlayerSupported?()=>void changeMiniMode(true):undefined} onOpenSleepTimer={() => setSleepTimerOpen(true)} onClose={() => setLyricsOpen(false)} onFavorite={() => void toggleCurrentFavorite()} favoritePending={favoritePending} onOpenCollection={item => openCollection(item, 'lyrics')} />
   )
   const renderDockTrack = (showCollapse: boolean, inactive = false) => (
     <div className={`dock-track-group dock-swipe-${dockSwipePhase}`} data-dock-track={showCollapse ? 'lyrics' : 'browse'}
@@ -571,9 +575,9 @@ export function App() {
         if (event.detail && suppressDockClick.current) { suppressDockClick.current = false; return }
         if (lyricsOpen) setLyricsOpen(false)
         else showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)
-      }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? '收起歌词' : '打开歌词'}>
+      }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? (duplicatePreview ? '返回查重' : '收起歌词') : '打开歌词'}>
         {!(wideTabletDock && showCollapse) && <><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></>}
-        <span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>收起歌词</span></span>
+        <span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>{duplicatePreview ? '返回查重' : '收起歌词'}</span></span>
       </button>
       <button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending}
         aria-label={current?.liked ? '取消喜欢当前歌曲' : '喜欢当前歌曲'} aria-pressed={Boolean(current?.liked)}
@@ -646,18 +650,17 @@ export function App() {
               <small className="sidebar-count">{allPlaylists.length}</small>
             </button>
             <div className="sidebar-heading-actions library-action-rail" hidden={!playlistsExpanded}>
-              {sidebarOrganizer.editing ? sidebarOrganizer.controls : <>
-                {sidebarOrganizer.canEdit && <button type="button" className="sidebar-icon-btn" title="整理歌单" aria-label="整理歌单" onClick={sidebarOrganizer.start}><ListFilter size={15}/></button>}
-                <ActionMenu panelClassName="sidebar-add-menu" label={importRunning ? '查看导入进度' : '新建或导入歌单'} icon={importRunning ? <LoaderCircle size={15} className="spin"/> : <Plus size={16}/>}>{close => <>
-                  <button role="menuitem" onClick={() => { close(); setCreatingPlaylist(true) }}><Plus size={16}/><span><strong>新建歌单</strong><small>创建本地或同步 B 站收藏夹</small></span></button>
-                  <button role="menuitem" onClick={() => { close(); setImportOpen(true) }}><ListPlus size={16}/><span><strong>{importRunning ? '查看导入进度' : '导入歌单'}</strong><small>B 站收藏夹、在线歌单或本地</small></span></button>
-                </>}</ActionMenu>
-              </>}
+              {sidebarOrganizer.controls}
+              <ActionMenu disabled={sidebarOrganizer.editing} panelClassName="sidebar-add-menu" label={importRunning ? '查看导入进度' : '新建或导入歌单'} icon={importRunning ? <LoaderCircle size={15} className="spin"/> : <Plus size={16}/>}>{close => <>
+                <button role="menuitem" onClick={() => { close(); setCreatingPlaylist(true) }}><Plus size={16}/><span><strong>新建歌单</strong><small>创建本地或同步 B 站收藏夹</small></span></button>
+                <button role="menuitem" onClick={() => { close(); setImportOpen(true) }}><ListPlus size={16}/><span><strong>{importRunning ? '查看导入进度' : '导入歌单'}</strong><small>B 站收藏夹、在线歌单或本地</small></span></button>
+              </>}</ActionMenu>
             </div>
           </div>
 
-          <div className="collection-list" hidden={!playlistsExpanded}>
-            {sidebarOrganizer.editing ? sidebarOrganizer.editor : allPlaylists.map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar
+          {playlistsExpanded && sidebarOrganizer.error && <p className="inline-error" role="alert">{sidebarOrganizer.error}</p>}
+          <div className="collection-list" hidden={!playlistsExpanded} {...sidebarOrganizer.listProps}>
+            {sidebarOrganizer.order(allPlaylists, playlistEntity).map(playlist => <PlaylistEntry key={playlist.id} playlist={playlist} sidebar order={{ organizer: sidebarOrganizer, id: playlistEntity(playlist) }}
               active={activeNav === `playlist:${playlist.id}`} onOpen={() => openPlaylist(playlist.id)} onRemoved={() => playlistRemoved(playlist.id)}/>)}
           </div>
         </section>
@@ -700,7 +703,9 @@ export function App() {
           {activeCreatorFolder!==undefined ? <CreatorsView key={activeCreatorFolder} followed folderId={activeCreatorFolder} onOpen={openCollection} onOpenFolder={openCreatorFolder} onFolderRemoved={closeLibraryPage}/> : activeFolder !== undefined ? <CollectionsView key={activeFolder} folderId={activeFolder} onOpenFolder={openFolder}
             onOpenLinked={openPlaylist} onLinkedRemoved={playlistRemoved} onSelect={openCollection} onFolderRemoved={folderRemoved}/> :
           activePlaylist?.biliFolderId ? <LinkedFolderView key={activePlaylist.id} playlist={{ ...activePlaylist, biliFolderId: activePlaylist.biliFolderId }} onUnlink={closeLibraryPage}/> :
-          activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
+          activePlaylist ? <LibraryView key={activePlaylist.id} playlist={activePlaylist} active={!selectedCollection && detailActive}
+            lyricsPresent={lyricsOpen || lyricsPresent} onPreviewLyrics={() => { setDuplicatePreview(true); setLyricsOpen(true) }}
+            onPlaylistDeleted={closeLibraryPage} onRematchImported={playlist=>{const job=usePlaylistImport.getState().job;setRematchPlaylist(job?.playlistId===playlist.id&&job.state!=='done'?undefined:playlist);setImportOpen(true)}}/> :
           libraryDetail && <ListSkeleton label="正在读取歌单" />}
           </div>
         </div>
@@ -776,11 +781,9 @@ export function App() {
             {queue.length > 1 && <button type="button" className="queue-organize" aria-pressed={queueSorting}
               aria-label={queueSorting ? '完成整理' : '整理播放队列'} title={queueSorting ? '完成整理' : '整理播放队列'}
               onClick={() => setQueueSorting(value => !value)}>{queueSorting ? <Check size={16}/> : <ListFilter size={16}/>}</button>}
-            {!queueSorting && <>
-              <button type="button" className="queue-reverse" disabled={queue.length < 2} onClick={reverseQueue} aria-pressed={queueReversed}
-                aria-label={queueReversed ? '恢复原序' : '倒序播放'} title={queueReversed ? '恢复原序' : '倒序播放'}><ArrowDownUp size={16}/></button>
-              <button disabled={!queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button>
-            </>}
+            <button type="button" className="queue-reverse" disabled={queueSorting || queue.length < 2} onClick={reverseQueue} aria-pressed={queueReversed}
+              aria-label={queueReversed ? '恢复原序' : '倒序播放'} title={queueReversed ? '恢复原序' : '倒序播放'}><ArrowDownUp size={16}/></button>
+            <button disabled={queueSorting || !queue.length} onClick={clearQueue} aria-label="清空队列"><Trash2 size={16} /></button>
             <button onClick={toggleQueue} aria-label="收起队列">{queueSheet ? <ChevronDown size={20}/> : <X size={18}/>}</button>
           </div>
         </header>

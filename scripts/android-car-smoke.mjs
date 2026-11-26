@@ -113,6 +113,23 @@ try {
   await click('[data-focus="nav-settings"]')
   await visible('[data-focus="nav-settings"][aria-current="page"]')
   report.settings = true
+  report.settingsLayout = await evaluate(`(function () {
+    const card = document.querySelector('.loudness-setting');
+    const icon = card.children[0].getBoundingClientRect();
+    const copy = card.children[1].getBoundingClientRect();
+    const toggle = card.children[2].getBoundingClientRect();
+    const dock = document.querySelector('.large-dock-song');
+    const queue = document.querySelector('.large-dock-actions button:last-child');
+    return {
+      settingsGap: copy.left - icon.right,
+      toggleGap: toggle.left - copy.right,
+      artworkGap: dock.children[1].getBoundingClientRect().left - dock.children[0].getBoundingClientRect().right,
+      queueIconGap: queue.children[1].getBoundingClientRect().left - queue.children[0].getBoundingClientRect().right
+    };
+  })()`)
+  for (const [control, gap] of Object.entries(report.settingsLayout)) {
+    assert.ok(gap > 0, `${control} must have spacing on the actual WebView`)
+  }
 
   if (bvid) {
     await click('[data-focus="nav-search"]')

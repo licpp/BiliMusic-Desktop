@@ -93,6 +93,11 @@ pub fn save(c: &Connection, changes: &[Preference]) -> Result<(), String> {
         return Err("一次整理的项目过多".into());
     }
     let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+    save_in_transaction(&tx, changes)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+pub(super) fn save_in_transaction(c: &Connection, changes: &[Preference]) -> Result<(), String> {
     for row in changes {
         let local_collection_rule = row.display_rank.is_none()
             && row.sort_rule.is_some()
@@ -126,7 +131,7 @@ pub fn save(c: &Connection, changes: &[Preference]) -> Result<(), String> {
         };
         c.execute("INSERT INTO list_preferences(entity,display_rank,sort_rule) VALUES(?1,?2,?3) ON CONFLICT(entity) DO UPDATE SET display_rank=COALESCE(excluded.display_rank,display_rank),sort_rule=COALESCE(excluded.sort_rule,sort_rule)",params![row.entity,row.display_rank,sync_rule]).map_err(|e|e.to_string())?;
     }
-    tx.commit().map_err(|e| e.to_string())
+    Ok(())
 }
 
 pub fn export(c: &Connection, snapshot: &mut Snapshot) -> Result<(), String> {

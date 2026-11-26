@@ -17,6 +17,7 @@
 .import-icon{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;background:transparent;color:var(--muted);border:0;border-radius:50%;padding:0}
 .import-icon:hover{background:var(--line);color:var(--ink)}
 .import-body{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain;padding:4px 26px 26px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.favorite-import-slot:not([hidden]) { display:contents; }
 .import-hint{color:var(--muted);font-size:13px;line-height:1.7;margin:0}
 .import-hint{text-align:center;padding:18px 0 2px}
 .import-sources {
@@ -94,6 +95,12 @@
 .import-season-list [aria-pressed=false] .import-selection {
   border-color: color-mix(in srgb,var(--muted) 48%,var(--line));
 }
+.import-following-toolbar > .touch-options { flex:1;min-width:0; }
+.import-following-toolbar > button { flex:none;margin-left:auto; }
+.import-following-search { margin-bottom:10px; }
+.import-following-search > svg { flex:none; }
+.import-following-artwork { flex:0 0 44px;width:44px;height:44px;border-radius:50%; }
+.import-following-sign { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .import-local-folder {
   display:flex;align-items:center;flex-wrap:wrap;gap:12px;
   padding:14px;border:1px solid var(--line);border-radius:14px;

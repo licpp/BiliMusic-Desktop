@@ -27,7 +27,10 @@ import '../styles/collections.css'
 import '../styles/media-features.css'
 import '../styles/playback-cache.css'
 import '../styles/editor-polish.css'
+import '../styles/playlist-import.css'
+import '../styles/components/imports.css'
 import './large-screen.css'
+import './library-import.css'
 import '../features/chapters/chapters.css'
 import '../features/settings/diagnostics.css'
 
@@ -35,7 +38,7 @@ document.documentElement.dataset.layout = 'large'
 document.documentElement.style.setProperty('--large-scale', String([0.9, 1, 1.15].includes(Number(localStorage.getItem('large-ui-size'))) ? Number(localStorage.getItem('large-ui-size')) : 1))
 document.documentElement.style.setProperty('--large-lyric-scale', String([0.85, 1, 1.2].includes(Number(localStorage.getItem('large-lyrics-size'))) ? Number(localStorage.getItem('large-lyrics-size')) : 1))
 document.documentElement.dataset.platform = isAndroid ? 'android' : 'desktop'
-installMobileKeyboard({ scrollContainers: '.large-dialog,.large-main', topInset: 58, onDismiss: dismissLargeKeyboard })
+installMobileKeyboard({ scrollContainers: '.large-library-import-dialog .import-body,.large-dialog,.large-main', topInset: 58, onDismiss: dismissLargeKeyboard })
 installOverlayBack()
 if (isAndroid) void controlMobileAudio('largeScreen', 1).catch(() => undefined)
 const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: retryOnceUnlessBiliPaused, refetchOnWindowFocus: false } } })

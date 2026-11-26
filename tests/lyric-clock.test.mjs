@@ -26,10 +26,18 @@ test('word fill uses fractional frame positions and remains filled after a word 
 globalThis.window={addEventListener(){}}
 const{readFloatingPreferences}=await moduleAt('src/services/floatingLyricsPreferences.ts')
 test('existing lyric settings migrate with colors and invalid color input falls back safely',()=>{
- assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5',alignment:'edges'})
+ assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5',alignment:'edges',language:'original'})
  const value=readFloatingPreferences('{"fontSize":100,"activeColor":"#AABBCC","inactiveColor":"url(x)"}');assert.equal(value.fontSize,48);assert.equal(value.activeColor,'#aabbcc');assert.equal(value.inactiveColor,'#91a6b5')
 })
-const {centeredLyricOffset}=await moduleAt('src/domain/lyricTimeline.ts')
+const {centeredLyricOffset,floatingDisplaySlots}=await moduleAt('src/domain/lyricTimeline.ts')
+test('floating translations follow the same line without inheriting original word timings',()=>{
+ const lyrics=[{timeMs:1000,text:'原文',translation:'Translation',words:[{text:'原文',startTimeMs:1000,endTimeMs:1800}]},{timeMs:2000,text:'下一行'}]
+ assert.deepEqual(floatingDisplaySlots(lyrics,1100,false,'bilingual').map(slot=>[slot.line?.text,slot.active]),[['原文',true],['Translation',false]])
+ assert.equal(floatingDisplaySlots(lyrics,1100,false,'translation')[0].line.words,undefined)
+ assert.equal(floatingDisplaySlots(lyrics,2100,false,'translation')[1].line.text,'下一行')
+ assert.equal(floatingDisplaySlots(lyrics,2100,false,'bilingual')[1].line,undefined)
+ assert.equal(readFloatingPreferences('{"language":"bilingual"}').language,'bilingual')
+})
 test('centered floating lyrics use the other half as needed before marquee scrolling',()=>{
  assert.equal(readFloatingPreferences('{"alignment":"center"}').alignment,'center')
  assert.equal(centeredLyricOffset(0,400,80),112)

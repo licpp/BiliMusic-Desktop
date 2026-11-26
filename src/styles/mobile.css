@@ -306,3 +306,10 @@
    display:flex;align-items:center;justify-content:center;line-height:0;
  }
 }
+
+@media (max-width: 960px) {
+  :root[data-layout="mobile"] .lyrics-topbar[data-duplicate-preview] {
+    grid-template-columns: minmax(40px,1fr) max-content minmax(40px,1fr);
+  }
+  :root[data-layout="mobile"] .lyrics-topbar[data-duplicate-preview] > span { display:block;text-align:center; }
+}

@@ -98,6 +98,135 @@ async fn sync(p: &Profile, cfg: &Config, secret: &Secret) -> super::Outcome {
 }
 
 #[tokio::test]
+async fn favorites_can_replace_and_reorder_without_changing_the_core_sync_format() {
+    use crate::infrastructure::repositories::{
+        library::{LibraryRepository, TrackInput},
+        playlists::{FAVORITES_PLAYLIST_ID as FAVORITES, PlaylistRepository},
+    };
+    let (cfg, secret, _, server) = test_dav::server().await;
+    let a = Profile::new(&cfg);
+    let b = Profile::new(&cfg);
+    let track = |cid| TrackInput {
+        id: format!("bilibili:BV1qFuQz2EVx:{cid}"),
+        cid,
+        bvid: "BV1qFuQz2EVx".into(),
+        aid: None,
+        page: cid as i32,
+        source_title: "同一首歌".into(),
+        source_title_context: None,
+        title: "同一首歌".into(),
+        artist: None,
+        album: None,
+        cover_url: Some(format!("https://i0.hdslb.com/bfs/cover/{cid}.jpg")),
+        duration_seconds: 180,
+        uploader_id: None,
+        uploader_name: None,
+    };
+    let ids = |cids: &[i64]| cids.iter().map(|&cid| track(cid).id).collect::<Vec<_>>();
+    let order = |profile: &Profile| {
+        PlaylistRepository::tracks(&profile.0.0.lock().unwrap(), FAVORITES)
+            .unwrap()
+            .into_iter()
+            .map(|track| track.id)
+            .collect::<Vec<_>>()
+    };
+    {
+        let mut c = a.0.0.lock().unwrap();
+        for cid in 1..=3 {
+            let item = track(cid);
+            LibraryRepository::upsert(&mut c, &item).unwrap();
+            LibraryRepository::set_favorite(&c, &item.id, true).unwrap();
+        }
+        PlaylistRepository::create(&c, LIST, "另一份歌单").unwrap();
+        PlaylistRepository::add_track(&c, LIST, &track(2).id).unwrap();
+        assert_eq!(
+            PlaylistRepository::replace_video(
+                &mut c,
+                &a.0.1,
+                FAVORITES,
+                &track(2).id,
+                &track(1),
+                None
+            )
+            .unwrap(),
+            Some("duplicate")
+        );
+        assert_eq!(
+            PlaylistRepository::replace_video(
+                &mut c,
+                &a.0.1,
+                FAVORITES,
+                &track(2).id,
+                &track(4),
+                None
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            PlaylistRepository::tracks(&c, LIST).unwrap()[0].id,
+            track(2).id
+        );
+    }
+    assert_eq!(order(&a), ids(&[3, 4, 1]));
+    let snapshot = a.snapshot(&cfg);
+    assert_eq!(
+        snapshot.records[&format!("favorite:{}", track(4).id)]
+            .fields
+            .len(),
+        1
+    );
+    assert!(
+        snapshot
+            .records
+            .keys()
+            .all(|key| !key.starts_with("favorite-order"))
+    );
+    assert_eq!(sync(&a, &cfg, &secret).await.favorite_order_error, None);
+    assert_eq!(sync(&b, &cfg, &secret).await.favorite_order_error, None);
+    assert_eq!(order(&b), ids(&[3, 4, 1]));
+    {
+        let mut c = b.0.0.lock().unwrap();
+        assert!(
+            PlaylistRepository::reorder(
+                &mut c,
+                &b.0.1,
+                FAVORITES,
+                &ids(&[3, 4, 1]),
+                &ids(&[1, 4, 3])
+            )
+            .unwrap()
+        );
+        assert!(
+            !PlaylistRepository::reorder(
+                &mut c,
+                &b.0.1,
+                FAVORITES,
+                &ids(&[3, 4, 1]),
+                &ids(&[4, 1, 3])
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(sync(&b, &cfg, &secret).await.favorite_order_error, None);
+    assert!(sync(&a, &cfg, &secret).await.changed);
+    assert_eq!(order(&a), ids(&[1, 4, 3]));
+    {
+        let mut c = a.0.0.lock().unwrap();
+        PlaylistRepository::remove_track(&c, FAVORITES, &track(4).id).unwrap();
+        assert_eq!(PlaylistRepository::tracks(&c, FAVORITES).unwrap().len(), 2);
+        assert!(LibraryRepository::get(&c, &track(4).id).unwrap().is_some());
+        LibraryRepository::upsert(&mut c, &track(5)).unwrap();
+        LibraryRepository::set_favorite(&c, &track(5).id, true).unwrap();
+    }
+    assert_eq!(order(&a), ids(&[5, 1, 3]));
+    assert!(sync(&a, &cfg, &secret).await.conflicts.is_empty());
+    assert!(sync(&b, &cfg, &secret).await.conflicts.is_empty());
+    assert_eq!(order(&b), ids(&[5, 1, 3]));
+    server.abort();
+}
+
+#[tokio::test]
 async fn followed_collection_progress_round_trips_without_creating_favorites() {
     use crate::infrastructure::repositories::collections::{change, progress, save_progress};
     let (mut cfg, secret, store, server) = test_dav::server().await;

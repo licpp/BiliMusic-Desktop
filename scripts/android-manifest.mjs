@@ -9,5 +9,15 @@ export function editionManifest(xml, large = false) {
   xml = xml.replace(/<application\b[^>]*>/, tag => tag.replace(/\s+android:banner="[^"]*"/g, '').replace('<application', '<application android:banner="@drawable/tv_banner"'))
   xml = xml.replace(/<activity\b[^>]*>/g, tag => /android:name="[^"]*MainActivity"/.test(tag) ? tag.replace(/\s+android:screenOrientation="[^"]*"/g, '').replace('<activity', '<activity android:screenOrientation="sensorLandscape"') : tag)
   xml = xml.replace(/(<category\s+android:name="android\.intent\.category\.LAUNCHER"\s*\/>)/, '$1\n<category android:name="android.intent.category.LEANBACK_LAUNCHER" />')
+  if (!xml.includes('android:name=".CarPlayerActivity"')) {
+    // Keep the existing launcher component and move WebView creation behind it.
+    const main = xml.match(/<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*>/)?.[0]
+    if (!main) throw new Error('Missing Android MainActivity')
+    const player = main
+      .replace(/android:name="[^"]*MainActivity"/, 'android:name=".CarPlayerActivity"')
+      .replace(/\s+android:exported="[^"]*"/, '')
+      .replace(/>$/, ' android:exported="false" />')
+    xml = xml.replace('</application>', `    ${player}\n    </application>`)
+  }
   return xml
 }

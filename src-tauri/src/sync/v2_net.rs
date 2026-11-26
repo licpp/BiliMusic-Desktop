@@ -65,7 +65,11 @@ fn request_error(error: &super::traffic::RequestError, operation: &str) -> Strin
 type Listings = std::cell::RefCell<std::collections::BTreeMap<String, (Vec<String>, Option<u64>)>>;
 tokio::task_local! { static LISTINGS: Listings; }
 pub async fn discovery_round<T>(future: impl std::future::Future<Output = T>) -> T {
-    LISTINGS.scope(Listings::default(), future).await
+    if LISTINGS.try_with(|_| ()).is_ok() {
+        future.await
+    } else {
+        LISTINGS.scope(Listings::default(), future).await
+    }
 }
 pub struct Client<'a> {
     cfg: &'a Config,

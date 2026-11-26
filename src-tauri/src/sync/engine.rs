@@ -890,6 +890,7 @@ fn outcome(view: &View, conflicts: Vec<Conflict>, changed: bool) -> Outcome {
         visibility_error: None,
         import_error: None,
         chapters_error: None,
+        favorite_order_error: None,
         records: view.snapshot.records.len(),
         bytes: serde_json::to_vec(view).map_or(0, |v| v.len()),
         changed,
@@ -1288,14 +1289,24 @@ pub async fn sync(
     })?;
     let import_result = super::import_entries::exchange(db, cfg, secret, lease.actor()).await;
     let import_error = import_result.as_ref().err().cloned();
-    let chapters_result =
-        super::chapters::exchange(db, cfg, secret, lease.actor(), &session, &after.snapshot).await;
+    // Both extensions discover the same control directories. With manual and
+    // background sync, share the listings within this discovery round.
+    let (chapters_result, favorite_order_result) = super::v2_net::discovery_round(async {
+        let chapters =
+            super::chapters::exchange(db, cfg, secret, lease.actor(), &session, &after.snapshot).await;
+        let favorite_order =
+            super::favorite_order::exchange(db, cfg, secret, lease.actor(), &session).await;
+        (chapters, favorite_order)
+    })
+    .await;
     let chapters_error = chapters_result.as_ref().err().cloned();
+    let favorite_order_error = favorite_order_result.as_ref().err().cloned();
     with(db, cfg, |c| {
         check_area_session(c)?;
         let tx = c.unchecked_transaction().map_err(err)?;
         put(c, &target, "import-error", &import_error)?;
         put(c, &target, "chapters-error", &chapters_error)?;
+        put(c, &target, "favorite-order-error", &favorite_order_error)?;
         c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(err)?;
         tx.commit().map_err(err)
     })?;
@@ -1305,11 +1316,13 @@ pub async fn sync(
         after != current
             || visibility_result.unwrap_or(false)
             || import_result.unwrap_or(false)
-            || chapters_result.unwrap_or(false),
+            || chapters_result.unwrap_or(false)
+            || favorite_order_result.unwrap_or(false),
     );
     result.visibility_error = visibility_error;
     result.import_error = import_error;
     result.chapters_error = chapters_error;
+    result.favorite_order_error = favorite_order_error;
     Ok(result)
 }
 

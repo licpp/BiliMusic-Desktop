@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="car_webview_upgrade_title">请更新 Android System WebView</string>
+    <string name="car_webview_upgrade_message">当前 WebView 为 %1$s，车机版需要 %2$d 或更高版本。请通过车机系统更新后重新打开 BiliMusic。</string>
+    <string name="car_webview_upgrade_close">关闭</string>
+</resources>

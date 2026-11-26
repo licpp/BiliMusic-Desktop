@@ -33,6 +33,8 @@ npm run android:large-screen -- --target armv7 # 单架构诊断包
 
 输出位于 `artifacts/BiliMusic-版本号-Android-LargeScreen/`，通用包文件名包含 `universal`。APK 的最低系统版本为 Android 8.0，界面的兼容基线为 Chromium 66 的 Android System WebView。官网显示一个通用下载项，发布清单保留 ARM64、ARMv7 两条更新记录，供旧版客户端覆盖更新。
 
+车机版启动时由原生界面读取系统实际启用的 WebView 版本。明确低于 66 时，弹窗提示当前版本和最低要求，关闭弹窗后退出本次启动。66 及以上直接进入应用。系统未提供可识别的版本号时，照常尝试启动。
+
 遇到首页可显示但切页空白时，用 `adb shell dumpsys webviewupdate` 检查实际启用的 WebView 版本，并用 `adb logcat -v brief -s chromium AndroidRuntime` 区分前端异常、渲染进程退出和原生崩溃。平台覆盖更新需要同一应用 ID 和发布签名。
 
 ### 旧版车机回归

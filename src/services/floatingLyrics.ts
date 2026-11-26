@@ -6,7 +6,7 @@ import { accountEpoch } from './accountScope'
 import { inDesktopShell } from './desktopApi'
 import type { LyricLine } from '../domain/lyrics'
 
-export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; alignment?:FloatingPreferences['alignment']; capturedAt?:number; revision?:number }
+export type FloatingFrame = { id: string; title: string; artist: string; position: number; rate: number; playing: boolean; theme: string; lines: LyricLine[]; biasMs: number; subtitles?:boolean; fontSize?:number; locked?:boolean; activeColor?:string; inactiveColor?:string; alignment?:FloatingPreferences['alignment']; language?:FloatingPreferences['language']; capturedAt?:number; revision?:number }
 export type FloatingCapability = { supported: boolean; enabled: boolean; permissionRequired?: boolean; fontSizeSupported?: boolean; lockSupported?: boolean; colorSupported?:boolean; reason?: string }
 const plugin = isOHOS ? 'ohos-player' : isIOS ? 'ios-player' : 'android-player'
 export const nativeLyrics = <T>(data: object) => invoke<T>(`plugin:${plugin}|lyrics`, {data:JSON.stringify(data)})

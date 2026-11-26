@@ -9,7 +9,7 @@ import { useCompactLayout } from './useCompactLayout'
 import { MoreHorizontal, X } from 'lucide-react'
 import { isMobile } from '../services/platform'
 
-export function ActionMenu({ panelClassName = '', label = '更多操作', panel = false, sheet = false, touchSheet = false, floating = false, icon, contextPosition, onOpenChange, children }: { panelClassName?: string; label?: string; panel?: boolean; sheet?: boolean; touchSheet?: boolean; floating?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
+export function ActionMenu({ panelClassName = '', label = '更多操作', panel = false, sheet = false, touchSheet = false, floating = false, disabled, icon, contextPosition, onOpenChange, children }: { panelClassName?: string; label?: string; panel?: boolean; sheet?: boolean; touchSheet?: boolean; floating?: boolean; disabled?: boolean; icon?: ReactNode; contextPosition?: {left:number;top:number;nonce:number}; onOpenChange?: (open: boolean) => void; children: (close: () => void) => ReactNode }) {
   const compact=useCompactLayout()
   const isSheet=!floating && (touchSheet || ((sheet || isMobile) && compact))
   const touch = isSheet && touchSheet
@@ -78,7 +78,7 @@ export function ActionMenu({ panelClassName = '', label = '更多操作', panel 
       document.removeEventListener('pointerdown', dismiss); window.removeEventListener('resize', close); window.removeEventListener('scroll', scroll, true)
     }
   }, [position, touch, isSheet, floating])
-  return <><button ref={trigger} type="button" className="action-menu-trigger" aria-label={label} title={label} aria-haspopup={panel ? 'dialog' : 'menu'} aria-expanded={Boolean(position)} onClick={(event) => {
+  return <><button ref={trigger} type="button" disabled={disabled} className="action-menu-trigger" aria-label={label} title={label} aria-haspopup={panel ? 'dialog' : 'menu'} aria-expanded={Boolean(position)} onClick={(event) => {
     event.stopPropagation()
     if (position) { close(); return }
     const rect = trigger.current!.getBoundingClientRect()

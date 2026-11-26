@@ -33,7 +33,7 @@ export function useTrackSelection(tracks: Track[]) {
   }
 }
 
-export function BatchTrackActions({ selection, total, onRemove, onHide, downloadScope, allowAutoMatch = false, linkedFolderId }: {
+export function BatchTrackActions({ selection, total, onRemove, onHide, onMatched, downloadScope, allowAutoMatch = false, linkedFolderId }: {
   selection: ReturnType<typeof useTrackSelection>
   total: number
   allowAutoMatch?: boolean
@@ -41,6 +41,7 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, download
   downloadScope?: string
   onHide?: (tracks: Track[]) => Promise<void>
   onRemove?: (tracks: Track[]) => Promise<void>
+  onMatched?: (ids: ReadonlySet<string>) => void
 }) {
   const { selected, all, exit } = selection
   const downloading = useDownloadBatch(state => state.busy)
@@ -79,7 +80,7 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, download
         finally { setRemoving(false) }
       }}><FolderPlus size={16}/>加入歌单</button>
       {selected.some(track => track.source.provider === 'bilibili') && <button disabled={downloading || removing} onClick={() => void download()}><Download size={16}/>下载所选</button>}
-      {linkedFolderId ? <LinkedMatchButton folderId={linkedFolderId} tracks={selected}/> : allowAutoMatch && <BatchMatchButton tracks={selected}/>}
+      {linkedFolderId ? <LinkedMatchButton folderId={linkedFolderId} tracks={selected}/> : allowAutoMatch && <BatchMatchButton tracks={selected} onMatched={onMatched}/>}
       {onHide && <button disabled={!selected.length || removing} onClick={async()=>{setRemoving(true);try{await onHide(selected)}catch(e){setMessage(commandErrorMessage(e))}finally{setRemoving(false)}}}><EyeOff size={16}/>隐藏所选</button>}
       {onRemove && <button disabled={!selected.length || removing} onClick={() => setConfirmRemove(true)}>移除所选</button>}
       <button onClick={exit} disabled={removing}>完成</button>

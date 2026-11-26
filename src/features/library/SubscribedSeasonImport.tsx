@@ -11,10 +11,12 @@ import { LoadMore } from '../../shared/LoadMore'
 
 type PageRequest = { page: number; session?: string }
 
-export function SubscribedSeasonImport({ busy, onBusyChange, onViewCollections }: {
+export function SubscribedSeasonImport({ busy, onBusyChange, onViewCollections, onLogin, manualPagination = false }: {
   busy: boolean
   onBusyChange: (busy: boolean) => void
   onViewCollections: () => void
+  onLogin?: () => void
+  manualPagination?: boolean
 }) {
   const client = useQueryClient()
   const epoch = accountEpoch()
@@ -75,7 +77,7 @@ export function SubscribedSeasonImport({ busy, onBusyChange, onViewCollections }
     <div className="import-body">
       {account.isPending ? <p className="import-inline-status" role="status"><LoaderCircle className="spin" size={17}/>正在检查登录状态…</p>
         : account.isError ? <button type="button" className="import-secondary" onClick={() => void account.refetch()}>登录状态读取失败，重试</button>
-        : !account.data?.loggedIn ? <div className="import-empty"><Layers size={28}/><p>请先登录 B 站账号，再导入订阅合集。</p></div>
+        : !account.data?.loggedIn ? <div className="import-empty"><Layers size={28}/><p>请先登录 B 站账号，再导入订阅合集。</p>{onLogin && <button type="button" className="import-secondary" onClick={onLogin}>前往设置</button>}</div>
         : <>
           {rows.length > 0 && <div className="import-folder-toolbar">
             <span>选择合集</span>
@@ -114,7 +116,7 @@ export function SubscribedSeasonImport({ busy, onBusyChange, onViewCollections }
             })}
           </div>
           {seasons.hasNextPage && <LoadMore key={seasons.data?.pages.length} busy={busy || seasons.isFetchingNextPage}
-            automatic={!seasons.isFetchNextPageError} onLoad={() => void seasons.fetchNextPage()}
+            automatic={!manualPagination && !seasons.isFetchNextPageError} onLoad={() => void seasons.fetchNextPage()}
             label={seasons.isFetchNextPageError ? '重试加载更多' : '加载更多合集'}/>}
           {seasons.isSuccess && !seasons.hasNextPage && !rows.length && <p className="import-hint">还没有可导入的订阅合集。</p>}
         </>}

@@ -29,6 +29,14 @@ test('phone stays off TV launchers and the large APK has an independent manifest
  assert.match(large,/SYSTEM_ALERT_WINDOW" tools:node="remove"/)
  assert.match(large,/android:banner="@drawable\/tv_banner"/)
 })
+test('car launchers keep the existing component and the WebView activity stays private', () => {
+ const large = editionManifest(manifest, true)
+ const launcher = large.match(/<activity\b[^>]*android:name="\.MainActivity"[^>]*>([\s\S]*?)<\/activity>/)?.[1]
+ assert.match(launcher, /android\.intent\.category\.LAUNCHER/)
+ assert.match(launcher, /android\.intent\.category\.LEANBACK_LAUNCHER/)
+ assert.match(large, /<activity\b[^>]*android:screenOrientation="sensorLandscape"[^>]*android:name="\.CarPlayerActivity"[^>]*android:exported="false"[^>]*\/>/)
+ assert.doesNotMatch(editionManifest(manifest), /CarPlayerActivity/)
+})
 test('large screen target preserves native Android identity and uses isolated outputs',async()=>{
  const config=JSON.parse(await readFile('src-tauri/tauri.large-screen.conf.json','utf8'))
  const phone=JSON.parse(await readFile('src-tauri/tauri.android.conf.json','utf8'))
@@ -154,6 +162,17 @@ test('old car WebViews can place the lyric viewport and pad the first and final 
  }
  assert.match(legacyRules, /html\[data-layout="large"\] #root\s*\{\s*min-width:0;/)
  assert.match(legacyRules, /\.large-lyric-window\s*\{[^{}]*padding-top:var\(--large-lyric-inset,[^{}]*padding-bottom:var\(--large-lyric-inset,/)
+})
+test('car settings and the dock keep their layout without modern selectors or flex gaps', async () => {
+ const css = await readFile('src/large-screen/large-screen.css', 'utf8')
+ const legacyRules = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[^{}]*:(?:is|has)\([^{}]*\{[^{}]*\}/g, '')
+ assert.match(legacyRules, /\.large-settings-common>section\.settings-card\s*\{[^{}]*display:grid;[^{}]*grid-template-columns:28px minmax\(0,1fr\) auto;[^{}]*grid-gap:/)
+ assert.match(legacyRules, /\.large-settings-common summary>\.settings-icon\s*\{\s*margin-right:/)
+ assert.match(legacyRules, /\.large-playback-settings \.touch-option-trigger\s*\{[^{}]*grid-template-columns:/)
+ assert.match(legacyRules, /\.large-dock-song>\.artwork\s*\{[^{}]*margin-right:var\(--dock-art-spacing\)/)
+ assert.match(legacyRules, /\.large-dock-actions button>svg\s*\{\s*margin-right:/)
+ assert.match(legacyRules, /\.large-dock-song>span:last-child\s*\{[^{}]*flex:1;min-width:0;/)
+ assert.match(legacyRules, /\.large-nav-items\s*\{[^{}]*flex:1 0 auto;/)
 })
 test('the standard car player bounds the shared row when timed lyrics resize', async () => {
  const css = await readFile('src/large-screen/large-screen.css', 'utf8')
