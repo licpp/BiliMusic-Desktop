@@ -91,7 +91,9 @@ import type { Playlist } from '../domain/library'
 import { PlayingMark } from '../shared/PlayingMark'
 import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
-import { useThemeStore } from '../services/theme'
+import { useThemeStore, systemThemeSupported } from '../services/theme'
+import { themeActionLabel, themePreferenceLabel } from '../domain/theme'
+import { ThemeSystemIcon } from '../shared/ThemeSystemIcon'
 import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/library/TrackActions'
 import { showTrackMenu } from '../features/library/trackActionStore'
 import { isMobile } from '../services/platform'
@@ -256,8 +258,9 @@ export function App() {
   const suppressDockClick = useRef(false)
   const dockSwitch = useRef<{ from: string; direction: number; expires: number } | undefined>(undefined)
   const [dockSwipePhase, setDockSwipePhase] = useState<'idle' | 'dragging' | 'enter-left' | 'enter-right'>('idle')
-  const theme = useThemeStore((state) => state.theme)
-  const setTheme = useThemeStore((state) => state.setTheme)
+  const themePreference = useThemeStore((state) => state.preference)
+  const cycleTheme = useThemeStore((state) => state.cycleTheme)
+  const systemSupported = systemThemeSupported()
   const queryClient = useQueryClient()
   useEffect(() => {
     const refresh = () => { void queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }) }
@@ -685,7 +688,7 @@ export function App() {
             onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
 
           {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
-          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
+          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>

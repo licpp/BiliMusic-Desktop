@@ -9,7 +9,7 @@ const stubComponents=['WindowCloseSettings','ShortcutSettings','FloatingLyricsSe
 const mocks={
  platform:`export const isIOS=globalThis.titleLyricsTestPlatform==='ios';export const isAndroid=globalThis.titleLyricsTestPlatform==='android';export const isOHOS=globalThis.titleLyricsTestPlatform==='ohos';export const isMobile=isIOS||isAndroid||isOHOS;export const isLargeScreen=false;`,
  query:'export const useQuery=()=>({});',keys:'export const accountQueryKey=(...args)=>args;',
- theme:"export const useThemeStore=select=>select({theme:'light',setTheme(){}});",
+ theme:"export const useThemeStore=select=>select({theme:'light',preference:'light',setTheme(){}});export const systemThemeSupported=()=>true;",
  attention:'export const useSyncAttention=select=>select({library:null,statistics:null,reveal:0});',
  api:'export const commandErrorMessage=String;export const inDesktopShell=false;',
  settings:"export const chooseDownloadDirectory=async()=>'';export const getDownloadDirectory=async()=>'';",
