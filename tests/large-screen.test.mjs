@@ -262,3 +262,10 @@ test('player header stays in toolbar order and the video window has an exit to b
  const player=await readFile('src/large-screen/Player.tsx','utf8')
  assert.match(player,/data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back"/)
 })
+test('large-screen navigation exposes the shared daily recommendation page',async()=>{
+ const app=await readFile('src/large-screen/LargeScreenApp.tsx','utf8')
+ assert.match(app,/kind: 'recommendations', title: '每日推荐'/)
+ assert.match(app,/\{route\.kind === 'recommendations' && <RecommendationView active\/>\}/)
+ assert.match(await readFile('src/large-screen/Library.tsx','utf8'),/\| 'recommendations' \}/)
+ assert.match(await readFile('src/large-screen/main.tsx','utf8'),/styles\/recommendations\.css/)
+})
