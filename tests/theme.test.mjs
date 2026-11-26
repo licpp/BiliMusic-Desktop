@@ -7,12 +7,13 @@ import vm from 'node:vm'
 
 const require = createRequire(import.meta.url)
 
-async function bundle(entry) {
+async function bundle(entry, platform = {}) {
+  const flags = { isOHOS: false, isAndroid: false, isIOS: false, isMobile: false, ...platform }
   const output = await build({
     entryPoints: [entry], bundle: true, write: false, format: 'cjs', platform: 'node', packages: 'external',
     plugins: [{ name: 'platform', setup(b) {
       b.onResolve({ filter: /^\.\/platform$/ }, () => ({ path: 'platform', namespace: 'test' }))
-      b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export const isOHOS = false; export const isAndroid = false; export const isIOS = false; export const isMobile = false' }))
+      b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: `export const isOHOS = ${flags.isOHOS}; export const isAndroid = ${flags.isAndroid}; export const isIOS = ${flags.isIOS}; export const isMobile = ${flags.isMobile}` }))
     } }],
   })
   return output.outputFiles[0].text
@@ -26,6 +27,7 @@ function evaluate(text, imports = require) {
 
 const domain = evaluate(await bundle('src/domain/theme.ts'))
 const serviceText = await bundle('src/services/theme.ts')
+const iosServiceText = await bundle('src/services/theme.ts', { isIOS: true, isMobile: true })
 
 test('an unknown or missing stored value keeps the dark default', () => {
   assert.equal(domain.parseThemePreference('light'), 'light')
@@ -172,6 +174,23 @@ test('a platform without a system scheme never enters the system state', () => {
     assert.equal(useThemeStore.getState().preference, 'light')
     useThemeStore.getState().cycleTheme()
     assert.equal(useThemeStore.getState().preference, 'dark')
+  } finally { restore() }
+})
+
+test('iOS never offers the system state: the player plugin pins the window scheme', () => {
+  try {
+    // The plugin sets overrideUserInterfaceStyle, so the media query reports the
+    // pinned colour rather than the OS; following the system could never work.
+    const env = environment({ stored: 'system', dark: true })
+    const { useThemeStore, systemThemeSupported } = evaluate(iosServiceText)
+    assert.equal(systemThemeSupported(), false)
+    assert.equal(useThemeStore.getState().preference, 'dark')
+    assert.equal(useThemeStore.getState().theme, 'dark')
+    useThemeStore.getState().cycleTheme()
+    assert.equal(useThemeStore.getState().preference, 'light')
+    useThemeStore.getState().cycleTheme()
+    assert.equal(useThemeStore.getState().preference, 'dark')
+    assert.equal(env.storage.get('bilimusic-theme'), 'dark')
   } finally { restore() }
 })
 

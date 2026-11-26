@@ -33,8 +33,12 @@ let systemSupported: boolean | undefined
 /** Resolved once: a WebView either understands the media query for its whole life. */
 export function systemThemeSupported(): boolean {
   if (systemSupported === undefined) {
+    // iOS reports the scheme the player plugin pinned on the window
+    // (`overrideUserInterfaceStyle`), not the OS, and the plugin has no way to
+    // hand the window back — so 跟随系统 could never track the OS there and the
+    // option stays hidden.
     const query = systemQuery()
-    systemSupported = Boolean(query && query.media !== 'not all')
+    systemSupported = !isIOS && Boolean(query && query.media !== 'not all')
   }
   return systemSupported
 }
