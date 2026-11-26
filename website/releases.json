@@ -144,24 +144,24 @@
       "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.5",
-      "file": "BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk",
-      "size": 28504413,
-      "sha256": "c077881c6b521d496b70bd95f8d75114ebbfc9f275d914f20a22836bfa0df829",
+      "file": "BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk",
+      "size": 28533085,
+      "sha256": "d106e739a2c601969f0adb779bf0275a18e31c13d4926963731b6800ce732312",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk"
         }
       ],
-      "build": 1,
-      "sourceCommit": "8f53989a98e3f02d1bbde708c98f84f8a977a99b"
+      "build": 2,
+      "sourceCommit": "d474bab6327f39da8d18a9688a6a098eae2ebb9d"
     },
     {
       "id": "android-large-armv7",
@@ -170,24 +170,24 @@
       "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.5",
-      "file": "BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk",
-      "size": 28504413,
-      "sha256": "c077881c6b521d496b70bd95f8d75114ebbfc9f275d914f20a22836bfa0df829",
+      "file": "BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk",
+      "size": 28533085,
+      "sha256": "d106e739a2c601969f0adb779bf0275a18e31c13d4926963731b6800ce732312",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Android_LargeScreen_universal.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_car-build2_Android_LargeScreen_universal.apk"
         }
       ],
-      "build": 1,
-      "sourceCommit": "8f53989a98e3f02d1bbde708c98f84f8a977a99b"
+      "build": 2,
+      "sourceCommit": "d474bab6327f39da8d18a9688a6a098eae2ebb9d"
     },
     {
       "id": "ios",
@@ -361,6 +361,7 @@
       "publishedAt": "2026-11-25T14:26:26.595980+00:00",
       "kind": "release",
       "changes": [
+        "车机版支持导入 B 站收藏夹、订阅合集和关注。修复旧 WebView 下的设置与播放栏排版，启动时提示升级低于 66 的 WebView。",
         "Android 手机和平板可在悬浮歌词上直接切换原文、译文和双语，并记住选择。",
         "歌单和「我喜欢」支持拖动排序、更换视频和自动查重，顺序可跨端同步。",
         "自动记住播放倍速。桌面歌词支持原文、译文和双语。",
