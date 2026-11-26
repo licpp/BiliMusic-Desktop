@@ -1,4 +1,9 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import type { Playlist } from '../domain/library'
+import { folderPlayableTracks } from '../domain/recommendation'
+import type { Track } from '../domain/track'
+import { accountEpoch } from './accountScope'
+import { addTracksToPlaylist, changeLinkedVideo, createLinkedPlaylist, createPlaylist, saveLibraryTrack } from './desktopApi'
 import type {
   RecommendationMatchMode,
   RecommendationMatchState,
@@ -82,6 +87,16 @@ export async function cancelNeteaseQr(attemptId: string): Promise<void> {
   await invoke('netease_qr_login_cancel', { attemptId })
 }
 
+export async function webLoginNetease(termsAccepted: boolean): Promise<RecommendationSource> {
+  if (!isTauri()) throw unavailable()
+  return sourceOf(await invoke<RawSource>('netease_web_login', { termsAccepted }))
+}
+
+export async function cancelNeteaseWebLogin(): Promise<void> {
+  if (!isTauri()) return
+  await invoke('netease_web_login_cancel')
+}
+
 export async function bindRecommendationSong(
   sourceId: string,
   day: string,
@@ -130,4 +145,109 @@ export async function removeRecommendationSource(sourceId: string, expectedRevis
 export async function clearRecommendationData(): Promise<number> {
   if (!isTauri()) return 0
   return invoke<number>('recommendation_clear_all')
+}
+
+export type RecommendationPlaylistWrite = {
+  playlistId: string
+  playlistName: string
+  /** Set for a Bilibili folder so the caller can refresh its cached snapshot. */
+  folderId?: number
+  added: number
+  skipped: number
+}
+
+/**
+ * The destination was created, but writing the tracks stopped partway. The
+ * playlist is already on the account (and, for a folder, on Bilibili), so the
+ * caller must not create a second one on retry; it can append to this one.
+ */
+export class RecommendationPlaylistPartialError extends Error {
+  constructor(readonly playlist: Playlist, readonly added: number, readonly skipped: number, readonly reason: unknown) {
+    super('RECOMMENDATION_PLAYLIST_PARTIAL')
+    this.name = 'RecommendationPlaylistPartialError'
+  }
+}
+
+class TrackWriteError extends Error {
+  constructor(readonly added: number, readonly skipped: number, readonly reason: unknown) {
+    super('RECOMMENDATION_TRACK_WRITE_FAILED')
+    this.name = 'TrackWriteError'
+  }
+}
+
+const unwrapTrackWrite = (cause: unknown) => cause instanceof TrackWriteError ? cause.reason : cause
+
+/**
+ * Saves the matches a day already produced; nothing here searches Bilibili.
+ * A local playlist keeps every matched part, while a Bilibili folder can only
+ * hold whole single-part videos, so multi-P matches are reported as skipped
+ * instead of silently recording a different part.
+ */
+export async function saveRecommendationPlaylist(name: string, tracks: Track[], linked: boolean): Promise<RecommendationPlaylistWrite> {
+  if (!isTauri()) throw unavailable()
+  const epoch = accountEpoch()
+  const guard = () => { if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED') }
+  const playlist = linked ? await createLinkedPlaylist(name) : await createPlaylist(name)
+  guard()
+  try {
+    const written = linked
+      ? await writeFolderTracks(playlist, tracks, guard)
+      : await writeLocalTracks(playlist, tracks, guard)
+    return { playlistId: playlist.id, playlistName: playlist.name, folderId: playlist.biliFolderId, ...written }
+  } catch (cause) {
+    // Do not leave the user with an invisible half-written playlist: report
+    // what exists so the dialog can offer a retry into the same destination.
+    const failure = cause instanceof TrackWriteError ? cause : new TrackWriteError(0, 0, cause)
+    throw new RecommendationPlaylistPartialError(playlist, failure.added, failure.skipped, failure.reason)
+  }
+}
+
+/** Appends today's matches to a playlist the user already owns. */
+export async function addRecommendationTracksToPlaylist(playlist: Playlist, tracks: Track[]): Promise<RecommendationPlaylistWrite> {
+  if (!isTauri()) throw unavailable()
+  const epoch = accountEpoch()
+  const guard = () => { if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED') }
+  let written: { added: number; skipped: number }
+  try {
+    written = playlist.biliFolderId
+      ? await writeFolderTracks(playlist, tracks, guard)
+      : await writeLocalTracks(playlist, tracks, guard)
+  } catch (cause) {
+    throw unwrapTrackWrite(cause)
+  }
+  return { playlistId: playlist.id, playlistName: playlist.name, folderId: playlist.biliFolderId, ...written }
+}
+
+async function writeLocalTracks(playlist: Playlist, tracks: Track[], guard: () => void) {
+  const ids: string[] = []
+  try {
+    for (const track of tracks) {
+      guard()
+      ids.push((await saveLibraryTrack(track)).id)
+    }
+    if (ids.length) {
+      guard()
+      await addTracksToPlaylist(playlist.id, ids, true)
+    }
+  } catch (cause) {
+    throw new TrackWriteError(ids.length, 0, cause)
+  }
+  return { added: ids.length, skipped: 0 }
+}
+
+async function writeFolderTracks(playlist: Playlist, tracks: Track[], guard: () => void) {
+  const folderId = playlist.biliFolderId
+  if (!folderId) throw new Error('NOT_A_BILIBILI_FOLDER')
+  const { included, skipped } = folderPlayableTracks(tracks)
+  let added = 0
+  try {
+    for (const track of included) {
+      guard()
+      await changeLinkedVideo(folderId, track.source.bvid, true)
+      added += 1
+    }
+  } catch (cause) {
+    throw new TrackWriteError(added, skipped, cause)
+  }
+  return { added, skipped }
 }

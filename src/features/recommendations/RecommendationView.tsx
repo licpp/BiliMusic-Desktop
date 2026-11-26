@@ -5,6 +5,7 @@ import {
   CalendarHeart,
   Check,
   ChevronRight,
+  ListPlus,
   LoaderCircle,
   MoreHorizontal,
   Music2,
@@ -45,6 +46,7 @@ import { formatDuration } from '../../shared/time'
 import { TrackMenuButton } from '../library/TrackActions'
 import { usePlayerStore } from '../player/playerStore'
 import { RecommendationReplaceDialog } from './RecommendationReplaceDialog'
+import { RecommendationPlaylistDialog } from './RecommendationPlaylistDialog'
 import { RecommendationSourceDialog } from './RecommendationSourceDialog'
 
 export function RecommendationView({ active }: { active: boolean }) {
@@ -71,7 +73,8 @@ export function RecommendationView({ active }: { active: boolean }) {
     staleTime: 0,
   })
   const snapshot = daily.data
-  const [sourceDialog, setSourceDialog] = useState(false)
+  const [sourceDialog, setSourceDialog] = useState<'list' | 'login' | 'add' | null>(null)
+  const [playlistDialog, setPlaylistDialog] = useState(false)
   const [replacing, setReplacing] = useState<RecommendationSong>()
   const [confirmEmpty, setConfirmEmpty] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -81,7 +84,8 @@ export function RecommendationView({ active }: { active: boolean }) {
   snapshotRef.current = snapshot
   useEffect(() => {
     if (active) return
-    setSourceDialog(false)
+    setSourceDialog(null)
+    setPlaylistDialog(false)
     setReplacing(undefined)
     setConfirmEmpty(false)
   }, [active])
@@ -204,7 +208,7 @@ export function RecommendationView({ active }: { active: boolean }) {
   }
 
   const matchingLabel = (() => {
-    if (refreshing) return '正在从网易云获取今日推荐…'
+    if (refreshing) return '正在从推荐源获取今日推荐…'
     if (matchStatus?.running) return `正在匹配 ${matchStatus.remaining ?? 0} 首`
     if (matchStatus?.pause) return matchStatus.pause.reason === 'verificationRequired' ? 'B 站需要完成验证后才能继续匹配' : matchStatus.pause.reason === 'authRequired' ? '请重新登录 B 站账号以继续匹配' : 'B 站暂时限制了请求，稍后自动继续'
     if (matchStatus?.error) return matchStatus.error
@@ -219,9 +223,9 @@ export function RecommendationView({ active }: { active: boolean }) {
           <strong>{label.day}</strong><span>/ {label.month}</span>
         </div>
         <div className="recommendation-banner-copy">
-          <span className="eyebrow coral">DAILY MIX · NETEASE</span>
+          <span className="eyebrow coral">DAILY MIX</span>
           <h2>每日推荐</h2>
-          <p>根据你的音乐口味生成，每天 6:00 更新</p>
+          <p>从推荐源读取每日歌单，自动匹配成 B 站视频</p>
           <div className="recommendation-banner-meta">
             {source ? <span className="recommendation-current-source">{source.name}</span> : <span>还没有添加推荐源</span>}
             {snapshot && <span>{summary.matched} / {summary.total} 首已匹配</span>}
@@ -234,13 +238,16 @@ export function RecommendationView({ active }: { active: boolean }) {
           </button>
           <ActionMenu label="更多推荐操作" icon={<MoreHorizontal size={19} />} panelClassName="recommendation-menu">
             {close => <>
+              <button role="menuitem" disabled={!playable.length} onClick={() => { close(); setPlaylistDialog(true) }}>
+                <ListPlus size={16} /><span><strong>添加为歌单</strong><small>把已匹配的 {playable.length} 首保存成歌单</small></span>
+              </button>
               <button role="menuitem" disabled={!source || refreshing} onClick={() => { close(); retryRefresh() }}>
-                <RefreshCw size={16} /><span><strong>刷新今日推荐</strong><small>重新从网易云获取列表</small></span>
+                <RefreshCw size={16} /><span><strong>刷新今日推荐</strong><small>重新从推荐源获取列表</small></span>
               </button>
               <button role="menuitem" disabled={!snapshot || resetting || matchStatus?.running} onClick={() => { close(); void resetMatches() }}>
                 {resetting ? <LoaderCircle size={16} className="spin" /> : <Repeat2 size={16} />}<span><strong>重新匹配全部</strong><small>手动选择的视频会保留</small></span>
               </button>
-              <button role="menuitem" onClick={() => { close(); setSourceDialog(true) }}>
+              <button role="menuitem" onClick={() => { close(); setSourceDialog('list') }}>
                 <Plus size={16} /><span><strong>推荐源设置</strong><small>添加、重命名或重新登录</small></span>
               </button>
             </>}
@@ -253,7 +260,7 @@ export function RecommendationView({ active }: { active: boolean }) {
           className="recommendation-source-chip" onClick={() => selectSource(item.id)}>
           <Music2 size={14} /><span>{item.name}</span>
         </button>)}
-        <button type="button" className="recommendation-source-add" onClick={() => setSourceDialog(true)}><Plus size={14} /><span>添加推荐源</span></button>
+        <button type="button" className="recommendation-source-add" onClick={() => setSourceDialog('list')}><Plus size={14} /><span>添加推荐源</span></button>
       </div>}
 
       {actionError && <div className="recommendation-alert" role="alert">
@@ -262,32 +269,34 @@ export function RecommendationView({ active }: { active: boolean }) {
       </div>}
       {source?.lastRefreshState === 'auth-required' && !actionError && <div className="recommendation-alert" role="alert">
         <AlertTriangle size={17} /><span>{source.lastErrorCode === 'netease_verification_required'
-          ? '网易云要求安全验证，当前版本无法完成；可稍后重试或更换账号。'
-          : '网易云登录已失效，需要重新扫码登录。'}</span>
-        <button type="button" onClick={() => setSourceDialog(true)}>重新登录</button>
+          ? '推荐源要求安全验证，请稍后重试或重新登录。'
+          : '推荐源登录已失效，需要重新登录。'}</span>
+        <button type="button" onClick={() => setSourceDialog('login')}>重新登录</button>
       </div>}
       {confirmEmpty && <div className="recommendation-alert" role="alert">
-        <AlertTriangle size={17} /><span>网易云今天没有返回歌曲。保留现有列表，还是清空今天的推荐？</span>
+        <AlertTriangle size={17} /><span>推荐源今天没有返回歌曲。保留现有列表，还是清空今天的推荐？</span>
         <button type="button" className="danger" onClick={clearToday}>清空今日列表</button>
         <button type="button" onClick={() => { setConfirmEmpty(false); void client.invalidateQueries({ queryKey: dailyKey }) }}>保留</button>
       </div>}
 
-      {!source ? <NoSource onAdd={() => setSourceDialog(true)} /> : daily.isLoading && !snapshot ? <ListSkeleton label="正在读取今日推荐" /> : snapshot
+      {!source ? <NoSource onAdd={() => setSourceDialog('add')} /> : daily.isLoading && !snapshot ? <ListSkeleton label="正在读取今日推荐" /> : snapshot
         ? <RecommendationTracks songs={snapshot.songs} playable={playable} currentId={current?.id}
           queueActive={queueSource?.kind === 'recommendation' && queueSource.title === source.name}
           notice={notice} onPlay={play} onReplace={setReplacing} />
         : !refreshing && !actionError && <div className="recommendation-empty">
           <CalendarHeart size={26} />
           <strong>今天还没有可显示的推荐</strong>
-          <p>网易云可能还没有生成今日推荐，稍后再试。</p>
+          <p>推荐源可能还没有生成今日推荐，稍后再试。</p>
           <button type="button" className="recommendation-primary" onClick={retryRefresh}><RefreshCw size={15} />立即获取</button>
         </div>}
 
       <RecentListens />
       {replacing && source && snapshot && <RecommendationReplaceDialog song={replacing} source={source} day={snapshot.day}
         onBound={boundSong} onClose={() => setReplacing(undefined)} />}
-      {sourceDialog && <RecommendationSourceDialog sources={sourceList} selectedId={source?.id} onSelect={selectSource}
-        onClose={() => setSourceDialog(false)} />}
+      {sourceDialog && <RecommendationSourceDialog initialView={sourceDialog} sources={sourceList} selectedId={source?.id} onSelect={selectSource}
+        onClose={() => setSourceDialog(null)} />}
+      {playlistDialog && source && <RecommendationPlaylistDialog day={day} sourceName={source.name} tracks={playable}
+        onClose={() => setPlaylistDialog(false)} />}
     </section>
   )
 }
@@ -310,8 +319,8 @@ function useRecommendationDay(active: boolean) {
 function NoSource({ onAdd }: { onAdd: () => void }) {
   return <div className="recommendation-empty">
     <CalendarHeart size={28} />
-    <strong>添加一个网易云推荐源</strong>
-    <p>扫码登录网易云音乐后，每天 6:00 获取当日推荐，再自动从 B 站找到可播放的视频。</p>
+    <strong>还没有推荐源</strong>
+    <p>推荐源是你自己的外部音乐账号。添加后，每日推荐会读取它生成的每日歌单，再自动在 B 站找到可播放的视频；歌单什么时候更新、包含哪些歌曲，都由推荐源自己决定。</p>
     <button type="button" className="recommendation-primary" onClick={onAdd}><Plus size={15} />添加推荐源</button>
     <small>使用非官方接口，仅保存在本机；请自行评估账号风险。</small>
   </div>
@@ -392,13 +401,13 @@ function RecentListens() {
 export function RecommendationHomeEntry({ compact = false, onOpen }: { compact?: boolean; onOpen: () => void }) {
   if (!compact) return <button type="button" onClick={onOpen}>
     <span className="quick-icon amber-bg"><CalendarHeart /></span>
-    <span><strong>每日推荐</strong><small>根据口味，每天 6:00 更新</small></span>
+    <span><strong>每日推荐</strong><small>根据口味生成每日歌单</small></span>
     <ChevronRight size={16} aria-hidden="true" />
   </button>
   const label = recommendationDayLabel(recommendationDay(new Date()))
   return <button type="button" className="recommendation-mobile-entry" onClick={onOpen}>
     <span className="recommendation-mobile-date"><strong>{label.day}</strong><small>/ {label.month}</small></span>
-    <span className="recommendation-mobile-copy"><strong>每日推荐</strong><small>根据你的音乐口味生成 · 每天 6:00 更新</small></span>
+    <span className="recommendation-mobile-copy"><strong>每日推荐</strong><small>根据你的音乐口味生成</small></span>
     <ChevronRight size={18} aria-hidden="true" />
   </button>
 }

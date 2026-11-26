@@ -8,7 +8,8 @@ const {
   validateRecommendationSourceName, canApplyAutomaticMatch, bindRecommendationSong,
   playableRecommendationTracks, recommendationPlaybackNotice,
   recommendationMatchSummary, recommendationPendingSongs, replaceRecommendationSong,
-  recommendationRetryDelay, qrPollingCanRetry,
+  recommendationRetryDelay, qrPollingCanRetry, isNeteaseLoginCancelled, commandErrorCode,
+  recommendationPlaylistName, folderPlayableTracks,
 } = await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 
 const track = (id, bvid = `BV${id.padEnd(10, '0')}`) => ({
@@ -157,3 +158,44 @@ test('qr polling stops for terminal errors and keeps retrying transient ones', (
   assert.equal(qrPollingCanRetry('boom'), true)
   assert.equal(qrPollingCanRetry(undefined), true)
 })
+
+test('closing the embedded login window returns to the login intro rather than an error', () => {
+  assert.equal(isNeteaseLoginCancelled({code: 'netease_login_cancelled', message: '已取消网易云登录'}), true)
+  assert.equal(isNeteaseLoginCancelled({code: 'netease_login_timeout'}), false)
+  assert.equal(isNeteaseLoginCancelled(new Error('netease_login_cancelled')), false)
+  assert.equal(isNeteaseLoginCancelled(undefined), false)
+})
+
+test('only the safety gate offers the official-page login as a fallback', () => {
+  // 8821 answers every QR poll the same way, so switching login method is the
+  // one action that can still succeed on Android.
+  assert.equal(commandErrorCode({code: 'netease_verification_required', retryable: false}), 'netease_verification_required')
+  assert.equal(commandErrorCode({code: 'netease_login_timeout', retryable: true}), 'netease_login_timeout')
+  // Anything without a stable command code must not open the fallback.
+  assert.equal(commandErrorCode(new Error('boom')), undefined)
+  assert.equal(commandErrorCode({code: 42}), undefined)
+  assert.equal(commandErrorCode(null), undefined)
+  assert.equal(commandErrorCode('netease_verification_required'), undefined)
+})
+
+test('a playlist created from today starts with a readable default name', () => {
+  assert.equal(recommendationPlaylistName('2026-11-26'), '每日推荐 11月26日')
+  assert.equal(recommendationPlaylistName('2026-01-05'), '每日推荐 1月5日')
+  // An unexpected day must not produce "undefined月" in a name the user sees.
+  assert.equal(recommendationPlaylistName(''), '每日推荐')
+  assert.equal(recommendationPlaylistName('not-a-day'), '每日推荐')
+})
+
+test('a Bilibili folder only takes whole single-part videos and never repeats one', () => {
+  const single = {...track('a'), partCount: 1}
+  const multi = {...track('b'), partCount: 3}
+  // Same video as `single`, reached through a different match.
+  const duplicate = {...track('c'), partCount: 1, source: {provider: 'bilibili', bvid: single.source.bvid, cid: 7, page: 1}}
+  // Unknown part count is treated as a single-part video.
+  const unknown = track('d')
+  const {included, skipped} = folderPlayableTracks([single, multi, duplicate, unknown])
+  assert.deepEqual(included.map(item => item.id), ['a', 'd'])
+  assert.equal(skipped, 2)
+  assert.deepEqual(folderPlayableTracks([]), {included: [], skipped: 0})
+})
+

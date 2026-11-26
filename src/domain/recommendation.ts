@@ -144,6 +144,29 @@ export function recommendationPlaybackNotice(total: number, matched: number): st
   return undefined
 }
 
+/** Default name offered when today's matched songs are saved as a playlist. */
+export function recommendationPlaylistName(day: string): string {
+  const [, month, date] = day.split('-')
+  const m = Number(month)
+  const d = Number(date)
+  return Number.isInteger(m) && Number.isInteger(d) && m > 0 && d > 0 ? `每日推荐 ${m}月${d}日` : '每日推荐'
+}
+
+/**
+ * A Bilibili folder holds whole videos, so a matched part of a multi-P video
+ * cannot be represented there: adding the video would play a different part.
+ * Those matches, and a video already queued by another entry, are skipped.
+ */
+export function folderPlayableTracks(tracks: Track[]): { included: Track[]; skipped: number } {
+  const seen = new Set<string>()
+  const included = tracks.filter(track => {
+    if ((track.partCount ?? 1) !== 1 || seen.has(track.source.bvid)) return false
+    seen.add(track.source.bvid)
+    return true
+  })
+  return { included, skipped: tracks.length - included.length }
+}
+
 export type RecommendationMatchSummary = {
   total: number
   matched: number
@@ -188,5 +211,23 @@ export function recommendationRetryDelay(retryAt: number | undefined, now: numbe
  */
 export function qrPollingCanRetry(error: unknown): boolean {
   return !(typeof error === 'object' && error !== null && 'retryable' in error && error.retryable === false)
+}
+
+/**
+ * Closing the embedded login window (or the in-app cancel button) is a normal
+ * outcome, not a failure: the view returns to the login intro instead of
+ * showing an error with a retry CTA.
+ */
+export function isNeteaseLoginCancelled(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'netease_login_cancelled'
+}
+
+/**
+ * Command errors carry a stable `code`. The QR dialog reads it to offer the
+ * official-page login only for the safety gate, not for a generic failure.
+ */
+export function commandErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
 }
 

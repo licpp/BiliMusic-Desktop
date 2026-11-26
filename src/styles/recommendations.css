@@ -116,6 +116,17 @@
 .recommendation-source-rows { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
 .recommendation-source-rows > li { display: grid; gap: 9px; padding: 12px 13px; background: color-mix(in srgb, var(--panel-raised) 62%, transparent); border: 1px solid var(--line); border-radius: 12px; }
 .recommendation-source-rows > li[data-active] { border-color: color-mix(in srgb, var(--cyan) 38%, transparent); }
+/* Empty state: a drop-zone shaped tile instead of a red call to action. */
+.recommendation-source-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 104px; padding: 16px; color: var(--muted); background: transparent; border: 1.5px dashed color-mix(in srgb, var(--muted) 42%, transparent); border-radius: 14px; font-size: 12px; cursor: pointer; transition: color 140ms ease, border-color 140ms ease, background 140ms ease; }
+.recommendation-source-dropzone:hover, .recommendation-source-dropzone:focus-visible { color: var(--ink); border-color: color-mix(in srgb, var(--cyan) 46%, var(--line)); background: color-mix(in srgb, var(--cyan) 6%, transparent); }
+.recommendation-source-dropzone span { font-size: 11.5px; letter-spacing: .04em; }
+.recommendation-provider { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; color: var(--ink); text-align: left; background: color-mix(in srgb, var(--panel-raised) 62%, transparent); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
+.recommendation-provider:hover, .recommendation-provider:focus-visible { border-color: color-mix(in srgb, var(--cyan) 38%, transparent); background: color-mix(in srgb, var(--cyan) 7%, transparent); }
+.recommendation-provider > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.recommendation-provider strong { font-size: 13px; }
+.recommendation-provider small { color: var(--muted); font-size: 11px; }
+.recommendation-provider > svg:last-child { flex: 0 0 auto; margin-left: auto; color: var(--muted); }
+.recommendation-provider-mark { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 9px; }
 .recommendation-source-copy { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
 .recommendation-source-copy strong { color: var(--ink); font-size: 13px; }
 .recommendation-source-copy small { color: var(--muted); font-size: 11px; }
@@ -133,13 +144,51 @@
 .recommendation-rename button { display: grid; place-items: center; width: 28px; height: 28px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 7px; cursor: pointer; }
 .recommendation-dialog-error { margin: 0; color: var(--coral); font-size: 11.5px; }
 .recommendation-dialog-notice { margin: 0; color: var(--cyan); font-size: 11.5px; }
-.recommendation-risk { margin: 0; padding: 10px 12px; color: var(--muted); background: color-mix(in srgb, var(--ink) 3.5%, transparent); border-left: 2px solid color-mix(in srgb, var(--coral) 45%, transparent); border-radius: 0 8px 8px 0; font-size: 11px; line-height: 1.7; }
 .recommendation-dialog-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .recommendation-dialog-footer > button:not(.recommendation-primary) { padding: 8px 13px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; cursor: pointer; }
 .recommendation-dialog-footer > button:not(.recommendation-primary):hover { color: var(--ink); }
 .recommendation-dialog-footer > .recommendation-clear { margin-right: auto; color: var(--coral); }
 .recommendation-dialog-footer > .recommendation-clear:hover { color: var(--coral); border-color: color-mix(in srgb, var(--coral) 40%, var(--line)); }
+.recommendation-switch-login { justify-self: start; padding: 2px 0; color: var(--muted); background: none; border: 0; font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.recommendation-switch-login:hover { color: var(--ink); }
 .recommendation-dialog-footer > .recommendation-remove-confirm { flex: 1 1 100%; }
+
+/* Save today's matches as a playlist */
+.recommendation-playlist-create { display: grid; gap: 10px; }
+.recommendation-playlist-create label { display: grid; gap: 6px; color: var(--muted); font-size: 11.5px; }
+.recommendation-playlist-create input { padding: 9px 11px; color: var(--ink); background: color-mix(in srgb, var(--panel) 80%, transparent); border: 1px solid var(--line); border-radius: 9px; font: inherit; font-size: 13px; }
+.recommendation-playlist-create input:focus { outline: 0; border-color: color-mix(in srgb, var(--cyan) 46%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cyan) 12%, transparent); }
+.recommendation-destination-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.recommendation-destination-toggle button { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 8px; padding: 10px 11px; color: var(--muted); text-align: left; background: color-mix(in srgb, var(--panel-raised) 62%, transparent); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.recommendation-destination-toggle button > span { display: grid; gap: 3px; min-width: 0; }
+.recommendation-destination-toggle strong { color: var(--ink); font-size: 12px; font-weight: 600; }
+.recommendation-destination-toggle small { color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+.recommendation-destination-toggle button[aria-checked="true"] { color: var(--cyan); border-color: color-mix(in srgb, var(--cyan) 42%, transparent); background: color-mix(in srgb, var(--cyan) 8%, transparent); }
+.recommendation-destination-toggle button:disabled { opacity: .55; cursor: default; }
+.recommendation-playlist-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.recommendation-playlist-heading { margin: 4px 0 0; color: var(--ink); font-size: 12px; font-weight: 600; }
+.recommendation-playlist-existing { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+/* The dialog scrolls as a whole, so keep the destination list short and pin
+   the footer: at 1280x720 the create action and 取消 must both stay reachable. */
+.recommendation-playlist-dialog .playlist-destinations { max-height: clamp(140px, 24dvh, 280px); }
+.recommendation-playlist-dialog .recommendation-dialog-footer { position: sticky; bottom: -18px; z-index: 1; padding-top: 10px; background: var(--panel); }
+.recommendation-playlist-done { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--cyan); font-size: 12.5px; }
+/* The dialog footer is pinned, so status text must live inside it and stack
+   above the action, otherwise the opaque footer hides a failed write. */
+.recommendation-playlist-footer { flex-direction: column; align-items: stretch; gap: 8px; }
+.recommendation-playlist-footer > button { align-self: flex-end; }
+.recommendation-retry { margin-left: 6px; padding: 0; color: inherit; background: none; border: 0; font: inherit; font-size: 11px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+/* `.collection-dialog p` (0,1,1) outranks a single class, so the dialog text
+   keeps its accent colours only with the parent dialog class in the selector. */
+.recommendation-dialog p.recommendation-dialog-empty { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.recommendation-dialog p.recommendation-dialog-error { color: var(--coral); font-size: 11.5px; line-height: 1.55; }
+.recommendation-dialog p.recommendation-dialog-notice { color: var(--cyan); font-size: 11.5px; line-height: 1.55; }
+.recommendation-dialog p.recommendation-playlist-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.recommendation-dialog p.recommendation-playlist-heading { color: var(--ink); font-size: 12px; }
+.recommendation-dialog p.recommendation-playlist-done { color: var(--cyan); font-size: 12.5px; }
+@media (max-width: 640px) {
+  .recommendation-destination-toggle { grid-template-columns: 1fr; }
+}
 
 /* QR login */
 .recommendation-qr { display: grid; gap: 14px; padding: 16px 18px 18px; }
