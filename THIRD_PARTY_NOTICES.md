@@ -7,7 +7,7 @@ Public releases include machine-readable dependency notices with dependency vers
 - Rust: `cargo deny check licenses`
 - npm: an SPDX-compatible license report generated from the lockfile
 
-The project does not bundle media, lyrics, comments, danmaku, or branding from Bilibili or any metadata provider. Availability of a provider adapter does not imply affiliation or authorization by that provider.
+The project does not bundle media, lyrics, comments, danmaku, or branding from Bilibili or any metadata provider, with one exception: `public/netease-music.png` is the NetEase Cloud Music application icon, used only to identify that recommendation source in the provider picker. It remains the trademark of its owner and implies no affiliation or endorsement. Availability of a provider adapter does not imply affiliation or authorization by that provider.
 
 Runtime services used by the current implementation:
 
