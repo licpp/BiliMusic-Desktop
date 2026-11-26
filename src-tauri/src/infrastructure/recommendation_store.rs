@@ -10,11 +10,16 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-pub const VERSION: i64 = 1;
+pub const VERSION: i64 = 2;
 
 /// A refresh that never reached a terminal state (crash, force quit) stops
 /// blocking new refreshes after this window.
 const REFRESH_LEASE_MS: i64 = 5 * 60 * 1000;
+
+/// Cross-day reuse keeps at most this many bindings per source. One daily list
+/// holds a few dozen songs and the retained snapshots cover a week, so the cap
+/// only matters for a source that has been in use for a long time.
+const MATCH_CACHE_LIMIT: i64 = 2000;
 
 const SOURCE_COLUMNS: &str = "id, provider, provider_uid, nickname, name, name_custom, sort_order, revision, credential_token, terms_accepted_at, last_refresh_at, last_refresh_state, last_error_code, last_error_at, retry_at, created_at, updated_at";
 const SONG_COLUMNS: &str = "source_id, day, position, netease_song_id, title, artists_json, album, duration_seconds, cover_url, match_state, track_id, bvid, cid, track_json, match_mode, entry_revision, match_attempts, match_retry_at, match_error_code, matched_at";
@@ -34,6 +39,12 @@ pub fn migrate(connection: &Connection) -> rusqlite::Result<()> {
             "../../migrations_recommendation/0001_recommendations.sql"
         ))?;
         connection.execute_batch("PRAGMA user_version=1;")?;
+    }
+    if version < 2 {
+        connection.execute_batch(include_str!(
+            "../../migrations_recommendation/0002_recommendation_matches.sql"
+        ))?;
+        connection.execute_batch("PRAGMA user_version=2;")?;
     }
     transaction.commit()
 }
@@ -576,8 +587,78 @@ pub fn upsert_day(
             )?;
         }
     }
+    seed_cached_matches(&transaction, source_id, day)?;
+    touch_cached_matches(&transaction, source_id, day, fetched_at)?;
+    prune_match_cache(&transaction, source_id)?;
     transaction.commit()?;
     snapshot(connection, source_id, day)?.ok_or(RecommendationStoreError::NotFound)
+}
+
+/// A day starts as pending rows. Before the matching lane can see them, copy
+/// the binding that the same external song received on an earlier day so that
+/// a returning song does not search Bilibili again. Only rows the user has
+/// never touched are seeded; a surviving row keeps its own binding, and a row
+/// the user reset keeps its reset.
+fn seed_cached_matches(
+    connection: &Connection,
+    source_id: &str,
+    day: &str,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "UPDATE recommendation_songs AS target
+         SET match_state='matched', track_id=cached.track_id, bvid=cached.bvid,
+           cid=cached.cid, track_json=cached.track_json, match_mode=cached.match_mode,
+           matched_at=cached.matched_at
+         FROM recommendation_matches AS cached
+         WHERE target.source_id=?1 AND target.day=?2
+           AND cached.source_id=target.source_id
+           AND cached.netease_song_id=target.netease_song_id
+           AND target.match_state='pending' AND target.entry_revision=0
+           AND target.track_json IS NULL",
+        params![source_id, day],
+    )
+}
+
+/// A binding ages out when its song stops being listed, not when it gets old.
+/// Every song in a written day refreshes the cached timestamp, so the size cap
+/// evicts the songs that left the list instead of the ones still in use. The
+/// song row keeps the timestamp it was seeded with; only the cache entry moves.
+fn touch_cached_matches(
+    connection: &Connection,
+    source_id: &str,
+    day: &str,
+    seen_at: i64,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "UPDATE recommendation_matches AS cached
+         SET matched_at=?3
+         WHERE cached.source_id=?1
+           AND cached.netease_song_id IN (
+             SELECT netease_song_id FROM recommendation_songs
+             WHERE source_id=?1 AND day=?2)",
+        params![source_id, day, seen_at],
+    )
+}
+
+/// Drops cached bindings whose song no longer appears in any retained day, so
+/// a list change clears the corresponding cache, and enforces the size cap.
+fn prune_match_cache(connection: &Connection, source_id: &str) -> rusqlite::Result<usize> {
+    let orphaned = connection.execute(
+        "DELETE FROM recommendation_matches
+         WHERE source_id=?1
+           AND netease_song_id NOT IN (
+             SELECT netease_song_id FROM recommendation_songs WHERE source_id=?1)",
+        params![source_id],
+    )?;
+    let excess = connection.execute(
+        "DELETE FROM recommendation_matches
+         WHERE source_id=?1
+           AND netease_song_id NOT IN (
+             SELECT netease_song_id FROM recommendation_matches
+             WHERE source_id=?1 ORDER BY matched_at DESC, netease_song_id LIMIT ?2)",
+        params![source_id, MATCH_CACHE_LIMIT],
+    )?;
+    Ok(orphaned + excess)
 }
 
 pub fn bind(
@@ -636,8 +717,49 @@ pub fn bind(
     if changed == 0 {
         return Err(RecommendationStoreError::BindingStale);
     }
+    remember_binding(
+        &transaction,
+        source_id,
+        netease_song_id,
+        binding,
+        &track_json,
+        mode,
+        now,
+    )?;
     transaction.commit()?;
     get_song(connection, source_id, day, netease_song_id)?.ok_or(RecommendationStoreError::NotFound)
+}
+
+/// Keeps the cross-day binding. A manual choice is cached too, so a later day
+/// starts from the user's pick instead of asking the automatic lane again.
+fn remember_binding(
+    connection: &Connection,
+    source_id: &str,
+    netease_song_id: &str,
+    binding: &RecommendationBinding,
+    track_json: &str,
+    mode: BindMode,
+    now: i64,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "INSERT INTO recommendation_matches
+         (source_id, netease_song_id, track_id, bvid, cid, track_json, match_mode, matched_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(source_id, netease_song_id) DO UPDATE SET
+           track_id=excluded.track_id, bvid=excluded.bvid, cid=excluded.cid,
+           track_json=excluded.track_json, match_mode=excluded.match_mode,
+           matched_at=excluded.matched_at",
+        params![
+            source_id,
+            netease_song_id,
+            binding.track_id,
+            binding.bvid,
+            binding.cid,
+            track_json,
+            mode.as_str(),
+            now,
+        ],
+    )
 }
 
 pub fn mark_match_failed(
@@ -696,14 +818,30 @@ pub fn mark_match_failed(
 }
 
 /// Reset automatic matches for a day; manual choices survive a re-match.
+///
+/// The cached cross-day bindings for the rows this clears are dropped in the
+/// same transaction: "重新匹配全部" means the next pass must search again, and a
+/// later refresh must not seed the same bindings straight back. A manual pick
+/// keeps its cache, because the same rule protects it on the next day.
 pub fn reset_matches(
     connection: &Connection,
     source_id: &str,
     day: &str,
     expected_token: &str,
 ) -> Result<usize, RecommendationStoreError> {
-    check_token(connection, source_id, expected_token)?;
-    let changed = connection.execute(
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    check_token(&transaction, source_id, expected_token)?;
+    transaction.execute(
+        "DELETE FROM recommendation_matches
+         WHERE source_id=?1
+           AND netease_song_id IN (
+             SELECT netease_song_id FROM recommendation_songs
+             WHERE source_id=?1 AND day=?2
+               AND (match_mode IS NULL OR match_mode != 'manual'))",
+        params![source_id, day],
+    )?;
+    let changed = transaction.execute(
         "UPDATE recommendation_songs SET match_state='pending', track_id=NULL, bvid=NULL,
            cid=NULL, track_json=NULL, match_mode=NULL, entry_revision=entry_revision+1,
            match_attempts=0, match_retry_at=NULL, match_error_code=NULL, matched_at=NULL
@@ -711,20 +849,28 @@ pub fn reset_matches(
            AND NOT (match_state='pending' AND entry_revision=0)",
         params![source_id, day],
     )?;
+    transaction.commit()?;
     Ok(changed)
 }
 
 /// Retention uses the fetch timestamp so it does not depend on the client's
-/// clock or on a particular day string being supplied.
+/// clock or on a particular day string being supplied. The day delete and the
+/// cache prune commit together, so a concurrent refresh never sees days
+/// removed while their cached bindings are still present.
 pub fn prune_fetched_before(
     connection: &Connection,
     source_id: &str,
     before_ms: i64,
 ) -> rusqlite::Result<usize> {
-    connection.execute(
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let deleted = transaction.execute(
         "DELETE FROM recommendation_days WHERE source_id=?1 AND fetched_at < ?2",
         params![source_id, before_ms],
-    )
+    )?;
+    prune_match_cache(&transaction, source_id)?;
+    transaction.commit()?;
+    Ok(deleted)
 }
 
 pub fn clear_all(connection: &Connection) -> rusqlite::Result<usize> {
@@ -1354,5 +1500,491 @@ mod tests {
         assert_eq!(prune_fetched_before(&connection, "s1", 95).unwrap(), 2);
         assert!(snapshot(&connection, "s1", "2026-11-23").unwrap().is_none());
         assert!(snapshot(&connection, "s1", "2026-11-24").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_song_matched_on_one_day_starts_matched_on_the_next_day() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+
+        let next = upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            120,
+            None,
+            &[song("a", "A"), song("b", "B")],
+        )
+        .unwrap();
+        let a = next
+            .songs
+            .iter()
+            .find(|row| row.netease_song_id == "a")
+            .unwrap();
+        assert_eq!(a.match_state, "matched");
+        assert_eq!(a.bvid.as_deref(), Some("BV1"));
+        assert_eq!(a.track_id.as_deref(), Some("bilibili:BV1:1"));
+        assert_eq!(a.match_mode.as_deref(), Some("automatic"));
+        assert_eq!(a.matched_at, Some(110));
+        // A seeded row is untouched by the user, so the lane may still replace
+        // it with a better match using the snapshot's own revision.
+        assert_eq!(a.entry_revision, 0);
+        let b = next
+            .songs
+            .iter()
+            .find(|row| row.netease_song_id == "b")
+            .unwrap();
+        assert_eq!(b.match_state, "pending");
+        // The earlier day keeps its own binding.
+        let previous = snapshot(&connection, "s1", "2026-11-23").unwrap().unwrap();
+        assert_eq!(previous.songs[0].match_state, "matched");
+    }
+
+    #[test]
+    fn a_manual_choice_is_reused_and_still_cannot_be_overwritten() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV9"),
+            BindMode::Manual,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+
+        let next = upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            120,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        assert_eq!(next.songs[0].match_mode.as_deref(), Some("manual"));
+        assert_eq!(next.songs[0].bvid.as_deref(), Some("BV9"));
+        assert!(matches!(
+            bind(
+                &mut connection,
+                "s1",
+                "2026-11-24",
+                "a",
+                &binding("BV2"),
+                BindMode::Automatic,
+                0,
+                "token",
+                130,
+            ),
+            Err(RecommendationStoreError::ManualBindingProtected)
+        ));
+    }
+
+    #[test]
+    fn resetting_matches_for_a_day_drops_its_cached_binding() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+        assert_eq!(
+            reset_matches(&connection, "s1", "2026-11-23", "token").unwrap(),
+            1
+        );
+        assert_eq!(cached_binding_count(&connection), 0);
+
+        let next = upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            120,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        assert_eq!(next.songs[0].match_state, "pending");
+    }
+
+    #[test]
+    fn resetting_matches_keeps_a_manual_pick_and_its_cached_binding() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A"), song("m", "M")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "m",
+            &binding("BV2"),
+            BindMode::Manual,
+            0,
+            "token",
+            111,
+        )
+        .unwrap();
+
+        assert_eq!(
+            reset_matches(&connection, "s1", "2026-11-23", "token").unwrap(),
+            1
+        );
+        // Only the automatic row is dropped, and only its cache goes with it.
+        assert_eq!(cached_binding_count(&connection), 1);
+        let day = snapshot(&connection, "s1", "2026-11-23").unwrap().unwrap();
+        let manual = day
+            .songs
+            .iter()
+            .find(|row| row.netease_song_id == "m")
+            .unwrap();
+        assert_eq!(manual.match_mode.as_deref(), Some("manual"));
+
+        // The next day seeds the manual pick and searches the reset song again.
+        let next = upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            200,
+            None,
+            &[song("a", "A"), song("m", "M")],
+        )
+        .unwrap();
+        let automatic = next
+            .songs
+            .iter()
+            .find(|row| row.netease_song_id == "a")
+            .unwrap();
+        assert_eq!(automatic.match_state, "pending");
+        let manual = next
+            .songs
+            .iter()
+            .find(|row| row.netease_song_id == "m")
+            .unwrap();
+        assert_eq!(manual.bvid.as_deref(), Some("BV2"));
+        assert_eq!(manual.match_mode.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn a_song_missing_from_every_retained_day_loses_its_cached_binding() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+        // The provider replaces the list: the vanished song loses its cache.
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            115,
+            None,
+            &[song("b", "B")],
+        )
+        .unwrap();
+        assert_eq!(cached_binding_count(&connection), 0);
+
+        let next = upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            120,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        assert_eq!(next.songs[0].match_state, "pending");
+    }
+
+    #[test]
+    fn removing_a_source_cascades_to_its_cached_bindings() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+        assert_eq!(cached_binding_count(&connection), 1);
+        remove_source(&connection, "s1", 0).unwrap();
+        assert_eq!(cached_binding_count(&connection), 0);
+    }
+
+    #[test]
+    fn the_cache_cap_keeps_the_newest_bindings() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            100,
+            None,
+            &[song("seed", "Seed")],
+        )
+        .unwrap();
+        for index in 0..(MATCH_CACHE_LIMIT + 5) {
+            let id = format!("x{index}");
+            connection
+                .execute(
+                    "INSERT INTO recommendation_songs
+                     (source_id, day, position, netease_song_id, title, artists_json)
+                     VALUES ('s1', '2026-11-24', ?1, ?2, ?2, '[]')",
+                    params![index + 1, id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO recommendation_matches
+                     (source_id, netease_song_id, track_id, bvid, cid, track_json,
+                      match_mode, matched_at)
+                     VALUES ('s1', ?1, ?1, ?1, 1, '{}', 'automatic', ?2)",
+                    params![id, index],
+                )
+                .unwrap();
+        }
+        prune_match_cache(&connection, "s1").unwrap();
+        assert_eq!(cached_binding_count(&connection), MATCH_CACHE_LIMIT);
+        let oldest = connection
+            .query_row(
+                "SELECT COUNT(*) FROM recommendation_matches WHERE netease_song_id=?1",
+                params!["x0"],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(oldest, 0);
+        let newest = connection
+            .query_row(
+                "SELECT COUNT(*) FROM recommendation_matches WHERE netease_song_id=?1",
+                params![format!("x{}", MATCH_CACHE_LIMIT + 4)],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(newest, 1);
+    }
+
+    #[test]
+    fn a_song_still_in_the_list_refreshes_its_cached_timestamp() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            100,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "a",
+            &binding("BV1"),
+            BindMode::Automatic,
+            0,
+            "token",
+            110,
+        )
+        .unwrap();
+        // The same song is still recommended the next day.
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            500,
+            None,
+            &[song("a", "A")],
+        )
+        .unwrap();
+
+        let cached: i64 = connection
+            .query_row(
+                "SELECT matched_at FROM recommendation_matches
+                 WHERE source_id='s1' AND netease_song_id='a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cached, 500);
+        // The row keeps the time it was first matched, not the last refresh.
+        let day = snapshot(&connection, "s1", "2026-11-24").unwrap().unwrap();
+        assert_eq!(day.songs[0].matched_at, Some(110));
+    }
+
+    #[test]
+    fn the_cache_cap_evicts_songs_that_left_the_list_before_ones_still_listed() {
+        let mut connection = database();
+        insert_source(&mut connection, &source("s1", "42", "token")).unwrap();
+        let mut listed: Vec<NewRecommendationSong> = (0..MATCH_CACHE_LIMIT)
+            .map(|index| song(&format!("x{index}"), "Old"))
+            .collect();
+        listed.push(song("keep", "Keep"));
+        upsert(&mut connection, "s1", "2026-11-23", 100, None, &listed).unwrap();
+        for index in 0..MATCH_CACHE_LIMIT {
+            connection
+                .execute(
+                    "INSERT INTO recommendation_matches
+                     (source_id, netease_song_id, track_id, bvid, cid, track_json,
+                      match_mode, matched_at)
+                     VALUES ('s1', ?1, ?1, ?1, 1, '{}', 'automatic', ?2)",
+                    params![format!("x{index}"), 1000 + index],
+                )
+                .unwrap();
+        }
+        // 「keep」 was matched first, long before every other binding.
+        bind(
+            &mut connection,
+            "s1",
+            "2026-11-23",
+            "keep",
+            &binding("BVkeep"),
+            BindMode::Automatic,
+            0,
+            "token",
+            1,
+        )
+        .unwrap();
+
+        // Only 「keep」 is still recommended the next day.
+        upsert(
+            &mut connection,
+            "s1",
+            "2026-11-24",
+            5000,
+            None,
+            &[song("keep", "Keep")],
+        )
+        .unwrap();
+
+        assert_eq!(cached_binding_count(&connection), MATCH_CACHE_LIMIT);
+        let kept: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM recommendation_matches WHERE netease_song_id='keep'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1);
+        let evicted: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM recommendation_matches WHERE netease_song_id='x0'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(evicted, 0);
+    }
+
+    fn cached_binding_count(connection: &Connection) -> i64 {
+        connection
+            .query_row("SELECT COUNT(*) FROM recommendation_matches", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
     }
 }
