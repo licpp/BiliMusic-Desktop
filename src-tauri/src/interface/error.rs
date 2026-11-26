@@ -113,6 +113,34 @@ impl CommandError {
         )
     }
 
+    pub fn netease_login_in_progress() -> Self {
+        Self::new(
+            "netease_login_in_progress",
+            "网易云登录窗口已经打开，请先完成或取消当前登录",
+            false,
+        )
+    }
+
+    pub fn netease_login_cancelled() -> Self {
+        Self::new("netease_login_cancelled", "已取消网易云登录", false)
+    }
+
+    pub fn netease_login_timeout() -> Self {
+        Self::new(
+            "netease_login_timeout",
+            "网易云登录等待超时，请重新打开登录窗口",
+            true,
+        )
+    }
+
+    pub fn netease_login_window(error: impl std::fmt::Display) -> Self {
+        Self::new(
+            "netease_login_window_error",
+            format!("无法打开网易云登录窗口: {error}"),
+            true,
+        )
+    }
+
     pub fn netease(error: crate::infrastructure::providers::netease::NeteaseError) -> Self {
         use crate::infrastructure::providers::netease::NeteaseError;
         match error {
@@ -152,7 +180,7 @@ impl CommandError {
             ),
             NeteaseError::VerificationRequired => Self::new(
                 "netease_verification_required",
-                "网易云要求安全验证，当前版本无法完成，请稍后再试或更换账号",
+                "网易云要求安全验证，请稍后重试或改用网页登录",
                 false,
             ),
             NeteaseError::Protocol => Self::new(
@@ -229,5 +257,18 @@ mod tests {
         assert!(!gate.retryable);
         assert!(gate.message.contains("安全验证"));
         assert!(CommandError::netease(NeteaseError::Unavailable).retryable);
+    }
+
+    #[test]
+    fn web_login_lifecycle_errors_have_stable_codes_and_retry_policy() {
+        let cancelled = CommandError::netease_login_cancelled();
+        assert_eq!(cancelled.code, "netease_login_cancelled");
+        assert!(!cancelled.retryable);
+        let busy = CommandError::netease_login_in_progress();
+        assert_eq!(busy.code, "netease_login_in_progress");
+        assert!(!busy.retryable);
+        let timeout = CommandError::netease_login_timeout();
+        assert_eq!(timeout.code, "netease_login_timeout");
+        assert!(timeout.retryable);
     }
 }
