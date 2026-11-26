@@ -25,6 +25,11 @@ const NETEASE_LOGIN_URL: &str = "https://music.163.com/#/login";
 const NETEASE_LOGIN_COOKIE_URL: &str = "https://music.163.com/";
 const NETEASE_LOGIN_POLL: Duration = Duration::from_millis(500);
 const NETEASE_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+/// Centres the QR code in the login view. Re-evaluated on every poll because
+/// the page renders its login box asynchronously; the script is idempotent and
+/// ignores anything outside a 163.com document.
+#[cfg(any(desktop, target_os = "android"))]
+const NETEASE_LOGIN_FOCUS_SCRIPT: &str = include_str!("netease_login_focus.js");
 /// Android reuses the main webview, so the first ticks after `navigate` still
 /// report the app URL. The login page counts as unreachable only after this.
 #[cfg(any(target_os = "android", test))]
@@ -266,6 +271,10 @@ pub async fn netease_web_login(
         if app.get_webview_window(NETEASE_LOGIN_LABEL).is_none() {
             return Err(CommandError::netease_login_cancelled());
         }
+        // The login box is not guaranteed to be in view (a narrow window also
+        // clips it sideways); keep the QR code visible. The script no-ops once
+        // the user takes over.
+        let _ = window.eval(NETEASE_LOGIN_FOCUS_SCRIPT);
         let cookies = match window.cookies_for_url(cookie_url.clone()) {
             Ok(cookies) => cookies,
             Err(_) => {
@@ -341,6 +350,9 @@ pub async fn netease_web_login(
         match app_login_tick(on_login_page, reached_login, started.elapsed()) {
             AppLoginTick::OnPage => {
                 reached_login = true;
+                // Same as the desktop window: the mobile login page also opens
+                // with the QR code below the fold.
+                let _ = window.eval(NETEASE_LOGIN_FOCUS_SCRIPT);
                 let cookies = window
                     .cookies_for_url(cookie_url.clone())
                     .unwrap_or_default();
