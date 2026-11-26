@@ -110,6 +110,9 @@ pub fn run() {
             });
             tauri::async_runtime::block_on(bilibili.set_session_cookie(saved_cookie));
             app.manage(database);
+            app.manage(interface::recommendation::RecommendationState::new(
+                app.handle(),
+            ));
             app.manage(sync::SyncState::default());
             app.manage(media_proxy);
             app.manage(bilibili);
@@ -282,6 +285,19 @@ pub fn run() {
             interface::account::bili_qr_login_generate,
             interface::account::bili_qr_login_poll,
             interface::account::bili_account_profile,
+            interface::recommendation::netease_qr_login_generate,
+            interface::recommendation::netease_qr_login_poll,
+            interface::recommendation::netease_qr_login_cancel,
+            interface::recommendation::recommendation_sources,
+            interface::recommendation::recommendation_daily,
+            interface::recommendation::recommendation_refresh,
+            interface::recommendation::recommendation_bind,
+            interface::recommendation::recommendation_bind_manual,
+            interface::recommendation::recommendation_match_fail,
+            interface::recommendation::recommendation_match_reset,
+            interface::recommendation::recommendation_source_rename,
+            interface::recommendation::recommendation_source_remove,
+            interface::recommendation::recommendation_clear_all,
             interface::account::bili_favorite_folders,
             interface::account::bili_subscribed_seasons,
             interface::account::bili_favorite_videos,

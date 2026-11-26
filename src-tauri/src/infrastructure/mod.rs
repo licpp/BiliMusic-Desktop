@@ -6,6 +6,7 @@ pub mod media_proxy;
 pub mod migrations;
 pub mod playback_cache;
 pub mod providers;
+pub mod recommendation_store;
 pub mod repositories;
 pub mod updates;
 

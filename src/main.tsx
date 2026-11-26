@@ -70,6 +70,8 @@ import './styles/media-features.css'
 
 import './styles/queue.css'
 import './styles/playlist-import.css'
+
+import './styles/recommendations.css'
 import './styles/mini-player.css'
 import './styles/playback-cache.css'
 import './styles/search-suggestions.css'
