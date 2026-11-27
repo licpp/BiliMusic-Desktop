@@ -125,7 +125,7 @@ pub fn run() {
                     .app_cache_dir()
                     .ok()
                     .map(|path| path.join("music-hot-search-v1")),
-            )?);
+            ));
             global_shortcuts::start(app.handle().clone());
             #[cfg(desktop)]
             app.manage(mini_player::MiniPlayerState::default());

@@ -1,7 +1,5 @@
 use super::bilibili::{BilibiliProvider, ProviderError};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -15,21 +13,11 @@ const FRESH_FOR: Duration = Duration::from_secs(30 * 60);
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
 const BILIBILI_LIMIT: usize = 10;
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HotSearchSource {
-    Bilibili,
-    Netease,
-    Qq,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HotSearchBadge {
     Hot,
     New,
-    Viral,
-    Rising,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -51,8 +39,6 @@ pub struct HotSearchChart {
 pub enum HotSearchError {
     #[error("热搜暂时不可用")]
     Unavailable,
-    #[error("热搜请求失败")]
-    Request(#[from] reqwest::Error),
     #[error(transparent)]
     Bilibili(#[from] ProviderError),
 }
@@ -147,40 +133,25 @@ impl ChartCache {
 }
 
 pub struct HotSearchProvider {
-    client: Client,
     directory: Option<PathBuf>,
-    bilibili: Mutex<Option<ChartCache>>,
-    netease: Mutex<Option<ChartCache>>,
-    qq: Mutex<Option<ChartCache>>,
+    cache: Mutex<Option<ChartCache>>,
 }
 
 impl HotSearchProvider {
-    pub fn new(directory: Option<PathBuf>) -> Result<Self, reqwest::Error> {
-        Ok(Self {
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(3))
-                .timeout(Duration::from_secs(8))
-                .build()?,
+    pub fn new(directory: Option<PathBuf>) -> Self {
+        Self {
             directory,
-            bilibili: Mutex::default(),
-            netease: Mutex::default(),
-            qq: Mutex::default(),
-        })
+            cache: Mutex::default(),
+        }
     }
 
     pub async fn chart(
         &self,
-        source: HotSearchSource,
         bilibili: &BilibiliProvider,
     ) -> Result<HotSearchChart, HotSearchError> {
-        let (slot, filename) = match source {
-            HotSearchSource::Bilibili => (&self.bilibili, "bilibili.json"),
-            HotSearchSource::Netease => (&self.netease, "netease.json"),
-            HotSearchSource::Qq => (&self.qq, "qq.json"),
-        };
-        // Simultaneous requests share a single refresh per provider.
-        let path = self.directory.as_ref().map(|dir| dir.join(filename));
-        let mut slot = slot.lock().await;
+        // Simultaneous requests share a single refresh.
+        let path = self.directory.as_ref().map(|dir| dir.join("bilibili.json"));
+        let mut slot = self.cache.lock().await;
         if slot.is_none() {
             let success = match &path {
                 Some(path) => StoredChart::load(path).await,
@@ -195,7 +166,12 @@ impl HotSearchProvider {
         if let Some(chart) = cache.resolve(Instant::now(), SystemTime::now()) {
             return chart;
         }
-        match self.fetch(source, bilibili).await {
+        let result = bilibili
+            .hot_search(BILIBILI_LIMIT)
+            .await
+            .map_err(HotSearchError::from)
+            .and_then(parse_chart);
+        match result {
             Ok(items) => {
                 cache.failure = None;
                 let stored = StoredChart {
@@ -217,83 +193,28 @@ impl HotSearchProvider {
             }
         }
     }
-
-    async fn fetch(
-        &self,
-        source: HotSearchSource,
-        bilibili: &BilibiliProvider,
-    ) -> Result<Vec<HotSearchItem>, HotSearchError> {
-        let response = match source {
-            HotSearchSource::Bilibili => {
-                let data = bilibili.hot_search(BILIBILI_LIMIT).await?;
-                return parse_chart(source, data);
-            }
-            HotSearchSource::Netease => {
-                self.client
-                    .get("https://music.163.com/api/hotsearchlist/get")
-                    .send()
-                    .await?
-            }
-            HotSearchSource::Qq => {
-                self.client
-                    .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
-                    .json(&json!({
-                        "comm": { "ct": 24, "cv": 0 },
-                        "hotkey": {
-                            "module": "music.musicsearch.HotkeyService",
-                            "method": "GetHotkeyForQQMusicMobile",
-                            "param": {}
-                        }
-                    }))
-                    .send()
-                    .await?
-            }
-        };
-        let payload = response.error_for_status()?.json().await?;
-        parse_chart(source, payload)
-    }
 }
 
-fn parse_chart(
-    source: HotSearchSource,
-    payload: serde_json::Value,
-) -> Result<Vec<HotSearchItem>, HotSearchError> {
-    let (rows, field, limit) = match source {
-        HotSearchSource::Bilibili => (&payload["trending"]["list"], "keyword", BILIBILI_LIMIT),
-        HotSearchSource::Netease if payload["code"].as_i64() == Some(200) => {
-            (&payload["data"], "searchWord", 30)
-        }
-        HotSearchSource::Qq
-            if payload["code"].as_i64() == Some(0)
-                && payload["hotkey"]["code"].as_i64() == Some(0)
-                && payload["hotkey"]["data"]["ret_code"].as_i64() == Some(0) =>
-        {
-            (&payload["hotkey"]["data"]["vec_hotkey"], "query", 30)
-        }
-        _ => return Err(HotSearchError::Unavailable),
-    };
+fn parse_chart(payload: serde_json::Value) -> Result<Vec<HotSearchItem>, HotSearchError> {
+    let rows = &payload["trending"]["list"];
     let mut seen = HashSet::new();
     let items: Vec<_> = rows
         .as_array()
         .ok_or(HotSearchError::Unavailable)?
         .iter()
         .filter_map(|row| {
-            let keyword = chart_word(&row[field])?;
+            let keyword = chart_word(&row["keyword"])?;
             if !seen.insert(keyword.to_lowercase()) {
                 return None;
             }
-            let title = match source {
-                HotSearchSource::Bilibili => chart_word(&row["show_name"]),
-                HotSearchSource::Netease | HotSearchSource::Qq => None,
-            }
-            .filter(|title| title != &keyword);
+            let title = chart_word(&row["show_name"]).filter(|title| title != &keyword);
             Some(HotSearchItem {
                 keyword,
                 title,
-                badge: chart_badge(source, row),
+                badge: chart_badge(row),
             })
         })
-        .take(limit)
+        .take(BILIBILI_LIMIT)
         .collect();
     if items.is_empty() {
         return Err(HotSearchError::Unavailable);
@@ -310,69 +231,19 @@ fn chart_word(value: &serde_json::Value) -> Option<String> {
     (!word.is_empty() && word.chars().count() <= 120).then_some(word)
 }
 
-fn chart_badge(source: HotSearchSource, row: &serde_json::Value) -> Option<HotSearchBadge> {
-    use HotSearchBadge::*;
-    match source {
-        // The web chart identifies standard badges by their icon asset.
-        HotSearchSource::Bilibili => match row["icon"].as_str()?.rsplit('/').next()? {
-            "lrx9rnKo24.png" => Some(Hot),
-            "UF7B1wVKT2.png" => Some(New),
-            _ => None,
-        },
-        HotSearchSource::Netease => match row["iconType"].as_i64()? {
-            4 => Some(Viral),
-            5 => Some(Rising),
-            _ => None,
-        },
-        HotSearchSource::Qq => match row["desc_icon_text"].as_str() {
-            Some("热") => Some(Hot),
-            Some("新") => Some(New),
-            _ if row["description"].as_str() == Some("新歌") => Some(New),
-            _ => None,
-        },
+fn chart_badge(row: &serde_json::Value) -> Option<HotSearchBadge> {
+    // The web chart identifies standard badges by their icon asset.
+    match row["icon"].as_str()?.rsplit('/').next()? {
+        "lrx9rnKo24.png" => Some(HotSearchBadge::Hot),
+        "UF7B1wVKT2.png" => Some(HotSearchBadge::New),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn music_rank_and_badges_follow_each_provider() {
-        let netease = json!({"code":200,"data":[
-            {"searchWord":" 汤令山 ", "iconType":4}, {"searchWord":"Time Machine", "iconType":5},
-            {"searchWord":"time   machine"}, {"searchWord":" "}, {"searchWord":"趁早", "iconType":99}
-        ]});
-        let qq = json!({"code":0,"hotkey":{"code":0,"data":{"ret_code":0,"vec_hotkey":[
-            {"query":"慌啥子嘛 赵本山","description":"正在热搜"},
-            {"query":"发如雪","description":"新歌"}, {"jump_url":"example"}
-        ]}}});
-        let entries = |source, payload| {
-            parse_chart(source, payload)
-                .unwrap()
-                .into_iter()
-                .map(|row| (row.keyword, row.badge))
-                .collect::<Vec<_>>()
-        };
-        use HotSearchBadge::*;
-        assert_eq!(
-            entries(HotSearchSource::Netease, netease.clone()),
-            [
-                ("汤令山".into(), Some(Viral)),
-                ("Time Machine".into(), Some(Rising)),
-                ("趁早".into(), None)
-            ]
-        );
-        assert_eq!(
-            entries(HotSearchSource::Qq, qq.clone()),
-            [
-                ("慌啥子嘛 赵本山".into(), None),
-                ("发如雪".into(), Some(New))
-            ]
-        );
-        assert!(parse_chart(HotSearchSource::Qq, netease).is_err());
-        assert!(parse_chart(HotSearchSource::Netease, qq).is_err());
-    }
+    use serde_json::json;
 
     #[test]
     fn bilibili_retains_ten_ranked_terms_and_recognizes_only_standard_icons() {
@@ -382,8 +253,7 @@ mod tests {
             json!({"keyword":"自定义图标", "icon":"https://i0.hdslb.com/bfs/legacy/custom.png"}),
         ];
         rows.extend((4..=12).map(|rank| json!({"keyword":format!("词条 {rank}")})));
-        let items =
-            parse_chart(HotSearchSource::Bilibili, json!({"trending":{"list":rows}})).unwrap();
+        let items = parse_chart(json!({"trending":{"list":rows}})).unwrap();
         assert_eq!(items.len(), 10);
         assert_eq!(items[0].keyword, "热搜词");
         assert_eq!(items[0].title.as_deref(), Some("榜单标题"));
@@ -396,21 +266,8 @@ mod tests {
 
     #[test]
     fn rejects_upstream_errors_and_empty_charts() {
-        for (source, payload) in [
-            (HotSearchSource::Netease, json!({"code":200,"data":[]})),
-            (
-                HotSearchSource::Netease,
-                json!({"code":429,"data":[{"searchWord":"old"}]}),
-            ),
-            (
-                HotSearchSource::Qq,
-                json!({"code":0,"hotkey":{"code":0,"data":{
-                    "ret_code":1, "vec_hotkey":[{"query":"old"}]
-                }}}),
-            ),
-        ] {
-            assert!(parse_chart(source, payload).is_err());
-        }
+        assert!(parse_chart(json!({"code":429})).is_err());
+        assert!(parse_chart(json!({"trending":{"list":[]}})).is_err());
     }
 
     #[test]
@@ -423,7 +280,7 @@ mod tests {
                 items: vec![HotSearchItem {
                     keyword: "传奇".into(),
                     title: None,
-                    badge: Some(HotSearchBadge::Viral),
+                    badge: Some(HotSearchBadge::Hot),
                 }],
             }),
             failure: None,
@@ -445,7 +302,7 @@ mod tests {
             .unwrap();
         assert!(previous.stale);
         assert_eq!(previous.items[0].keyword, "传奇");
-        assert_eq!(previous.items[0].badge, Some(HotSearchBadge::Viral));
+        assert_eq!(previous.items[0].badge, Some(HotSearchBadge::Hot));
         assert!(
             cache
                 .resolve(refresh_at + RETRY_AFTER_FAILURE, refresh_wall_clock)
@@ -461,65 +318,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loads_each_persisted_chart_without_network_on_restart() {
+    async fn loads_persisted_chart_without_network_on_restart() {
         let directory = std::env::temp_dir().join(format!(
             "bilimusic-hot-search-test-{}",
             uuid::Uuid::new_v4()
         ));
-        let fetched_at = SystemTime::now();
-        StoredChart {
-            fetched_at,
-            items: vec![HotSearchItem {
-                keyword: "榜单".into(),
-                title: None,
-                badge: Some(HotSearchBadge::Hot),
-            }],
-        }
-        .save(&directory.join("bilibili.json"))
+        fs::create_dir_all(&directory).await.unwrap();
+        fs::write(
+            directory.join("bilibili.json"),
+            json!({"fetched_at":SystemTime::now(),"keywords":["榜单"]}).to_string(),
+        )
         .await
         .unwrap();
-        for (file, keyword) in [("netease.json", "传奇"), ("qq.json", "发如雪")] {
-            fs::write(
-                directory.join(file),
-                json!({ "fetched_at": fetched_at, "keywords": [keyword] }).to_string(),
-            )
-            .await
-            .unwrap();
-        }
-        let provider = HotSearchProvider::new(Some(directory.clone())).unwrap();
+        let provider = HotSearchProvider::new(Some(directory.clone()));
         let bilibili = BilibiliProvider::new().unwrap();
-        let bili = provider
-            .chart(HotSearchSource::Bilibili, &bilibili)
-            .await
-            .unwrap();
-        let netease = provider
-            .chart(HotSearchSource::Netease, &bilibili)
-            .await
-            .unwrap();
-        let qq = provider
-            .chart(HotSearchSource::Qq, &bilibili)
-            .await
-            .unwrap();
+        let chart = provider.chart(&bilibili).await.unwrap();
         fs::remove_dir_all(directory).await.unwrap();
-        assert_eq!(bili.items[0].badge, Some(HotSearchBadge::Hot));
-        assert_eq!(netease.items[0].keyword, "传奇");
-        assert_eq!(qq.items[0].keyword, "发如雪");
-        assert!(!bili.stale && !netease.stale && !qq.stale);
+        assert_eq!(chart.items[0].keyword, "榜单");
+        assert!(!chart.stale);
     }
 
     #[tokio::test]
     #[ignore = "queries public provider endpoints"]
-    async fn live_providers_return_keywords() {
-        let provider = HotSearchProvider::new(None).unwrap();
+    async fn live_bilibili_returns_keywords() {
+        let provider = HotSearchProvider::new(None);
         let bilibili = BilibiliProvider::new().unwrap();
-        let (bili, netease, qq) = tokio::join!(
-            provider.chart(HotSearchSource::Bilibili, &bilibili),
-            provider.chart(HotSearchSource::Netease, &bilibili),
-            provider.chart(HotSearchSource::Qq, &bilibili)
+        assert_eq!(
+            provider.chart(&bilibili).await.unwrap().items.len(),
+            BILIBILI_LIMIT
         );
-        assert_eq!(bili.unwrap().items.len(), BILIBILI_LIMIT);
-        for chart in [netease.unwrap(), qq.unwrap()] {
-            assert!(!chart.items.is_empty() && !chart.stale);
-        }
     }
 }
