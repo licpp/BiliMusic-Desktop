@@ -92,6 +92,25 @@ export async function webLoginNetease(termsAccepted: boolean): Promise<Recommend
   return sourceOf(await invoke<RawSource>('netease_web_login', { termsAccepted }))
 }
 
+/**
+ * What ended the web login that reloaded the app page. The Android login
+ * replaces the page, so the command above never resolves into the document
+ * that started it; the reloaded page asks for the outcome instead.
+ */
+export type WebLoginOutcome = {
+  /** Wall clock when the login ended, compared against the marker's start. */
+  finishedAt: number
+  source?: RecommendationSource
+  error?: { code?: string; message?: string; retryable?: boolean }
+}
+
+export async function webLoginOutcome(): Promise<WebLoginOutcome | undefined> {
+  if (!isTauri()) return undefined
+  const raw = await invoke<(Omit<WebLoginOutcome, 'source'> & { source?: RawSource }) | null>('netease_web_login_outcome')
+  if (!raw) return undefined
+  return { finishedAt: raw.finishedAt, source: raw.source ? sourceOf(raw.source) : undefined, error: raw.error }
+}
+
 export async function cancelNeteaseWebLogin(): Promise<void> {
   if (!isTauri()) return
   await invoke('netease_web_login_cancel')

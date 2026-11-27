@@ -15,15 +15,21 @@ import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 
 test('Android restores the app page on every exit from embedded login', async () => {
-  const source = await readFile('src-tauri/src/interface/recommendation.rs', 'utf8')
+  // Checkouts on Windows use CRLF; these assertions are about statement order,
+  // not line endings.
+  const source = (await readFile('src-tauri/src/interface/recommendation.rs', 'utf8')).replace(/\r\n/g, '\n')
   const android = source.split('#[cfg(target_os = "android")]\n#[tauri::command]\npub async fn netease_web_login(')[1]
   const login = android?.split('\n/// One decision per poll')[0]
   assert.ok(login)
-  const loop = login.split('let result = loop {')[1]
+  // The function ends at the first column-0 `}`; the command declared after it
+  // is not part of the login's exit path.
+  const loop = login.split('let result = loop {')[1].split('\n}\n')[0]
   assert.ok(loop)
   assert.match(loop, /AppLoginTick::Left => break Err\(CommandError::netease_login_cancelled\(\)\)/)
   assert.doesNotMatch(loop, /\breturn\b/)
-  assert.match(loop, /};\s+restore_app_page\(&window, &app_url\);\s+result\s+}/)
+  // Every exit carries the loop's value out: the result is left for the page
+  // that the return reloads, and only then is the app page put back.
+  assert.match(loop, /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\);\s+result\s*$/)
 })
 
 const source = await readFile(new URL('../src-tauri/src/interface/netease_login_focus.js', import.meta.url), 'utf8')

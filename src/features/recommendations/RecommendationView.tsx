@@ -23,9 +23,12 @@ import {
   recommendationQueryKey,
   refreshRecommendation,
   resetRecommendationMatches,
+  webLoginOutcome,
 } from '../../services/recommendations'
 import { runRecommendationMatching, stopRecommendationMatching, useRecommendationMatch } from '../../services/recommendationMatching'
+import { clearWebLoginReturn, outcomeForAttempt, peekWebLoginReturn, sourceAddedByLogin } from '../../services/recommendationLoginReturn'
 import {
+  isNeteaseLoginCancelled,
   playableRecommendationTracks,
   recommendationDay,
   recommendationDayLabel,
@@ -74,6 +77,40 @@ export function RecommendationView({ active }: { active: boolean }) {
   })
   const snapshot = daily.data
   const [sourceDialog, setSourceDialog] = useState<'list' | 'login' | 'add' | null>(null)
+  // The Android web login replaces the app page, so the app reloads on the way
+  // back and the dialog that started the login is gone. The login leaves a
+  // marker for the reload; reopen the dialog it belonged to and say what was
+  // added, instead of dropping the user on the home page.
+  const [loginReturn, setLoginReturn] = useState(() => peekWebLoginReturn())
+  const [loginReturnNotice, setLoginReturnNotice] = useState<string>()
+  const [loginReturnError, setLoginReturnError] = useState<string>()
+  useEffect(() => {
+    if (!active || !loginReturn || sources.isLoading) return
+    setLoginReturn(undefined)
+    clearWebLoginReturn()
+    // The login replaced this page, so its result waits in the backend: the
+    // source list alone cannot tell a failed login from a cancelled one. An
+    // outcome older than this attempt's marker belongs to an earlier login.
+    void webLoginOutcome()
+      .then(outcome => outcomeForAttempt(outcome, loginReturn))
+      .catch(() => undefined)
+      .then(outcome => {
+        if (outcome?.error) {
+          if (!isNeteaseLoginCancelled(outcome.error)) setLoginReturnError(commandErrorMessage(outcome.error))
+        } else if (outcome?.source) {
+          selectSource(outcome.source.id)
+          const known = loginReturn.sourceIds.includes(outcome.source.id)
+          setLoginReturnNotice(`已${known ? '重新登录' : '添加'}「${outcome.source.name}」，可以关闭窗口开始匹配`)
+        } else {
+          const added = sourceAddedByLogin(sourceList, loginReturn)
+          if (added) {
+            selectSource(added.id)
+            setLoginReturnNotice(`已添加「${added.name}」，可以关闭窗口开始匹配`)
+          }
+        }
+        setSourceDialog('list')
+      })
+  }, [active, loginReturn, sources.isLoading, sourceList])
   const [playlistDialog, setPlaylistDialog] = useState(false)
   const [replacing, setReplacing] = useState<RecommendationSong>()
   const [confirmEmpty, setConfirmEmpty] = useState(false)
@@ -310,8 +347,9 @@ export function RecommendationView({ active }: { active: boolean }) {
 
       {replacing && source && snapshot && <RecommendationReplaceDialog song={replacing} source={source} day={snapshot.day}
         onBound={boundSong} onClose={() => setReplacing(undefined)} />}
-      {sourceDialog && <RecommendationSourceDialog initialView={sourceDialog} sources={sourceList} selectedId={source?.id} onSelect={selectSource}
-        onClose={() => setSourceDialog(null)} />}
+      {sourceDialog && <RecommendationSourceDialog initialView={sourceDialog} initialNotice={loginReturnNotice} initialError={loginReturnError}
+        sources={sourceList} selectedId={source?.id} onSelect={selectSource}
+        onClose={() => { setSourceDialog(null); setLoginReturnNotice(undefined); setLoginReturnError(undefined) }} />}
       {playlistDialog && source && <RecommendationPlaylistDialog day={day} sourceName={source.name} tracks={playable}
         onClose={() => setPlaylistDialog(false)} />}
     </section>

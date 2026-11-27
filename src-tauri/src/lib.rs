@@ -302,6 +302,7 @@ pub fn run() {
             interface::recommendation::netease_qr_login_cancel,
             interface::recommendation::netease_web_login,
             interface::recommendation::netease_web_login_cancel,
+            interface::recommendation::netease_web_login_outcome,
             interface::recommendation::recommendation_sources,
             interface::recommendation::recommendation_daily,
             interface::recommendation::recommendation_refresh,

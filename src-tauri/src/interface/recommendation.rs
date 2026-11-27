@@ -29,6 +29,8 @@ const NETEASE_LOGIN_LABEL: &str = "netease-login";
 const NETEASE_LOGIN_URL: &str = "https://music.163.com/#/login";
 const NETEASE_LOGIN_COOKIE_URL: &str = "https://music.163.com/";
 const NETEASE_LOGIN_POLL: Duration = Duration::from_millis(500);
+#[cfg(target_os = "android")]
+const NETEASE_LOGIN_PROFILE_RETRY: Duration = Duration::from_secs(3);
 const NETEASE_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Centres the QR code in the login view. Re-evaluated on every poll because
 /// the page renders its login box asynchronously; the script is idempotent and
@@ -50,6 +52,8 @@ pub struct RecommendationState {
     database: Result<RecommendationDatabase, String>,
     provider: Result<NeteaseProvider, String>,
     web_login: Mutex<WebLoginSlot>,
+    /// Where the Android login leaves its result for the page it reloads.
+    web_login_outcome: Mutex<Option<WebLoginOutcome>>,
 }
 
 impl RecommendationState {
@@ -58,7 +62,22 @@ impl RecommendationState {
             database: RecommendationDatabase::open(app).map_err(|error| error.to_string()),
             provider: NeteaseProvider::new().map_err(|error| error.to_string()),
             web_login: Mutex::new(WebLoginSlot::default()),
+            web_login_outcome: Mutex::new(None),
         }
+    }
+
+    fn set_web_login_outcome(&self, outcome: WebLoginOutcome) {
+        *self
+            .web_login_outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+    }
+
+    fn take_web_login_outcome(&self) -> Option<WebLoginOutcome> {
+        self.web_login_outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     fn database(&self) -> Result<&RecommendationDatabase, CommandError> {
@@ -117,6 +136,43 @@ struct WebLoginGuard<'a>(&'a RecommendationState);
 impl Drop for WebLoginGuard<'_> {
     fn drop(&mut self) {
         self.0.finish_web_login();
+    }
+}
+
+/// What the app page learns about the login that reloaded it. The Android
+/// login replaces the app page, so the command's return value reaches a
+/// document that no longer exists; the outcome waits here instead and the
+/// reloaded page asks for it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLoginOutcome {
+    /// Wall clock at the end of the attempt, so the page can tell its own
+    /// attempt's result from one left behind by an earlier attempt.
+    pub finished_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<RecommendationSourceRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<WebLoginOutcomeError>,
+}
+
+/// `CommandError` is handed to the frontend by value and is not shared, so the
+/// fields the UI reads are copied out of it. `message` is already sanitized:
+/// it never carries the token, the nickname or a raw URL.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLoginOutcomeError {
+    pub code: &'static str,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl From<&CommandError> for WebLoginOutcomeError {
+    fn from(error: &CommandError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message.clone(),
+            retryable: error.retryable,
+        }
     }
 }
 
@@ -349,6 +405,17 @@ pub async fn netease_web_login(
     let started = Instant::now();
     let deadline = started + NETEASE_LOGIN_TIMEOUT;
     let mut reached_login = false;
+    // The main webview keeps the cookie store between attempts and wry cannot
+    // delete a cookie on Android, so a session from an earlier attempt stays
+    // visible here. Only the account call can tell whether it still
+    // authenticates; remember the value it rejected instead of asking again.
+    let mut rejected_music_u: Option<String> = None;
+    // A failed account call that may pass on its own is not retried on every
+    // poll: every 500ms would be two requests per second for minutes.
+    let mut profile_retry_at = Instant::now();
+    // logcat is the only place this flow can be observed, so it reports state
+    // changes rather than one line per poll.
+    let mut logged: Option<(bool, Vec<String>)> = None;
     let result = loop {
         if state.web_login_cancelled() {
             break Err(CommandError::netease_login_cancelled());
@@ -360,17 +427,51 @@ pub async fn netease_web_login(
                 // Same as the desktop window: the mobile login page also opens
                 // with the QR code below the fold.
                 let _ = window.eval(NETEASE_LOGIN_FOCUS_SCRIPT);
-                let cookies = window
-                    .cookies_for_url(cookie_url.clone())
-                    .unwrap_or_default();
-                if let Some((music_u, csrf)) = login_credentials(&cookies) {
-                    let profile = provider.profile(&music_u, &csrf).await;
-                    if !window.url().ok().as_ref().is_some_and(is_netease_url) {
-                        break Err(CommandError::netease_login_cancelled());
+                let cookies = match window.cookies_for_url(cookie_url.clone()) {
+                    Ok(cookies) => cookies,
+                    Err(error) => {
+                        login_log(format!("cookies error={error}"));
+                        Vec::new()
                     }
-                    break profile.map_err(CommandError::netease).and_then(|profile| {
-                        persist_web_login(state.inner(), &music_u, &csrf, &profile)
-                    });
+                };
+                let names = cookies
+                    .iter()
+                    .map(|cookie| cookie.name().to_string())
+                    .collect::<Vec<_>>();
+                let state_key = (on_login_page, names.clone());
+                if logged.as_ref() != Some(&state_key) {
+                    let current = window.url().ok().map(|url| url.to_string());
+                    login_log(format!(
+                        "tick url={current:?} on_login_page={on_login_page} elapsed={:?} cookies={:?}",
+                        started.elapsed(),
+                        names
+                    ));
+                    logged = Some(state_key);
+                }
+                if let Some((music_u, csrf)) = login_credentials(&cookies) {
+                    if rejected_music_u.as_deref() != Some(music_u.as_str())
+                        && Instant::now() >= profile_retry_at
+                    {
+                        match provider.profile(&music_u, &csrf).await {
+                            Ok(profile) => {
+                                if !window.url().ok().as_ref().is_some_and(is_netease_url) {
+                                    break Err(CommandError::netease_login_cancelled());
+                                }
+                                break persist_web_login(state.inner(), &music_u, &csrf, &profile);
+                            }
+                            Err(error) => match profile_verdict(&error) {
+                                ProfileVerdict::Stale => {
+                                    login_log("profile rejected the stored session");
+                                    rejected_music_u = Some(music_u);
+                                }
+                                ProfileVerdict::Transient => {
+                                    login_log("profile not reachable, will retry");
+                                    profile_retry_at = Instant::now() + NETEASE_LOGIN_PROFILE_RETRY;
+                                }
+                                ProfileVerdict::Fatal => break Err(CommandError::netease(error)),
+                            },
+                        }
+                    }
                 }
             }
             AppLoginTick::Left => break Err(CommandError::netease_login_cancelled()),
@@ -384,8 +485,51 @@ pub async fn netease_web_login(
         }
         tokio::time::sleep(NETEASE_LOGIN_POLL).await;
     };
+    login_log(format!(
+        "end ok={} reached={reached_login} elapsed={:?}",
+        result.is_ok(),
+        started.elapsed()
+    ));
+    // The reload below destroys the document that called this command, so the
+    // result is left where the new document can pick it up.
+    state.set_web_login_outcome(WebLoginOutcome {
+        finished_at: now_millis(),
+        source: result.as_ref().ok().cloned(),
+        error: result.as_ref().err().map(WebLoginOutcomeError::from),
+    });
     restore_app_page(&window, &app_url);
     result
+}
+
+/// What ended the last web login, for the app page that the Android login
+/// reloads on its way back. Reading consumes it: the page asks once, so a
+/// later reload cannot show an earlier attempt's result.
+#[tauri::command]
+pub fn netease_web_login_outcome(state: State<'_, RecommendationState>) -> Option<WebLoginOutcome> {
+    state.take_web_login_outcome()
+}
+
+/// Android has no console, and the embedded login is the one flow that cannot
+/// be inspected from the UI, so it reports to logcat. Cookie values, the
+/// nickname and the user id stay out of the log.
+#[cfg(target_os = "android")]
+fn login_log(message: impl AsRef<str>) {
+    use std::ffi::CString;
+    unsafe extern "C" {
+        fn __android_log_write(
+            priority: i32,
+            tag: *const std::os::raw::c_char,
+            text: *const std::os::raw::c_char,
+        ) -> i32;
+    }
+    let (Ok(tag), Ok(text)) = (
+        CString::new("BiliMusicLogin"),
+        CString::new(message.as_ref()),
+    ) else {
+        return;
+    };
+    // 4 is ANDROID_LOG_INFO.
+    unsafe { __android_log_write(4, tag.as_ptr(), text.as_ptr()) };
 }
 
 /// One decision per poll of the Android main-webview login. `navigate` is
@@ -411,6 +555,32 @@ fn app_login_tick(on_login_page: bool, reached: bool, elapsed: Duration) -> AppL
         AppLoginTick::NotLoaded
     } else {
         AppLoginTick::Wait
+    }
+}
+
+/// What the login loop does when the account call for a cookie value fails.
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileVerdict {
+    /// The session does not authenticate any more: this attempt is not a login,
+    /// so ignore that value and keep the login page open for a real one.
+    Stale,
+    /// May pass on its own; ask again shortly with the same value.
+    Transient,
+    /// Retrying escalates the restriction or repeats a settled failure.
+    Fatal,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn profile_verdict(error: &NeteaseError) -> ProfileVerdict {
+    match error {
+        NeteaseError::AuthRequired | NeteaseError::AccountMismatch => ProfileVerdict::Stale,
+        NeteaseError::Network(_) | NeteaseError::Unavailable => ProfileVerdict::Transient,
+        NeteaseError::QrUnknown
+        | NeteaseError::RateLimited { .. }
+        | NeteaseError::RiskBlocked
+        | NeteaseError::VerificationRequired
+        | NeteaseError::Protocol => ProfileVerdict::Fatal,
     }
 }
 
@@ -498,7 +668,10 @@ fn persist_web_login(
 /// not reload the app and drop its in-memory state for nothing.
 #[cfg(target_os = "android")]
 fn restore_app_page(window: &tauri::WebviewWindow, app_url: &tauri::Url) {
+    let current = window.url().ok().map(|url| url.to_string());
+    login_log(format!("restore current={current:?} app={app_url}"));
     if window.url().ok().as_ref() != Some(app_url) {
+        login_log("restore navigating back to the app page");
         let _ = window.navigate(app_url.clone());
     }
 }
@@ -1477,6 +1650,38 @@ mod tests {
         assert_eq!(
             app_login_tick(false, false, NETEASE_LOGIN_NAVIGATION_GRACE),
             AppLoginTick::NotLoaded
+        );
+    }
+
+    #[test]
+    fn a_rejected_session_keeps_the_login_open_instead_of_failing() {
+        // Android's cookie store cannot be cleared and survives attempts, so a
+        // cookie left by an earlier login reaches the account call. Its answer
+        // decides whether the loop waits for a real login or gives up.
+        assert_eq!(
+            profile_verdict(&NeteaseError::AuthRequired),
+            ProfileVerdict::Stale
+        );
+        assert_eq!(
+            profile_verdict(&NeteaseError::AccountMismatch),
+            ProfileVerdict::Stale
+        );
+        assert_eq!(
+            profile_verdict(&NeteaseError::Unavailable),
+            ProfileVerdict::Transient
+        );
+        // Retrying these would deepen the restriction or repeat a settled answer.
+        assert_eq!(
+            profile_verdict(&NeteaseError::RiskBlocked),
+            ProfileVerdict::Fatal
+        );
+        assert_eq!(
+            profile_verdict(&NeteaseError::VerificationRequired),
+            ProfileVerdict::Fatal
+        );
+        assert_eq!(
+            profile_verdict(&NeteaseError::Protocol),
+            ProfileVerdict::Fatal
         );
     }
 

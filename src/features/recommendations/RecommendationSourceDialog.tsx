@@ -6,6 +6,7 @@ import { CollectionDialog } from '../../shared/CollectionDialog'
 import { isAndroid, isMobile } from '../../services/platform'
 import { commandErrorMessage } from '../../services/userErrors'
 import { commandErrorCode, RECOMMENDATION_SOURCE_NAME_MAX, isNeteaseLoginCancelled, qrPollingCanRetry, validateRecommendationSourceName, type RecommendationSource } from '../../domain/recommendation'
+import { clearWebLoginReturn, markWebLoginReturn } from '../../services/recommendationLoginReturn'
 import {
   cancelNeteaseQr,
   cancelNeteaseWebLogin,
@@ -24,12 +25,16 @@ type Props = {
   selectedId?: string
   /** `add` opens the provider picker directly, for callers with no list behind it. */
   initialView?: 'list' | 'login' | 'add'
+  /** Restored after an Android web login reloads the app, which loses the dialog. */
+  initialNotice?: string
+  /** The same reload, when the login ended in a failure the user has to see. */
+  initialError?: string
   onSelect: (sourceId: string) => void
   onClose: () => void
 }
 
 /** Source management keeps its own QR view so the main page never blocks on login. */
-export function RecommendationSourceDialog({ sources, selectedId, initialView = 'list', onSelect, onClose }: Props) {
+export function RecommendationSourceDialog({ sources, selectedId, initialView = 'list', initialNotice, initialError, onSelect, onClose }: Props) {
   const client = useQueryClient()
   const [view, setView] = useState<'list' | 'login'>(initialView === 'login' ? 'login' : 'list')
   // The picker stacks over the list so the user can still see which sources
@@ -39,8 +44,8 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<string>()
   const [clearing, setClearing] = useState(false)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const [error, setError] = useState(initialError ?? '')
+  const [notice, setNotice] = useState(initialNotice ?? '')
 
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: recommendationQueryKey.sources })
@@ -144,7 +149,7 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
                       <button type="submit" aria-label="保存名称" disabled={rename.isPending}><Check size={15} /></button>
                       <button type="button" aria-label="取消重命名" onClick={() => setRenaming(undefined)}><X size={15} /></button>
                     </form>
-                    : <><strong>{source.name}</strong><small>网易云 · {source.nickname || '未命名账号'}</small></>}
+                    : <><strong>{source.name}</strong><small> {source.nickname || '未命名账号'}</small></>}
                   <span className="recommendation-source-state" data-state={source.lastRefreshState}>{refreshLabel(source)}</span>
                 </div>
                 {removing === source.id
@@ -197,7 +202,7 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
     </CollectionDialog>}
 
     {loginOpen && <CollectionDialog title="添加网易云音乐推荐源" mobileSheet stacked className="recommendation-dialog" onClose={closeLogin}>
-      <NeteaseLogin onAuthorized={authorized} onCancel={closeLogin} />
+      <NeteaseLogin sourceIds={sources.map(source => source.id)} onAuthorized={authorized} onCancel={closeLogin} />
     </CollectionDialog>}
   </>
 }
@@ -213,26 +218,28 @@ function refreshLabel(source: RecommendationSource) {
   }
 }
 
-function NeteaseLogin({ onAuthorized, onCancel }: {
+function NeteaseLogin({ sourceIds, onAuthorized, onCancel }: {
+  sourceIds: string[]
   onAuthorized: (source: RecommendationSource) => void
   onCancel: () => void
 }) {
-  // Desktop opens the official page in an isolated window. Android has no
-  // second window, so it keeps the generated QR and only falls back to showing
-  // the official page inside the main webview when the QR endpoint is gated
-  // (business code 8821). iOS and OHOS keep the QR alone: their webviews
-  // cannot return to the app page on their own.
-  const [mode, setMode] = useState<'qr' | 'web'>(isMobile ? 'qr' : 'web')
+  // Desktop opens the official page in an isolated window. On Android the web
+  // page goes first: in practice only it reliably completes there, so the
+  // generated QR stays as the fallback (the QR endpoint is what gets gated with
+  // business code 8821). iOS and OHOS keep the QR alone: their webviews cannot
+  // return to the app page on their own.
+  const [mode, setMode] = useState<'qr' | 'web'>(isMobile && !isAndroid ? 'qr' : 'web')
   if (mode === 'web') {
-    return <NeteaseWebLogin android={isAndroid} onUseQr={isAndroid ? () => setMode('qr') : undefined}
+    return <NeteaseWebLogin android={isAndroid} sourceIds={sourceIds} onUseQr={isAndroid ? () => setMode('qr') : undefined}
       onAuthorized={onAuthorized} onCancel={onCancel} />
   }
   return <NeteaseQrLogin onUseWeb={isAndroid ? () => setMode('web') : undefined}
     onAuthorized={onAuthorized} onCancel={onCancel} />
 }
 
-function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
+function NeteaseWebLogin({ android, sourceIds, onUseQr, onAuthorized, onCancel }: {
   android?: boolean
+  sourceIds: string[]
   onUseQr?: () => void
   onAuthorized: (source: RecommendationSource) => void
   onCancel: () => void
@@ -263,6 +270,11 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
     setState('opening')
     setStatus(android ? '正在打开网易云登录页…' : '正在打开网易云登录窗口…')
     pending.current = true
+    // Android replaces the app page with the login page and reloads the app on
+    // the way back, so no state here survives to receive the result. The marker
+    // lets the reload reopen this dialog; pages that keep their JavaScript
+    // clear it in `finally` instead.
+    if (android) markWebLoginReturn(sourceIds)
     // The command resolves only after login, so switch the copy once the
     // window has had time to appear instead of leaving it on "opening".
     const opened = window.setTimeout(() => {
@@ -288,6 +300,7 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
       setStatus(commandErrorMessage(cause))
     } finally {
       window.clearTimeout(opened)
+      clearWebLoginReturn()
     }
   }
 
@@ -297,7 +310,7 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
         <span className="eyebrow coral">NETEASE CLOUD MUSIC</span>
         <h4>在应用内登录网易云音乐</h4>
         <p>{android
-          ? '点击下方按钮后，当前界面会切换为网易云官方登录页；登录成功会自动返回并重新加载应用，当前播放会中断。网易云音乐每天 6:00（北京时间）更新「每日推荐」，登录后只读取这份歌单，播放仍然通过 B 站完成。'
+          ? '点击下方按钮后，当前界面会切换为网易云官方登录页；登录成功后应用会自动重新加载，并回到推荐源设置、选中刚添加的账号，期间当前播放会中断。网易云音乐每天 6:00（北京时间）更新「每日推荐」，登录后只读取这份歌单，播放仍然通过 B 站完成。'
           : '点击下方按钮会打开网易云官方登录页。网易云音乐每天 6:00（北京时间）更新「每日推荐」，登录后只读取这份歌单，播放仍然通过 B 站完成，不会播放或下载网易云音频。'}</p>
       </div>
       <div className="recommendation-terms">
@@ -345,7 +358,7 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
     </div>
     <p className="recommendation-qr-status" data-state={state} role="status">{status}</p>
     <small className="recommendation-qr-tip">{android
-      ? '登录页会替换当前界面，按系统返回键可以取消并回到应用；完成登录后应用会自动重新加载。'
+      ? '登录页会替换当前界面，按系统返回键可以取消本次登录并回到应用；完成登录后应用会自动重新加载并回到推荐源设置。'
       : '登录页在单独的窗口中打开，可以用手机号、邮箱或网易云 App 扫码。完成登录后登录窗口会自动关闭；关闭登录窗口则取消本次登录。'}</small>
     <div className="recommendation-dialog-footer">
       <button type="button" onClick={onCancel}>取消登录</button>
@@ -445,7 +458,7 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
           <span>我已了解上述风险，并愿意继续使用自己的网易云账号登录</span>
         </label>
       </div>
-      {onUseWeb && <button type="button" className="recommendation-switch-login" onClick={onUseWeb}>扫码被拦截？改用网页登录</button>}
+      {onUseWeb && <button type="button" className="recommendation-switch-login" onClick={onUseWeb}>改用网页登录</button>}
       <div className="recommendation-dialog-footer">
         <button type="button" onClick={onCancel}>取消</button>
         <button type="button" className="recommendation-primary" disabled={!accepted} onClick={() => setStarted(true)}>同意并生成二维码</button>

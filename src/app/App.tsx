@@ -110,6 +110,7 @@ import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
 import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
 import { RecommendationView } from '../features/recommendations/RecommendationView'
+import { peekWebLoginReturn } from '../services/recommendationLoginReturn'
 import { PictureInPicture2 } from 'lucide-react'
 
 const navigation = [
@@ -494,6 +495,14 @@ export function App() {
     exploreFocus.current = recommendationActive ? '每日推荐' : 'B 站推荐'
     openSearch()
   }
+  // The Android NetEase web login replaces the app page, so the app reloads on
+  // the way back and forgets which page it was on. Return to the recommendation
+  // page the dialog was opened from instead of dropping the user on the home tab.
+  const [loginReturn] = useState(() => peekWebLoginReturn())
+  useEffect(() => {
+    if (!loginReturn || !showDaily || activeNav === '每日推荐') return
+    openExploreDetail('每日推荐')
+  }, [loginReturn, showDaily, activeNav])
   const openExtensions = () => {
     extensionsReturn.current = { preview: stagePreview(), scroll: settingsScroll.current?.scrollTop ?? 0 }
     setActiveNav('扩展')
