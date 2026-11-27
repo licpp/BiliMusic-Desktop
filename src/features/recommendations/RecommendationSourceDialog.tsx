@@ -5,7 +5,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { isAndroid, isMobile } from '../../services/platform'
 import { commandErrorMessage } from '../../services/userErrors'
-import { commandErrorCode, RECOMMENDATION_SOURCE_NAME_MAX, isNeteaseLoginCancelled, qrPollingCanRetry, validateRecommendationSourceName, type RecommendationSource } from '../../domain/recommendation'
+import { commandErrorCode, RECOMMENDATION_SOURCE_NAME_MAX, isNeteaseLoginCancelled, qrPollingCanRetry, recommendationSourceAccount, validateRecommendationSourceName, type RecommendationSource } from '../../domain/recommendation'
 import {
   cancelNeteaseQr,
   cancelNeteaseWebLogin,
@@ -135,8 +135,9 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
             <span>推荐源</span>
           </button>
           : <ul className="recommendation-source-rows">
-            {sources.map(source => (
-              <li key={source.id} data-active={source.id === selectedId || undefined}>
+            {sources.map(source => {
+              const account = recommendationSourceAccount(source)
+              return <li key={source.id} data-active={source.id === selectedId || undefined}>
                 <div className="recommendation-source-copy">
                   {renaming === source.id
                     ? <form className="recommendation-rename" onSubmit={event => { event.preventDefault(); submitRename() }}>
@@ -144,7 +145,7 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
                       <button type="submit" aria-label="保存名称" disabled={rename.isPending}><Check size={15} /></button>
                       <button type="button" aria-label="取消重命名" onClick={() => setRenaming(undefined)}><X size={15} /></button>
                     </form>
-                    : <><strong>{source.name}</strong><small>网易云 · {source.nickname || '未命名账号'}</small></>}
+                    : <><strong>{source.name}</strong>{account && <small>{account}</small>}</>}
                   <span className="recommendation-source-state" data-state={source.lastRefreshState}>{refreshLabel(source)}</span>
                 </div>
                 {removing === source.id
@@ -159,7 +160,7 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
                     <button type="button" className="danger" onClick={() => { setError(''); setNotice(''); setRemoving(source.id) }} disabled={rename.isPending || remove.isPending}><Trash2 size={14} /><span>移除</span></button>
                   </div>}
               </li>
-            ))}
+            })}
           </ul>}
         {sources.length === 0 && <p className="recommendation-dialog-empty">添加账号后，可以在这里切换、重命名或重新登录；歌单什么时候更新、包含哪些歌曲，都由各推荐源自己决定。</p>}
         {error && <p className="recommendation-dialog-error" role="alert">{error}</p>}
