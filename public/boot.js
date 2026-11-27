@@ -1,4 +1,15 @@
-try { document.documentElement.dataset.theme = localStorage.getItem('bilimusic-theme') === 'light' ? 'light' : 'dark' } catch (_) {}
+// Paint the stored theme before the module loads. Keep this in sync with
+// src/domain/theme.ts: anything that is not light/dark/system is dark, and a
+// `system` preference resolves through the media query when the WebView has one.
+try {
+  var preference = localStorage.getItem('bilimusic-theme')
+  var theme = preference === 'light' ? 'light' : 'dark'
+  if (preference === 'system' && typeof window.matchMedia === 'function') {
+    var scheme = window.matchMedia('(prefers-color-scheme: dark)')
+    if (scheme.media !== 'not all') theme = scheme.matches ? 'dark' : 'light'
+  }
+  document.documentElement.dataset.theme = theme
+} catch (_) {}
 
 document.addEventListener('DOMContentLoaded', function () {
   var entry = document.querySelector('meta[name="bilimusic-android-entry"]')

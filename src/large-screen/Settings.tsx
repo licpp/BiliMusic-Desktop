@@ -13,13 +13,14 @@ import { UpdateSettings } from '../features/settings/UpdateSettings'
 import { ResumeSettings } from '../features/settings/ResumeSettings'
 import { PlaybackCacheSettings } from '../features/settings/PlaybackCacheSettings'
 import { SyncSettings } from '../features/sync/SyncSettings'
-import { useThemeStore } from '../services/theme'
+import { systemThemeSupported, useThemeStore } from '../services/theme'
+import { ThemeSystemIcon } from '../shared/ThemeSystemIcon'
 import { useSyncAttention } from '../services/syncAttention'
 import { LargeDialog } from './LargeDialog'
 import { Failure } from './Library'
 
 export function LargeSettings() {
-  const theme = useThemeStore(s => s.theme), setTheme = useThemeStore(s => s.setTheme)
+  const themePreference = useThemeStore(s => s.preference), setTheme = useThemeStore(s => s.setTheme), followsSystem = systemThemeSupported()
   const attention = useSyncAttention(s => s.library || s.statistics)
   const [size, setSize] = useState(() => Number(localStorage.getItem('large-ui-size')) || 1)
   const [lyrics, setLyrics] = useState(() => Number(localStorage.getItem('large-lyrics-size')) || 1)
@@ -28,7 +29,7 @@ export function LargeSettings() {
     <details className="large-disclosure" open={attention ? true : undefined}><summary><Cloud/><span><strong>云同步</strong><small>{attention || '在不同设备间同步音乐库与听歌记录'}</small></span></summary><SyncSettings embedded/></details>
     <div className="large-settings-common"><ResumeSettings/><LoudnessSettings/><SystemTitleLyricsSettings/></div>
     <details className="large-disclosure"><summary><HardDrive/><span><strong>播放缓存</strong><small>容量与已用空间</small></span></summary><PlaybackCacheSettings embedded/></details>
-    <section className="large-setting-section large-surface"><h2>外观与显示</h2><div className="large-setting-row"><span>主题</span><div className="large-options"><button aria-pressed={theme === 'light'} onClick={() => setTheme('light')}><Sun/>明亮</button><button aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}><Moon/>深色</button></div></div>
+    <section className="large-setting-section large-surface"><h2>外观与显示</h2><div className="large-setting-row"><span>主题</span><div className="large-options"><button aria-pressed={themePreference === 'light'} onClick={() => setTheme('light')}><Sun/>明亮</button><button aria-pressed={themePreference === 'dark'} onClick={() => setTheme('dark')}><Moon/>深色</button>{followsSystem && <button aria-pressed={themePreference === 'system'} onClick={() => setTheme('system')}><ThemeSystemIcon/>跟随系统</button>}</div></div>
       <div className="large-setting-row"><span>界面大小</span><div className="large-options">{[0.9, 1, 1.15].map((value, i) => <button key={value} aria-pressed={size === value} onClick={() => { setSize(value); localStorage.setItem('large-ui-size', String(value)); document.documentElement.style.setProperty('--large-scale', String(value)) }}>{['紧凑', '标准', '较大'][i]}</button>)}</div></div>
       <div className="large-setting-row"><span>歌词字号</span><div className="large-options">{[0.85, 1, 1.2].map((value, i) => <button key={value} aria-pressed={lyrics === value} onClick={() => { setLyrics(value); localStorage.setItem('large-lyrics-size', String(value)); document.documentElement.style.setProperty('--large-lyric-scale', String(value)) }}>{['小', '标准', '大'][i]}</button>)}</div></div>
       <button className="large-setting-toggle" aria-pressed={awake} onClick={() => { const next = !awake; setAwake(next); localStorage.setItem('large-keep-awake', String(next)); window.dispatchEvent(new Event('bilimusic-display-changed')) }}><Sun/><span>播放页面保持亮屏</span><small>{awake ? '已开启' : '未开启'}</small></button>

@@ -9,7 +9,7 @@ const stubComponents=['WindowCloseSettings','ShortcutSettings','FloatingLyricsSe
 const mocks={
  platform:`export const isIOS=globalThis.titleLyricsTestPlatform==='ios';export const isAndroid=globalThis.titleLyricsTestPlatform==='android';export const isOHOS=globalThis.titleLyricsTestPlatform==='ohos';export const isMobile=isIOS||isAndroid||isOHOS;export const isLargeScreen=false;`,
  query:'export const useQuery=()=>({});',keys:'export const accountQueryKey=(...args)=>args;',
- theme:"export const useThemeStore=select=>select({theme:'light',setTheme(){}});",
+ theme:"export const useThemeStore=select=>select({theme:'light',preference:'light',setTheme(){}});export const systemThemeSupported=()=>globalThis.themeSystemSupported!==false;",
  attention:'export const useSyncAttention=select=>select({library:null,statistics:null,reveal:0});',
  api:'export const commandErrorMessage=String;export const inDesktopShell=false;',
  settings:"export const chooseDownloadDirectory=async()=>'';export const getDownloadDirectory=async()=>'';",
@@ -31,6 +31,18 @@ test('iOS settings omit system title lyrics even when the old preference is enab
    const html=renderToStaticMarkup(React.createElement(m.exports.SettingsView))
    assert.equal(html.includes('系统标题歌词'),platform==='android'||platform==='ohos',platform)
    if(platform==='android'||platform==='ohos')assert.match(html,/aria-checked="true"/)
+  }
+ }finally{Object.assign(globalThis,saved)}
+})
+test('the 跟随系统 option only appears where the platform can resolve the system scheme',()=>{
+ const saved={localStorage:globalThis.localStorage,themeSystemSupported:globalThis.themeSystemSupported}
+ try{
+  globalThis.localStorage={getItem:()=>null}
+  for(const supported of [true,false]){
+   globalThis.themeSystemSupported=supported
+   const m={exports:{}};new Function('require','module','exports',output.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
+   const html=renderToStaticMarkup(React.createElement(m.exports.SettingsView))
+   assert.equal(html.includes('跟随系统'),supported,supported?'shown where supported':'hidden where unsupported')
   }
  }finally{Object.assign(globalThis,saved)}
 })
