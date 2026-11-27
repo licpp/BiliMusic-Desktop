@@ -22,3 +22,9 @@ dependencies {
     implementation("androidx.media3:media3-session:1.9.4")
     implementation(project(":tauri-android"))
 }
+// Robolectric downloads its Android runtime jars at test time. Maven Central answers
+// 429 to the shared GitHub runner IPs, so fetch them from Google's mirror instead;
+// the Android workflow also caches the downloaded jars between runs.
+tasks.withType<Test>().configureEach {
+    systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2/")
+}
