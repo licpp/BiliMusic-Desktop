@@ -5,7 +5,7 @@ const compiled = await build({
   stdin: { contents: "export * from './src/features/lyrics/biasWriter.ts'; export { LyricBiasConflict } from './src/domain/lyrics.ts'", resolveDir: process.cwd() },
   bundle: true, write: false, format: 'esm', platform: 'node',
 })
-const { createBiasWriter, clampBias, LyricBiasConflict } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
+const { createBiasWriter, roundedLyricBias, LyricBiasConflict } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
 const selection = (trackId, writeToken = trackId, biasMs = 0) => ({ trackId, writeToken, biasMs, accountSession: 'account' })
 
 test('rapid lyric adjustments coalesce and in-flight writes finish in order across tracks', async () => {
@@ -37,8 +37,8 @@ test('a failed save does not block the next adjustment, and account cancellation
   writer.set(selection('b'), 2000); writer.cancel(); await writer.flush()
   assert.deepEqual(results, [['a', 500, true], ['a', 1000, false]])
   assert.equal(attempts, 2)
-  assert.equal(clampBias(60000), 30000)
-  assert.equal(clampBias(-60000), -30000)
+  assert.equal(roundedLyricBias(90500.2), 90500)
+  assert.equal(roundedLyricBias(-90500.8), -90501)
 })
 
 test('delayed offsets keep their original lyric selection when the same song is rematched', async () => {

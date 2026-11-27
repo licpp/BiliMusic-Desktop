@@ -15,6 +15,7 @@ async function moduleAt(path) {
 }
 
 const {
+  createLyricSpringController,
   stepSpring,
   lyricAnchorRatio,
   lyricScrollTarget,
@@ -24,17 +25,62 @@ const {
   lyricInterludeState,
 } = await moduleAt('src/features/lyrics/appleLyricMotion.ts')
 
-test('stepSpring converges smoothly to target without exploding on large frame drops', () => {
-  let state = { value: 0, velocity: 0 }
-  for (let i = 0; i < 180; i++) {
-    state = stepSpring(state, 240, 1 / 60)
+function lyricMotionFixture(t) {
+  let now = 0
+  let callback
+  t.mock.method(performance, 'now', () => now)
+  globalThis.requestAnimationFrame = schedule => { callback = schedule; return 1 }
+  globalThis.cancelAnimationFrame = () => { callback = undefined }
+  t.after(() => {
+    delete globalThis.requestAnimationFrame
+    delete globalThis.cancelAnimationFrame
+  })
+  const scroll = { clientHeight: 400, scrollHeight: 2200, scrollTop: 200 }
+  const lines = Array.from({ length: 32 }, () => ({
+    style: {
+      value: 0,
+      setProperty(_name, value) { this.value = parseFloat(value) },
+      removeProperty() { this.value = 0 },
+    },
+  }))
+  return {
+    scroll, lines,
+    motion: createLyricSpringController(),
+    position: index => scroll.scrollTop - lines[index].style.value,
+    advance(ms = 16) {
+      now += ms
+      const tick = callback
+      callback = undefined
+      tick?.(now)
+    },
   }
-  assert.equal(state.value, 240)
-  assert.equal(state.velocity, 0)
+}
 
-  // Clamped dt protects stability after background tab suspension.
-  const afterSpike = stepSpring({ value: 0, velocity: 0 }, 200, 10)
-  assert.ok(Number.isFinite(afterSpike.value) && afterSpike.value > 0 && afterSpike.value < 200)
+test('stagger starts without moving upcoming lines backwards and keeps position through a fast handoff', t => {
+  const { scroll, lines, motion, position, advance } = lyricMotionFixture(t)
+  motion.animate(scroll, 272, lines, 7, 6, false, 260)
+  advance()
+  assert.ok(position(7) > 200)
+  assert.ok(position(8) >= 199.99, 'an upcoming line must not jump away before entering')
+  for (let i = 0; i < 5; i++) advance()
+  const before = position(8)
+  motion.animate(scroll, 344, lines, 8, 7, false, 260)
+  advance()
+  assert.ok(position(8) >= before, 'the newly active line keeps its upward momentum')
+  assert.ok(position(8) - before < 15, 'retargeting should not teleport the line forward')
+  for (let i = 0; i < 80; i++) advance()
+  assert.equal(scroll.scrollTop, 344)
+  assert.ok(lines.every(line => line.style.value === 0))
+})
+
+test('stepSpring has the same trajectory with different frame rates and settles after suspension', () => {
+  const initial = { value: 0, velocity: 0 }
+  const direct = stepSpring(initial, 240, 0.15)
+  let stepped = initial
+  for (let i = 0; i < 18; i++) stepped = stepSpring(stepped, 240, 1 / 120)
+  assert.ok(Math.abs(stepped.value - direct.value) < 1e-9)
+  assert.ok(Math.abs(stepped.velocity - direct.velocity) < 1e-9)
+  assert.deepEqual(stepSpring(initial, 240, 10), { value: 240, velocity: 0 })
 })
 
 test('lyricAnchorRatio and lyricScrollTarget place active lines at Apple Music golden focal point', () => {
@@ -46,12 +92,34 @@ test('lyricAnchorRatio and lyricScrollTarget place active lines at Apple Music g
   assert.equal(lyricScrollTarget(20, 40, 1000, 0.34), 0)
 })
 
-test('staggerDelayMs increases with distance, favors upcoming trail, and caps cleanly', () => {
-  assert.equal(staggerDelayMs(3, 3), 0)
-  assert.equal(staggerDelayMs(4, 3), 38)
-  assert.equal(staggerDelayMs(2, 3), 26)
-  assert.equal(staggerDelayMs(50, 3), 260)
-  assert.equal(staggerDelayMs(0, -1), 0)
+test('staggerDelayMs trails upcoming lines, caps distant rows and responds to shorter intervals', () => {
+  assert.equal(staggerDelayMs(3, 3, 900), 0)
+  assert.equal(staggerDelayMs(4, 3, 900), 28)
+  assert.equal(staggerDelayMs(2, 3, 900), 20)
+  assert.equal(staggerDelayMs(50, 3, 900), 112)
+  assert.equal(staggerDelayMs(4, 3, 325), 14)
+  assert.equal(staggerDelayMs(0, -1, 900), 0)
+})
+
+test('browsing takes over the native scroll and seeking drops any remaining stagger', t => {
+  const { scroll, lines, motion, position, advance } = lyricMotionFixture(t)
+  motion.animate(scroll, 272, lines, 7, 6, false, 1200)
+  advance(60)
+  assert.ok(position(10) < scroll.scrollTop)
+  motion.releaseForUserScroll()
+  scroll.scrollTop += 22
+  const manualTop = scroll.scrollTop
+  for (let i = 0; i < 80; i++) advance()
+  assert.equal(scroll.scrollTop, manualTop)
+  assert.ok(lines.every(line => line.style.value === 0))
+
+  motion.animate(scroll, 344, lines, 8, 7, false, 1200)
+  advance()
+  motion.animate(scroll, 1080, lines, 18, 8, false)
+  assert.equal(scroll.scrollTop, 1080)
+  assert.ok(lines.every(line => line.style.value === 0))
+  advance()
+  assert.equal(scroll.scrollTop, 1080)
 })
 
 test('lyricLineVisual computes distance depth-of-field blur/opacity and clears blur on focus', () => {

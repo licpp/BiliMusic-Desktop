@@ -1,0 +1,187 @@
+.extension-settings {
+  width: 100%;
+  max-width: 640px;
+}
+.extension-settings > h3 {
+  margin: 0 0 14px;
+  color: var(--ink);
+  font-size: 16px;
+}
+.extension-settings-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.extension-settings-group + .extension-settings-group {
+  margin-top: 18px;
+}
+.extension-settings-group > legend {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.extension-settings-options {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.extension-settings-option,
+.extension-settings-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-column-gap: 11px;
+  align-items: center;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.extension-settings-option {
+  min-height: 48px;
+  padding: 10px 13px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.extension-settings-option:first-child {
+  border-radius: 11px 11px 0 0;
+}
+.extension-settings-option:last-child {
+  border-radius: 0 0 11px 11px;
+}
+.extension-settings-option:only-child {
+  border-radius: 11px;
+}
+.extension-settings-option + .extension-settings-option {
+  border-top: 1px solid var(--line);
+}
+.extension-settings-option[data-checked="true"] {
+  background: var(--panel-raised);
+  background: color-mix(in srgb, var(--cyan) 8%, var(--panel));
+}
+.extension-option-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+.extension-settings-option[data-checked="true"] > svg {
+  color: var(--cyan);
+}
+.extension-settings-option:focus-within {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
+}
+.extension-settings-check {
+  position: relative;
+  width: 19px;
+  height: 19px;
+}
+.extension-settings-check > input {
+  display: block;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  background: var(--panel);
+  cursor: inherit;
+}
+.extension-settings .extension-settings-check > input:focus {
+  outline: 0;
+  box-shadow: none;
+}
+.extension-settings-check > input:checked {
+  border-color: var(--cyan);
+  background: var(--cyan);
+}
+.extension-settings-check > svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 78%;
+  height: 78%;
+  color: var(--base);
+  transform: translate(-50%, -50%);
+  visibility: hidden;
+  pointer-events: none;
+}
+.extension-settings-check > input:checked + svg {
+  visibility: visible;
+}
+@media (forced-colors: active) {
+  .extension-settings-option:focus-within {
+    outline-color: Highlight;
+  }
+  .extension-settings-check > input:checked {
+    forced-color-adjust: none;
+    border-color: Highlight;
+    background: Highlight;
+  }
+  .extension-settings-check > input:checked + svg {
+    forced-color-adjust: none;
+    color: HighlightText;
+  }
+}
+.extension-settings-entry,
+[data-layout="large"] .extension-settings-entry {
+  display: grid;
+  width: 100%;
+  min-height: 62px;
+  padding: 12px 15px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+  font: inherit;
+  color: var(--ink);
+}
+.extension-settings-entry:hover,
+[data-layout="large"] .extension-settings-entry:hover {
+  background: var(--panel-raised);
+}
+.extension-settings-entry:focus {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+.extension-entry-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--panel-raised);
+  color: var(--cyan);
+}
+.extension-entry-icon > svg,
+.extension-settings-entry > svg {
+  width: 18px;
+  height: 18px;
+}
+.extension-settings-entry > svg {
+  color: var(--muted);
+}
+[data-layout="large"] .extension-settings-entry {
+  grid-column-gap: 14px;
+  margin-bottom: 18px;
+  min-height: calc(64px * var(--large-scale));
+  padding: 12px 18px;
+  border-radius: 16px;
+}
+[data-layout="large"] .extension-settings > h3 {
+  font-size: 1.12rem;
+}
+[data-layout="large"] .extension-settings-group > legend {
+  font-size: .875rem;
+}
+[data-layout="large"] .extension-settings-option {
+  min-height: var(--large-target);
+  padding: 10px 16px;
+  font-size: 1rem;
+}
+[data-layout="large"] .extension-option-icon,
+[data-layout="large"] .extension-settings-check {
+  width: 1.25rem;
+  height: 1.25rem;
+}

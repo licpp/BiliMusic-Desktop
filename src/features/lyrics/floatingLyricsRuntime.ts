@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { lyricDisplayText } from '../../domain/lyricDisplay'
 import { storedLyricLines, systemLrc, floatingTimeline } from '../../domain/lyricTimeline'
 import { parseLrc } from '../../domain/lrc'
-import type { LyricLine, StoredLyrics } from '../../domain/lyrics'
+import { lyricsWereCleared, type LyricLine, type StoredLyrics } from '../../domain/lyrics'
 import { accountEpoch } from '../../services/accountScope'
 import { getStoredLyrics, enrichStoredLyricLines, inDesktopShell } from '../../services/desktopApi'
 import { nativeLyrics, setFloatingLyrics, setSystemTitleLyrics, useFloatingLyrics, type FloatingFrame } from '../../services/floatingLyrics'
@@ -50,8 +50,9 @@ export function startFloatingLyrics() {
       const session = isAndroid ? nativeLyricPlaybackSession(frame.id) : undefined
       // Android can already hold lyrics from its native background lookup. Only
       // publish a resolved timeline for the same playing session from the WebView.
-      if (isAndroid && (!session || !frame.lines.length)) return
-      const signature = JSON.stringify([session,frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,useFloatingPreferences.getState().fontSize])
+      const cleared = lyricsWereCleared(stored) && !frame.lines.length
+      if (isAndroid && (!session || !frame.lines.length && !cleared)) return
+      const signature = JSON.stringify([session,frame.id,frame.title,timelineRevision,frame.biasMs,frame.subtitles,cleared,useFloatingPreferences.getState().fontSize])
       if (signature === lastNative) return
       lastNative = signature; pending = true
       try {
@@ -59,7 +60,7 @@ export function startFloatingLyrics() {
           const lines = frame.lines.map(({ timeMs, endTimeMs, text }) => ({ timeMs, endTimeMs, text }))
           await nativeLyrics({ action: 'update', id: frame.id, lines, biasMs: frame.biasMs, subtitles: frame.subtitles })
         } else {
-          await nativeLyrics({action:'update',session,...frame,lrc:systemLrc(frame.lines,frame.biasMs)})
+          await nativeLyrics({action:'update',session,...frame,cleared,lrc:systemLrc(frame.lines,frame.biasMs)})
         }
       }
       catch { if (signature === lastNative) lastNative = '' }

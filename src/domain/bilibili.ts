@@ -1,5 +1,6 @@
 export type BiliSearchItem = { publishedAt?: number; bvid: string; title: string; uploaderName: string; uploaderId: number; coverUrl: string; durationSeconds: number; playCount: number; description: string }
 export type BiliSearchPage = { items: BiliSearchItem[]; page: number; pageSize: number; total: number }
+export type BiliFeedPage = { items: BiliSearchItem[]; nextPage: number | null }
 
 export function isVideoSearchInput(input: string): boolean {
   const value = input.trim()

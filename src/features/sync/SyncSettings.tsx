@@ -148,7 +148,7 @@ export function SyncSettings({embedded=false}:{embedded?:boolean}={}) {
   if (status.data?.importError) issues.push({ area: '导入歌单', issue: describeSyncIssue(status.data.importError) })
   if (status.data?.visibilityError) issues.push({ area: '隐藏偏好', issue: describeSyncIssue(status.data.visibilityError) })
   if (status.data?.chaptersError) issues.push({ area: '章节', issue: describeSyncIssue(status.data.chaptersError) })
-  if (status.data?.favoriteOrderError) issues.push({ area: '我喜欢的排序', issue: describeSyncIssue(status.data.favoriteOrderError) })
+  if (status.data?.favoriteOrderError) issues.push({ area: '歌单排序', issue: describeSyncIssue(status.data.favoriteOrderError) })
   if (statisticsIssue) issues.push({ area: '听歌统计', issue: statisticsIssue })
   const exportBackup = () => action(async session => {
     const path = await invoke<string>('sync_export')

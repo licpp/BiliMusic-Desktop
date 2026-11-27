@@ -28,7 +28,39 @@ test('QQ lyric selections sync as an ID and bias, without lyric bodies',()=>{
   snapshot.records['lyric:bilibili:BV1:1'].fields.translatedLyrics='never upload lyric bodies';
   assert.throws(()=>validateSnapshot(snapshot,'42'));
 });
+test('long lyric offsets and explicit blank selections use the existing sync record',()=>{
+  const snapshot=sample('42');
+  const id='bilibili:BV1:1', key=`lyric:${id}`;
+  snapshot.records[key]={kind:'lyric',fields:{id,provider:'qq',providerLyricId:'9',biasMs:-96500,manual:true}};
+  assert.equal(validateSnapshot(snapshot,'42'),snapshot);
+  snapshot.records[key].fields.biasMs=Number.MAX_SAFE_INTEGER+1;
+  assert.throws(()=>validateSnapshot(snapshot,'42'));
+  snapshot.records[key].fields={id,provider:'local',providerLyricId:'cleared',biasMs:0,manual:true};
+  assert.equal(validateSnapshot(snapshot,'42'),snapshot);
+});
 async function setup(t){const store=new Store();const server=http.createServer(createHandler(store,{verify:async cookie=>{if(cookie==='SESSDATA=one')return '42';if(cookie==='SESSDATA=two')return '43';throw Error('invalid');}}));server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(r=>server.close(r)));const url=`http://127.0.0.1:${server.address().port}/api/sync/v1`;const auth=async cookie=>{const r=await fetch(url+'/auth',{method:'POST',body:JSON.stringify({cookie,uid:'999'})});assert.equal(r.status,200);return(await r.json()).token;};return{store,url,auth};}
+test('old clients preserve wide lyric offsets during unrelated updates and can still clear the selection', async t => {
+  const { url, auth } = await setup(t);
+  const legacy = { Authorization: `Bearer ${await auth('SESSDATA=one')}`, 'x-bilimusic-sync-format': 'creator-groups' };
+  const modern = { ...legacy, 'x-bilimusic-lyric-bias': 'wide' };
+  const snapshot = sample('42'), id = 'bilibili:BV1:1', key = `lyric:${id}`;
+  const put = (headers, value) => fetch(url + '/vault', { method: 'PUT', headers, body: JSON.stringify(value) });
+  const get = headers => fetch(url + '/vault', { headers });
+  assert.equal((await get(modern)).headers.get('x-bilimusic-lyric-bias'), 'wide');
+  snapshot.records[key] = { kind: 'lyric', fields: {id, provider: 'qq', providerLyricId: '9', biasMs: 96500, manual: true} };
+  assert.equal((await put({ ...modern, 'If-None-Match': '*' }, snapshot)).status, 200);
+  let read = await get(legacy), data = await read.json();
+  assert.equal(data.records[key].fields.biasMs, 30000);
+  data.records[`track:${id}`].fields.overrideTitle = 'Edited using an older app';
+  assert.equal((await put({ ...legacy, 'If-Match': read.headers.get('etag') }, data)).status, 200);
+  const updated = await (await get(modern)).json();
+  assert.equal(updated.records[key].fields.biasMs, 96500);
+  assert.equal(updated.records[`track:${id}`].fields.overrideTitle, 'Edited using an older app');
+  read = await get(legacy); data = await read.json();
+  data.records[key].fields = {id, provider: 'local', providerLyricId: 'cleared', biasMs: 0, manual: true};
+  assert.equal((await put({ ...legacy, 'If-Match': read.headers.get('etag') }, data)).status, 200);
+  assert.deepEqual((await (await get(modern)).json()).records[key], data.records[key]);
+});
 test('server derives identity from verification, isolates users and never stores cookies',async t=>{const{store,url,auth}=await setup(t);const a=await auth('SESSDATA=one'),b=await auth('SESSDATA=two');assert.equal(JSON.stringify([...store.sessions]).includes('SESSDATA'),false);let r=await fetch(url+'/vault',{method:'PUT',headers:{Authorization:`Bearer ${a}`,'If-None-Match':'*'},body:JSON.stringify(sample('42'))});assert.equal(r.status,200);r=await fetch(url+'/vault?uid=42',{headers:{Authorization:`Bearer ${b}`}});assert.equal(r.status,404);r=await fetch(url+'/vault',{method:'PUT',headers:{Authorization:`Bearer ${b}`,'If-None-Match':'*'},body:JSON.stringify(sample('42'))});assert.equal(r.status,400);assert.equal((await fetch(url+'/vault')).status,401);});
 test('conditional writes prevent lost updates and deletion revokes all devices',async t=>{const{url,auth}=await setup(t);const a=await auth('SESSDATA=one'),b=await auth('SESSDATA=one');const headers={Authorization:`Bearer ${a}`,'If-None-Match':'*'};const write=()=>fetch(url+'/vault',{method:'PUT',headers,body:JSON.stringify(sample('42'))});assert.equal((await write()).status,200);assert.equal((await write()).status,412);const read=await fetch(url+'/vault',{headers:{Authorization:`Bearer ${a}`}});const tag=read.headers.get('etag');assert.ok(tag);const updated=sample('42');updated.records['track:bilibili:BV1:1'].fields.overrideArtist='Singer';assert.equal((await fetch(url+'/vault',{method:'PUT',headers:{Authorization:`Bearer ${b}`,'If-Match':tag},body:JSON.stringify(updated)})).status,200);assert.equal((await fetch(url+'/vault',{method:'PUT',headers:{Authorization:`Bearer ${a}`,'If-Match':tag},body:JSON.stringify(sample('42'))})).status,412);assert.equal((await fetch(url+'/vault',{method:'DELETE',headers:{Authorization:`Bearer ${a}`}})).status,200);assert.equal((await fetch(url+'/vault',{headers:{Authorization:`Bearer ${b}`}})).status,401);});
 test('protocol rejects source caches, unreferenced edits and excessive history',()=>{const s=sample('42');assert.equal(validateSnapshot(s,'42'),s);const raw=structuredClone(s);raw.records['track:bilibili:BV1:1'].fields.uploaderName='should stay local';assert.throws(()=>validateSnapshot(raw,'42'));delete s.records['favorite:bilibili:BV1:1'];assert.throws(()=>validateSnapshot(s,'42'));const h=sample('42');for(let i=0;i<201;i++){h.records[`track:bilibili:BV1:${i+1}`]={kind:'track',fields:{id:`bilibili:BV1:${i+1}`,bvid:'BV1',cid:i+1}};h.records[`history:bilibili:BV1:${i+1}`]={kind:'history',fields:{trackId:`bilibili:BV1:${i+1}`,playedAt:'2026-10-28 01:00:00'}};}assert.throws(()=>validateSnapshot(h,'42'),/200/);});

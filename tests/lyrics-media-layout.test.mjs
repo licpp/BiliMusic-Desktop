@@ -18,7 +18,7 @@ const mocks={
  useArtworkFit:`export const useArtworkFit=()=>({stage:{current:null},onRatio(){}});`,
  mobileAudio:`export const controlMobileAudio=async()=>{};`,
  trackActionStore:`export const chooseTrackPlaylist=()=>{};`,
- desktopApi:`${['getDanmaku','getVideoSource','getStoredLyrics','enrichStoredLyricLines','getVideoParts','saveStoredLyrics','lyricMatchVersion','saveLyricsWithMetadata','searchMetadataCatalog','searchLyrics','setStoredLyricsBias'].map(n=>`export const ${n}=async()=>null;`).join('')}export const commandErrorMessage=String;export const toTrackInput=track=>track;`,
+ desktopApi:`${['getDanmaku','getVideoSource','getStoredLyrics','clearStoredLyrics','enrichStoredLyricLines','getVideoParts','saveStoredLyrics','lyricMatchVersion','saveLyricsWithMetadata','searchMetadataCatalog','searchLyrics','setStoredLyricsBias'].map(n=>`export const ${n}=async()=>null;`).join('')}export const commandErrorMessage=String;export const toTrackInput=track=>track;`,
 }
 for(const [module,names] of Object.entries({SeekRange:['SeekRange'],FloatingLyricsToggle:['FloatingLyricsToggle'],SeasonBrowser:['SeasonBrowser'],MobilePlaybackRate:['MobilePlaybackRate','PlaybackRateEntry'],PlaybackSettings:['PlaybackSettings'],SleepTimer:['SleepTimerEntry'],MetadataDialog:['MetadataDialog'],PlayingVideoReplacement:['PlayingVideoReplacement'],TouchOptions:['TouchOptions'],MobilePartsPage:['MobilePartsPage'],CommentsPanel:['CommentsPanel'],LyricsChooser:['LyricsChooser'],DanmakuCanvas:['DanmakuCanvas'],SyncedVideo:['SyncedVideo'],LyricsBiasControl:['LyricsBiasControl']}))mocks[module]=names.map(n=>`export const ${n}=()=>null;`).join('')
 
@@ -30,11 +30,11 @@ async function renderer(mobile){
   b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:mocks[args.path],loader:'js'}))
  }}]})
  const m={exports:{}};new Function('require','module','exports',bundle.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
- return (compact,mode,fullscreenRequested=false,chapters={items:[],directoryOpen:false})=>{
+ return (compact,mode,fullscreenRequested=false,chapters={items:[],directoryOpen:false},coverUrl)=>{
   globalThis.mediaLayout.compact=compact
   globalThis.document={getElementById:()=>null}
   globalThis.localStorage={getItem:key=>key==='lyrics-media-mode'?mode:null}
-  globalThis.mediaLayout.state={current:{id:'bilibili:BV1GJ411x7h7:1',source:{provider:'bilibili',bvid:'BV1GJ411x7h7',cid:1,page:1,aid:1},title:'测试歌曲',durationSeconds:240},status:'paused',durationSeconds:240,progressSeconds:0}
+  globalThis.mediaLayout.state={current:{id:'bilibili:BV1GJ411x7h7:1',source:{provider:'bilibili',bvid:'BV1GJ411x7h7',cid:1,page:1,aid:1},title:'测试歌曲',coverUrl,durationSeconds:240},status:'paused',durationSeconds:240,progressSeconds:0}
   const client=new QueryClient({defaultOptions:{queries:{retry:false}}})
   try{return renderToStaticMarkup(createElement(QueryClientProvider,{client},createElement(m.exports.LyricsView,{chapters,fullscreenRequested,setVideoFullscreen(){},onOpenSleepTimer(){},onClose(){},onFavorite(){},favoritePending:false,onOpenCollection(){}})))}finally{client.clear()}
  }
@@ -53,6 +53,24 @@ function nodes(html){
 }
 const hasClass=(node,name)=>new RegExp(`class="[^"]*\\b${name}\\b`).test(node.attrs)
 const mobileRender=await renderer(true)
+test('the lyrics cover renders a placeholder and requests cold artwork immediately',()=>{
+ for(const compact of [true,false]){
+  const html=nodes(mobileRender(compact,'cover',false,undefined,'https://example.test/cold.jpg'))
+  const cover=html.find(n=>hasClass(n,'lyrics-cover'))
+  const artwork=cover.children.find(n=>hasClass(n,'artwork'))
+  assert.ok(artwork.children.some(n=>hasClass(n,'artwork-placeholder')))
+  assert.ok(artwork.children.some(n=>n.tag==='img'&&n.attrs.includes('loading="eager"')))
+  assert.ok(!artwork.attrs.includes('data-artwork-loaded'))
+  assert.ok(html.some(n=>hasClass(n,'lyrics-track-meta')))
+ }
+})
+test('the lyrics cover reuses the list thumbnail and enqueues the original at low priority',()=>{
+ const original='https://i1.hdslb.com/bfs/archive/example.jpg'
+ const markup=mobileRender(true,'cover',false,undefined,original)
+ const images=nodes(markup).filter(n=>n.tag==='img')
+ assert.ok(images.some(n=>hasClass(n,'artwork-preview')&&n.attrs.includes(`${original}@160w.jpg`)))
+ assert.ok(images.some(n=>hasClass(n,'artwork-original')&&n.attrs.includes(`src="${original}"`)&&/fetchpriority="low"/i.test(n.attrs)))
+})
 test('tablet cover and video controls use the same external media-stage toolbar as desktop',()=>{
  const video=nodes(mobileRender(false,'video')),tools=video.find(n=>hasClass(n,'video-tools'))
  assert.ok(hasClass(tools.parent,'lyrics-media'))

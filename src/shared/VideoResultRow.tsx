@@ -9,9 +9,10 @@ import { VideoAccessBadge } from './VideoAccessBadge'
 import { formatPlayCount } from './count'
 import { formatDuration } from './time'
 
-export function VideoResultRow({ title, ariaLabel, coverUrl, coverRef, count, countUnit, durationSeconds, uploaderName, playCount, publishedAt, access, currentId, disabled, onClick, onContextMenu, actions }: {
+export function VideoResultRow({ title, ariaLabel, focusId, coverUrl, coverRef, count, countUnit, durationSeconds, uploaderName, playCount, publishedAt, access, currentId, disabled, onClick, onContextMenu, actions }: {
   title: string
   ariaLabel?: string
+  focusId?: string
   coverUrl?: string
   coverRef?: Ref<HTMLSpanElement>
   count?: number
@@ -29,10 +30,10 @@ export function VideoResultRow({ title, ariaLabel, coverUrl, coverRef, count, co
 }) {
   const showStats = playCount !== undefined || Boolean(publishedAt)
   return <div className="video-result-row playing-row" data-current-row={currentId}>
-    <button type="button" className="video-result-play" aria-label={ariaLabel} aria-current={currentId ? 'true' : undefined}
+    <button type="button" className="video-result-play" aria-label={ariaLabel} aria-current={currentId ? 'true' : undefined} data-focus={focusId}
       disabled={disabled} onContextMenu={onContextMenu} onClick={onClick}>
       <span className="video-result-cover">
-        <Artwork src={coverUrl} elementRef={coverRef}/>
+        <Artwork variant="thumbnail" src={coverUrl} elementRef={coverRef}/>
         {durationSeconds !== undefined && durationSeconds > 0 && <span className="video-result-duration">{formatDuration(durationSeconds)}</span>}
         <span className="video-result-play-icon" aria-hidden="true"><Play size={17} fill="currentColor"/></span>
         {currentId && <PlayingMark/>}<CoverCount count={count} unit={countUnit} single={Boolean(countUnit)}/><VideoAccessBadge access={access} onCover/>

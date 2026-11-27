@@ -870,6 +870,92 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn imported_playlist_reorder_follows_slots_across_sync_and_rematching() {
+        use crate::infrastructure::repositories::playlists::PlaylistRepository;
+
+        let (cfg, secret, store, server) = setup().await;
+        let a = device(&cfg);
+        let b = device(&cfg);
+        let ids = |cids: &[i64]| {
+            cids.iter()
+                .map(|cid| format!("bilibili:BV1GJ411x7h7:{cid}"))
+                .collect::<Vec<_>>()
+        };
+        let order = |db: &Database| {
+            PlaylistRepository::tracks(&db.0.lock().unwrap(), LIST)
+                .unwrap()
+                .into_iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>()
+        };
+        seed(&a, 3);
+        edit(&a, 0, 1, "automatic");
+        edit(&a, 2, 3, "automatic");
+        for db in [&a, &b] {
+            super::super::engine::sync(db, &cfg, &secret, None, false)
+                .await
+                .unwrap();
+            assert_eq!(order(db), ids(&[1, 3]));
+        }
+        {
+            let mut c = a.0.lock().unwrap();
+            assert!(
+                PlaylistRepository::reorder(&mut c, &a.1, LIST, &ids(&[1, 3]), &ids(&[3, 1]))
+                    .unwrap()
+            );
+            assert!(
+                !PlaylistRepository::reorder(&mut c, &a.1, LIST, &ids(&[1, 3]), &ids(&[3, 1]))
+                    .unwrap()
+            );
+            let snapshot = super::super::storage::export(&c, &cfg.uid, cfg.history).unwrap();
+            assert_eq!(
+                snapshot.records[&format!("item:{LIST}|{}", ids(&[1])[0])].fields["position"],
+                0
+            );
+            assert_eq!(
+                snapshot.records[&format!("item:{LIST}|{}", ids(&[3])[0])].fields["position"],
+                2
+            );
+        }
+        assert_eq!(order(&a), ids(&[3, 1]));
+        // The other device still sees the import order when it fills the gap
+        // and changes the video for a song that was moved on the first device.
+        edit(&b, 1, 2, "automatic");
+        edit(&b, 2, 4, "manual");
+        assert_eq!(order(&b), ids(&[1, 2, 4]));
+        for db in [&a, &b, &a] {
+            let report = super::super::engine::sync(db, &cfg, &secret, None, false)
+                .await
+                .unwrap();
+            assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+            assert_eq!(report.import_error, None);
+            assert_eq!(report.favorite_order_error, None);
+        }
+        for db in [&a, &b] {
+            assert_eq!(order(db), ids(&[4, 2, 1]));
+            let entries = repo::list(&db.0.lock().unwrap(), LIST).unwrap();
+            assert_eq!(
+                entries.iter().map(|entry| entry.order).collect::<Vec<_>>(),
+                [0, 1, 2]
+            );
+        }
+        store.lock().unwrap().requests.clear();
+        super::super::engine::sync(&b, &cfg, &secret, None, false)
+            .await
+            .unwrap();
+        assert!(
+            store.lock().unwrap().requests.iter().all(|(method, path)| {
+                method != "PUT" || !path.contains("import-playlist-order")
+            }),
+            "receiving an order did not author a new order"
+        );
+        server.abort();
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap()
+        }
+    }
+
+    #[tokio::test]
     async fn manifest_duplicate_across_cached_and_new_chunk_is_rejected_atomically() {
         let (cfg, secret, store, server) = setup().await;
         let a = device(&cfg);

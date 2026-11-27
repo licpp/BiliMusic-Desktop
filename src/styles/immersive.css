@@ -1,7 +1,5 @@
 /* One continuous cover layer for the complete window, including playback chrome. */
-:is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive { --lyrics-shade:rgba(3,10,17,.68); }
-:root[data-theme="light"] :is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive { --lyrics-shade:rgba(248,250,253,.73); }
-:is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18;background:radial-gradient(ellipse at 24% 25%,color-mix(in srgb,var(--cyan) 22%,var(--base)),var(--base) 72%); }
+:is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive > .immersive-backdrop { position:fixed;inset:0;z-index:18; }
 .desktop-lyrics-surface.lyrics-immersive > .immersive-backdrop { position:absolute;z-index:-1; }
 :is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive .lyrics-view { background:transparent; }
 :is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive .lyrics-topbar,:is(.app-shell,.mobile-player-surface,.desktop-lyrics-surface).lyrics-immersive .lyrics-album-pane { border-color:transparent; }

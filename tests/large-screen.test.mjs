@@ -63,6 +63,22 @@ test('ordinary playlists and single search videos keep the shared resume thresho
  assert.equal(isCollectionPlayback(track,[track],collectionContext('合集','season:1:2',true,1)),true)
  assert.equal(isCollectionPlayback(track,[track],collectionContext('多P','BV1',false,3)),true)
 })
+test('car video entries play one part immediately and open details for multiple parts', async () => {
+ const source = (await build({entryPoints:['src/large-screen/videoEntry.ts'],bundle:true,write:false,format:'esm'})).outputFiles[0].text
+ const {resolveLargeVideoEntry} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+ const part = {cid:31,page:1,title:'文件名',durationSeconds:191,coverUrl:''}
+ const detail = {bvid:'BV1v5wyzBESJ',aid:3,title:'视频标题',coverUrl:'cover.png',uploaderName:'UP 主',uploaderId:2,parts:[part]}
+ const single = await resolveLargeVideoEntry(async () => detail)
+ assert.equal(single.kind, 'single')
+ assert.equal(single.track.id, 'bilibili:BV1v5wyzBESJ:31')
+ assert.equal(single.track.title, '视频标题')
+ const libraryRow = {...single.track,title:'匹配后的标题'}
+ assert.deepEqual(await resolveLargeVideoEntry(() => assert.fail('known part should not be requested again'), libraryRow),
+  {kind:'single',track:libraryRow})
+ assert.deepEqual(await resolveLargeVideoEntry(async () => ({...detail,parts:[part,{...part,cid:32,page:2}]})), {kind:'parts'})
+ assert.deepEqual(await resolveLargeVideoEntry(() => assert.fail('known multipart video opens directly'), {...libraryRow,partCount:2}), {kind:'parts'})
+ await assert.rejects(resolveLargeVideoEntry(async () => ({...detail,parts:[]})), /暂无可播放内容/)
+})
 test('down enters the immediately following settings row instead of a closer footer',async()=>{
  const {nextRowFocus}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
  const current=box('cache',100,100)
@@ -281,10 +297,17 @@ test('player header stays in toolbar order and the video window has an exit to b
  const player=await readFile('src/large-screen/Player.tsx','utf8')
  assert.match(player,/data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back"/)
 })
-test('large-screen navigation exposes the shared daily recommendation page',async()=>{
+test('large-screen extensions keep the Search entry and gate recommendation routes',async()=>{
  const app=await readFile('src/large-screen/LargeScreenApp.tsx','utf8')
- assert.match(app,/kind: 'recommendations', title: '每日推荐'/)
- assert.match(app,/\{route\.kind === 'recommendations' && <RecommendationView active\/>\}/)
- assert.match(await readFile('src/large-screen/Library.tsx','utf8'),/\| 'recommendations' \}/)
+ assert.match(app,/kind: 'search', title: '搜索'/)
+ assert.doesNotMatch(app,/kind: 'recommendations', title:/)
+ assert.match(app,/exploreDetail = route\.kind === 'recommendations' \|\| route\.kind === 'bili-feed'/)
+ assert.match(app,/exploreDetail \? 'search'/)
+ assert.match(app,/exploreDetail && routeAvailable\(route\) && <>[\s\S]*?aria-label="返回搜索"[\s\S]*?<RecommendationView active\/>[\s\S]*?<LargeBilibiliFeed navigate/)
+ assert.match(app,/while \(previous && !routeAvailable\(previous\.route\)\)/)
+ assert.match(app,/onOpenExtensions=\{\(\) => navigate\(\{ kind: 'extensions' \}\)\}[\s\S]*?<ExtensionsSettings\/>/)
+ const library=await readFile('src/large-screen/Library.tsx','utf8')
+ assert.match(library,/hasSearchExtensions && !query && <ExploreLanding[\s\S]*?onOpenRecommendation=\{\(\) => navigate\(\{ kind: 'recommendations' \}\)\}/)
+ assert.match(library,/onOpenBiliFeed=\{\(\) => navigate\(\{ kind: 'bili-feed' \}\)\}/)
  assert.match(await readFile('src/large-screen/main.tsx','utf8'),/styles\/recommendations\.css/)
 })

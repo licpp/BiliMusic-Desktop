@@ -19,28 +19,15 @@ export type InterludeState = {
   exiting: boolean
 }
 
-const MAX_DT_SEC = 1 / 24
-
-/**
- * Semi-implicit Euler damped harmonic oscillator.
- * Produces Apple Music / AMLL-style organic momentum without layout thrashing.
- */
-export function stepSpring(
-  state: SpringState,
-  target: number,
-  dtSec: number,
-  stiffness = 135,
-  damping = 22.5,
-): SpringState {
-  const dt = Math.max(0, Math.min(MAX_DT_SEC, dtSec))
-  if (dt === 0) return state
+/** Sample a critically damped spring independently of the display's frame rate. */
+export function stepSpring(state: SpringState, target: number, dtSec: number, speed = 15): SpringState {
+  if (dtSec <= 0) return state
   const displacement = state.value - target
-  const acceleration = -stiffness * displacement - damping * state.velocity
-  const velocity = state.velocity + acceleration * dt
-  const value = state.value + velocity * dt
-  if (Math.abs(target - value) < 0.15 && Math.abs(velocity) < 0.8) {
-    return { value: target, velocity: 0 }
-  }
+  const drift = state.velocity + speed * displacement
+  const decay = Math.exp(-speed * dtSec)
+  const value = target + (displacement + drift * dtSec) * decay
+  const velocity = (state.velocity - speed * drift * dtSec) * decay
+  if (Math.abs(target - value) < 0.15 && Math.abs(velocity) < 0.8) return { value: target, velocity: 0 }
   return { value, velocity }
 }
 
@@ -63,17 +50,12 @@ export function lyricScrollTarget(
   return Math.max(0, lineTop + lineHeight / 2 - anchorY)
 }
 
-/**
- * Staggered cascade delay (ms) by signed distance from the active line,
- * inspired by AMLL's elastic per-line arrival wave.
- */
-export function staggerDelayMs(index: number, activeIndex: number): number {
+/** Short lines use a tighter cascade so the next handoff can start on time. */
+export function staggerDelayMs(index: number, activeIndex: number, intervalMs: number): number {
   if (activeIndex < 0) return 0
-  const dist = Math.abs(index - activeIndex)
-  if (dist === 0) return 0
-  // Upcoming lines trail slightly further behind active than past lines exiting upward.
-  const perRow = index > activeIndex ? 38 : 26
-  return Math.min(260, dist * perRow)
+  const perRow = index > activeIndex ? 28 : 20
+  const cadence = Math.min(1, Math.max(0, intervalMs / 650))
+  return Math.min(112, Math.abs(index - activeIndex) * perRow) * cadence
 }
 
 /**
@@ -171,158 +153,129 @@ function buildInterlude(beforeIndex: number, startMs: number, endMs: number, tim
   return { beforeIndex, progress, dots, exiting }
 }
 
-type LineWave = {
-  element: HTMLElement
-  delayMs: number
-  state: SpringState
+type ScrollPath = { from: SpringState; to: number; start: number; speed: number }
+
+const samplePath = (path: ScrollPath, now: number) => stepSpring(path.from, path.to, (now - path.start) / 1000, path.speed)
+
+type LineMotion = {
+  index: number
+  path: ScrollPath
+  next?: ScrollPath
+  offset: number
+}
+
+function currentPath(line: LineMotion, now: number) {
+  if (line.next && now >= line.next.start) {
+    line.path = line.next
+    line.next = undefined
+  }
+  return line.path
 }
 
 /**
- * Imperative rAF spring controller driving both smooth elastic scrollTop and
- * staggered per-line vertical cascade waves (`--lyric-wave-y`) without touching React state.
+ * The scroller and staggered rows each follow a continuous position curve.
+ * Row transforms only make up the difference against the native scroll position.
  */
 export function createLyricSpringController() {
   let frame = 0
-  let lastTime = 0
-  let scrollSpring: SpringState | null = null
-  let scrollTarget = 0
-  let scrollEl: HTMLDivElement | null = null
-  let waves: LineWave[] = []
+  let container: HTMLDivElement | null = null
+  let scrollPath: ScrollPath | null = null
+  let releaseTop = 0
+  const rows = new Map<HTMLParagraphElement, LineMotion>()
 
-  const clearWaves = () => {
-    for (const wave of waves) {
-      wave.element.style.removeProperty('--lyric-wave-y')
-    }
-    waves = []
+  const stop = () => {
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
+    scrollPath = null
+    container = null
+    for (const element of rows.keys()) element.style.removeProperty('--lyric-wave-y')
+    rows.clear()
   }
 
-  const stop = (resetWaves = false) => {
-    if (frame) {
-      cancelAnimationFrame(frame)
-      frame = 0
+  const tick = (now: number) => {
+    frame = 0
+    if (!container) return
+    let top = releaseTop
+    if (scrollPath) {
+      const scroll = samplePath(scrollPath, now)
+      container.scrollTop = scroll.value
+      top = container.scrollTop
+      if (scroll.velocity !== 0 || scroll.value !== scrollPath.to) frame = requestAnimationFrame(tick)
     }
-    scrollSpring = null
-    if (resetWaves) clearWaves()
+    for (const [element, row] of rows) {
+      const path = currentPath(row, now)
+      const position = samplePath(path, now)
+      const offset = top - position.value
+      if (row.next || position.velocity !== 0 || (scrollPath && path.to !== scrollPath.to) || frame) {
+        row.offset = offset
+        element.style.setProperty('--lyric-wave-y', `${offset.toFixed(2)}px`)
+      } else {
+        element.style.removeProperty('--lyric-wave-y')
+        rows.delete(element)
+      }
+    }
+    if (!frame && rows.size) frame = requestAnimationFrame(tick)
+    if (!frame) scrollPath = null
   }
 
   const animate = (
-    container: HTMLDivElement,
+    scroll: HTMLDivElement,
     targetTop: number,
-    lines: (HTMLParagraphElement | null)[],
+    lines: readonly (HTMLParagraphElement | null)[],
     activeIndex: number,
     previousIndex: number,
     instant: boolean,
+    intervalMs = Infinity,
   ) => {
-    scrollEl = container
-    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
-    const clampedTarget = Math.max(0, Math.min(maxScroll, targetTop))
-
-    if (instant) {
-      stop(true)
-      container.scrollTop = clampedTarget
+    const target = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, targetTop))
+    if (instant || (previousIndex >= 0 && Math.abs(activeIndex - previousIndex) > 4)) {
+      stop()
+      scroll.scrollTop = target
       return
     }
+    if (container !== scroll) stop()
+    container = scroll
+    const oldScroll = scrollPath
+    if (oldScroll?.to === target) return
+    const now = performance.now()
+    const from = oldScroll ? samplePath(oldScroll, now) : { value: scroll.scrollTop, velocity: 0 }
+    if (!oldScroll && !rows.size && Math.abs(from.value - target) < 1) return
+    const speed = 15 + 10 * (1 - Math.min(1, Math.max(0, (intervalMs - 200) / 600)))
+    const nextPath = { from, to: target, start: now, speed }
+    const previousPath = oldScroll ?? { ...nextPath, to: from.value }
 
-    const currentTop = scrollSpring ? scrollSpring.value : container.scrollTop
-    const deltaY = clampedTarget - currentTop
-    scrollTarget = clampedTarget
-    scrollSpring = { value: currentTop, velocity: scrollSpring?.velocity ?? 0 }
-
-    // Seed per-line staggered elastic cascade waves when advancing smoothly between nearby lines.
-    if (
-      activeIndex >= 0 &&
-      previousIndex >= 0 &&
-      activeIndex !== previousIndex &&
-      Math.abs(activeIndex - previousIndex) <= 4 &&
-      Math.abs(deltaY) > 2 &&
-      Math.abs(deltaY) < container.clientHeight * 0.85
-    ) {
-      const nextWaves: LineWave[] = []
-      const existing = new Map(waves.map(w => [w.element, w.state]))
-      // Limit wave physics strictly to lines near the viewport for constant-time 120fps performance.
-      const start = Math.max(0, activeIndex - 8)
-      const end = Math.min(lines.length - 1, activeIndex + 10)
-      for (let i = start; i <= end; i++) {
-        const el = lines[i]
-        if (!el) continue
-        const prev = existing.get(el)
-        const delayMs = staggerDelayMs(i, activeIndex)
-        if (delayMs === 0 && !prev) continue
-        // Positive wave offset trails the scroll slightly, then springs cleanly into place.
-        const seedOffset = Math.max(-44, Math.min(44, deltaY * 0.42))
-        nextWaves.push({
-          element: el,
-          delayMs,
-          state: prev
-            ? { value: prev.value + seedOffset * 0.55, velocity: prev.velocity }
-            : { value: seedOffset, velocity: 0 },
-        })
-      }
-      // Clear any lines that fell out of the visible window.
-      for (const old of waves) {
-        if (!nextWaves.some(n => n.element === old.element)) {
-          old.element.style.removeProperty('--lyric-wave-y')
-        }
-      }
-      waves = nextWaves
-    }
-
-    if (frame) return
-    lastTime = performance.now()
-    const tick = (now: number) => {
-      const dtMs = Math.max(1, Math.min(42, now - lastTime))
-      lastTime = now
-      const dtSec = dtMs / 1000
-      let busy = false
-
-      if (scrollEl && scrollSpring) {
-        scrollSpring = stepSpring(scrollSpring, scrollTarget, dtSec, 130, 22)
-        scrollEl.scrollTop = scrollSpring.value
-        if (scrollSpring.value !== scrollTarget || scrollSpring.velocity !== 0) {
-          busy = true
-        } else {
-          scrollSpring = null
-        }
-      }
-
-      const remaining: LineWave[] = []
-      for (const wave of waves) {
-        if (wave.delayMs > 0) {
-          wave.delayMs = Math.max(0, wave.delayMs - dtMs)
-          wave.element.style.setProperty('--lyric-wave-y', `${wave.state.value.toFixed(2)}px`)
-          remaining.push(wave)
-          busy = true
-          continue
-        }
-        wave.state = stepSpring(wave.state, 0, dtSec, 175, 21)
-        if (wave.state.value === 0 && wave.state.velocity === 0) {
-          wave.element.style.removeProperty('--lyric-wave-y')
-        } else {
-          wave.element.style.setProperty('--lyric-wave-y', `${wave.state.value.toFixed(2)}px`)
-          remaining.push(wave)
-          busy = true
-        }
-      }
-      waves = remaining
-
-      if (busy) {
-        frame = requestAnimationFrame(tick)
-      } else {
-        frame = 0
+    const consecutive = previousIndex >= 0 && activeIndex === previousIndex + 1 && Math.abs(target - from.value) < scroll.clientHeight * 0.85
+    if (consecutive) {
+      // Keep the cascade near the visible lyric rows.
+      for (let index = Math.max(0, activeIndex - 8); index <= Math.min(lines.length - 1, activeIndex + 10); index++) {
+        const element = lines[index]
+        if (element && !rows.has(element) && index !== activeIndex) rows.set(element, { index, path: previousPath, offset: 0 })
       }
     }
-    frame = requestAnimationFrame(tick)
+    for (const [element, row] of rows) {
+      const path = currentPath(row, now)
+      const { index } = row
+      if (lines[index] !== element || index < activeIndex - 8 || index > activeIndex + 10) {
+        element.style.removeProperty('--lyric-wave-y')
+        rows.delete(element)
+        continue
+      }
+      // An already delayed row keeps its earlier deadline across rapid consecutive lyrics.
+      const start = consecutive ? Math.min(row.next?.start ?? Infinity, now + staggerDelayMs(index, activeIndex, intervalMs)) : now
+      row.next = { ...nextPath, from: samplePath(path, start), start }
+    }
+    scrollPath = nextPath
+    if (!frame) frame = requestAnimationFrame(tick)
   }
 
-  /** Smoothly release waves when the user starts manual trackpad/wheel browsing. */
   const releaseForUserScroll = () => {
-    scrollSpring = null
-    for (const wave of waves) {
-      wave.delayMs = 0
-    }
-    if (!waves.length && frame) {
-      cancelAnimationFrame(frame)
-      frame = 0
+    if (!container || !scrollPath) return
+    releaseTop = container.scrollTop
+    const now = performance.now()
+    scrollPath = null
+    for (const row of rows.values()) {
+      row.path = { from: { value: releaseTop - row.offset, velocity: 0 }, to: releaseTop, start: now, speed: 24 }
+      row.next = undefined
     }
   }
 

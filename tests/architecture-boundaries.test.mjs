@@ -57,9 +57,8 @@ test('application runtime imports contain no cycles between feature modules',asy
 
 test('private cache reads cannot introduce unscoped literal query keys',async()=>{
  const {default:ts}=await import('typescript'),{readdir,readFile}=await import('node:fs/promises')
- // Recommendation sources and their days belong to the device, not to the active
- // Bilibili profile, so they are deliberately not scoped by accountEpoch.
- const publicKeys=new Set(['video-detail','video-danmaku','creator-profile','creator-search','collection-parts','search-suggestions','playback-cache','recommendations'])
+ // Recommendations and anonymous hot-search charts are independent of the active Bilibili profile.
+ const publicKeys=new Set(['video-detail','video-danmaku','creator-profile','creator-search','collection-parts','search-suggestions','playback-cache','recommendations','music-hot-search'])
  async function walk(dir){for(const e of await readdir(dir,{withFileTypes:true})){const file=`${dir}/${e.name}`;if(e.isDirectory()){await walk(file);continue}if(!/\.tsx?$/.test(file))continue;const source=ts.createSourceFile(file,await readFile(file,'utf8'),ts.ScriptTarget.Latest,true);function visit(n){if(ts.isPropertyAssignment(n)&&n.name.getText(source)==='queryKey'&&ts.isArrayLiteralExpression(n.initializer)){const first=n.initializer.elements[0];if(first&&ts.isStringLiteral(first))assert.ok(publicKeys.has(first.text),`${file}: private key ${first.text} must use accountQueryKey`)}ts.forEachChild(n,visit)}visit(source)}}
  await walk('src')
 })

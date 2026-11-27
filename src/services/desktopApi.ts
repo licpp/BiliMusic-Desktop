@@ -30,7 +30,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_clear lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected search_history_clear download_remove_many'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -41,7 +41,7 @@ async function scopedInvoke<T>(command: string, args: Record<string, unknown>): 
 }
 async function write<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const value = await scopedInvoke<T>(command, args)
-  if (command === 'lyrics_save') window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated',{detail:value}))
+  if (command === 'lyrics_save' || command === 'lyrics_clear') window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated',{detail:value}))
   window.dispatchEvent(new Event('bilimusic-data-changed'))
   return value
 }
@@ -61,6 +61,7 @@ export const getTrackPlaybackUrl = (track: Track, refresh = false, preferOnline 
 export const getTrackPlaybackPlan = (track: Track, refresh = false, preferOnline = false, offlineOnly = false) => invoke<{ url: string; upgradeUrl?: string; loudnessGainDb?: number; source?: DiagnosticSource; requestedQuality?: number; actualQuality?: number; codec?: string }>('track_playback_plan', { trackId: track.id, refresh, preferOnline, ...(offlineOnly ? { offlineOnly } : {}) })
 export async function saveLibraryTrack(track: Track): Promise<Track> {
   if (!inDesktopShell) return track
+  if (track.recommendationBinding) return (await prepareRecommendationTracks([track]))[0]
   if (track.resolveParts && track.source.cid <= 0) {
     const epoch = accountEpoch()
     const detail = await getVideoParts(track.source.bvid)
@@ -69,6 +70,30 @@ export async function saveLibraryTrack(track: Track): Promise<Track> {
     track = toTrack(detail, detail.parts[0])
   }
   return fromStoredTrack(await scopedInvoke<StoredTrack>('library_save_track', { track: toTrackInput(track) }))
+}
+
+export async function prepareRecommendationTracks(tracks: Track[]): Promise<Track[]> {
+  const bound = tracks.filter(track => track.recommendationBinding)
+  if (!inDesktopShell || !bound.length) return tracks
+  const epoch = accountEpoch()
+  const expectedAccountSession = await invoke<string>('account_session')
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
+  const results = await invoke<{ track: StoredTrack; lyrics?: StoredLyrics | null; changed: boolean }[]>('recommendation_prepare_tracks', {
+    expectedAccountSession,
+    bindings: bound.map(track => ({ track: toTrackInput(track), reference: track.recommendationBinding })),
+  })
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
+  const byId = new Map(results.map(result => [result.track.id, result]))
+  for (const { lyrics } of results) {
+    if (lyrics) window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: lyrics }))
+  }
+  if (results.some(result => result.changed)) window.dispatchEvent(new Event('bilimusic-data-changed'))
+  return tracks.map(track => {
+    const result = byId.get(track.id)
+    if (!result) return track
+    const { recommendationBinding: _, ...original } = track
+    return { ...original, ...fromStoredTrack(result.track), partCount: result.track.sourceTitleContext?.partCount ?? original.partCount }
+  })
 }
 export const getVideoSource = (bvid: string, cid: number, refresh = false, compatible = false) => invoke<VideoSource>('bili_video_source', { bvid, cid, refresh, compatible })
 export const getDanmaku = (cid: number) => invoke<DanmakuItem[]>('bili_danmaku', { cid })
@@ -98,7 +123,7 @@ export async function listSearchHistory(): Promise<string[]> {
 
 export async function clearSearchHistory(): Promise<void> {
   if (!inDesktopShell) return
-  await invoke('search_history_clear')
+  await scopedInvoke('search_history_clear', {})
 }
 
 export const toggleStoredFavorite = (trackId: string) => write<boolean>('library_toggle_favorite', { trackId })
@@ -117,12 +142,23 @@ export async function searchLyrics(title: string, artist?: string, forceRefresh 
 }
 
 const lyricSupplements = new Map<string, Promise<LyricCandidate | null>>()
+const lyricRestores = new Map<string, Promise<LyricCandidate | null>>()
+function restoreSelectedLyrics(stored: StoredLyrics, epoch: number) {
+  const key = `${epoch}:${stored.provider}:${stored.providerLyricId}`
+  let request = lyricRestores.get(key)
+  if (!request) {
+    request = invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+      .finally(() => lyricRestores.delete(key))
+    lyricRestores.set(key, request)
+  }
+  return request
+}
 export async function enrichStoredLyricLines(stored: StoredLyrics): Promise<LyricLine[] | null> {
   if (!inDesktopShell || !['netease', 'qq'].includes(stored.provider)) return null
   const epoch = accountEpoch(), key = `${epoch}:${stored.provider}:${stored.providerLyricId}`
   let request = lyricSupplements.get(key)
   if (!request) {
-    request = invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+    request = restoreSelectedLyrics(stored, epoch)
     lyricSupplements.set(key, request)
     if (lyricSupplements.size > 50) lyricSupplements.delete(lyricSupplements.keys().next().value!)
     void request.catch(() => { if (lyricSupplements.get(key) === request) lyricSupplements.delete(key) })
@@ -150,11 +186,14 @@ export async function getStoredLyrics(trackId: string): Promise<StoredLyrics | n
   if (stored?.provider === 'bilibili') return null
   if (stored && !stored.rawText && stored.provider !== 'local') {
     try {
-      const candidate = await invoke<LyricCandidate | null>('lyrics_restore_selected', { lyricProvider: stored.provider, id: Number(stored.providerLyricId) })
+      const candidate = await restoreSelectedLyrics(stored, epoch)
       if (epoch !== accountEpoch()) return null
-      if (candidate && stored.writeToken && stored.accountSession) {
-        const completed = await invoke<StoredLyrics | null>('lyrics_complete_selected', { trackId, expected: stored, rawText: candidate.syncedLyrics || candidate.plainLyrics || '', parsedJson: JSON.stringify(candidateLines(candidate)) })
-        return epoch === accountEpoch() ? completed : null
+      const lines = candidate ? candidateLines(candidate) : []
+      if (candidate && lines.length && stored.writeToken && stored.accountSession) {
+        const completed = await invoke<StoredLyrics | null>('lyrics_complete_selected', { trackId, expected: stored, rawText: candidate.syncedLyrics || candidate.plainLyrics || '', parsedJson: JSON.stringify(lines) })
+        if (epoch !== accountEpoch()) return null
+        if (completed?.rawText) window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: completed }))
+        return completed
       }
     } catch { /* Re-read the selection below: it may have changed during the failed request. */ }
     if (epoch !== accountEpoch()) return null
@@ -176,6 +215,8 @@ export async function saveStoredLyrics(trackId: string, candidate: LyricCandidat
     manual,
   })
 }
+
+export const clearStoredLyrics = (expected: StoredLyrics) => write<StoredLyrics>('lyrics_clear', { expected })
 
 export const lyricMatchVersion = (trackId: string) => scopedInvoke<string>('lyric_match_version', { trackId })
 
@@ -239,7 +280,7 @@ export async function searchMetadataCatalog(title: string, artist: string, sourc
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
-  const records = await invoke<(Omit<DownloadRecord, 'track'> & { track?: StoredTrack })[]>('downloads_list')
+  const records = await scopedInvoke<(Omit<DownloadRecord, 'track'> & { track?: StoredTrack })[]>('downloads_list', {})
   return records.map(record => ({ ...record, track: record.track ? fromStoredTrack(record.track) : undefined }))
 }
 export async function listOfflinePlayableTracks(): Promise<Track[]> {
@@ -248,10 +289,18 @@ export async function listOfflinePlayableTracks(): Promise<Track[]> {
   const tracks = await invoke<StoredTrack[]>('offline_playable_tracks')
   return epoch === accountEpoch() ? tracks.map(fromStoredTrack) : []
 }
-export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId }).then(() => { window.dispatchEvent(new Event('bilimusic-offline-files-changed')) })
-export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') => invoke<boolean>('download_track', {
-  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
-})
+export async function removeDownloads(downloadIds: string[]): Promise<{failed: {id: string; message: string}[]}> {
+  const result = await scopedInvoke<{failed: {id: string; message: string}[]}>('download_remove_many', {downloadIds})
+  if (result.failed.length < downloadIds.length) window.dispatchEvent(new Event('bilimusic-offline-files-changed'))
+  return result
+}
+export async function downloadTrack(track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') {
+  const saved = await scopedInvoke<boolean>('download_track', {
+    trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
+  })
+  if (saved) window.dispatchEvent(new Event('bilimusic-offline-files-changed'))
+  return saved
+}
 export async function getAccountProfile(): Promise<AccountProfile> {
   if (!inDesktopShell) return { loggedIn: false }
   return invoke<AccountProfile>('bili_account_profile')

@@ -1,5 +1,6 @@
 import type { SourceTitleContext } from './sourceTitle'
 import type { ImportedEntry } from './importedEntry'
+import type { RecommendationBindingRef } from './recommendation'
 export type TrackSource = {
   provider: 'bilibili'
   bvid: string
@@ -32,6 +33,7 @@ export type Track = {
   /** Playlist-local catalog presentation; never a manual metadata override. */
   importedEntry?: ImportedEntry
   importedSourceMetadata?: Pick<Track, 'title' | 'displayTitle' | 'artist' | 'album' | 'coverUrl'>
+  recommendationBinding?: RecommendationBindingRef
 }
 
 export const sourceIdentity = (source: TrackSource) =>

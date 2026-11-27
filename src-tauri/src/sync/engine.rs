@@ -1289,18 +1289,47 @@ pub async fn sync(
     })?;
     let import_result = super::import_entries::exchange(db, cfg, secret, lease.actor()).await;
     let import_error = import_result.as_ref().err().cloned();
-    // Both extensions discover the same control directories. With manual and
-    // background sync, share the listings within this discovery round.
-    let (chapters_result, favorite_order_result) = super::v2_net::discovery_round(async {
-        let chapters =
-            super::chapters::exchange(db, cfg, secret, lease.actor(), &session, &after.snapshot).await;
-        let favorite_order =
-            super::favorite_order::exchange(db, cfg, secret, lease.actor(), &session).await;
-        (chapters, favorite_order)
-    })
-    .await;
+    // Share control directory discovery across all optional register extensions.
+    let (chapters_result, favorite_order_result, playlist_order_result) =
+        super::v2_net::discovery_round(async {
+            let chapters = super::chapters::exchange(
+                db,
+                cfg,
+                secret,
+                lease.actor(),
+                &session,
+                &after.snapshot,
+            )
+            .await;
+            let favorite_order =
+                super::favorite_order::exchange(db, cfg, secret, lease.actor(), &session).await;
+            let playlist_order = super::playlist_order::exchange(
+                db,
+                cfg,
+                secret,
+                lease.actor(),
+                &session,
+                &after.snapshot,
+            )
+            .await;
+            (chapters, favorite_order, playlist_order)
+        })
+        .await;
     let chapters_error = chapters_result.as_ref().err().cloned();
-    let favorite_order_error = favorite_order_result.as_ref().err().cloned();
+    // Keep the existing status field so clients continue to see optional order failures.
+    let order_errors: Vec<_> = [
+        ("我喜欢的排序", &favorite_order_result),
+        ("导入歌单排序", &playlist_order_result),
+    ]
+    .into_iter()
+    .filter_map(|(label, result)| {
+        result
+            .as_ref()
+            .err()
+            .map(|message| format!("{label}同步失败（{message}）"))
+    })
+    .collect();
+    let favorite_order_error = (!order_errors.is_empty()).then(|| order_errors.join("。"));
     with(db, cfg, |c| {
         check_area_session(c)?;
         let tx = c.unchecked_transaction().map_err(err)?;
@@ -1317,7 +1346,8 @@ pub async fn sync(
             || visibility_result.unwrap_or(false)
             || import_result.unwrap_or(false)
             || chapters_result.unwrap_or(false)
-            || favorite_order_result.unwrap_or(false),
+            || favorite_order_result.unwrap_or(false)
+            || playlist_order_result.unwrap_or(false),
     );
     result.visibility_error = visibility_error;
     result.import_error = import_error;

@@ -1,3 +1,4 @@
+import { ExtensionSettingsEntry } from '../features/settings/ExtensionsSettings'
 import { LoudnessSettings } from '../features/settings/LoudnessSettings'
 import { SystemTitleLyricsSettings } from '../features/settings/SystemTitleLyricsSettings'
 import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../services/queryKeys'
@@ -19,13 +20,13 @@ import { useSyncAttention } from '../services/syncAttention'
 import { LargeDialog } from './LargeDialog'
 import { Failure } from './Library'
 
-export function LargeSettings() {
+export function LargeSettings({ onOpenExtensions }: { onOpenExtensions: () => void }) {
   const themePreference = useThemeStore(s => s.preference), setTheme = useThemeStore(s => s.setTheme), followsSystem = systemThemeSupported()
   const attention = useSyncAttention(s => s.library || s.statistics)
   const [size, setSize] = useState(() => Number(localStorage.getItem('large-ui-size')) || 1)
   const [lyrics, setLyrics] = useState(() => Number(localStorage.getItem('large-lyrics-size')) || 1)
   const [awake, setAwake] = useState(() => localStorage.getItem('large-keep-awake') === 'true')
-  return <><LargeAccount/><div className="large-settings-common"><UpdateSettings/><DiagnosticsSettings large/></div>
+  return <><LargeAccount/><ExtensionSettingsEntry onOpen={onOpenExtensions}/><div className="large-settings-common"><UpdateSettings/><DiagnosticsSettings large/></div>
     <details className="large-disclosure" open={attention ? true : undefined}><summary><Cloud/><span><strong>云同步</strong><small>{attention || '在不同设备间同步音乐库与听歌记录'}</small></span></summary><SyncSettings embedded/></details>
     <div className="large-settings-common"><ResumeSettings/><LoudnessSettings/><SystemTitleLyricsSettings/></div>
     <details className="large-disclosure"><summary><HardDrive/><span><strong>播放缓存</strong><small>容量与已用空间</small></span></summary><PlaybackCacheSettings embedded/></details>

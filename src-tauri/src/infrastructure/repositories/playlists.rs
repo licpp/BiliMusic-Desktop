@@ -1,9 +1,13 @@
-use crate::infrastructure::repositories::library::{LibraryRepository, TrackRecord};
+use super::{
+    imported_entries,
+    library::{LibraryRepository, TrackRecord},
+};
 use rusqlite::{Connection, params};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::sync::favorite_order;
+use crate::sync::{favorite_order, playlist_order};
 
 pub const FAVORITES_PLAYLIST_ID: &str = "system:favorites";
 // Keep newly liked tracks ahead of the explicitly ordered ones.
@@ -366,11 +370,11 @@ impl PlaylistRepository {
     }
 
     pub fn list(connection: &Connection) -> rusqlite::Result<Vec<PlaylistRecord>> {
-        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
+        let mut statement = connection.prepare(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0),p.cover_url FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') GROUP BY p.id ORDER BY p.created_at DESC,p.rowid DESC"))?;
         let mut playlists = vec![Self::get(connection, FAVORITES_PLAYLIST_ID)?];
         playlists.extend(
             statement
-                .query_map([], Self::map_row)?
+                .query_map([], |row| Self::map_with_ordered_cover(connection, row))?
                 .collect::<rusqlite::Result<Vec<_>>>()?,
         );
         Ok(playlists)
@@ -394,7 +398,25 @@ impl PlaylistRepository {
                 bili_folder_id: None,
             });
         }
-        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0) FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') WHERE p.id=?1 GROUP BY p.id"), params![id], Self::map_row)
+        connection.query_row(&format!("SELECT p.id,p.name,p.description,{PLAYLIST_COVER},COUNT(i.track_id),COALESCE((julianday(p.created_at)-2440587.5)*86400,0),p.cover_url FROM playlists p LEFT JOIN playlist_items i ON i.playlist_id=p.id AND i.track_id IN (SELECT t.id FROM tracks t JOIN source_items s ON s.id=t.source_item_id WHERE s.provider='bilibili') WHERE p.id=?1 GROUP BY p.id"), params![id], |row| Self::map_with_ordered_cover(connection, row))
+    }
+
+    fn map_with_ordered_cover(
+        connection: &Connection,
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<PlaylistRecord> {
+        let mut playlist = Self::map_row(row)?;
+        let cover: Option<String> = row.get(6)?;
+        if playlist.id.starts_with("import:")
+            && cover.as_deref().is_none_or(str::is_empty)
+            && let Some(order) = playlist_order::positions(connection, &playlist.id)?
+        {
+            playlist.cover_url = Self::custom_tracks(connection, &playlist.id, Some(&order))?
+                .into_iter()
+                .next()
+                .and_then(|track| track.cover_url.filter(|url| !url.is_empty()));
+        }
+        Ok(playlist)
     }
 
     pub fn tracks(connection: &Connection, id: &str) -> rusqlite::Result<Vec<TrackRecord>> {
@@ -410,10 +432,55 @@ impl PlaylistRepository {
                 )?
                 .collect();
         }
+        let order = if id.starts_with("import:") {
+            playlist_order::positions(connection, id)?
+        } else {
+            None
+        };
+        Self::custom_tracks(connection, id, order.as_deref())
+    }
+
+    fn custom_tracks(
+        connection: &Connection,
+        id: &str,
+        order: Option<&[String]>,
+    ) -> rusqlite::Result<Vec<TrackRecord>> {
         let mut statement = connection.prepare(&format!("{} JOIN playlist_items pi ON pi.track_id=t.id WHERE pi.playlist_id=?1 ORDER BY pi.position,CASE WHEN pi.playlist_id NOT LIKE 'import:%' THEN pi.track_id END,pi.created_at DESC,pi.rowid DESC", LibraryRepository::select_sql()))?;
-        statement
+        let mut tracks = statement
             .query_map(params![id], LibraryRepository::map_row)?
-            .collect()
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if let Some(order) = order {
+            let entries = imported_entries::entry_ids_by_track(connection, id)
+                .map_err(rusqlite::Error::InvalidParameterName)?;
+            let ranks: HashMap<_, _> = order
+                .iter()
+                .enumerate()
+                .map(|(rank, id)| (id, rank))
+                .collect();
+            let mut ranked_slots: Vec<_> = tracks
+                .iter()
+                .enumerate()
+                .filter_map(|(index, track)| {
+                    ranks
+                        .get(entries.get(&track.id).unwrap_or(&track.id))
+                        .map(|rank| (index, *rank))
+                })
+                .collect();
+            // Keep songs matched or added since the last edit in their usual slots.
+            let slots = ranked_slots
+                .iter()
+                .map(|&(index, _)| index)
+                .collect::<Vec<_>>();
+            ranked_slots.sort_unstable_by_key(|&(_, rank)| rank);
+            let ranked = ranked_slots
+                .into_iter()
+                .map(|(index, _)| tracks[index].clone())
+                .collect::<Vec<_>>();
+            for (slot, track) in slots.into_iter().zip(ranked) {
+                tracks[slot] = track;
+            }
+        }
+        Ok(tracks)
     }
 
     pub fn reorder(
@@ -423,9 +490,6 @@ impl PlaylistRepository {
         expected: &[String],
         ordered: &[String],
     ) -> rusqlite::Result<bool> {
-        if playlist_id.starts_with("import:") {
-            return Ok(false);
-        }
         let tx = connection.transaction()?;
         let current = Self::tracks(&tx, playlist_id)?;
         if !current.iter().map(|track| &track.id).eq(expected)
@@ -439,11 +503,23 @@ impl PlaylistRepository {
         if favorite {
             favorite_order::save(&tx, root, ordered)?;
         } else if expected != ordered {
-            let mut update = tx.prepare(
-                "UPDATE playlist_items SET position=?3 WHERE playlist_id=?1 AND track_id=?2 AND position<>?3",
-            )?;
-            for (index, id) in ordered.iter().enumerate() {
-                update.execute(params![playlist_id, id, index as i64])?;
+            if playlist_id.starts_with("import:")
+                && imported_entries::has_entries(&tx, playlist_id)?
+            {
+                let entries = imported_entries::entry_ids_by_track(&tx, playlist_id)
+                    .map_err(rusqlite::Error::InvalidParameterName)?;
+                let order = ordered
+                    .iter()
+                    .map(|id| entries.get(id).unwrap_or(id).clone())
+                    .collect::<Vec<_>>();
+                playlist_order::save(&tx, root, playlist_id, &order)?;
+            } else {
+                let mut update = tx.prepare(
+                    "UPDATE playlist_items SET position=?3 WHERE playlist_id=?1 AND track_id=?2 AND position<>?3",
+                )?;
+                for (index, id) in ordered.iter().enumerate() {
+                    update.execute(params![playlist_id, id, index as i64])?;
+                }
             }
         }
         super::list_preferences::init(&tx)?;
@@ -523,6 +599,23 @@ impl PlaylistRepository {
         }
         if already_present && keep_existing == Some(false) {
             Self::remove_track(&tx, playlist_id, &track.id)?;
+        }
+        if move_to_previous
+            && playlist_id.starts_with("import:")
+            && let Some(order) = playlist_order::positions(&tx, playlist_id)?
+            && order.iter().any(|key| key == previous || key == &track.id)
+        {
+            let order = order
+                .into_iter()
+                .filter_map(|key| {
+                    if key == previous {
+                        Some(track.id.clone())
+                    } else {
+                        (key != track.id).then_some(key)
+                    }
+                })
+                .collect::<Vec<_>>();
+            playlist_order::save(&tx, root, playlist_id, &order)?;
         }
         if move_to_previous {
             LibraryRepository::upsert_source(&tx, track)?;

@@ -7,7 +7,7 @@ const phrases=['风吹过树梢轻轻哼着旋律','当熟悉的歌再次响起'
 const lyrics=phrases.map((text,i)=>({text,timeMs:10_000+i*8_000}))
 const shifted=(offset,lines=lyrics)=>lines.map(l=>({...l,timeMs:l.timeMs+offset}))
 test('absolute positive/negative offsets ignore prior bias and preserve word timing',()=>{
- for(const offset of [-7000,0,1350,12000]){
+ for(const offset of [-7000,0,1350,12000,40000,900000]){
   const input=structuredClone(lyrics);input[0].words=[{text:input[0].text,startTimeMs:10000,endTimeMs:14000}]
   const before=JSON.stringify(input);const r=alignLyricTiming(input,shifted(offset))
   assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.biasMs,offset);assert.equal(JSON.stringify(input),before)
@@ -37,8 +37,7 @@ test('edited / different tempo versions and equally plausible repetitions are no
  assert.equal(alignLyricTiming(lyrics,drift).ok,false)
  const twice=[...shifted(2000),...shifted(102000)];assert.equal(alignLyricTiming(lyrics,twice).ok,false)
 })
-test('unsupported offsets, malformed timestamps and excessively large input are rejected',()=>{
- assert.deepEqual(alignLyricTiming(lyrics,shifted(40000)),{ok:false,reason:'range'})
+test('malformed timestamps and excessively large input are rejected',()=>{
  assert.equal(alignLyricTiming(lyrics.map(l=>({...l,timeMs:NaN})),lyrics).ok,false)
  assert.equal(alignLyricTiming(Array.from({length:601},(_,i)=>({...lyrics[i%8],timeMs:i*5000})),lyrics).ok,false)
 })

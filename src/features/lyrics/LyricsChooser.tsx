@@ -6,9 +6,10 @@ import { flushSync } from 'react-dom'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { ListFilter } from 'lucide-react'
 import { isMobile } from '../../services/platform'
-import type { LyricCandidate, StoredLyrics } from '../../domain/lyrics'
+import { lyricsWereCleared, type LyricCandidate, type StoredLyrics } from '../../domain/lyrics'
 import { hasTimedLyrics } from '../../domain/lrc'
 import { MobilePage } from '../../shared/MobilePage'
+import { LyricMatchActions } from './LyricMatchActions'
 
 type Props = {
   title: string; artist: string; onTitle: (value: string) => void; onArtist: (value: string) => void
@@ -16,6 +17,7 @@ type Props = {
   candidates: LyricCandidate[]; stored: StoredLyrics | null
   onSearch: () => Promise<void>; onChoose: (candidate: LyricCandidate, updateMetadata: boolean) => Promise<void>; onClose: () => void
   saving: boolean
+  onClear: () => void
   manualOpen: boolean; onManualOpen: (value: boolean) => void; manualText: string; onManualText: (value: string) => void; onImport: () => Promise<void>
 }
 export function LyricsChooser(p: Props) {
@@ -29,7 +31,9 @@ export function LyricsChooser(p: Props) {
     flushSync(() => p.onManualOpen(true))
     manualInput.current?.focus({ preventScroll: true })
   }
-  const matchOption = <label className="lyric-match-option"><input type="checkbox" checked={updateMetadata} disabled={p.saving} onChange={e => setUpdateMetadata(e.target.checked)}/><span>同时更新歌名、歌手、专辑和封面</span></label>
+  const matchActions = <LyricMatchActions key={p.stored?.writeToken} stored={p.stored} busy={p.saving} onClear={p.onClear}>
+    <label className="lyric-match-option" title="同时更新歌名、歌手、专辑和封面"><input type="checkbox" aria-label="同时更新歌名、歌手、专辑和封面" checked={updateMetadata} disabled={p.saving} onChange={e => setUpdateMetadata(e.target.checked)}/><span>同时匹配歌曲信息</span></label>
+  </LyricMatchActions>
   const candidates = p.candidates.filter(candidate => platform === 'all' || candidate.provider === platform)
   const tools = <div className="lyrics-lookup-tools"><ActionMenu label="筛选歌词平台" icon={<><ListFilter size={16}/><span>{platform === 'all' ? '全部平台' : platform === 'netease' ? '网易云' : platform === 'qq' ? 'QQ 音乐' : 'LRCLIB'}</span></>} sheet>
     {close => ['all', 'netease', 'qq', 'lrclib'].map(value => <button key={value} role="menuitemradio" aria-checked={platform === value} onClick={() => { setPlatform(value); close() }}>{value === 'all' ? '全部平台' : value === 'netease' ? '网易云' : value === 'qq' ? 'QQ 音乐' : 'LRCLIB'}{platform === value && <Check size={16}/>}</button>)}
@@ -56,16 +60,16 @@ export function LyricsChooser(p: Props) {
     {!isMobile && <button disabled={!p.manualText.trim()}>保存到这首歌</button>}
   </form>
   if (isMobile) return <>
-    <MobilePage title="匹配歌词" onBack={p.onClose} className="mobile-lyrics-chooser">
+    <MobilePage title={p.stored && !lyricsWereCleared(p.stored) ? '更换歌词' : '匹配歌词'} onBack={p.onClose} className="mobile-lyrics-chooser">
       {search}
       {tools}
-      {matchOption}
+      {matchActions}
       {results}
     </MobilePage>
     {p.manualOpen && <MobilePage title="导入歌词" onBack={() => p.onManualOpen(false)} className="mobile-manual-page" actions={<button className="mobile-page-primary" form="manual-lyrics-form" type="submit" disabled={!p.manualText.trim()}>保存</button>}>{manual}{p.error && <p className="inline-error" role="alert">{p.error}</p>}</MobilePage>}
   </>
   return <div ref={dialog} className="lyric-chooser-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) p.onClose() }}><div className="lyric-chooser">
     <header><div><span className="eyebrow">LYRICS</span><h3>选择歌词版本</h3></div><button onClick={p.onClose} aria-label="关闭"><X/></button></header>
-    {search}{tools}{matchOption}{p.manualOpen && manual}{results}
+    {search}{tools}{matchActions}{p.manualOpen && manual}{results}
   </div></div>
 }

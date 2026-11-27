@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / 'artifacts/ohos'
 SOURCES = BASE / 'sources'
 APP = BASE / 'workspace/src-tauri'
+# DevEco scales launcher images above 512 px. Reuse the shared 512 px icon.
+HAP_ICON = ROOT / 'src-tauri/icons/icon.png'
 PINS = json.loads((ROOT / 'platforms/ohos/toolchain-pins.json').read_text())
 
 
@@ -152,7 +154,7 @@ def prepare_hap():
         package.add(ability, arcname='package')
     entry = project / 'entry'
     for media in (project / 'AppScope/resources/base/media', entry / 'src/main/resources/base/media'):
-        shutil.copy2(ROOT / 'public/app-icon.png', media / 'app_icon.png')
+        shutil.copy2(HAP_ICON, media / 'app_icon.png')
     ets = entry / 'src/main/ets/entryability'
     shutil.copy2(ROOT / 'platforms/ohos/EntryAbility.ets', ets / 'EntryAbility.ets')
     shutil.copy2(ROOT / 'native/ohos-player/ohos/PlayerPlugin.ets', ets / 'PlayerPlugin.ets')
@@ -268,7 +270,7 @@ def verify_hap(target):
             raise RuntimeError('HAP is missing the permission required for network status')
         if metadata['app']['icon'] != '$media:app_icon' or metadata['module']['abilities'][0]['icon'] != '$media:app_icon':
             raise RuntimeError('HAP is using a template icon')
-        if package.read('resources/base/media/app_icon.png') != (ROOT / 'public/app-icon.png').read_bytes():
+        if package.read('resources/base/media/app_icon.png') != (HAP_ICON).read_bytes():
             raise RuntimeError('HAP icon differs from the shared application icon')
         library = f'libs/{abi}/libbilimusic_lib.so'
         binary = package.read(library)

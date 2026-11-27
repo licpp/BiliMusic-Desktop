@@ -803,6 +803,57 @@ mod tests {
     }
 
     #[test]
+    fn copied_bilibili_playlist_order_round_trips_as_existing_item_positions() {
+        use crate::infrastructure::repositories::playlists::PlaylistRepository;
+
+        let mut source = Connection::open_in_memory().unwrap();
+        let target = Connection::open_in_memory().unwrap();
+        for connection in [&source, &target] {
+            crate::infrastructure::migrations::migrate(connection).unwrap();
+        }
+        let playlist = "import:8076ad4b-2861-4be1-8b08-a6a0fb0b0579";
+        PlaylistRepository::create(&source, playlist, "B 站收藏夹副本").unwrap();
+        let ids = (1..=2)
+            .map(|cid| format!("bilibili:BV1GJ411x7h7:{cid}"))
+            .collect::<Vec<_>>();
+        for (index, id) in ids.iter().enumerate() {
+            source.execute("INSERT INTO source_items(id,provider,bvid,cid) VALUES(?1,'bilibili','BV1GJ411x7h7',?2)", params![id, index + 1]).unwrap();
+            source
+                .execute(
+                    "INSERT INTO tracks(id,source_item_id,title) VALUES(?1,?1,'歌名')",
+                    [id],
+                )
+                .unwrap();
+        }
+        PlaylistRepository::add_tracks(&source, playlist, &ids, true).unwrap();
+        let reordered = ids.iter().rev().cloned().collect::<Vec<_>>();
+        assert!(
+            PlaylistRepository::reorder(
+                &mut source,
+                std::path::Path::new("."),
+                playlist,
+                &ids,
+                &reordered
+            )
+            .unwrap()
+        );
+        assert!(
+            crate::sync::playlist_order::positions(&source, playlist)
+                .unwrap()
+                .is_none()
+        );
+        apply(&target, &export(&source, "42", false).unwrap(), false).unwrap();
+        assert_eq!(
+            PlaylistRepository::tracks(&target, playlist)
+                .unwrap()
+                .into_iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            reordered
+        );
+    }
+
+    #[test]
     fn imported_playlists_and_members_round_trip_without_changing_identity() {
         let c = Connection::open_in_memory().unwrap();
         crate::infrastructure::migrations::migrate(&c).unwrap();

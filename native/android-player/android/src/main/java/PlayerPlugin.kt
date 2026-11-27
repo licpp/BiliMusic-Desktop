@@ -84,7 +84,7 @@ class ListeningArgs {
 class ResolvedArgs { var request: Long = 0; var data: String = "{}" }
 
 @InvokeArg
-class DownloadPathArgs { lateinit var path: String }
+class DownloadPathArgs { lateinit var path: String; var skipExisting: Boolean = false }
 
 @InvokeArg
 class InstallUpdateArgs { lateinit var path: String; lateinit var version: String; var versionCode: Long? = null }
@@ -123,15 +123,20 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun reset_download_destination(invoke: Invoke) {
-        try { downloadStorage.reset(); invoke.resolve(downloadStorage.status()) }
-        catch (_: Exception) { invoke.reject("无法恢复默认目录，请重新选择文件夹") }
+        downloadWorker.execute {
+            try { downloadStorage.reset(); invoke.resolve(downloadStorage.status()) }
+            catch (_: Exception) { invoke.reject("无法恢复默认目录，请重新选择文件夹") }
+        }
     }
 
     @Command
     fun save_download(invoke: Invoke) {
         val args = invoke.parseArgs(DownloadPathArgs::class.java)
         downloadWorker.execute {
-            try { downloadStorage.save(args.path); invoke.resolve() }
+            try {
+                val saved = downloadStorage.save(args.path, args.skipExisting)
+                if (args.skipExisting) invoke.resolve(JSObject().put("saved", saved)) else invoke.resolve()
+            }
             catch (error: Exception) {
                 invoke.reject(if (error is SecurityException) "保存文件夹的授权已失效，请在设置中重新选择下载目录"
                     else error.message ?: "保存失败，请检查文件夹权限与剩余空间")

@@ -4,7 +4,7 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 pub(super) use crate::infrastructure::providers::bilibili::valid_bvid;
 use crate::infrastructure::providers::bilibili::{
-    BilibiliProvider, CommentItem, CommentPage, DanmakuItem, PlaybackSource, ProviderError,
+    BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FeedPage, PlaybackSource, ProviderError,
     RequestPriority, SearchPage, VideoPart, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
@@ -189,6 +189,23 @@ pub async fn bili_search(
 }
 
 #[tauri::command]
+pub async fn bili_personalized_feed(
+    provider: State<'_, BilibiliProvider>,
+    database: State<'_, Database>,
+    expected_account_session: String,
+    page: u32,
+) -> Result<FeedPage, CommandError> {
+    let check_session = || {
+        let connection = database.0.lock().map_err(CommandError::database)?;
+        check_account_session(&connection, &expected_account_session)
+    };
+    check_session()?;
+    let result = provider.personalized_feed(page).await;
+    check_session()?;
+    result.map_err(CommandError::bilibili)
+}
+
+#[tauri::command]
 pub fn search_history_list(database: State<'_, Database>) -> Result<Vec<String>, CommandError> {
     let connection = database
         .0
@@ -198,11 +215,15 @@ pub fn search_history_list(database: State<'_, Database>) -> Result<Vec<String>,
 }
 
 #[tauri::command]
-pub fn search_history_clear(database: State<'_, Database>) -> Result<(), CommandError> {
+pub fn search_history_clear(
+    database: State<'_, Database>,
+    expected_account_session: String,
+) -> Result<(), CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     SearchHistoryRepository::clear(&connection).map_err(CommandError::database)
 }
 
@@ -903,6 +924,20 @@ pub fn lyrics_save_with_metadata(
 }
 
 #[tauri::command]
+pub fn lyrics_clear(
+    database: State<'_, Database>,
+    expected_account_session: String,
+    expected: StoredLyrics,
+) -> Result<StoredLyrics, CommandError> {
+    let connection = database.0.lock().map_err(CommandError::database)?;
+    check_account_session(&connection, &expected_account_session)?;
+    check_account_session(&connection, &expected.account_session)?;
+    LyricsRepository::clear_if_current(&connection, &expected)
+        .map_err(CommandError::database)?
+        .ok_or_else(|| CommandError::validation("歌词已更新，请重新打开后再移除"))
+}
+
+#[tauri::command]
 pub fn lyrics_set_bias(
     database: State<'_, Database>,
     expected_account_session: String,
@@ -910,6 +945,9 @@ pub fn lyrics_set_bias(
     bias_ms: i64,
     expected: StoredLyrics,
 ) -> Result<LyricBiasWrite, CommandError> {
+    if bias_ms.unsigned_abs() > crate::infrastructure::repositories::lyrics::MAX_SAFE_BIAS_MS {
+        return Err(CommandError::validation("歌词偏移数值无效"));
+    }
     let connection = database
         .0
         .lock()

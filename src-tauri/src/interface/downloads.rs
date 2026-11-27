@@ -10,27 +10,62 @@ use tauri::State;
 use tokio::io::AsyncWriteExt;
 
 #[tauri::command]
-pub fn downloads_list(database: State<'_, Database>) -> Result<Vec<DownloadRecord>, CommandError> {
-    let connection = database
-        .0
-        .lock()
-        .map_err(|_| CommandError::database("数据库正忙"))?;
-    DownloadRepository::list_with_tracks(&connection).map_err(CommandError::database)
+pub async fn downloads_list(
+    database: State<'_, Database>,
+) -> Result<Vec<DownloadRecord>, CommandError> {
+    let mut records = {
+        let connection = database.0.lock().map_err(CommandError::database)?;
+        DownloadRepository::list_with_tracks(&connection).map_err(CommandError::database)?
+    };
+    tokio::task::spawn_blocking(move || {
+        for record in &mut records {
+            record.check_file();
+        }
+        records
+    })
+    .await
+    .map_err(CommandError::database)
+}
+
+#[derive(serde::Serialize)]
+struct DownloadRemovalFailure {
+    id: String,
+    message: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct DownloadRemovalResult {
+    failed: Vec<DownloadRemovalFailure>,
 }
 
 #[tauri::command]
-pub fn download_remove(
+pub async fn download_remove_many(
     database: State<'_, Database>,
-    download_id: String,
-) -> Result<(), CommandError> {
+    download_ids: Vec<String>,
+    expected_account_session: String,
+) -> Result<DownloadRemovalResult, CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    DownloadRepository::remove(&connection, &download_id).map_err(|error| match error {
-        RemoveDownloadError::Database(error) => CommandError::database(error),
-        RemoveDownloadError::InProgress => CommandError::validation("文件正在下载，请完成后再删除"),
-        RemoveDownloadError::FileUnavailable => {
-            CommandError::validation("无法删除下载文件，请确认文件未被占用并重试")
-        }
-    })
+    super::account::check_account_session(&connection, &expected_account_session)?;
+    Ok(remove_downloads(&connection, download_ids))
+}
+
+fn remove_downloads(connection: &rusqlite::Connection, ids: Vec<String>) -> DownloadRemovalResult {
+    let mut seen = std::collections::HashSet::new();
+    let failed = ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .filter_map(|id| {
+            let message = match DownloadRepository::remove(connection, &id).err()? {
+                RemoveDownloadError::Database(error) => error.to_string(),
+                RemoveDownloadError::InProgress => "文件正在下载，请完成后再删除".into(),
+                RemoveDownloadError::FileUnavailable => {
+                    "无法删除下载文件，请确认文件未被占用并重试".into()
+                }
+            };
+            Some(DownloadRemovalFailure { id, message })
+        })
+        .collect();
+    DownloadRemovalResult { failed }
 }
 
 #[tauri::command]
@@ -178,38 +213,45 @@ pub async fn download_track(
     if !["auto", "original", "flac"].contains(&export_format) {
         return Err(CommandError::validation("不支持的下载格式"));
     }
-    {
+    let existing_file = {
         let connection = database
             .0
             .lock()
             .map_err(|_| CommandError::database("数据库正忙"))?;
+        super::account::check_account_session(&connection, &expected_session)?;
         if LibraryRepository::get(&connection, &track_id)
             .map_err(CommandError::database)?
             .is_none()
         {
             return Err(CommandError::validation("请先播放歌曲再下载"));
         }
-        if skip_existing.unwrap_or(false) {
-            let mut query = connection
-                .prepare(
-                    "SELECT target_path FROM downloads WHERE track_id=?1 AND status='completed'",
-                )
-                .map_err(CommandError::database)?;
-            let paths = query
-                .query_map([&track_id], |row| row.get::<_, String>(0))
-                .map_err(CommandError::database)?;
-            for path in paths {
-                if std::fs::metadata(path.map_err(CommandError::database)?)
-                    .is_ok_and(|m| m.is_file() && m.len() > 0)
-                {
-                    return Ok(false);
-                }
-            }
-        }
         let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM downloads WHERE track_id=?1 AND status IN ('queued','downloading'))", [&track_id], |row| row.get(0)).map_err(CommandError::database)?;
         if active {
             return Err(CommandError::validation("这首歌曲正在下载中"));
         }
+        if skip_existing.unwrap_or(false) {
+            DownloadRepository::existing_file(&connection, &track_id).map_err(CommandError::database)?
+        } else {
+            None
+        }
+    };
+    #[cfg(not(target_os = "android"))]
+    if existing_file.is_some() {
+        return Ok(false);
+    }
+    #[cfg(target_os = "android")]
+    if let Some(path) = existing_file.as_deref().map(std::path::Path::new)
+        .filter(|path| path.parent() == Some(directory.as_path()))
+    {
+        trace.emit(stage, Outcome::Succeeded, None);
+        stage = Step::Export;
+        trace.emit(stage, Outcome::Started, None);
+        let saved = tauri_plugin_android_player::restore_download(&app, path)
+            .await
+            .map_err(CommandError::provider)?;
+        let connection = database.0.lock().map_err(CommandError::database)?;
+        super::account::check_account_session(&connection, &expected_session)?;
+        return Ok(saved);
     }
     trace.emit(stage, Outcome::Succeeded, None);
     stage = Step::Source;
@@ -261,9 +303,7 @@ pub async fn download_track(
             .0
             .lock()
             .map_err(|_| CommandError::database("数据库正忙"))?;
-        if expected_profile != crate::interface::media::profile(&database) {
-            return Err(CommandError::validation("账号已切换，请重新下载"));
-        }
+        super::account::check_account_session(&connection, &expected_session)?;
         let active: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM downloads WHERE track_id=?1 AND status IN ('queued','downloading'))", [&track_id], |row| row.get(0)).map_err(CommandError::database)?;
         if active {
             return Err(CommandError::validation("这首歌曲正在下载中"));
@@ -432,6 +472,44 @@ fn safe_filename(title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn removing_all_downloads_leaves_only_active_and_reports_its_id_once() {
+        use super::{DownloadRepository, remove_downloads};
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
+        connection.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES ('source','bilibili','BVTEST00001',1); INSERT INTO tracks(id,source_item_id,title) VALUES ('track','source','歌曲');").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("bilimusic-test-{}.m4a", uuid::Uuid::new_v4()));
+        let missing = path.with_extension("missing");
+        let active = path.with_extension("part");
+        std::fs::write(&path, b"fixture").unwrap();
+        for (id, target) in [
+            ("saved", &path),
+            ("failed", &missing),
+            ("active", &active),
+            ("missing", &missing),
+        ] {
+            DownloadRepository::create(&connection, id, "track", target.to_str().unwrap()).unwrap();
+        }
+        DownloadRepository::complete(&connection, "saved", 7).unwrap();
+        DownloadRepository::complete(&connection, "missing", 7).unwrap();
+        DownloadRepository::fail(&connection, "failed", "fixture").unwrap();
+
+        let result = remove_downloads(
+            &connection,
+            ["active", "saved", "missing", "failed", "active"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].id, "active");
+        assert!(!path.exists());
+        let records = DownloadRepository::list(&connection).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "active");
+    }
+
     #[test]
     fn download_extension_preserves_the_container_even_for_lossless_audio() {
         assert_eq!(

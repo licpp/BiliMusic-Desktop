@@ -87,6 +87,7 @@ object FloatingLyricsOverlay {
             if (line.has("endTimeMs")) translated.put("endTimeMs", line.optDouble("endTimeMs"))
             translations.put(index, translated)
         }
+        controls?.showLanguage(translations.length() > 0)
         SystemTitleLyrics.update(timeline)
         render()
     }
@@ -197,6 +198,7 @@ object FloatingLyricsOverlay {
         }.apply {
             visibility = View.INVISIBLE
             displayLanguage(language)
+            showLanguage(translations.length() > 0)
             displayFontSize(fontSize)
         }
         controls = tools
@@ -336,9 +338,10 @@ object FloatingLyricsOverlay {
         val subtitles = data.optBoolean("subtitles")
         val current=activeIndex.coerceAtLeast(0)
         val other=if(current+1<(lines?.length() ?: 0))current+1 else current-1
+        val displayLanguage = if (translations.length() > 0) language else FloatingLyricsLanguage.ORIGINAL
         for(slot in 0..1) {
             val target=if(slot==0)output else nextText ?: continue
-            val bilingual = language == FloatingLyricsLanguage.BILINGUAL
+            val bilingual = displayLanguage == FloatingLyricsLanguage.BILINGUAL
             val index=if (bilingual || current%2==slot) current else other
             val original=lines?.optJSONObject(index)
             val inside = index==activeIndex && original!=null && (!subtitles || !original.has("endTimeMs") || time<original.optDouble("endTimeMs"))
@@ -346,12 +349,12 @@ object FloatingLyricsOverlay {
             val line = when {
                 bilingual && subtitles && !inside -> null
                 bilingual && slot == 1 -> translated
-                language == FloatingLyricsLanguage.TRANSLATION -> translated ?: original
+                displayLanguage == FloatingLyricsLanguage.TRANSLATION -> translated ?: original
                 else -> original
             }
             val active = inside && line != null && (!bilingual || slot == 0)
             target.setTextColor(if(active)activeColor else inactiveColor)
-            val key="${position.first}:${language.value}:$slot:$index:${line?.optDouble("timeMs")}"
+            val key="${position.first}:${displayLanguage.value}:$slot:$index:${line?.optDouble("timeMs")}"
             if(line==null){target.showLyric(if(slot==0 && (lines?.length() ?: 0)==0)service.lyricTitle() else " ",key);continue}
             val words=line.optJSONArray("words")
             val scroll=lyricScrollPosition(line,time,lines?.optJSONObject(index+1)?.optDouble("timeMs"),target)

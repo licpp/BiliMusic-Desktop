@@ -29,7 +29,13 @@ test('existing lyric settings migrate with colors and invalid color input falls 
  assert.deepEqual(readFloatingPreferences('{"fontSize":32,"locked":true}'),{fontSize:32,locked:true,showUnlockButton:true,activeColor:'#b4f3e9',inactiveColor:'#91a6b5',alignment:'edges',language:'original'})
  const value=readFloatingPreferences('{"fontSize":100,"activeColor":"#AABBCC","inactiveColor":"url(x)"}');assert.equal(value.fontSize,48);assert.equal(value.activeColor,'#aabbcc');assert.equal(value.inactiveColor,'#91a6b5')
 })
-const {centeredLyricOffset,floatingDisplaySlots}=await moduleAt('src/domain/lyricTimeline.ts')
+const {centeredLyricOffset,floatingDisplaySlots,hasLyricTranslation}=await moduleAt('src/domain/lyricTimeline.ts')
+test('saved bilingual or translation preference keeps original slots when the track has no translation',()=>{
+ const lines=[{timeMs:1000,text:'第一行',translation:' '},{timeMs:2000,text:'第二行'}]
+ assert.equal(hasLyricTranslation(lines),false)
+ for(const mode of ['translation','bilingual']) assert.deepEqual(floatingDisplaySlots(lines,1500,false,mode),floatingDisplaySlots(lines,1500,false,'original'))
+ assert.equal(hasLyricTranslation([...lines,{timeMs:3000,text:'第三行',translation:'Third line'}]),true)
+})
 test('floating translations follow the same line without inheriting original word timings',()=>{
  const lyrics=[{timeMs:1000,text:'原文',translation:'Translation',words:[{text:'原文',startTimeMs:1000,endTimeMs:1800}]},{timeMs:2000,text:'下一行'}]
  assert.deepEqual(floatingDisplaySlots(lyrics,1100,false,'bilingual').map(slot=>[slot.line?.text,slot.active]),[['原文',true],['Translation',false]])

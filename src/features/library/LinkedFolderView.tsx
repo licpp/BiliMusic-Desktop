@@ -18,17 +18,18 @@ import { ChevronDown, ChevronRight, ListChecks, Play, Plus, RefreshCw } from 'lu
 import { changeLinkedVideo, commandErrorMessage, getLinkedFolder, getVideoParts } from '../../services/desktopApi'
 import type { FavoriteVideo } from '../../domain/bilibili'
 import type { Playlist } from '../../domain/library'
+import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
 import { toTrack } from '../../services/collectionTrack'
 import { PlayingMark } from '../../shared/PlayingMark'
 import { Artwork } from '../../shared/Artwork'
-import { ActionMenu } from '../../shared/ActionMenu'
 import { useLocateCurrentRow } from '../../shared/useLocateCurrentRow'
-import { useRowContextMenu } from '../../shared/useRowContextMenu'
+import { TrackMenuButton } from './TrackMenuButton'
+import { showTrackMenu } from './trackActionStore'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { linkedFolderKey } from '../../services/linkedFolders'
 import { openBiliVerification } from '../../services/biliRequestStatus'
-import { useLinkedMatchedCovers } from '../../services/linkedMatchedCovers'
+import { applyLinkedTrackOverrides, useLinkedMatchedCovers, type LinkedTrackOverrides } from '../../services/linkedMatchedCovers'
 import { VideoPartsList } from './VideoPartsList'
 import { usePlayerStore } from '../player/playerStore'
 import { PlaylistMenu } from './PlaylistEntry'
@@ -64,8 +65,8 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
   const loadingFolder = folder.isLoading || Boolean(folder.data && !visibleFolder)
   const [filter, setFilter] = useState('')
   const sortEntity=`linkedFolder:${folderId}`,listSort=useListSort(sortEntity)
-  const orderedVideos=sortList(visibleFolder?.videos||[],listSort.rule,video=>({id:video.bvid,name:video.title,date:video.pubtime||listSort.dates[video.bvid],playCount:video.cnt_info?.play??listSort.playCounts[video.bvid]}))
-  const visibleVideos = orderedVideos.filter(video => matchesListSearch(filter, video.title, video.bvid))
+  const orderedVideos=sortList(visibleFolder?.videos||[],listSort.rule,video=>({id:video.bvid,name:matchedCovers.byVideo.get(video.bvid)?.title || video.title,date:video.pubtime||listSort.dates[video.bvid],playCount:video.cnt_info?.play??listSort.playCounts[video.bvid]}))
+  const visibleVideos = orderedVideos.filter(video => matchesListSearch(filter, matchedCovers.byVideo.get(video.bvid)?.title || video.title, matchedCovers.byVideo.get(video.bvid)?.artist ?? undefined, video.bvid))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<string>()
@@ -105,7 +106,7 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     await client.invalidateQueries({ queryKey: accountQueryKey('playlists') })
   }
 
-  const queue = visibleVideos.map(favoriteVideoTrack)
+  const queue = visibleVideos.map(video => applyLinkedTrackOverrides(favoriteVideoTrack(video), matchedCovers.byVideo.get(video.bvid)))
   const selection = useTrackSelection(queue)
   const selectionLayout = compact || narrowToolbar ? 'compact' : 'wide'
   const folderChanged = (updated: import('../../domain/bilibili').LinkedFolder) => {
@@ -167,29 +168,26 @@ export function LinkedFolderView({ playlist, onUnlink }: { playlist: Playlist & 
     <div className="result-list" ref={list}>{rendered.rows.map((video, index) => selection.selecting ?
       <article key={video.bvid} data-offline-unavailable={offlineUnavailable(queue[index], offline) || undefined} className="result-card"><label className="result-main linked-select-row">
         <input className="track-select" type="checkbox" aria-label={`选择 ${video.title || video.bvid}`} checked={selection.ids.has(queue[index].id)} onChange={() => selection.toggle(queue[index].id)}/>
-        <span className="result-cover"><Artwork src={matchedCovers.byVideo.get(video.bvid) || video.cover}/></span><span className="result-copy"><strong>{video.title || video.bvid}</strong><small>{favoriteVideoExpired(video) ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
+        <span className="result-cover"><Artwork variant="thumbnail" src={queue[index].coverUrl || video.cover}/></span><span className="result-copy"><strong>{queue[index].title || video.bvid}</strong><small>{favoriteVideoExpired(video) ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}</small></span>
       </label></article> :
-      <LinkedVideoRow key={video.bvid} folderId={folderId} video={video} cover={matchedCovers.byVideo.get(video.bvid)} partCovers={matchedCovers.byPart} queue={queue} title={name} current={currentBvid === video.bvid}
-      expanded={expanded === video.bvid} busy={busy} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
+      <LinkedVideoRow key={video.bvid} folderId={folderId} video={video} entry={queue[index]} partOverrides={matchedCovers.byPart} queue={queue} title={name} current={currentBvid === video.bvid}
+      expanded={expanded === video.bvid} onOpen={() => setExpanded(value => value === video.bvid ? undefined : video.bvid)}
       onRemove={() => { setError(''); setConfirm(video) }}/>) }
       {rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}
     </div>
   </section>
 }
 
-function LinkedVideoRow({ folderId, video, cover, partCovers, queue, title, expanded, busy, current, onOpen, onRemove }: {
+function LinkedVideoRow({ folderId, video, entry, partOverrides, queue, title, expanded, current, onOpen, onRemove }: {
   folderId: number
-  cover?: string
-  partCovers: ReadonlyMap<string, string>
-  queue: import('../../domain/track').Track[]; title: string
-  video: FavoriteVideo; expanded: boolean; busy: boolean; current: boolean; onOpen: () => void; onRemove: () => void
+  partOverrides: ReadonlyMap<string, LinkedTrackOverrides>
+  entry: Track; queue: Track[]; title: string
+  video: FavoriteVideo; expanded: boolean; current: boolean; onOpen: () => void; onRemove: () => void
 }) {
-  const { position, onContextMenu } = useRowContextMenu()
   const offline = useOfflinePlayback()
   const expired = favoriteVideoExpired(video)
   const { ref, pages, access } = useVisibleVideoPages<HTMLElement>(video.bvid, !expired && !offline.offline, true)
-  const entry = queue.find(track => track.source.bvid === video.bvid)
-  const unavailable = expired && !offline.offline || !!entry && offlineUnavailable(entry, offline)
+  const unavailable = expired && !offline.offline || offlineUnavailable(entry, offline)
   const multiple = !offline.offline && (pages?.length ?? 0) > 1
   const playVideo = async () => {
     if (unavailable) return
@@ -198,35 +196,40 @@ function LinkedVideoRow({ folderId, video, cover, partCovers, queue, title, expa
       return
     }
     const detail = await getVideoParts(video.bvid)
-    const tracks = detail.parts.map(part => toTrack(detail, part))
+    const tracks = detail.parts.map(part => {
+      const track = toTrack(detail, part)
+      return applyLinkedTrackOverrides(track, partOverrides.get(track.id))
+    })
     if (tracks[0]) await usePlayerStore.getState().playFromList(seasonPlaybackQueue(queue, tracks[0], tracks), tracks[0].id, { kind: 'season', title, origin: 'linked-favorite' })
   }
   const [playError, setPlayError] = useState('')
+  const play = () => void playVideo().catch(error => setPlayError(commandErrorMessage(error)))
+  const actions = { openParts: multiple ? onOpen : undefined, play, linkedVideo: { onRemove, multipart: multiple }, editLyrics: true }
   return <article ref={ref} data-offline-unavailable={unavailable || undefined} className="result-card">
-    <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={onContextMenu}>
-      <button type="button" className="result-main" disabled={unavailable} aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}>
-        <span className="result-cover" onClick={event => { event.stopPropagation(); void playVideo().catch(error => setPlayError(commandErrorMessage(error))) }}><Artwork src={cover || video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}<VideoAccessBadge access={access} onCover/></span>
-        <span className="result-copy"><strong>{video.title || video.bvid}</strong><small className="result-byline"><span>{expired ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</span></small></span>
+    <div className={expanded ? 'search-result-heading' : 'search-result-heading playing-row'} data-current-row={current ? video.bvid : undefined} onContextMenu={event => showTrackMenu(event, entry, undefined, queue, actions)}>
+      <button type="button" className="result-main" disabled={unavailable} aria-current={current && !expanded ? 'true' : undefined} aria-expanded={multiple ? expanded : undefined} onClick={() => { if (multiple) onOpen(); else play() }}>
+        <span className="result-cover" onClick={event => { event.stopPropagation(); play() }}><Artwork variant="thumbnail" src={entry.coverUrl || video.cover}/><i><Play size={17}/></i>{current && !expanded && <PlayingMark/>}<VideoAccessBadge access={access} onCover/></span>
+        <span className="result-copy"><strong>{entry.title || video.bvid}</strong><small className="result-byline"><span>{entry.artist && `${entry.artist} · `}{expired ? '已失效' : video.duration ? formatDuration(video.duration) : '时长未知'}{video.cnt_info?.play !== undefined ? ` · ${formatPlayCount(video.cnt_info.play)} 次播放` : ''}</span></small></span>
         {multiple && (expanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>)}
       </button>
-      <ActionMenu sheet label={`操作 ${video.title || video.bvid}`} contextPosition={position}>{close => <>
-        {multiple && <button role="menuitem" onClick={() => { close(); onOpen() }}>{expanded ? '收起分 P' : '展开分 P'}</button>}
-        <button role="menuitem" disabled={busy} onClick={() => { close(); onRemove() }}>从 B 站收藏夹移除</button>
-      </>}</ActionMenu>
+      <TrackMenuButton track={entry} tracks={queue} actions={actions} label={`操作 ${entry.title || video.bvid}`}/>
     </div>
     {playError && <p role="alert" className="inline-error">{playError}</p>}
-    {expanded && multiple && <LinkedVideoParts folderId={folderId} bvid={video.bvid} partCovers={partCovers} queue={queue} title={title}/>}
+    {expanded && multiple && <LinkedVideoParts folderId={folderId} bvid={video.bvid} partOverrides={partOverrides} queue={queue} title={title}/>}
   </article>
 }
 
-function LinkedVideoParts({ folderId, bvid, partCovers, queue, title }: { folderId: number; bvid: string; partCovers: ReadonlyMap<string, string>; queue: import('../../domain/track').Track[]; title: string }) {
+function LinkedVideoParts({ folderId, bvid, partOverrides, queue, title }: { folderId: number; bvid: string; partOverrides: ReadonlyMap<string, LinkedTrackOverrides>; queue: Track[]; title: string }) {
   const detail = useQuery({ queryKey: accountQueryKey('collection-parts', bvid), queryFn: () => getVideoParts(bvid) })
   if (detail.isLoading) return <p className="batch-message">正在加载分 P…</p>
   if (detail.error) return <p role="alert" className="inline-error">{commandErrorMessage(detail.error)}</p>
   const video = detail.data
   if (!video?.parts.length) return <p className="batch-message">暂无可播放内容</p>
-  const tracks = video.parts.map(part => toTrack(video, part))
+  const tracks = video.parts.map(part => {
+    const track = toTrack(video, part)
+    return applyLinkedTrackOverrides(track, partOverrides.get(track.id))
+  })
   return <VideoPartsList savedContainer locateCurrent linkedFolderId={folderId} queueSource={{ kind: 'season', title, origin: 'linked-favorite' }}
     playbackTracks={seasonPlaybackQueue(queue, tracks[0], tracks)}
-    tracks={tracks.map(track => ({ ...track, coverUrl: partCovers.get(track.id) || track.coverUrl }))}/>
+    tracks={tracks}/>
 }

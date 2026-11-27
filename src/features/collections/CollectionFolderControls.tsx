@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Folder, FolderPlus, Plus } from 'lucide-react'
+import { Folder, FolderPlus, Palette, Plus } from 'lucide-react'
 import { changeCollection } from '../../services/collections'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { CollectionDialog } from '../../shared/CollectionDialog'
 import { ActionMenu } from '../../shared/ActionMenu'
 import type { MenuPosition } from '../../shared/useRowContextMenu'
+import { CreatorFolderStyleEditor, creatorFolderStyleTitle } from './CreatorFolderStyleEditor'
 
 export function FolderEditor({action,id='',initial='',onDone,controlledOpen,onClose,creator=false,iconOnly=false,plusIcon=false,disabled}:{disabled?:boolean;iconOnly?:boolean;plusIcon?:boolean;creator?:boolean;action:'create'|'rename'|'delete';id?:string;initial?:string;onDone:()=>void;controlledOpen?:boolean;onClose?:()=>void}){
   const [open,setOpen]=useState(false),[name,setName]=useState(initial),[error,setError]=useState(''),[busy,setBusy]=useState(false)
@@ -26,14 +27,17 @@ export function FolderMenu({ folder, contextPosition, onOpen, onChanged, onRemov
   onChanged: () => void
   onRemoved: () => void
 }) {
-  const [action, setAction] = useState<'rename' | 'delete'>()
+  const [action, setAction] = useState<'rename' | 'delete' | 'icon'>()
   return <>
     <ActionMenu sheet label={`${creator?'关注文件夹':'收藏夹'}操作：${folder.name}`} contextPosition={contextPosition}>{close => <>
       {onOpen && <button role="menuitem" onClick={() => { close(); onOpen() }}><Folder size={16}/>打开文件夹</button>}
       <button role="menuitem" onClick={() => { close(); setAction('rename') }}>重命名</button>
+      {creator && <button role="menuitem" onClick={() => { close(); setAction('icon') }}><Palette size={16}/>{creatorFolderStyleTitle}</button>}
       <button role="menuitem" onClick={() => { close(); setAction('delete') }}>删除文件夹</button>
     </>}</ActionMenu>
-    {action && <FolderEditor creator={creator} action={action} id={folder.id} initial={folder.name} controlledOpen
+    {action === 'icon' ? <CollectionDialog title={creatorFolderStyleTitle} className="creator-folder-style-dialog" mobileSheet onClose={() => setAction(undefined)}>
+      <CreatorFolderStyleEditor id={folder.id} name={folder.name} onClose={() => setAction(undefined)}/>
+    </CollectionDialog> : action && <FolderEditor creator={creator} action={action} id={folder.id} initial={folder.name} controlledOpen
       onClose={() => setAction(undefined)} onDone={() => { if (action === 'delete') onRemoved(); onChanged() }} />}
   </>
 }

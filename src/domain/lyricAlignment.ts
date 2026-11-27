@@ -3,7 +3,7 @@ import { isLyricCredit, simplifiedLyricText } from './lyricText'
 
 export type LyricAlignment =
   | { ok: true; biasMs: number; matchedLines: number; spreadMs: number }
-  | { ok: false; reason: 'insufficient' | 'ambiguous' | 'inconsistent' | 'range' }
+  | { ok: false; reason: 'insufficient' | 'ambiguous' | 'inconsistent' }
 
 type TextLine = { text: string; time: number; index: number }
 type Block = { text: string; time: number; start: number; end: number }
@@ -113,7 +113,7 @@ function conflictingChain(anchors: Anchor[], chain: Anchor[], biasMs: number) {
 
 /** Estimate an absolute offset from the original lyric time axis, never from
  * the current bias. Text/timestamps are read-only, including word timing. */
-export function alignLyricTiming(lyrics: readonly LyricLine[], captions: readonly LyricLine[], maxBiasMs = 30_000): LyricAlignment {
+export function alignLyricTiming(lyrics: readonly LyricLine[], captions: readonly LyricLine[]): LyricAlignment {
   const left = clean(lyrics), right = clean(captions)
   if (left.length < 3 || right.length < 3 || left.length > 600 || right.length > 2000 || new Set(left.map(line => line.text)).size < 2) return { ok: false, reason: 'insufficient' }
   const lyricBlocks = blocks(left, 12000), captionBlocks = blocks(right)
@@ -133,7 +133,6 @@ export function alignLyricTiming(lyrics: readonly LyricLine[], captions: readonl
       const score = similarity(lyric.text, caption.text)
       if (score < (Math.min(lyric.text.length, caption.text.length) < 6 ? 1 : .72)) continue
       const offset = caption.time - lyric.time
-      if (Math.abs(offset) > 600_000) continue
       anchors.push({ lyric, caption, offset, similarity: score, weight: score * Math.min(lyric.text.length, 24) })
     }
   }
@@ -173,6 +172,5 @@ export function alignLyricTiming(lyrics: readonly LyricLine[], captions: readonl
   const conflicts = conflictingChain(anchors, chain, biasMs)
   const conflictCharacters = conflicts.reduce((sum, a) => sum + a.lyric.text.length, 0)
   if (conflicts.length >= 3 && new Set(conflicts.map(a => a.lyric.text)).size >= 3 && conflictCharacters >= 24 && conflicts.reduce((sum, a) => sum + a.weight, 0) >= best.score * .35) return { ok: false, reason: 'inconsistent' }
-  if (Math.abs(biasMs) > maxBiasMs) return { ok: false, reason: 'range' }
   return { ok: true, biasMs, matchedLines: matched.size, spreadMs }
 }

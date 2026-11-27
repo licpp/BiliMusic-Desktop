@@ -29,9 +29,32 @@ pub struct StoredLyrics {
     pub account_session: String,
 }
 
+pub const MAX_SAFE_BIAS_MS: u64 = 9_007_199_254_740_991;
+
 pub struct LyricsRepository;
 
 impl LyricsRepository {
+    pub fn clear_if_current(
+        connection: &Connection,
+        expected: &StoredLyrics,
+    ) -> rusqlite::Result<Option<StoredLyrics>> {
+        if super::super::database::account_session(connection)? != expected.account_session {
+            return Ok(None);
+        }
+        // An explicit blank selection travels through the existing sync record
+        // and protects the user's choice from delayed automatic matches.
+        let changed = connection.execute(
+            "UPDATE lyrics SET provider='local',provider_lyric_id='cleared',raw_text='',parsed_json='[]',bias_ms=0,selected_manually=1,updated_at=CURRENT_TIMESTAMP
+             WHERE track_id=?1 AND write_token=?2",
+            params![expected.track_id, expected.write_token],
+        )?;
+        if changed == 1 {
+            Self::get(connection, &expected.track_id)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn cached_search(
         connection: &Connection,
         key: &str,
@@ -100,7 +123,7 @@ impl LyricsRepository {
         }
         let changed = connection.execute(
             "UPDATE lyrics SET bias_ms=?2,updated_at=CURRENT_TIMESTAMP WHERE track_id=?1 AND provider=?3 AND COALESCE(provider_lyric_id,'')=?4 AND write_token=?5 AND bias_ms=?6 AND raw_text=?7 AND parsed_json=?8",
-            params![track_id,bias_ms.clamp(-30_000,30_000),expected.provider,expected.provider_lyric_id,expected.write_token,expected.bias_ms,expected.raw_text,expected.parsed_json],
+            params![track_id,bias_ms,expected.provider,expected.provider_lyric_id,expected.write_token,expected.bias_ms,expected.raw_text,expected.parsed_json],
         )?;
         if changed == 1 {
             Self::get(connection, track_id)
@@ -116,7 +139,7 @@ impl LyricsRepository {
     ) -> rusqlite::Result<StoredLyrics> {
         connection.execute(
             "UPDATE lyrics SET bias_ms=?2,updated_at=CURRENT_TIMESTAMP WHERE track_id=?1",
-            params![track_id, bias_ms.clamp(-30_000, 30_000)],
+            params![track_id, bias_ms],
         )?;
         Self::get(connection, track_id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
@@ -297,7 +320,35 @@ mod tests {
     }
 
     #[test]
-    fn saves_manual_selection_and_persists_clamped_bias() {
+    fn clearing_resets_bias_blocks_stale_writes_and_can_be_explicitly_rematched() {
+        let c = database();
+        let id = "bilibili:BV1test12345:42";
+        let original = SaveLyricsInput {
+            provider: "qq".into(),
+            provider_lyric_id: "41".into(),
+            raw_text: "[00:01]歌词".into(),
+            parsed_json: "[]".into(),
+        };
+        let saved = LyricsRepository::save(&c, id, &original, true).unwrap();
+        let delayed = LyricsRepository::set_bias_if_current(&c, id, -95_000, &saved)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delayed.bias_ms, -95_000);
+        let cleared = LyricsRepository::clear_if_current(&c, &delayed).unwrap().unwrap();
+        assert_eq!(cleared.provider, "local");
+        assert_eq!(cleared.provider_lyric_id, "cleared");
+        assert!(cleared.raw_text.is_empty() && cleared.selected_manually);
+        assert_eq!(cleared.bias_ms, 0);
+        assert_ne!(cleared.write_token, saved.write_token);
+        assert!(LyricsRepository::clear_if_current(&c, &saved).unwrap().is_none());
+        assert!(LyricsRepository::set_bias_if_current(&c, id, 950, &delayed).unwrap().is_none());
+        let rematched = LyricsRepository::save(&c, id, &original, true).unwrap();
+        assert_eq!(rematched.bias_ms, 0);
+        assert_eq!(rematched.provider_lyric_id, "41");
+    }
+
+    #[test]
+    fn saves_manual_selection_and_persists_long_bias() {
         let connection = database();
         let input = SaveLyricsInput {
             provider: "lrclib".into(),
@@ -311,13 +362,13 @@ mod tests {
         assert_eq!(stored.provider_lyric_id, "81");
 
         let adjusted = LyricsRepository::set_bias(&connection, &stored.track_id, 90_000).unwrap();
-        assert_eq!(adjusted.bias_ms, 30_000);
+        assert_eq!(adjusted.bias_ms, 90_000);
         assert_eq!(
             LyricsRepository::get(&connection, &stored.track_id)
                 .unwrap()
                 .unwrap()
                 .bias_ms,
-            30_000
+            90_000
         );
         let imported = SaveLyricsInput {
             provider: "local".into(),
@@ -328,6 +379,6 @@ mod tests {
         let imported =
             LyricsRepository::save(&connection, &stored.track_id, &imported, true).unwrap();
         assert_eq!(imported.provider, "local");
-        assert_eq!(imported.bias_ms, 30_000);
+        assert_eq!(imported.bias_ms, 90_000);
     }
 }

@@ -1,7 +1,7 @@
 import { useOverlayDismiss } from '../../shared/useOverlayDismiss'
 import { useMutation } from '@tanstack/react-query'
 import { Check,ChevronDown,Image as ImageIcon,LoaderCircle,RefreshCw,RotateCcw,Sparkles,X } from 'lucide-react'
-import { useEffect,useRef,useState,type FormEvent } from 'react'
+import { useEffect,useRef,useState,type FormEvent,type ReactNode } from 'react'
 import type { Track } from '../../domain/track'
 import { accountEpoch } from '../../services/accountScope'
 import { originalBilibiliMetadata } from '../../services/bilibiliMetadata'
@@ -12,7 +12,7 @@ import { ActionMenu } from '../../shared/ActionMenu'
 import { Artwork } from '../../shared/Artwork'
 import { MobilePage } from '../../shared/MobilePage'
 import { useCompactLayout } from '../../shared/useCompactLayout'
-export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onClose: () => void; onSaved: (track: Track) => void }) {
+export function MetadataDialog({ track, onClose, onSaved, renderDialog }: { track: Track; onClose: () => void; onSaved: (track: Track) => void; renderDialog?: (body: ReactNode) => ReactNode }) {
   const [title, setTitle] = useState(track.title)
   const [artist, setArtist] = useState(track.artist || '')
   const [album, setAlbum] = useState(track.album || '')
@@ -29,7 +29,7 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
   const [catalogOpen, setCatalogOpen] = useState(false)
   const compact = useCompactLayout()
   const dialog = useRef<HTMLDivElement>(null)
-  useOverlayDismiss(dialog, !isMobile, onClose)
+  useOverlayDismiss(dialog, !isMobile && !renderDialog, onClose)
   const [catalogSource, setCatalogSource] = useState<CatalogSource>('auto')
   const editEpoch = useRef(accountEpoch()).current
   const mutation = useMutation({ mutationFn: () => {
@@ -82,6 +82,9 @@ export function MetadataDialog({ track, onClose, onSaved }: { track: Track; onCl
     </section>}
     {mutation.isError&&<p role="alert" className="inline-error">{commandErrorMessage(mutation.error)}</p>}
   </div>
+  if (renderDialog) return renderDialog(<form className="metadata-editor-form" onSubmit={submit}>{editor}
+    <footer><button type="button" onClick={onClose}>取消</button><button className="save-button" disabled={mutation.isPending || restoring || !title.trim()}>{mutation.isPending ? '保存中…' : '保存修改'}</button></footer>
+  </form>)
   if(isMobile)return <MobilePage title="歌曲信息" onBack={onClose} className="mobile-metadata-page" actions={<button className="mobile-page-primary" type="submit" form="mobile-metadata-form" disabled={mutation.isPending||restoring||!title.trim()}>{mutation.isPending?'保存中':'保存'}</button>}><form id="mobile-metadata-form" className="metadata-editor-form" onSubmit={submit}>{editor}</form></MobilePage>
   return <div ref={dialog} className="dialog-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)onClose()}}><form className="metadata-dialog metadata-editor-form" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="metadata-title"><header><h3 id="metadata-title">编辑歌曲信息</h3><button type="button" onClick={onClose} aria-label="关闭"><X size={19}/></button></header>{editor}<footer><button type="button" onClick={onClose}>取消</button><button className="save-button" disabled={mutation.isPending||restoring||!title.trim()}>{mutation.isPending&&<LoaderCircle className="spin" size={15}/>}保存修改</button></footer></form></div>
 }

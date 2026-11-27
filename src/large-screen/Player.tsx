@@ -29,7 +29,7 @@ import { hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, type LyricSu
 import { storedLyricLines, lyricAt } from '../domain/lyricTimeline'
 import { useBiliSubtitles } from '../features/lyrics/useBiliSubtitles'
 import { useAutoLyricAlignment } from '../features/lyrics/useAutoLyricAlignment'
-import { clampBias } from '../features/lyrics/biasWriter'
+import { roundedLyricBias } from '../features/lyrics/biasWriter'
 import { LyricsBackdrop } from '../features/lyrics/LyricsBackdrop'
 import { commandErrorMessage, getStoredLyrics, enrichStoredLyricLines, setStoredLyricsBias } from '../services/desktopApi'
 import { LyricBiasConflict, type StoredLyrics, type LyricLine } from '../domain/lyrics'
@@ -163,7 +163,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
       <div className="large-media-stage" ref={mediaStage}><div className="large-media-frame" style={stageSize.width ? mediaFit : undefined} onLoadedMetadataCapture={e => { const element = e.target; if (element instanceof HTMLVideoElement && element.videoWidth && element.videoHeight) setVideoAspect({ trackId: current.id, ratio: element.videoWidth / element.videoHeight }) }}>{video ? <div className={`large-video${fullscreen ? ' expanded' : ''}`} role={fullscreen ? 'dialog' : undefined} aria-modal={fullscreen ? true : undefined} aria-label={fullscreen ? '全屏视频' : '视频小窗'} onPointerMove={fullscreen ? reveal : undefined} onKeyDownCapture={fullscreen ? e => { if (!shown) { e.preventDefault(); e.stopPropagation(); reveal() } else reveal() } : undefined}>
         {frame}{videoReady && danmaku.visible && danmaku.query.data && <DanmakuCanvas items={danmaku.query.data} scale={danmaku.size} opacity={danmaku.opacity} density={2 ** (danmaku.density - 3)}/>}{!fullscreen && <button tabIndex={-1} aria-hidden="true" className="large-video-tap" onClick={() => { setFullscreen(true); reveal() }}/>}
         {fullscreen && <><button className="large-video-surface" tabIndex={shown ? -1 : 0} aria-label="显示视频播放控制" onClick={reveal}/><div className="large-video-controls" hidden={!shown} onFocus={reveal}><header><button onClick={() => { setFullscreen(false) }}><ArrowLeft/>退出全屏</button><strong>{current.title}</strong><button aria-pressed={danmaku.visible} aria-label={danmaku.visible ? '关闭弹幕' : '显示弹幕'} onClick={danmaku.toggle}><MessageSquareText/>弹幕</button><ChapterTrigger model={chapters} variant="text"/><button onClick={() => setSettings(true)}><Settings2/>播放设置</button></header><LargeProgress chapters={chapters.items}/><LargeControls/></div></>}
-      </div> : <Artwork adaptAspect className="large-player-cover" src={current.coverUrl}
+      </div> : <Artwork adaptAspect variant="progressive" className="large-player-cover" src={current.coverUrl}
         onAspectRatio={ratio => setCoverAspect({ url: current.coverUrl, ratio })}/>}</div>
       {video && !fullscreen && <button ref={trigger} className="large-video-open" aria-label="全屏播放视频" data-focus="video-fullscreen" data-focus-left="player-back" data-focus-up="player-back"
         style={{ '--large-frame-right': `${(stageSize.width - mediaFit.width) / 2}px`, '--large-frame-bottom': `${(stageSize.height - mediaFit.height) / 2}px` } as CSSProperties}
@@ -211,7 +211,16 @@ function LargeLyrics({ track, toolsHost, density }: { track: Track; toolsHost: H
   const [chooserOpen, setChooserOpen] = useState(false)
   const [biasOpen, setBiasOpen] = useState(false), [biasBusy, setBiasBusy] = useState(false), [biasError, setBiasError] = useState('')
   useEffect(() => { let alive = true; if (stored.data) void enrichStoredLyricLines(stored.data).then(lines => { if (alive && lines) setEnriched({ stored: stored.data!, lines }) }).catch(() => undefined); return () => { alive = false } }, [stored.data])
-  useEffect(() => { const update = (e: Event) => { const value = (e as CustomEvent<StoredLyrics>).detail; if (value.trackId === track.id && epoch === accountEpoch()) client.setQueryData(key, value) }; window.addEventListener('bilimusic-lyrics-updated', update); return () => window.removeEventListener('bilimusic-lyrics-updated', update) }, [track.id, client, epoch])
+  useEffect(() => {
+    const update = (event: Event) => {
+      const value = (event as CustomEvent<StoredLyrics>).detail
+      if (value.trackId !== track.id || epoch !== accountEpoch()) return
+      void client.cancelQueries({ queryKey: key, exact: true }, { revert: false })
+      client.setQueryData(key, value)
+    }
+    window.addEventListener('bilimusic-lyrics-updated', update)
+    return () => window.removeEventListener('bilimusic-lyrics-updated', update)
+  }, [track.id, client, epoch])
   const captions = useBiliSubtitles(), bias = captions.lines ? 0 : stored.data?.biasMs || 0
   const matched = useMemo(() => stored.data ? storedLyricLines(stored.data) : [], [stored.data])
   const timedMatch = useMemo(() => hasTimedLyrics(stored.data?.rawText), [stored.data?.rawText])
@@ -272,7 +281,7 @@ function LargeLyrics({ track, toolsHost, density }: { track: Track; toolsHost: H
     const valid = () => epoch === accountEpoch() && usePlayerStore.getState().current === playingTrack
     setBiasBusy(true); setBiasError('')
     try {
-      const next = await setStoredLyricsBias(track.id, clampBias(stored.data.biasMs + delta), stored.data)
+      const next = await setStoredLyricsBias(track.id, roundedLyricBias(stored.data.biasMs + delta), stored.data)
       if (valid()) window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: next }))
     } catch (error) {
       if (valid()) {
@@ -320,7 +329,7 @@ function LargeLyrics({ track, toolsHost, density }: { track: Track; toolsHost: H
     </div> : <div className="large-lyrics-empty"><Music2/><h2>{captions.busy || stored.isPending ? '正在寻找歌词…' : '暂无歌词'}</h2>{captions.message && <p>{captions.message}</p>}<CaptionSetting/></div>}
     {lines.length > 0 && captions.message && <p className="large-caption-notice" role="status">{captions.message}</p>}
     {toolsHost && createPortal(tools, toolsHost)}
-    {chooserOpen && <LargeLyricSearch key={track.id} track={track} stored={stored.data} onClose={() => setChooserOpen(false)} onSaved={value => { client.setQueryData(key, value); if (captions.active) captions.toggle(); window.dispatchEvent(new CustomEvent('bilimusic-lyrics-updated', { detail: value })) }}/>}
+    {chooserOpen && <LargeLyricSearch key={track.id} track={track} stored={stored.data} onClose={() => setChooserOpen(false)} onSaved={() => { if (captions.active) captions.toggle() }}/>}
     {biasOpen && canAdjustBias && <LargeDialog title="歌词偏移" onClose={() => setBiasOpen(false)}><p className="large-muted">{((stored.data?.biasMs || 0) / 1000).toFixed(1)} 秒</p><div className="large-options"><button disabled={autoAlignment.busy || biasBusy} aria-busy={autoAlignment.busy} onClick={() => void autoAlignment.run()}>{autoAlignment.busy ? <LoaderCircle className="spin"/> : <Sparkles/>}自动对齐</button><button aria-disabled={biasBusy || autoAlignment.busy} onClick={() => void adjustBias(-500)}>提前 0.5秒</button><button aria-disabled={biasBusy || autoAlignment.busy} onClick={() => void adjustBias(500)}>延后 0.5秒</button><button aria-disabled={biasBusy || autoAlignment.busy} onClick={() => void adjustBias(-(stored.data?.biasMs || 0))}>重置</button></div>{(biasError || autoAlignment.message) && <p className={biasError || autoAlignment.failed ? "large-error" : "large-muted"} role={biasError || autoAlignment.failed ? "alert" : "status"}>{biasError || autoAlignment.message}</p>}</LargeDialog>}
   </section>
 }
