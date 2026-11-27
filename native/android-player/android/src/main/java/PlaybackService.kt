@@ -65,6 +65,7 @@ class PlaybackService : MediaSessionService() {
     private var sourceCandidate: MediaPlayer? = null
     private var sourceReply: ((String?) -> Unit)? = null
     private var sourceTimeout: Runnable? = null
+    private var sourceReadinessCheck: Runnable? = null
     private var pendingUpgradeUrl: String? = null
     private var upgradeAfterPosition = 0.0
     private var session: MediaSession? = null
@@ -753,6 +754,7 @@ class PlaybackService : MediaSessionService() {
             }
     }
     private fun cancelSourceSwitch(message:String?="音质切换已取消") {
+        sourceReadinessCheck?.let(handler::removeCallbacks); sourceReadinessCheck = null
         sourceTimeout?.let{handler.removeCallbacks(it)};sourceTimeout=null
         sourceCandidate?.release();sourceCandidate=null
         val reply=sourceReply;sourceReply=null;reply?.invoke(message)
@@ -767,15 +769,11 @@ class PlaybackService : MediaSessionService() {
         val candidate=MediaPlayer();sourceCandidate=candidate;sourceReply=reply
         sourceTimeout=Runnable{if(sourceCandidate===candidate)cancelSourceSwitch("新音源准备超时，已保留原音质")}.also{handler.postDelayed(it,12000)}
         fun valid()=sourceCandidate===candidate && player===original && id==expectedId && playbackRevision==revision && seekRevision==seek
-        fun commit() {
+        var previewRate: Float? = null
+        fun commit(shouldPlay: Boolean) {
+            if (shouldPlay && previewRate != playbackRate) startAtRate(candidate)
+            sourceReadinessCheck = null
             accountListening(true)
-            val shouldPlay=status!="paused" && hasAudioFocus
-            try {
-                if (shouldPlay) startAtRate(candidate)
-            } catch (_: IllegalStateException) {
-                cancelSourceSwitch("新音源无法播放，已保留原音质")
-                return
-            }
             if (original.isPlaying) original.pause()
             player=candidate;sourceCandidate=null
             cachedAudio = false
@@ -787,25 +785,68 @@ class PlaybackService : MediaSessionService() {
             status = if (shouldPlay) "playing" else "paused"
             publish();val completion=sourceReply;sourceReply=null;completion?.invoke(null)
         }
-        fun alignOrCommit() {
+        var candidateBuffering = false
+        fun originalPosition() = if (seeking) (lastPosition * 1000).toLong() else original.currentPosition.toLong()
+        fun alignAndWarm() {
             if (!valid()) {
                 if (sourceCandidate === candidate) cancelSourceSwitch()
                 return
             }
-            val position = if (seeking) (lastPosition * 1000).toLong() else original.currentPosition.toLong()
-            if (kotlin.math.abs(candidate.currentPosition - position) > 250) {
+            val position = originalPosition()
+            val baseline = candidate.currentPosition
+            if (kotlin.math.abs(baseline - position) > 250) {
                 candidate.seekTo(position, MediaPlayer.SEEK_CLOSEST)
-            } else {
-                commit()
+                return
             }
+            if (status == "paused" || !hasAudioFocus) {
+                if (previewRate != null) candidate.pause()
+                commit(false)
+                return
+            }
+            // MediaPlayer can finish a seek before its target range has decoded.
+            // Run the candidate muted and keep the original audible until it advances.
+            if (previewRate == null) {
+                startAtRate(candidate)
+                previewRate = playbackRate
+            }
+            sourceReadinessCheck = object : Runnable {
+                override fun run() {
+                    if (!valid() || status == "paused" || !hasAudioFocus) {
+                        if (sourceCandidate === candidate) cancelSourceSwitch()
+                        return
+                    }
+                    try {
+                        val candidatePosition = candidate.currentPosition
+                        if (!sourceHasPlayableProgress(baseline, candidatePosition, candidate.isPlaying, candidateBuffering)) {
+                            handler.postDelayed(this, 50)
+                            return
+                        }
+                        val current = originalPosition()
+                        if (kotlin.math.abs(candidatePosition - current) > 250) {
+                            candidate.seekTo(current, MediaPlayer.SEEK_CLOSEST)
+                        } else commit(true)
+                    } catch (_: IllegalStateException) {
+                        cancelSourceSwitch("新音源无法播放，已保留原音质")
+                    }
+                }
+            }.also { handler.postDelayed(it, 50) }
         }
         try {
             candidate.setAudioAttributes(playbackAttributes)
             candidate.setWakeMode(this,PowerManager.PARTIAL_WAKE_LOCK);candidate.setVolume(0f,0f)
             candidate.setOnErrorListener{_,_,_->if(sourceCandidate===candidate)cancelSourceSwitch("新音源无法播放，已保留原音质");true}
+            candidate.setOnInfoListener { _, what, _ ->
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) candidateBuffering = true
+                if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) candidateBuffering = false
+                false
+            }
+            val advance = {
+                try { alignAndWarm() }
+                catch (_: IllegalStateException) { cancelSourceSwitch("新音源无法播放，已保留原音质") }
+            }
             candidate.setOnPreparedListener{
-                candidate.setOnSeekCompleteListener{alignOrCommit()}
-                alignOrCommit()
+                candidate.setOnSeekCompleteListener{advance()}
+                advance()
             }
             candidate.setDataSource(mediaPlayerSource(url));candidate.prepareAsync()
         }catch(_:Exception){cancelSourceSwitch("新音源无法加载，已保留原音质")}
@@ -1232,3 +1273,6 @@ class PlaybackService : MediaSessionService() {
         instance = null; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
     }
 }
+
+internal fun sourceHasPlayableProgress(baseline: Int, position: Int, playing: Boolean, buffering: Boolean) =
+    playing && !buffering && position - baseline >= 50

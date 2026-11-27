@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackInteractionTest {
+    @Test fun coldQualitySwitchWaitsForActualPlaybackAfterSeek() {
+        assertFalse(sourceHasPlayableProgress(1_000, 1_000, playing = true, buffering = false))
+        assertFalse(sourceHasPlayableProgress(1_000, 1_080, playing = true, buffering = true))
+        assertFalse(sourceHasPlayableProgress(1_000, 1_080, playing = false, buffering = false))
+        assertTrue(sourceHasPlayableProgress(1_000, 1_080, playing = true, buffering = false))
+    }
+
     @Test fun overlayRestoresAnExactPositionAndScalesItToTheNewDisplay() {
         val place = FloatingLyricsWindowPolicy.capturePosition(62, 489, 108, 2120)
         val saved = FloatingLyricsWindowPolicy.savedPosition(place.horizontal, place.vertical)!!
