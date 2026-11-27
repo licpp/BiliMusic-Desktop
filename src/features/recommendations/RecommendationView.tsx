@@ -52,7 +52,7 @@ import { RecommendationSourceDialog } from './RecommendationSourceDialog'
 export function RecommendationView({ active }: { active: boolean }) {
   const client = useQueryClient()
   const day = useRecommendationDay(active)
-  const sources = useQuery({ queryKey: recommendationQueryKey.sources, queryFn: listRecommendationSources })
+  const sources = useQuery({ queryKey: recommendationQueryKey.sources, queryFn: listRecommendationSources, enabled: active })
   const sourceList = sources.data ?? []
   const [selectedId, setSelectedId] = useState(() => localStorage.getItem(RECOMMENDATION_SOURCE_STORAGE) ?? '')
   const selectSource = (sourceId: string) => {
@@ -69,7 +69,7 @@ export function RecommendationView({ active }: { active: boolean }) {
   const daily = useQuery({
     queryKey: dailyKey ?? recommendationQueryKey.none,
     queryFn: () => dailyRecommendation(source!.id, day),
-    enabled: Boolean(source),
+    enabled: active && Boolean(source),
     staleTime: 0,
   })
   const snapshot = daily.data

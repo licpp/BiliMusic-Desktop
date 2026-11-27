@@ -16,7 +16,7 @@ const mocks={
  sync:'export const syncStatus=async()=>({});',floating:'export const setSystemTitleLyrics=async()=>{};',
  components:stubComponents.map(name=>`export const ${name}=()=>null;`).join('\n'),
 }
-const output=await build({entryPoints:['src/features/settings/SettingsView.tsx'],bundle:true,write:false,platform:'node',format:'cjs',packages:'external',jsx:'automatic',plugins:[{name:'settings-platform',setup(b){
+const output=await build({entryPoints:['src/features/settings/SettingsView.tsx'],bundle:true,write:false,platform:'node',format:'cjs',packages:'external',jsx:'automatic',loader:{'.css':'empty'},plugins:[{name:'settings-platform',setup(b){
  const patterns=[[/services\/platform$/,'platform'],[/^@tanstack\/react-query$/,'query'],[/services\/queryKeys$/,'keys'],[/services\/theme$/,'theme'],[/services\/syncAttention$/,'attention'],[/services\/desktopApi$/,'api'],[/services\/settings$/,'settings'],[/services\/sync$/,'sync'],[/services\/floatingLyrics$/,'floating'],[new RegExp('/('+stubComponents.map(n=>n==='AndroidDownloadDestinationField'?'AndroidDownloadDestination':n).join('|')+')$'),'components']]
  for(const[filter,path]of patterns)b.onResolve({filter},()=>({path,namespace:'mock'}))
  b.onLoad({filter:/.*/,namespace:'mock'},({path})=>({contents:mocks[path]}))
