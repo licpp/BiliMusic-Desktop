@@ -33,7 +33,9 @@ fn legacy_bias(bias: i64) -> i64 {
 pub(super) fn project_lyric_bias(snapshot: &mut Snapshot) {
     for lyric in snapshot.records.values_mut().filter(|r| r.kind == "lyric") {
         if let Some(bias) = lyric.fields.get("biasMs").and_then(Value::as_i64) {
-            lyric.fields.insert("biasMs".into(), legacy_bias(bias).into());
+            lyric
+                .fields
+                .insert("biasMs".into(), legacy_bias(bias).into());
         }
     }
 }

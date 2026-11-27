@@ -165,8 +165,14 @@ mod tests {
         assert!(options[1].label.contains("192 kbps"));
         assert!(options[2].label.contains("132 kbps"));
         let serialized = serde_json::to_value(&options).unwrap();
-        assert_eq!(serialized[0]["audioQuality"], json!({"lossless":true,"bitrate":1500234}));
-        assert_eq!(serialized[1]["audioQuality"], json!({"lossless":false,"bitrate":191887}));
+        assert_eq!(
+            serialized[0]["audioQuality"],
+            json!({"lossless":true,"bitrate":1500234})
+        );
+        assert_eq!(
+            serialized[1]["audioQuality"],
+            json!({"lossless":false,"bitrate":191887})
+        );
     }
     #[test]
     fn lossless_requires_an_explicit_selection_even_without_aac() {

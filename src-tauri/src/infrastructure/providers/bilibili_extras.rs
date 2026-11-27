@@ -867,7 +867,9 @@ impl BilibiliProvider {
         cid: i64,
         priority: RequestPriority,
     ) -> Result<MediaOptions, ProviderError> {
-        let dash = self.play_dash_with_priority(bvid, cid, true, priority).await?;
+        let dash = self
+            .play_dash_with_priority(bvid, cid, true, priority)
+            .await?;
         let audio = audio_options(&dash);
         let mut video: Vec<_> = dash
             .video

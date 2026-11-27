@@ -1626,7 +1626,10 @@ impl BilibiliProvider {
         Url::parse(&format!("{API_ORIGIN}{path}")).expect("static API URL")
     }
 
-    pub(super) async fn hot_search(&self, limit: usize) -> Result<serde_json::Value, ProviderError> {
+    pub(super) async fn hot_search(
+        &self,
+        limit: usize,
+    ) -> Result<serde_json::Value, ProviderError> {
         let mut url = self.api_url("/x/web-interface/search/square");
         url.query_pairs_mut()
             .append_pair("limit", &limit.to_string())

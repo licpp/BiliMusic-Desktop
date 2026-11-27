@@ -334,14 +334,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(delayed.bias_ms, -95_000);
-        let cleared = LyricsRepository::clear_if_current(&c, &delayed).unwrap().unwrap();
+        let cleared = LyricsRepository::clear_if_current(&c, &delayed)
+            .unwrap()
+            .unwrap();
         assert_eq!(cleared.provider, "local");
         assert_eq!(cleared.provider_lyric_id, "cleared");
         assert!(cleared.raw_text.is_empty() && cleared.selected_manually);
         assert_eq!(cleared.bias_ms, 0);
         assert_ne!(cleared.write_token, saved.write_token);
-        assert!(LyricsRepository::clear_if_current(&c, &saved).unwrap().is_none());
-        assert!(LyricsRepository::set_bias_if_current(&c, id, 950, &delayed).unwrap().is_none());
+        assert!(
+            LyricsRepository::clear_if_current(&c, &saved)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            LyricsRepository::set_bias_if_current(&c, id, 950, &delayed)
+                .unwrap()
+                .is_none()
+        );
         let rematched = LyricsRepository::save(&c, id, &original, true).unwrap();
         assert_eq!(rematched.bias_ms, 0);
         assert_eq!(rematched.provider_lyric_id, "41");

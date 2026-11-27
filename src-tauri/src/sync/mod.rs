@@ -702,7 +702,10 @@ async fn sync_now_inner(
                 );
             }
             let (mut final_local, post_conflicts) = merge(
-                &initial_with_full_bias, &current, &merged_for_device, Some("local"),
+                &initial_with_full_bias,
+                &current,
+                &merged_for_device,
+                Some("local"),
             );
             final_local.records.extend(local_linked.records);
             if !remote.creators {

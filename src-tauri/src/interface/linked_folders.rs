@@ -1007,7 +1007,10 @@ mod tests {
         .unwrap();
         let result = matched_covers(&c, &[multi.into()]).unwrap();
         let edited_id = format!("bilibili:{multi}:3");
-        let part = result.iter().find(|part| part.track_id == edited_id).unwrap();
+        let part = result
+            .iter()
+            .find(|part| part.track_id == edited_id)
+            .unwrap();
         assert_eq!(part.title.as_deref(), Some("更正歌名"));
         assert_eq!(part.artist.as_deref(), Some("歌手"));
         assert_eq!(part.album.as_deref(), Some("专辑"));

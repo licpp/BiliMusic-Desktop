@@ -4,8 +4,8 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::media_proxy::MediaProxy;
 pub(super) use crate::infrastructure::providers::bilibili::valid_bvid;
 use crate::infrastructure::providers::bilibili::{
-    BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FeedPage, PlaybackSource, ProviderError,
-    RequestPriority, SearchPage, VideoPart, VideoParts, VideoSource,
+    BilibiliProvider, CommentItem, CommentPage, DanmakuItem, FeedPage, PlaybackSource,
+    ProviderError, RequestPriority, SearchPage, VideoPart, VideoParts, VideoSource,
 };
 use crate::infrastructure::providers::lrclib::{LrclibProvider, LyricCandidate};
 use crate::infrastructure::providers::music_catalog::{CatalogCandidate, MusicCatalogProvider};
@@ -283,8 +283,14 @@ pub fn playlist_reorder(
 ) -> Result<(), CommandError> {
     let mut connection = database.0.lock().map_err(CommandError::database)?;
     check_account_session(&connection, &expected_account_session)?;
-    if !PlaylistRepository::reorder(&mut connection, &database.1, &playlist_id, &expected, &ordered)
-        .map_err(CommandError::database)?
+    if !PlaylistRepository::reorder(
+        &mut connection,
+        &database.1,
+        &playlist_id,
+        &expected,
+        &ordered,
+    )
+    .map_err(CommandError::database)?
     {
         return Err(CommandError::validation("歌单顺序已变化，请重新整理"));
     }
@@ -303,12 +309,21 @@ pub fn playlist_replace_video(
     validate_track(&track)?;
     let mut connection = database.0.lock().map_err(CommandError::database)?;
     check_account_session(&connection, &expected_account_session)?;
-    match PlaylistRepository::replace_video(&mut connection, &database.1, &playlist_id, &previous, &track, keep_existing)
-        .map_err(CommandError::database)?
+    match PlaylistRepository::replace_video(
+        &mut connection,
+        &database.1,
+        &playlist_id,
+        &previous,
+        &track,
+        keep_existing,
+    )
+    .map_err(CommandError::database)?
     {
         None => Ok(true),
         Some("duplicate") => Ok(false),
-        Some(_) => Err(CommandError::validation("歌单条目已变化，请重新打开歌曲操作")),
+        Some(_) => Err(CommandError::validation(
+            "歌单条目已变化，请重新打开歌曲操作",
+        )),
     }
 }
 

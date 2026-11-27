@@ -463,8 +463,22 @@ mod tests {
             uploader_name: title.into(),
             note: String::new(),
         };
-        change(&mut c, "importCreator", "", "", Some(creator("原标题", &folder))).unwrap();
-        change(&mut c, "importCreator", "", "", Some(creator("来源标题", ""))).unwrap();
+        change(
+            &mut c,
+            "importCreator",
+            "",
+            "",
+            Some(creator("原标题", &folder)),
+        )
+        .unwrap();
+        change(
+            &mut c,
+            "importCreator",
+            "",
+            "",
+            Some(creator("来源标题", "")),
+        )
+        .unwrap();
         let items = list(&c).unwrap().items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].folder_id, folder);
