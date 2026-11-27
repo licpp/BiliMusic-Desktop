@@ -216,8 +216,7 @@ pub async fn netease_qr_login_cancel(
 /// client with business code 8821 on some networks, while a real browser
 /// session works for the account and daily-recommendation endpoints.
 ///
-/// Mobile has no second window (and Android/iOS block third-party cookies), so
-/// the command is desktop-only; the mobile UI keeps the QR login.
+/// Android has its own main-webview fallback for QR login failures.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn netease_web_login(
@@ -291,7 +290,11 @@ pub async fn netease_web_login(
                     return Err(CommandError::netease(error));
                 }
             };
-            let persisted = persist_web_login(state.inner(), &music_u, &csrf, &profile);
+            let persisted = if app.get_webview_window(NETEASE_LOGIN_LABEL).is_some() {
+                persist_web_login(state.inner(), &music_u, &csrf, &profile)
+            } else {
+                Err(CommandError::netease_login_cancelled())
+            };
             // The credentials now live in the device database; do not leave a
             // second copy in the WebView cookie store. This also runs when the
             // database rejects the write, so a failure cannot strand an open
@@ -341,10 +344,9 @@ pub async fn netease_web_login(
     let started = Instant::now();
     let deadline = started + NETEASE_LOGIN_TIMEOUT;
     let mut reached_login = false;
-    loop {
+    let result = loop {
         if state.web_login_cancelled() {
-            restore_app_page(&window, &app_url);
-            return Err(CommandError::netease_login_cancelled());
+            break Err(CommandError::netease_login_cancelled());
         }
         let on_login_page = window.url().ok().as_ref().is_some_and(is_netease_url);
         match app_login_tick(on_login_page, reached_login, started.elapsed()) {
@@ -357,31 +359,28 @@ pub async fn netease_web_login(
                     .cookies_for_url(cookie_url.clone())
                     .unwrap_or_default();
                 if let Some((music_u, csrf)) = login_credentials(&cookies) {
-                    let persisted = match provider.profile(&music_u, &csrf).await {
-                        Ok(profile) => persist_web_login(state.inner(), &music_u, &csrf, &profile),
-                        Err(error) => Err(CommandError::netease(error)),
-                    };
-                    // Android cannot delete a single cookie, so the session stays
-                    // in this webview's cookie store; the app page still has to
-                    // come back even when the account was rejected.
-                    restore_app_page(&window, &app_url);
-                    return persisted;
+                    let profile = provider.profile(&music_u, &csrf).await;
+                    if !window.url().ok().as_ref().is_some_and(is_netease_url) {
+                        break Err(CommandError::netease_login_cancelled());
+                    }
+                    break profile.map_err(CommandError::netease).and_then(|profile| {
+                        persist_web_login(state.inner(), &music_u, &csrf, &profile)
+                    });
                 }
             }
-            // The system back button left the login page: the user cancelled.
-            AppLoginTick::Left => return Err(CommandError::netease_login_cancelled()),
+            AppLoginTick::Left => break Err(CommandError::netease_login_cancelled()),
             AppLoginTick::NotLoaded => {
-                restore_app_page(&window, &app_url);
-                return Err(CommandError::netease_login_window("网易云登录页没有打开"));
+                break Err(CommandError::netease_login_window("网易云登录页没有打开"));
             }
             AppLoginTick::Wait => {}
         }
         if Instant::now() >= deadline {
-            restore_app_page(&window, &app_url);
-            return Err(CommandError::netease_login_timeout());
+            break Err(CommandError::netease_login_timeout());
         }
         tokio::time::sleep(NETEASE_LOGIN_POLL).await;
-    }
+    };
+    restore_app_page(&window, &app_url);
+    result
 }
 
 /// One decision per poll of the Android main-webview login. `navigate` is
@@ -470,6 +469,10 @@ fn persist_web_login(
     csrf: &str,
     profile: &crate::infrastructure::providers::netease::NeteaseProfile,
 ) -> Result<RecommendationSourceRecord, CommandError> {
+    let login = state.web_login_slot();
+    if !login.active || login.cancelled {
+        return Err(CommandError::netease_login_cancelled());
+    }
     let now = now_millis();
     let token = uuid::Uuid::new_v4().simple().to_string();
     let database = state.database()?;

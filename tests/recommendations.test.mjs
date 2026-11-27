@@ -198,4 +198,3 @@ test('a Bilibili folder only takes whole single-part videos and never repeats on
   assert.equal(skipped, 2)
   assert.deepEqual(folderPlayableTracks([]), {included: [], skipped: 0})
 })
-
