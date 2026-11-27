@@ -6,7 +6,7 @@ import type { SyncConfig, SyncOutcome } from '../../services/sync'
 import type { SyncIssue } from '../../services/syncIssues'
 import { SyncConflicts } from './SyncConflicts'
 
-export type IssueArea = '音乐库' | '本机资料' | '导入歌单' | '隐藏偏好' | '章节' | '听歌统计' | '我喜欢的排序'
+export type IssueArea = '音乐库' | '本机资料' | '导入歌单' | '隐藏偏好' | '章节' | '听歌统计' | '歌单排序'
 
 export function SyncRecovery({ issues, outcome, config, busy, message, onClose, onMerge, onRetry, onReconnect, onBackup }: {
   issues: { area: IssueArea; issue: SyncIssue }[]

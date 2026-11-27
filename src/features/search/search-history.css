@@ -1,0 +1,112 @@
+.search-history-strip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+.search-history-strip button {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.search-history-strip > .search-history-open {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-right: 10px;
+  padding: 0 3px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+.search-history-open > svg { margin-left: 3px; flex-shrink: 0; }
+.search-history-shortcuts { display: flex; align-items: center; flex: 1; min-width: 0; }
+.search-history-strip .search-history-shortcuts > button {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 176px;
+  overflow: hidden;
+  padding: 5px 10px;
+  background: var(--panel-raised);
+  border-color: var(--line);
+  color: var(--ink);
+  text-align: left;
+  text-overflow: ellipsis;
+}
+.search-history-shortcuts > button + button { margin-left: 6px; }
+.search-history-strip button:hover { color: var(--cyan); }
+.search-history-strip button:focus-visible,
+.search-history-dialog button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+
+.collection-dialog.search-history-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 460px;
+  max-width: 100%;
+  max-height: 78vh;
+  max-height: min(78dvh, calc(var(--visible-height, 100dvh) - 24px));
+  overflow: hidden;
+}
+.search-history-dialog > header,
+.search-history-dialog > .collection-sheet-handle { flex-shrink: 0; }
+.search-history-items {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 3px;
+  list-style: none;
+}
+.search-history-items li + li { border-top: 1px solid var(--line); }
+.search-history-dialog .search-history-items button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.search-history-items button > svg { flex-shrink: 0; margin-right: 10px; color: var(--muted); }
+.search-history-items button > span { min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
+.search-history-dialog .search-history-items button:hover { background: var(--panel-raised); }
+.search-history-actions { flex-shrink: 0; display: flex; justify-content: flex-end; margin-top: 8px; }
+.search-history-actions > button { min-height: 40px; color: var(--muted); }
+.search-history-dialog .search-history-empty { margin: 10px 3px; }
+
+@media (max-width: 1100px) {
+  .search-history-strip .search-history-shortcuts > button:nth-child(n+4) { display: none; }
+}
+@media (max-width: 639px) {
+  .search-history-strip .search-history-shortcuts > button:nth-child(n+3) { display: none; }
+  .search-history-strip button { min-height: 44px; }
+  .search-history-strip > .search-history-open { margin-right: 6px; }
+}
+.collection-dialog.collection-dialog-mobile-sheet.search-history-dialog { width: 100%; }
+.collection-dialog-sheet-layer > .collection-dialog.collection-dialog-mobile-sheet.search-history-dialog {
+  max-height: 72vh;
+  max-height: min(72dvh, calc(var(--visible-height, 100dvh) - max(48px, var(--native-safe-top, env(safe-area-inset-top, 0px)))));
+  overflow: hidden;
+}
+[data-layout="mobile"] .search-history-strip button,
+[data-layout="large"] .search-history-strip button { min-height: 44px; }
+[data-layout="mobile"] .search-history-actions > button { min-height: 44px; }
+[data-layout="large"] .search-history-strip .search-history-shortcuts > button { max-width: 210px; }
+[data-layout="large"] .search-history-dialog > header > button { width: 44px; height: 44px; }
+[data-layout="large"] .search-history-dialog .search-history-items button,
+[data-layout="large"] .search-history-actions > button { min-height: 46px; }
+@media (max-height: 600px) {
+  [data-layout="large"] .search-history-strip { margin-bottom: 7px; }
+}

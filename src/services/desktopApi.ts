@@ -30,7 +30,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_clear lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_clear lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected search_history_clear download_remove_many'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -123,7 +123,7 @@ export async function listSearchHistory(): Promise<string[]> {
 
 export async function clearSearchHistory(): Promise<void> {
   if (!inDesktopShell) return
-  await invoke('search_history_clear')
+  await scopedInvoke('search_history_clear', {})
 }
 
 export const toggleStoredFavorite = (trackId: string) => write<boolean>('library_toggle_favorite', { trackId })
@@ -280,7 +280,7 @@ export async function searchMetadataCatalog(title: string, artist: string, sourc
 }
 export async function listDownloads(): Promise<DownloadRecord[]> {
   if (!inDesktopShell) return []
-  const records = await invoke<(Omit<DownloadRecord, 'track'> & { track?: StoredTrack })[]>('downloads_list')
+  const records = await scopedInvoke<(Omit<DownloadRecord, 'track'> & { track?: StoredTrack })[]>('downloads_list', {})
   return records.map(record => ({ ...record, track: record.track ? fromStoredTrack(record.track) : undefined }))
 }
 export async function listOfflinePlayableTracks(): Promise<Track[]> {
@@ -289,10 +289,18 @@ export async function listOfflinePlayableTracks(): Promise<Track[]> {
   const tracks = await invoke<StoredTrack[]>('offline_playable_tracks')
   return epoch === accountEpoch() ? tracks.map(fromStoredTrack) : []
 }
-export const removeDownload = (downloadId: string) => invoke<void>('download_remove', { downloadId }).then(() => { window.dispatchEvent(new Event('bilimusic-offline-files-changed')) })
-export const downloadTrack = (track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') => invoke<boolean>('download_track', {
-  trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
-})
+export async function removeDownloads(downloadIds: string[]): Promise<{failed: {id: string; message: string}[]}> {
+  const result = await scopedInvoke<{failed: {id: string; message: string}[]}>('download_remove_many', {downloadIds})
+  if (result.failed.length < downloadIds.length) window.dispatchEvent(new Event('bilimusic-offline-files-changed'))
+  return result
+}
+export async function downloadTrack(track: Track, targetDirectory: string, skipExisting = false, audioId = 0, exportFormat: 'auto' | 'original' | 'flac' = 'auto') {
+  const saved = await scopedInvoke<boolean>('download_track', {
+    trackId: track.id, bvid: track.source.bvid, cid: track.source.cid, title: track.title, targetDirectory, skipExisting, audioId, exportFormat,
+  })
+  if (saved) window.dispatchEvent(new Event('bilimusic-offline-files-changed'))
+  return saved
+}
 export async function getAccountProfile(): Promise<AccountProfile> {
   if (!inDesktopShell) return { loggedIn: false }
   return invoke<AccountProfile>('bili_account_profile')

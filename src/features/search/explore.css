@@ -26,33 +26,6 @@
 .quick-actions.home-quick-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .explore-landing { padding: 4px 0 18px; }
-.explore-history {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  margin-bottom: 13px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.explore-history > strong { margin: 0 10px 5px 0; }
-.explore-history > div { display: flex; flex-wrap: wrap; min-width: 0; }
-.explore-landing .explore-history button {
-  display: block;
-  max-width: 180px;
-  min-height: 31px;
-  margin: 0 5px 5px 0;
-  padding: 4px 9px;
-  overflow: hidden;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: .85rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.explore-history button:hover { color: var(--cyan); }
 .explore-recommendations {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -226,14 +199,12 @@
 [data-layout="large"] .large-explore-top > .large-icon { width: 44px; min-width: 44px; }
 [data-layout="large"] .large-explore-top input { padding: 7px 0; }
 [data-layout="large"] .large-recommendation-topbar { margin-bottom: 8px; }
-[data-layout="large"] .explore-landing .explore-history button { min-height: 44px; }
 [data-layout="large"] .explore-hot .explore-ranks button,
 [data-layout="large"] .explore-hot .explore-hot-action { min-height: 46px; font-size: 1rem; }
 @media (max-height: 600px) {
   [data-layout="large"] .large-explore-top { margin-bottom: 8px; }
   [data-layout="large"] .large-explore-top > .large-search { min-height: 50px; padding-top: 3px; padding-bottom: 3px; }
   [data-layout="large"] .large-explore-top .large-search > button { min-height: 44px; height: 44px; padding-top: 5px; padding-bottom: 5px; }
-  [data-layout="large"] .explore-history { margin-bottom: 7px; }
   [data-layout="large"] .explore-hot { margin-top: 14px; }
   [data-layout="large"] .explore-landing .explore-card { padding-top: 7px; padding-bottom: 7px; }
   [data-layout="large"] .explore-card-mark { min-height: 44px; }

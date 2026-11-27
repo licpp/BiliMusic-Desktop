@@ -37,6 +37,7 @@ import { BatchTrackActions,useTrackSelection } from './useTrackSelection'
 import { useImportedPlaylist } from './useImportedPlaylist'
 import { ReplacementDialog } from './ReplacementDialog'
 import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from './PlaylistDuplicates'
+import { canEditPlaylistTracks } from './playlistEditing'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../../domain/importedEntry'
 
 export type LibraryTab = 'saved' | 'recent' | 'downloads'
@@ -72,11 +73,10 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   const sortEntity=playlist?playlistEntity(playlist):'view:saved'
   const listSort=useListSort(sortEntity)
   const isFavorites = playlist?.id === FAVORITES_PLAYLIST_ID
-  const editable = Boolean(playlist && !playlist.biliFolderId && (!playlist.isSystem || isFavorites))
-  const reorderable = editable && !playlist!.id.startsWith('import:')
+  const editable = canEditPlaylistTracks(playlist)
   const visibleTracks = useMemo(() => {
     const sorted = playlist
-      ? sortPlaylistTracks(trackRows || [], listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, reorderable)
+      ? sortPlaylistTracks(trackRows || [], listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, editable)
       : sortTracks(trackRows || [], recent ? 'source:asc' : listSort.rule, listSort.dates, listSort.playCounts)
     if (!filter.trim()) return sorted
     return sorted.filter(track => {
@@ -84,7 +84,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
       return matchesTrackSearch(track, filter) || Boolean(song &&
         `${song.title} ${song.artists.join(' ')} ${song.album || ''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
     })
-  }, [trackRows, playlist, recent, listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, filter, reorderable])
+  }, [trackRows, playlist, recent, listSort.rule, listSort.dates, listSort.playCounts, imported.byTrack, filter, editable])
   const playingIndex = playlist ? visibleTracks.findIndex(track => track.id === currentId) : -1
   useLocateCurrentRow(grid, Boolean(playlist) && active, playingIndex >= 0 ? currentId : undefined)
   useListReveal(grid, loadingTracks, visibleTracks.length > 0, active)
@@ -104,7 +104,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   }, [trackRows, client, active])
   const refresh = () => Promise.all([client.invalidateQueries({ queryKey: accountQueryKey('library') }), client.invalidateQueries({ queryKey: accountQueryKey('playlists') }), client.invalidateQueries({ queryKey: accountQueryKey('home-recent') })])
   const organizer = useOrganizer(
-    reorderable && !filter.trim() ? visibleTracks.map(track => ({ id: track.id, name: playlistTrackTitle(track) })) : [],
+    editable && !filter.trim() ? visibleTracks.map(track => ({ id: track.id, name: playlistTrackTitle(track) })) : [],
     '整理曲目',
     {
       expected: trackRows?.map(track => track.id),
@@ -158,8 +158,8 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
       <button className="collection-primary" disabled={!visibleTracks.some(track => !offlineUnavailable(track, offline))} onClick={() => void playAll(visibleTracks)}><Play size={16}/>{filter.trim() ? '播放搜索结果' : '播放全部'}</button>
       {!compact && <button disabled={!visibleTracks.length} onClick={() => enqueue(visibleTracks)}><ListPlus size={16}/>全部加入队列</button>}
     </div><div className="library-toolbar-icons">
-      {!recent && !organizer.editing && <ListSort entity={sortEntity} customOrder={reorderable}/>}
-      {reorderable && organizer.controls}
+      {!recent && !organizer.editing && <ListSort entity={sortEntity} customOrder={editable}/>}
+      {editable && organizer.controls}
       <ListSearch query={filter} onChange={setFilter} count={visibleTracks.length} disabled={organizer.editing}/>
       {playlist ? <PlaylistMenu playlist={playlist} disabled={organizer.editing} onRemoved={onPlaylistDeleted} missingCount={imported.missing.length} onRematch={imported.missing.length && onRematchImported ? () => onRematchImported(playlist) : undefined}
         onFindDuplicates={editable ? () => duplicates.setOpen(true) : undefined}

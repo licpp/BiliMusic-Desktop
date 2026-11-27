@@ -35,7 +35,7 @@ import { hydrateSourceTitles } from '../features/player/sourceTitles'
 import { useSeasonCover } from '../shared/useSeasonCover'
 import { useVisibleVideoPages } from '../shared/useVisibleVideoPages'
 import { isVideoSearchInput, type BiliSearchItem } from '../domain/bilibili'
-import { FAVORITES_PLAYLIST_ID, getVideoParts, listPlaylists, listPlaylistTracks, getLinkedFolder, changeLinkedVideo, searchBilibili, listSearchHistory, commandErrorMessage, reorderPlaylist } from '../services/desktopApi'
+import { FAVORITES_PLAYLIST_ID, getVideoParts, listPlaylists, listPlaylistTracks, getLinkedFolder, changeLinkedVideo, searchBilibili, commandErrorMessage, reorderPlaylist } from '../services/desktopApi'
 import type { Playlist } from '../domain/library'
 import type { LinkedFolder } from '../domain/bilibili'
 import { listCollections, type Collection, type CollectionProgress, type Collections } from '../services/collections'
@@ -56,6 +56,7 @@ import { openBiliVerification } from '../services/biliRequestStatus'
 import { applyLinkedTrackOverrides, useLinkedMatchedCovers } from '../services/linkedMatchedCovers'
 import { usePlayerStore, type QueueSource } from '../features/player/playerStore'
 import { useImportedPlaylist } from '../features/library/useImportedPlaylist'
+import { canEditPlaylistTracks } from '../features/library/playlistEditing'
 import { ReplacementSearch } from '../features/library/ReplacementDialog'
 import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from '../features/library/PlaylistDuplicates'
 import { ImportedPlaylistCompletionContent } from '../features/library/ImportedPlaylistCompletion'
@@ -63,6 +64,8 @@ import { LargeDialog } from './LargeDialog'
 import { LargeLibraryImport } from './LibraryImport'
 import { useSearchExtensions } from '../services/extensions'
 import { ExploreLanding } from '../features/search/ExploreLanding'
+import { SearchHistoryStrip } from '../features/search/SearchHistoryStrip'
+import { useSearchHistory } from '../features/search/useSearchHistory'
 import { dismissLargeKeyboard } from './keyboard'
 import { useVideoEntry } from './useVideoEntry'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
@@ -222,10 +225,9 @@ export function LargePlaylist({ playlist, onMore, navigate, filterState, preview
   }, [query.data, linked, client, offline.offline])
   const entity = playlistEntity(playlist), rule = prefs.data?.preferences.find(p => p.entity === entity)?.sortRule || 'source:asc'
   const dates = prefs.data?.dates || {}, playCounts = prefs.data?.playCounts || {}
-  const editable = !linked && (!playlist.isSystem || playlist.id === FAVORITES_PLAYLIST_ID)
-  const reorderable = editable && !playlist.id.startsWith('import:')
-  const tracks = (linked ? sortTracks(raw, rule, dates, playCounts) : sortPlaylistTracks(raw, rule, dates, playCounts, imported.byTrack, reorderable)).filter(t => {const entry=imported.byTrack.get(t.id);return matchesTrackSearch(t,filter)||Boolean(entry&&`${entry.song.title} ${entry.song.artists.join(' ')} ${entry.song.album||''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))})
-  const organizer = useOrganizer(reorderable && !filter.trim() ? tracks.map(track => ({ id: track.id, name: playlistTrackTitle(track) })) : [], '整理曲目', {
+  const editable = canEditPlaylistTracks(playlist)
+  const tracks = (linked ? sortTracks(raw, rule, dates, playCounts) : sortPlaylistTracks(raw, rule, dates, playCounts, imported.byTrack, editable)).filter(t => {const entry=imported.byTrack.get(t.id);return matchesTrackSearch(t,filter)||Boolean(entry&&`${entry.song.title} ${entry.song.artists.join(' ')} ${entry.song.album||''}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))})
+  const organizer = useOrganizer(editable && !filter.trim() ? tracks.map(track => ({ id: track.id, name: playlistTrackTitle(track) })) : [], '整理曲目', {
     expected: raw.map(track => track.id),
     saveOrder: async (expected, ordered) => {
       const epoch = accountEpoch()
@@ -245,7 +247,7 @@ export function LargePlaylist({ playlist, onMore, navigate, filterState, preview
     void query.refetch().then(()=>requestAnimationFrame(()=>{if(epoch!==accountEpoch())return;[...document.querySelectorAll<HTMLElement>('[data-focus]')].find(el=>el.dataset.focus===`more-${trackId}`)?.focus({preventScroll:true})}))
     void client.invalidateQueries({queryKey:accountQueryKey('playlists')})
   }
-  return <><header className="large-page-heading"><div><h1>{playlist.name}{linked && <Link2 size={22}/>}</h1><p>{raw.length} {linked ? '个视频 · B站关联收藏夹' : '首歌曲'}</p></div><div className="large-toolbar">{reorderable && organizer.controls}<ListSort entity={entity} customOrder={reorderable} disabled={organizer.editing}/>{!selection.selecting && <>
+  return <><header className="large-page-heading"><div><h1>{playlist.name}{linked && <Link2 size={22}/>}</h1><p>{raw.length} {linked ? '个视频 · B站关联收藏夹' : '首歌曲'}</p></div><div className="large-toolbar">{editable && organizer.controls}<ListSort entity={entity} customOrder={editable} disabled={organizer.editing}/>{!selection.selecting && <>
     {linked ? <button disabled={!tracks.length} onClick={selection.enter}><ListChecks/>多选</button> : <button disabled={!tracks.length} onClick={()=>setMatching(true)}>自动匹配</button>}
     {editable && <button disabled={raw.length < 2} title="查找重复" aria-label="查找重复" onClick={() => duplicates.setOpen(true)}><ScanSearch/></button>}
     {linked && !refresh.message && <button type="button" disabled={!refresh.canRetry} onClick={() => void refresh.refresh()}><RefreshCw/>{refresh.refreshing ? '同步中' : '同步'}</button>}
@@ -382,7 +384,7 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind, onBack }
   const inputRef = useRef<HTMLInputElement>(null)
   const videoTab = useRef<HTMLButtonElement>(null)
   const focusResults = useRef(false)
-  const history = useQuery({ queryKey: accountQueryKey('search-history'), queryFn: listSearchHistory })
+  const { history, onClear: clearHistory, clearing: clearingHistory } = useSearchHistory()
   const hasSearchExtensions = useSearchExtensions().length > 0
   const opener = useVideoEntry(navigate, `${kind}:${query}`)
   const results = useInfiniteQuery({ queryKey: accountQueryKey('large-search', kind, query), initialPageParam: 1, enabled: Boolean(query), queryFn: async ({ pageParam }) => kind === 'video' ? { videos: await searchBilibili(query, pageParam), creators: undefined } : { videos: undefined, creators: await catalog('search', undefined, pageParam, query) }, getNextPageParam: last => last.videos ? last.videos.page * last.videos.pageSize < last.videos.total ? last.videos.page + 1 : undefined : last.creators && last.creators.page * 20 < (last.creators.data.numResults || 0) ? last.creators.page + 1 : undefined })
@@ -419,15 +421,13 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind, onBack }
         <button className="large-primary" type="submit">搜索</button>
       </form>
     </header>
-    {hasSearchExtensions && !query && <ExploreLanding history={history.data ?? []} onSearch={exploreSearch}
+    {hasSearchExtensions && !query && <ExploreLanding history={history} onClearHistory={clearHistory} clearingHistory={clearingHistory} onSearch={exploreSearch}
       onOpenRecommendation={() => navigate({ kind: 'recommendations' })} onOpenBiliFeed={() => navigate({ kind: 'bili-feed' })}/>}
     {(query || !hasSearchExtensions) && <div className="large-tabs" role="tablist" aria-label="搜索类型">
       {(['video', 'creator'] as const).map((tab, index) => <button ref={tab === 'video' ? videoTab : undefined}
         type="button" role="tab" aria-selected={kind === tab} key={tab} onClick={() => setKind(tab)}>{['视频', 'UP主'][index]}</button>)}
     </div>}
-    {!hasSearchExtensions && !query && Boolean(history.data?.length) && <div className="large-history" aria-label="搜索历史">
-      {history.data?.map(keyword => <button type="button" key={keyword} onClick={() => submit(keyword)}>{keyword}</button>)}
-    </div>}
+    {!hasSearchExtensions && !query && <SearchHistoryStrip history={history} onClear={clearHistory} clearing={clearingHistory} onSearch={exploreSearch}/>}
     {query && <>
       <Failure error={results.error} retry={() => void results.refetch()}/>
       <Failure error={opener.error}/>

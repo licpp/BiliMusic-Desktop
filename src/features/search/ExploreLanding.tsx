@@ -7,6 +7,7 @@ import { inDesktopShell } from '../../services/desktopApi'
 import { EXTENSIONS, useSearchExtensions } from '../../services/extensions'
 import { isLargeScreen } from '../../services/platform'
 import { useTabletWidth } from '../../shared/useCompactLayout'
+import { SearchHistoryStrip } from './SearchHistoryStrip'
 import './explore.css'
 
 const hotSearchExtensions = EXTENSIONS.filter(extension => extension.group === 'hot-search')
@@ -23,6 +24,8 @@ const badgeLabels: Record<HotSearchBadge, { text: string; label: string }> = {
 type Props = {
   active?: boolean
   history: string[]
+  onClearHistory: () => void
+  clearingHistory: boolean
   onSearch: (keyword: string) => void
   onOpenRecommendation: () => void
   onOpenBiliFeed: () => void
@@ -30,18 +33,14 @@ type Props = {
   biliFeedRef?: Ref<HTMLButtonElement>
 }
 
-export function ExploreLanding({ active = true, history, onSearch, onOpenRecommendation, onOpenBiliFeed, recommendationRef, biliFeedRef }: Props) {
+export function ExploreLanding({ active = true, history, onClearHistory, clearingHistory, onSearch, onOpenRecommendation, onOpenBiliFeed, recommendationRef, biliFeedRef }: Props) {
   const enabled = useSearchExtensions()
   const showDaily = enabled.includes('daily')
   const showBiliFeed = enabled.includes('feed')
   const hotSources = hotSearchExtensions.filter(extension => enabled.includes(extension.id))
   const { day, month } = recommendationDayLabel(recommendationDay(new Date()))
   return <section className="explore-landing" hidden={!active} aria-label="搜索首页">
-    {history.length > 0 && <div className="explore-history">
-      <strong>最近搜索</strong>
-      <div>{history.slice(0, 5).map(word =>
-        <button type="button" key={word} title={word} onClick={() => onSearch(word)}>{word}</button>)}</div>
-    </div>}
+    {active && <SearchHistoryStrip history={history} onClear={onClearHistory} clearing={clearingHistory} onSearch={onSearch}/>}
     {(showDaily || showBiliFeed) && <div className="explore-recommendations">
       {showDaily && <button ref={recommendationRef} type="button" className="explore-card explore-daily" data-focus="explore-daily"
         onClick={onOpenRecommendation} aria-label="每日推荐">

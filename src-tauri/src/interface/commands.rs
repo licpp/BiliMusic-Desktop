@@ -215,11 +215,15 @@ pub fn search_history_list(database: State<'_, Database>) -> Result<Vec<String>,
 }
 
 #[tauri::command]
-pub fn search_history_clear(database: State<'_, Database>) -> Result<(), CommandError> {
+pub fn search_history_clear(
+    database: State<'_, Database>,
+    expected_account_session: String,
+) -> Result<(), CommandError> {
     let connection = database
         .0
         .lock()
         .map_err(|_| CommandError::database("数据库正忙"))?;
+    check_account_session(&connection, &expected_account_session)?;
     SearchHistoryRepository::clear(&connection).map_err(CommandError::database)
 }
 

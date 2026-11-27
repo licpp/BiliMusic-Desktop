@@ -8,10 +8,13 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.provider.BaseColumns
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.OutputStream
 import org.junit.Assert.*
@@ -70,6 +73,33 @@ class DownloadStorageTest {
         assertEquals("我的音乐", storage.status().getString("label"))
         storage.save(source.path)
         assertEquals("测试歌曲.flac", provider.created.single().getAsString(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+        assertArrayEquals(source.readBytes(), provider.output.toByteArray())
+    }
+    @Test fun restoringDeletedPublicDownloadCopiesTheManagedFileAndThenSkipsIt() {
+        assumeTrue(Build.VERSION.SDK_INT >= 29)
+        assertTrue(storage.save(source.path))
+        assertFalse(storage.save(source.path, skipExisting = true))
+        provider.removeExportedFile()
+
+        storage = DownloadStorage(context)
+        assertTrue(storage.save(source.path, skipExisting = true))
+        assertArrayEquals(source.readBytes(), provider.output.toByteArray())
+        assertFalse(storage.save(source.path, skipExisting = true))
+        assertEquals(2, provider.created.size)
+    }
+    @Test fun restoringThroughSafUsesOnlyTheSelectedFolder() {
+        storage.select(tree, grants)
+        assertTrue(storage.save(source.path))
+        assertFalse(storage.save(source.path, skipExisting = true))
+
+        val other = Uri.parse("content://test.downloads/tree/other")
+        storage.select(other, grants)
+        assertTrue(storage.save(source.path, skipExisting = true))
+        assertFalse(storage.save(source.path, skipExisting = true))
+        provider.removeExportedFile()
+        assertTrue(storage.save(source.path, skipExisting = true))
+        assertFalse(storage.save(source.path, skipExisting = true))
+        assertEquals(3, provider.created.size)
         assertArrayEquals(source.readBytes(), provider.output.toByteArray())
     }
     @Test fun revokedPermissionStopsExportWithoutFallingBackToAnotherFolder() {
@@ -133,24 +163,70 @@ private class StorageProvider(private val app: Context) : ContentProvider() {
     val created = mutableListOf<ContentValues>()
     val deleted = mutableListOf<Uri>()
     val output = ByteArrayOutputStream()
-    private fun register(uri: Uri): Uri {
+    private data class Export(val id: Int, val folder: String?, val name: String, val file: File, var size: Long = 0)
+    private val exports = mutableListOf<Export>()
+
+    fun removeExportedFile() { assertTrue(exports.last().file.delete()) }
+
+    private fun register(uri: Uri, folder: String?, name: String): Uri {
+        output.reset()
+        val file = File.createTempFile("export", ".flac", app.cacheDir)
+        val export = Export(created.size, folder, name, file)
+        exports.add(export)
         shadowOf(app.contentResolver).registerOutputStream(uri, if (failWrite) object : OutputStream() {
             override fun write(value: Int) { throw IOException("disk full") }
-        } else output)
+        } else object : OutputStream() {
+            override fun write(value: Int) { output.write(value) }
+            override fun write(bytes: ByteArray, offset: Int, length: Int) { output.write(bytes, offset, length) }
+            override fun close() {
+                file.writeBytes(output.toByteArray())
+                export.size = file.length()
+            }
+        })
         return uri
     }
     override fun onCreate() = true
     override fun getType(uri: Uri) = "audio/flac"
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?) =
-        MatrixCursor(projection!!).apply { addRow(projection.map { when (it) {
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME -> "我的音乐"
-            DocumentsContract.Document.COLUMN_MIME_TYPE -> DocumentsContract.Document.MIME_TYPE_DIR
-            DocumentsContract.Document.COLUMN_FLAGS -> if (writable) DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE else 0
-            else -> null
-        } }) }
+        MatrixCursor(projection!!).apply {
+            if (uri.authority == "media") {
+                assertEquals("Download/BiliMusic/", args!![1])
+                assertEquals(app.packageName, args[2])
+                for (item in exports.filter { it.folder == null }) {
+                    addRow(projection.map { if (it == BaseColumns._ID) item.id else item.name })
+                }
+            } else if (uri.lastPathSegment == "children") {
+                val folder = DocumentsContract.getTreeDocumentId(uri)
+                for (item in exports.filter { it.folder == folder }) {
+                    addRow(projection.map { when (it) {
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID -> "saved-${item.id}"
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME -> item.name
+                        DocumentsContract.Document.COLUMN_SIZE -> item.size
+                        DocumentsContract.Document.COLUMN_MIME_TYPE -> "audio/flac"
+                        else -> null
+                    } })
+                }
+            } else {
+                addRow(projection.map { when (it) {
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME -> "我的音乐"
+                    DocumentsContract.Document.COLUMN_MIME_TYPE -> DocumentsContract.Document.MIME_TYPE_DIR
+                    DocumentsContract.Document.COLUMN_FLAGS -> if (writable) DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE else 0
+                    else -> null
+                } })
+            }
+        }
+
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        val id = uri.lastPathSegment?.removePrefix("saved-")?.toIntOrNull()
+        val file = exports.firstOrNull { it.id == id }?.file ?: throw FileNotFoundException()
+        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
     override fun insert(uri: Uri, values: ContentValues?): Uri {
         created.add(ContentValues(values!!))
-        return register(Uri.withAppendedPath(uri, created.size.toString()))
+        val name = values.getAsString(MediaStore.MediaColumns.DISPLAY_NAME)
+        val displayName = if (exports.any { it.folder == null && it.name == name }) "${name.substringBeforeLast('.')} (1).${name.substringAfterLast('.')}" else name
+        return register(Uri.withAppendedPath(uri, created.size.toString()), null, displayName)
     }
     override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?): Int {
         assertArrayEquals(byteArrayOf(1, 2, 3, 4), output.toByteArray())
@@ -161,11 +237,15 @@ private class StorageProvider(private val app: Context) : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
         return when (method) {
             "android:createDocument" -> {
+                val parent = extras!!.getParcelable<Uri>("uri")!!
+                val name = extras.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME)!!
                 created.add(ContentValues().apply {
-                    put(DocumentsContract.Document.COLUMN_DISPLAY_NAME, extras!!.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
+                    put(DocumentsContract.Document.COLUMN_DISPLAY_NAME, name)
                     put(DocumentsContract.Document.COLUMN_MIME_TYPE, extras.getString(DocumentsContract.Document.COLUMN_MIME_TYPE))
                 })
-                Bundle().apply { putParcelable("uri", register(DocumentsContract.buildDocumentUri("test.downloads", "saved-${created.size}"))) }
+                val folder = DocumentsContract.getTreeDocumentId(parent)
+                val document = DocumentsContract.buildDocumentUriUsingTree(parent, "saved-${created.size}")
+                Bundle().apply { putParcelable("uri", register(document, folder, name)) }
             }
             "android:deleteDocument" -> { deleted.add(extras!!.getParcelable<Uri>("uri")!!); Bundle() }
             else -> error("Unexpected document operation: $method")

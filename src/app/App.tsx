@@ -80,10 +80,11 @@ import { SimpleSearchLanding } from '../features/search/SimpleSearchLanding'
 import { ExploreLanding } from '../features/search/ExploreLanding'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
 import { SearchField } from '../features/search/SearchField'
+import { useSearchHistory } from '../features/search/useSearchHistory'
 import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
-import { clearSearchHistory, commandErrorMessage, createPlaylist, getVideoParts, saveLibraryTrack, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, listSearchHistory, toggleStoredFavorite } from '../services/desktopApi'
+import { commandErrorMessage, createPlaylist, getVideoParts, saveLibraryTrack, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, toggleStoredFavorite } from '../services/desktopApi'
 import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { toTrack } from '../services/collectionTrack'
 import { accountEpoch } from '../services/accountScope'
@@ -282,8 +283,7 @@ export function App() {
     window.addEventListener('bilimusic-import-updated', refresh)
     return () => window.removeEventListener('bilimusic-import-updated', refresh)
   }, [queryClient])
-  const searchHistory = useQuery({ queryKey: accountQueryKey('search-history'), queryFn: listSearchHistory })
-  const clearHistory = useMutation({ mutationFn: clearSearchHistory, onSuccess: () => queryClient.setQueryData(accountQueryKey('search-history'), []) })
+  const { history: searchHistory, onClear: clearHistory, clearing: clearingHistory } = useSearchHistory()
   const playlists = useQuery({ queryKey: accountQueryKey('playlists'), queryFn: listPlaylists })
   const offline = useOfflinePlayback()
   const homeTracks = useQuery({ queryKey: accountQueryKey('home-recent'), queryFn: listRecentTracks })
@@ -742,10 +742,10 @@ export function App() {
             <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (searchActive && submittedQuery) ? '返回上一页' : '返回主页'}
               onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : searchActive && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>}
           {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
-          <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={searchHistory.data || []}
+          <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={exploreLandingActive && enabledSearchExtensions.length ? [] : searchHistory}
             onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('探索') }} onBlur={() => setSearchFocused(false)}
             onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
-            onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
+            onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={clearHistory} /></>}
 
           {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
           <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
@@ -753,7 +753,7 @@ export function App() {
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>
           {enabledSearchExtensions.length === 0 ? !submittedQuery && <SimpleSearchLanding onSearch={runSearch}/> :
-            <ExploreLanding active={exploreLandingActive} history={searchHistory.data || []} onSearch={runSearch}
+            <ExploreLanding active={exploreLandingActive} history={searchHistory} onClearHistory={clearHistory} clearingHistory={clearingHistory} onSearch={runSearch}
               onOpenRecommendation={() => openExploreDetail('每日推荐')} recommendationRef={recommendationEntry}
               onOpenBiliFeed={() => openExploreDetail('B 站推荐')} biliFeedRef={biliFeedEntry}/>}
           {submittedQuery && <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection}/>}

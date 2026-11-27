@@ -187,16 +187,27 @@ pub fn registers(c: &Connection, local_only: bool) -> Result<BTreeMap<String, Re
         })
         .collect()
 }
-pub fn list(c: &Connection, playlist: &str) -> Result<Vec<Entry>, String> {
+fn playlist_entries(
+    c: &Connection,
+    playlist: &str,
+) -> Result<Vec<(String, Register, Value)>, String> {
     init(c).map_err(err)?;
-    let mut values = registers(c, false)?
-        .into_iter()
-        .filter_map(|(key, r)| {
-            selected(&r)
-                .filter(|v| v.playlist_id == playlist)
-                .map(|v| (key, r, v))
+    let mut query = c
+        .prepare("SELECT entry_id,register FROM imported_entries WHERE playlist_id=?1")
+        .map_err(err)?;
+    let rows = query
+        .query_map([playlist], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
-        .collect::<Vec<_>>();
+        .map_err(err)?;
+    let mut values = Vec::new();
+    for row in rows {
+        let (key, json) = row.map_err(err)?;
+        let register = serde_json::from_str(&json).map_err(err)?;
+        if let Some(value) = selected(&register).filter(|value| value.playlist_id == playlist) {
+            values.push((key, register, value));
+        }
+    }
     values.sort_by(|(ka, _, a), (kb, _, b)| {
         (a.mode.as_deref() != Some("manual"), a.order, ka).cmp(&(
             b.mode.as_deref() != Some("manual"),
@@ -204,6 +215,24 @@ pub fn list(c: &Connection, playlist: &str) -> Result<Vec<Entry>, String> {
             kb,
         ))
     });
+    Ok(values)
+}
+
+pub(super) fn entry_ids_by_track(
+    c: &Connection,
+    playlist: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut entries = BTreeMap::new();
+    for (key, _, value) in playlist_entries(c, playlist)? {
+        if let Some(track) = value.track {
+            entries.entry(track.id).or_insert(key);
+        }
+    }
+    Ok(entries)
+}
+
+pub fn list(c: &Connection, playlist: &str) -> Result<Vec<Entry>, String> {
+    let values = playlist_entries(c, playlist)?;
     let mut used = BTreeSet::new();
     let mut entries = Vec::new();
     for (entry_id, r, v) in values {
@@ -225,6 +254,14 @@ pub fn list(c: &Connection, playlist: &str) -> Result<Vec<Entry>, String> {
     }
     entries.sort_by(|a, b| a.order.cmp(&b.order).then(a.entry_id.cmp(&b.entry_id)));
     Ok(entries)
+}
+
+pub(super) fn has_entries(c: &Connection, playlist: &str) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM imported_entries WHERE playlist_id=?1)",
+        [playlist],
+        |row| row.get(0),
+    )
 }
 /// Recover old local queue presentation only when provenance is unambiguous.
 /// Multiple playlists can intentionally label one BVID/CID differently.
@@ -931,6 +968,49 @@ mod tests {
         migrate_archive(&c, "import:copy").unwrap();
         assert!(list(&c, "import:copy").unwrap().is_empty());
     }
+    #[test]
+    fn imported_playlist_reorder_keeps_manually_added_tracks_and_updates_the_cover() {
+        use crate::infrastructure::repositories::{
+            library::LibraryRepository, playlists::PlaylistRepository,
+        };
+        let mut c = db();
+        let root = std::env::temp_dir().join(format!("import-order-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        seed(&c, LIST, "歌单", "qq", &rows()).unwrap();
+        edit(&c, 0, 1, "automatic");
+        edit(&c, 2, 3, "automatic");
+        let mut manual = track(4);
+        manual.cover_url = Some("https://i0.hdslb.com/bfs/cover/4.jpg".into());
+        LibraryRepository::upsert(&mut c, &manual).unwrap();
+        PlaylistRepository::add_tracks(&c, LIST, &[manual.id.clone()], true).unwrap();
+        let ids = |cids: &[i64]| cids.iter().map(|&cid| track(cid).id).collect::<Vec<_>>();
+        assert!(
+            PlaylistRepository::reorder(&mut c, &root, LIST, &ids(&[1, 3, 4]), &ids(&[4, 3, 1]))
+                .unwrap()
+        );
+        assert_eq!(
+            PlaylistRepository::get(&c, LIST).unwrap().cover_url,
+            manual.cover_url
+        );
+        let order = |c: &Connection| {
+            PlaylistRepository::tracks(c, LIST)
+                .unwrap()
+                .into_iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&c), ids(&[4, 3, 1]));
+        assert_eq!(
+            PlaylistRepository::replace_video(&mut c, &root, LIST, &manual.id, &track(5), None)
+                .unwrap(),
+            None
+        );
+        assert_eq!(order(&c), ids(&[5, 3, 1]));
+        edit(&c, 1, 2, "automatic");
+        assert_eq!(order(&c), ids(&[5, 2, 3, 1]));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn replacements_keep_order_other_lists_favorites_and_global_edits() {
         let c = db();

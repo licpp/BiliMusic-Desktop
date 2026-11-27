@@ -2,6 +2,7 @@ use super::library::{LibraryRepository, TrackRecord};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +16,18 @@ pub struct DownloadRecord {
     pub error_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track: Option<TrackRecord>,
+}
+
+pub fn download_file_available(path: impl AsRef<Path>) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+}
+
+impl DownloadRecord {
+    pub fn check_file(&mut self) {
+        if self.status == "completed" && !download_file_available(&self.target_path) {
+            self.status = "missing".into();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -88,6 +101,45 @@ mod tests {
     }
 
     #[test]
+    fn deleted_download_is_unavailable_and_does_not_block_a_new_download() {
+        let connection = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
+        connection.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES ('source','bilibili','BVTEST00001',1); INSERT INTO tracks(id,source_item_id,title) VALUES ('t1','source','歌曲');").unwrap();
+        let path =
+            std::env::temp_dir().join(format!("bilimusic-test-{}.m4a", uuid::Uuid::new_v4()));
+        let target = path.to_str().unwrap();
+        DownloadRepository::create(&connection, "d1", "t1", target).unwrap();
+        DownloadRepository::complete(&connection, "d1", 7).unwrap();
+        std::fs::write(&path, b"fixture").unwrap();
+
+        let mut record = DownloadRepository::list(&connection).unwrap().remove(0);
+        record.check_file();
+        assert_eq!(record.status, "completed");
+        assert_eq!(
+            DownloadRepository::existing_file(&connection, "t1")
+                .unwrap()
+                .as_deref(),
+            Some(target)
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        record.check_file();
+        assert_eq!(record.status, "missing");
+        assert_eq!(
+            DownloadRepository::existing_file(&connection, "t1").unwrap(),
+            None
+        );
+        DownloadRepository::create(&connection, "retry", "t1", target).unwrap();
+        std::fs::write(&path, b"fixture").unwrap();
+        DownloadRepository::complete(&connection, "retry", 7).unwrap();
+        let records = DownloadRepository::list(&connection).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "retry");
+        DownloadRepository::remove(&connection, "retry").unwrap();
+        assert!(DownloadRepository::list(&connection).unwrap().is_empty());
+    }
+
+    #[test]
     fn list_keeps_all_downloads_in_creation_order() {
         use super::super::library::TrackInput;
         let mut connection = Connection::open_in_memory().unwrap();
@@ -141,12 +193,22 @@ mod tests {
             DownloadRepository::create(&connection, id, "track", target).unwrap();
         }
         DownloadRepository::complete(&connection, "completed", 7).unwrap();
-        DownloadRepository::complete(&connection, "duplicate", 7).unwrap();
+        connection
+            .execute(
+                "UPDATE downloads SET status='completed' WHERE id='duplicate'",
+                [],
+            )
+            .unwrap();
         DownloadRepository::fail(&connection, "failed", "fixture").unwrap();
         DownloadRepository::remove(&connection, "failed").unwrap();
         assert!(DownloadRepository::remove(&connection, "completed").is_err());
         assert!(path.is_file());
-        DownloadRepository::complete(&connection, "active", 7).unwrap();
+        connection
+            .execute(
+                "UPDATE downloads SET status='completed' WHERE id='active'",
+                [],
+            )
+            .unwrap();
         DownloadRepository::remove(&connection, "completed").unwrap();
         assert!(!path.exists());
         assert!(DownloadRepository::list(&connection).unwrap().is_empty());
@@ -170,6 +232,23 @@ impl From<rusqlite::Error> for RemoveDownloadError {
 }
 
 impl DownloadRepository {
+    pub fn existing_file(
+        connection: &Connection,
+        track_id: &str,
+    ) -> rusqlite::Result<Option<String>> {
+        let mut statement = connection.prepare(
+            "SELECT target_path FROM downloads WHERE track_id=?1 AND status='completed' ORDER BY rowid DESC",
+        )?;
+        let paths = statement.query_map([track_id], |row| row.get::<_, String>(0))?;
+        for path in paths {
+            let path = path?;
+            if download_file_available(&path) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
     // Resolve by download identity, not the 500 most recently updated library tracks.
     pub fn list_with_tracks(connection: &Connection) -> rusqlite::Result<Vec<DownloadRecord>> {
         let mut records = Self::list(connection)?;
@@ -206,8 +285,14 @@ impl DownloadRepository {
     }
 
     pub fn complete(connection: &Connection, id: &str, received: i64) -> rusqlite::Result<()> {
-        connection.execute("UPDATE downloads SET status='completed',received_bytes=?2,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?1", params![id, received])?;
-        Ok(())
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute("UPDATE downloads SET status='completed',received_bytes=?2,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?1", params![id, received])?;
+        transaction.execute(
+            "DELETE FROM downloads WHERE id<>?1 AND status IN ('completed','failed')
+             AND (track_id,target_path)=(SELECT track_id,target_path FROM downloads WHERE id=?1)",
+            [id],
+        )?;
+        transaction.commit()
     }
 
     pub fn fail(connection: &Connection, id: &str, message: &str) -> rusqlite::Result<()> {

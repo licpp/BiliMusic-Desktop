@@ -1196,8 +1196,7 @@ mod tests {
     #[test]
     fn import_is_idempotent_ordered_profile_scoped_and_keeps_existing_edits() {
         let mut c = Connection::open_in_memory().unwrap();
-        c.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
         let entry = |cid| ImportEntry {
             track: TrackInput {
                 id: format!("bilibili:BV1GJ411x7h7:{cid}"),

@@ -347,7 +347,7 @@ pub fn run() {
             interface::downloads::mobile_export_download,
             window_lifecycle::window_close_to_tray,
             interface::downloads::downloads_list,
-            interface::downloads::download_remove,
+            interface::downloads::download_remove_many,
             interface::downloads::download_track,
         ])
         .on_window_event(|window, event| {

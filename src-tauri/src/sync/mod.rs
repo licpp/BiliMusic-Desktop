@@ -1,5 +1,6 @@
 pub mod chapters;
 pub(crate) mod favorite_order;
+pub(crate) mod playlist_order;
 mod register_extension;
 mod source_titles;
 pub mod visibility;

@@ -37,7 +37,7 @@ const { outputFiles: [output] } = await build({
 const load = new Function('module', 'require', 'fixture', 'localStorage', output.text)
 const require = createRequire(import.meta.url)
 
-function landing(enabledIds, { active = true, wide = true, largeScreen = false } = {}) {
+function landing(enabledIds, { active = true, wide = true, largeScreen = false, history = ['旅行'] } = {}) {
   const sources = []
   const queries = []
   const module = { exports: {} }
@@ -52,7 +52,8 @@ function landing(enabledIds, { active = true, wide = true, largeScreen = false }
     },
   }, { getItem: () => null })
   const html = renderToStaticMarkup(createElement(module.exports.ExploreLanding, {
-    active, history: ['旅行'], onSearch() {}, onOpenRecommendation() {}, onOpenBiliFeed() {},
+    active, history, onClearHistory() {}, clearingHistory: false,
+    onSearch() {}, onOpenRecommendation() {}, onOpenBiliFeed() {},
   }))
   return { html, sources, queries }
 }
@@ -99,4 +100,15 @@ test('an inactive search page does not activate its charts', () => {
   const view = landing(['bili', 'qq', 'netease'], { active: false })
   assert.match(view.html, /class="explore-landing" hidden=""/)
   assert.deepEqual(view.sources, [])
+})
+
+test('a long search history only renders four shortcuts before recommendations and hot searches', () => {
+  const history = Array.from({ length: 30 }, (_, i) => `超长搜索记录-${String(i).padStart(2, '0')}-原声合辑`)
+  const { html } = landing(['daily', 'bili'], { history })
+  assert.match(html, /aria-label="查看最近搜索" aria-haspopup="dialog" aria-expanded="false"/)
+  assert.equal((html.match(/title="超长搜索记录-/g) ?? []).length, 4)
+  assert.doesNotMatch(html, /超长搜索记录-04-/)
+  assert.ok(html.indexOf('search-history-shortcuts') < html.indexOf('explore-recommendations'))
+  assert.match(html, /<h2[^>]+>热搜<\/h2>/)
+  assert.doesNotMatch(landing(['daily', 'bili'], { history: [] }).html, /search-history-strip/)
 })

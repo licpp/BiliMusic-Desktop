@@ -1,27 +1,31 @@
 package app.bilimusic.player
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.BaseColumns
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import app.tauri.plugin.JSObject
 import java.io.File
+import java.io.FileNotFoundException
 
 /** Device-local destination grants. Audio remains in the managed library for offline playback. */
 internal class DownloadStorage(private val context: Context) {
     private val resolver get() = context.contentResolver
     private val prefs get() = context.getSharedPreferences("bilimusic-downloads", Context.MODE_PRIVATE)
     private val tree get() = prefs.getString("tree", null)?.let(Uri::parse)
+    private val defaultDirectory get() = "${Environment.DIRECTORY_DOWNLOADS}/BiliMusic"
 
     fun status(): JSObject {
         val uri = tree
         val available = if (uri == null) Build.VERSION.SDK_INT >= 29 else hasGrant(uri)
         return JSObject().put("label", if (uri == null) {
-            if (available) "Download/BiliMusic" else "请选择保存文件夹"
+            if (available) defaultDirectory else "请选择保存文件夹"
         } else prefs.getString("label", "已选择的文件夹"))
             .put("available", available).put("custom", uri != null).put("canReset", Build.VERSION.SDK_INT >= 29)
     }
@@ -68,7 +72,7 @@ internal class DownloadStorage(private val context: Context) {
         old?.let(::release)
     }
 
-    fun save(path: String) {
+    fun save(path: String, skipExisting: Boolean = false): Boolean {
         val source = File(path).canonicalFile
         val managed = File(context.applicationInfo.dataDir, "downloads").canonicalFile
         require(source.parentFile == managed && source.isFile && source.length() > 0) { "下载文件不可用" }
@@ -80,15 +84,17 @@ internal class DownloadStorage(private val context: Context) {
         val destination: Uri
         if (folder != null) {
             check(hasGrant(folder)) { "保存文件夹的授权已失效，请在设置中重新选择下载目录" }
+            if (skipExisting && hasDocument(folder, source)) return false
             val parent = DocumentsContract.buildDocumentUriUsingTree(folder, DocumentsContract.getTreeDocumentId(folder))
             destination = DocumentsContract.createDocument(resolver, parent, mime, source.name)
                 ?: error("无法创建音乐文件，请检查文件夹权限与剩余空间")
         } else {
             check(Build.VERSION.SDK_INT >= 29) { "请先在设置中选择下载目录" }
+            if (skipExisting && hasMediaStoreFile(source)) return false
             destination = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, source.name)
                 put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/BiliMusic")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, defaultDirectory)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }) ?: error("无法保存到下载文件夹，请检查剩余空间")
         }
@@ -105,5 +111,66 @@ internal class DownloadStorage(private val context: Context) {
             } catch (_: Exception) { }
             throw error
         }
+        return true
+    }
+
+    private fun hasDocument(folder: Uri, source: File): Boolean {
+        val parentId = DocumentsContract.getTreeDocumentId(folder)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(folder, parentId)
+        val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_MIME_TYPE)
+        return resolver.query(children, columns, null, null, null)?.use { rows ->
+            val size = source.length()
+            while (rows.moveToNext()) {
+                val name = rows.getString(1) ?: continue
+                if (rows.getString(3) == DocumentsContract.Document.MIME_TYPE_DIR ||
+                    !matchesExportName(name, source) || (!rows.isNull(2) && rows.getLong(2) != size)) continue
+                val document = DocumentsContract.buildDocumentUriUsingTree(folder, rows.getString(0))
+                if (hasFile(document, size)) return@use true
+            }
+            false
+        } ?: error("无法读取保存文件夹，请检查权限")
+    }
+
+    @androidx.annotation.RequiresApi(29)
+    private fun hasMediaStoreFile(source: File): Boolean {
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val columns = arrayOf(BaseColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
+        val size = source.length()
+        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} IN (?, ?) AND " +
+            "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 0 AND " +
+            "(${MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? ESCAPE '#')"
+        val prefix = source.nameWithoutExtension.replace("#", "##").replace("%", "#%").replace("_", "#_")
+        val args = arrayOf(defaultDirectory, "$defaultDirectory/", context.packageName, source.name,
+            "$prefix (%).${source.extension}")
+        return resolver.query(collection, columns, selection, args, null)?.use { rows ->
+            while (rows.moveToNext()) {
+                val name = rows.getString(1) ?: continue
+                if (matchesExportName(name, source) && hasFile(ContentUris.withAppendedId(collection, rows.getLong(0)), size)) {
+                    return@use true
+                }
+            }
+            false
+        } ?: error("无法读取下载目录，请检查权限")
+    }
+
+    // Android providers can append a number if the original name is already in use.
+    private fun matchesExportName(name: String, source: File): Boolean {
+        if (name == source.name) return true
+        val prefix = "${source.nameWithoutExtension} ("
+        val suffix = ").${source.extension}"
+        if (!name.startsWith(prefix) || !name.endsWith(suffix)) return false
+        val number = name.removePrefix(prefix).removeSuffix(suffix)
+        return number.isNotEmpty() && number.all { it in '0'..'9' }
+    }
+
+    private fun hasFile(uri: Uri, expectedSize: Long): Boolean = try {
+        resolver.openAssetFileDescriptor(uri, "r")?.use { file ->
+            val size = file.length
+            if (size >= 0) size == expectedSize else file.createInputStream().use { it.read() >= 0 }
+        } ?: false
+    } catch (_: FileNotFoundException) {
+        false
     }
 }
