@@ -77,6 +77,13 @@ await cp(new URL('../src-tauri/.android-icons/android/', import.meta.url), new U
 const adaptive = await readFile(new URL('res/mipmap-anydpi-v26/ic_launcher.xml', base), 'utf8')
 await writeFile(new URL('res/mipmap-anydpi-v26/ic_launcher_round.xml', base), adaptive)
 
+// `tauri android init` writes a bare launcher activity; the back handling for
+// the single WebView lives in the repository so a regenerated project keeps it.
+// The car edition copies its own activity below, under its own package.
+if (!largeScreen) {
+  await cp(new URL('../src-tauri/android/phone/MainActivity.kt', import.meta.url), new URL('java/app/bilimusic/mobile/MainActivity.kt', base))
+}
+
 if (largeScreen) {
   await mkdir(new URL('res/drawable/', base), { recursive: true })
   await cp(new URL('../assets/android/tv_banner.png', import.meta.url), new URL('res/drawable/tv_banner.png', base))

@@ -1,8 +1,11 @@
 package app.bilimusic.large
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
+import android.window.OnBackInvokedDispatcher
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -33,8 +36,39 @@ class MainActivity : AppCompatActivity() {
 }
 
 class CarPlayerActivity : TauriActivity() {
+    private var webView: WebView? = null
+
+    // The app targets API 36, where Android 16 stops calling
+    // `Activity.onBackPressed` and stops handing KEYCODE_BACK to the activity
+    // for back: back only reaches the platform's OnBackInvokedCallback. The
+    // single WebView needs its own handling, because the embedded login
+    // replaces the app page there and BACK must walk back out of it instead of
+    // leaving the player.
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // The same reason as the phone activity: androidx bridges the
+            // dispatcher to this platform callback at the default priority,
+            // after this activity, and an equal-priority registration made
+            // later takes the press first.
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+            ) { back() }
+        } else {
+            onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = back()
+            })
+        }
+    }
+
+    override fun onWebViewCreate(webView: WebView) {
+        this.webView = webView
+    }
+
+    // TauriActivity turns wry's back handling off; this is the only back path.
+    private fun back() {
+        val webView = webView
+        if (webView != null && webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
     }
 }
