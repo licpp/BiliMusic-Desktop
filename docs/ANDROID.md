@@ -132,6 +132,27 @@ npm run dev                     # 另开一个终端常驻
 
 Windows 上 `tauri android build` 会在把编译好的 `.so` 链接进 `jniLibs` 时失败（默认账户没有创建符号链接的权限）。开启「开发者模式」即可；或者在 CLI 完成 Rust 编译后，自行把 `target/aarch64-linux-android/<profile>/libbilimusic_lib.so` 复制到 `gen/android/app/src/main/jniLibs/arm64-v8a/`，再用 Gradle 打包并签名，跳过会重建 Rust 的任务。
 
+## 应用内网页登录与返回键
+
+Android 只有一个主 WebView，网易云网页登录直接把它换成官方登录页，登录成功、超时或用户按返回键后再换回应用页。整页替换会重载前端，所以登录结束时把结果留在后端，重载后的页面再取回：`netease_web_login_outcome` 带上这次登录的标记，前端据此重新打开「添加推荐源」弹窗并提示结果，而不是把用户丢回首页。换回应用页时先让登录页退回第一条历史（应用页），退不回去再 `location.replace` 覆盖登录页那条历史，最后才 `navigate`：只要登录页那条历史还留着，下一次返回键就会把它翻出来或者白重载一次。
+
+返回键由 `src-tauri/android/phone/MainActivity.kt` 处理，车机版是对应的 `CarPlayerActivity`（`src-tauri/android/large-screen/MainActivity.kt`）。这两个文件在版本控制里，`scripts/android-prepare.mjs` 会把它们复制进生成的工程（`src-tauri/gen` 不进仓库），改完重新构建即生效。
+
+- 应用 `targetSdk` 是 36：Android 16 起不再调用 `Activity.onBackPressed`，也不再以 `KEYCODE_BACK` 把返回交给 Activity，只剩平台的 `OnBackInvokedCallback`。`scripts/android-manifest.mjs` 为此写入 `android:enableOnBackInvokedCallback="true"`，缺了它平台会忽略这个 API。
+- Activity 用 `OnBackInvokedDispatcher.PRIORITY_OVERLAY` 注册回调。androidx 会用默认优先级桥接同一套 API，且注册得比 Activity 晚，同优先级下会先拿到按键；覆盖优先级保证返回键回到持有 WebView 的地方。Android 12 及以下走同一逻辑的 `OnBackPressedCallback`。
+- 回调里 WebView 还能后退就 `goBack()`（退出登录页、回到应用页），否则 `moveTaskToBack(true)`，与系统原本的行为一致：回到桌面但保留任务状态。
+
+验收（调试包，`BiliMusicLogin` 只记录页面地址、Cookie 名称和账号接口结果）：
+
+```sh
+adb logcat -c && adb logcat -s BiliMusicLogin
+# 应用里「添加推荐源」→ 网易云网页登录，等登录页出现后按一次返回键
+# 期望：日志出现 end ok=false reached=true，应用停在推荐页且进程仍在，
+#       而不是回到桌面
+```
+
+在 x86_64 模拟器上验收需要 x86_64 ABI 的包（`rustup target add x86_64-linux-android`），arm64 包装不上模拟器；API 37 的 Play Store 镜像在模拟器里有 surfaceflinger 崩溃问题，网页登录建议用 API 36 的 AOSP 镜像。
+
 ## 下载目录
 
 设置 → 音乐资料 → 已下载音乐，展开后可选择保存文件夹。下载歌曲的底部面板也提供同一入口，选择会保存在本机，不参与云同步。取消选择不改变原目录；目录授权失效时需重新选择，不会悄悄改存其他位置。Android 11 及以上限制授权“下载”根目录，可在其中创建并选择子文件夹，或使用默认公共下载目录。
