@@ -87,6 +87,10 @@ npm run tauri -- android build --apk --target aarch64
 
 原生 Gradle 工程由 Tauri CLI 在 `src-tauri/gen/android` 生成，不提交含本机路径的生成物；`scripts/android-prepare.mjs` 补齐网络配置与图标。修改原生播放器请编辑 `native/android-player`。
 
+Release APK 会经过 R8 压缩。Rust 通过 JNI 按类名和方法名调用 `gen/android` 里的 wry 胶水（`RustWebView`、`Ipc` 等），R8 看不到这些调用；wry 自带的 `proguard-wry.pro` 只按方法白名单保留，wry 0.55 新增的 `RustWebView.getCookies`（`cookies_for_url` 读取 Cookie 用）和 `clearAllBrowsingData` 不在名单里，会从 Release 包里被删掉，Android 的网易云网页登录第一次读 Cookie 就在主线程抛 `NoSuchMethodError` 闪退。`scripts/android-prepare.mjs` 生成 `app/proguard-bilimusic-jni.pro` 按类整体保留这些胶水，`android-build` 在签名前还会检查 dex 里仍有这些方法。
+
+`getCookies` 本身还有一处平台差异：`CookieManager.getCookie` 在页面还没有 Cookie 时返回 null，而胶水声明的返回类型非空，Kotlin 的空检查会在 JNI 调用里直接抛异常。刚打开的登录页正是这种状态，所以第一次轮询就会闪退。`scripts/android-glue.mjs` 把胶水里的 `getCookie(url)` 补成 `?: ""`（wry 0.57 的上游修复），并在找不到预期代码时让构建失败，而不是悄悄跳过。
+
 ## 下载目录
 
 设置 → 音乐资料 → 已下载音乐，展开后可选择保存文件夹。下载歌曲的底部面板也提供同一入口，选择会保存在本机，不参与云同步。取消选择不改变原目录；目录授权失效时需重新选择，不会悄悄改存其他位置。Android 11 及以上限制授权“下载”根目录，可在其中创建并选择子文件夹，或使用默认公共下载目录。

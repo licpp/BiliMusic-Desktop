@@ -90,6 +90,8 @@ jobs:
             dex=b''.join(z.read(f.filename) for f in z.infolist() if f.filename.endswith('.dex'))
             for cls in ['PlayerPlugin','PlayArgs','ControlArgs','SecretArgs']:
               assert ('Lapp/bilimusic/player/'+cls+';').encode() in dex, 'Native bridge removed by shrinker: '+cls
+            for name in ['setWebView','getCookies','clearAllBrowsingData','loadUrlMainThread','loadHTMLMainThread','evalScript']:
+              assert name.encode() in dex, 'wry JNI method removed by shrinker: '+name
           assert os.path.getsize(path) < 40*1024*1024, 'APK unexpectedly exceeds 40MB'
           PYAPK
       - uses: actions/upload-artifact@v4

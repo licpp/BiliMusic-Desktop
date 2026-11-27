@@ -1,7 +1,49 @@
 // Run after `tauri android init`. Keep generated Gradle scaffolding reproducible.
 import { readFile, writeFile, mkdir, cp } from 'node:fs/promises'
 import { editionManifest } from './android-manifest.mjs'
+import { jniKeepRules, patchRustWebViewFile } from './android-glue.mjs'
 const base = new URL('../src-tauri/gen/android/app/src/main/', import.meta.url)
+
+// The release shrinker does not see Rust's JNI calls into the wry glue and would
+// strip the methods they target. `app/build.gradle.kts` applies every `.pro` file
+// in the app directory, so this file lands in the release build automatically.
+await writeFile(
+  new URL('../src-tauri/gen/android/app/proguard-bilimusic-jni.pro', import.meta.url),
+  jniKeepRules('app.bilimusic.mobile'),
+)
+console.log('Android: the wry JNI glue is kept through release shrinking.')
+
+// A login page has no cookies yet, so the first `cookies_for_url` gets null from
+// the platform and the non-null Kotlin return would crash the app. wry writes the
+// glue while the Rust library builds, so it may not exist yet; the Gradle hook
+// below patches it again before Kotlin compiles.
+const rustWebView = new URL('java/app/bilimusic/mobile/generated/RustWebView.kt', base)
+if (await patchRustWebViewFile(rustWebView)) {
+  console.log('Android: an empty cookie lookup returns an empty string instead of crashing.')
+}
+
+const appGradle = new URL('../src-tauri/gen/android/app/build.gradle.kts', import.meta.url)
+const glueHook = '// scripts/android-glue.mjs: patch the wry glue before Kotlin compiles it'
+const gradle = await readFile(appGradle, 'utf8')
+if (!gradle.includes(glueHook)) {
+  await writeFile(appGradle, gradle + `
+${glueHook}
+// wry writes RustWebView.kt while the Rust library builds, after this project was
+// prepared, so patch it once more right before Kotlin compiles it.
+val patchWryGlue = tasks.register<Exec>("patchWryGlue") {
+    group = "rust"
+    description = "Backport wry's empty-cookie fix into the generated RustWebView.kt"
+    workingDir = rootProject.projectDir
+    commandLine("node",
+        file("../../../../scripts/android-glue.mjs").absolutePath,
+        file("src/main/java/app/bilimusic/mobile/generated/RustWebView.kt").absolutePath)
+}
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
+    dependsOn(patchWryGlue)
+}
+`)
+}
+console.log('Android: the Kotlin glue is patched before it compiles.')
 const manifest = new URL('AndroidManifest.xml', base)
 let xml = await readFile(manifest, 'utf8')
 xml = editionManifest(xml, process.argv.includes('--large-screen'))
