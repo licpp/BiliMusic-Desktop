@@ -32,7 +32,7 @@ import { LargeTrackActions, type LinkedTrackActions } from './TrackActions'
 import { LargeOffline } from './Offline'
 import { currentDisplayVersion } from '../shared/version'
 import { RecommendationView } from '../features/recommendations/RecommendationView'
-import { BilibiliFeedView } from '../features/search/SearchView'
+import { LargeBilibiliFeed } from './BilibiliFeed'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
 export function LargeScreenApp() {
@@ -136,9 +136,7 @@ export function LargeScreenApp() {
           <button type="button" className="large-icon" aria-label="返回探索" onClick={back}><ArrowLeft/></button>
           <h1>{route.kind === 'recommendations' ? '每日推荐' : 'B 站推荐'}</h1>
         </header>
-        {route.kind === 'recommendations' ? <RecommendationView active/> : <BilibiliFeedView active
-          onLogin={() => navigate({ kind: 'settings' })}
-          onVideoOpen={video => navigate({ kind: 'collection', item: { ...video, folderId: '' } })}/>}
+        {route.kind === 'recommendations' ? <RecommendationView active/> : <LargeBilibiliFeed navigate={navigate}/>}
       </>}
       {route.kind === 'library' && <LargeLibrary filterState={filterState} tab={tab} setTab={setTab} navigate={navigate}/>}
       {route.kind === 'folder' && <LargeLibrary filterState={filterState} key={route.id} tab={tab} setTab={setTab} navigate={navigate} folder={route}/>}

@@ -551,7 +551,7 @@ html[data-layout="large"],html[data-layout="large"] body,html[data-layout="large
 .large-download-dialog .download-destination-copy { display:grid;gap:8px; }
 .large-download-dialog .download-destination-copy small,.large-download-dialog .download-destination-hint { color:var(--muted);font-size:.85rem; }
 /* Reserve equal artwork columns; wide video covers fit without cropping. */
-.large-track-art { flex:none;display:flex;align-items:center;justify-content:center;width:92px;height:52px; }
+.large-track-art { position:relative;flex:none;display:flex;align-items:center;justify-content:center;width:92px;height:52px; }
 .large-track-art>.artwork { position:relative;width:52px;height:52px;border-radius:9px; }
 .large-track-art>.artwork[data-artwork-wide] { width:92px;height:52px; }
 .large-track-art>.artwork>img { position:absolute;inset:0;width:100%;height:100%; }

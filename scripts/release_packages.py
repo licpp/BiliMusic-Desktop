@@ -132,12 +132,11 @@ def checksum_list(build, manifest):
 
 def compatible_package_source(platform, built, release):
     changed = command(['git', 'diff', '--name-only', built, release]).splitlines()
-    common = ('scripts/', 'tests/')
+    # The standard frontend entry does not import the car-only application.
+    common = ('scripts/', 'tests/', 'src/large-screen/')
     allowed = ('native/android-player/',) if platform != 'Android' else ()
-    if platform == 'Android Large Screen':
-        allowed += ('src/large-screen/',)
     if platform == 'iOS':
-        allowed += ('native/ios-player/', 'src/large-screen/', 'src/features/settings/SettingsView.tsx', 'src/services/floatingLyrics.ts')
+        allowed += ('native/ios-player/', 'src/features/settings/SettingsView.tsx', 'src/services/floatingLyrics.ts')
     return bool(changed) and all(n.startswith(common + allowed) for n in changed)
 
 
