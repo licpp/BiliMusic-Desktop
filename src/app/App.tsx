@@ -91,7 +91,9 @@ import type { Playlist } from '../domain/library'
 import { PlayingMark } from '../shared/PlayingMark'
 import { Artwork } from '../shared/Artwork'
 import { RangeControl } from '../shared/RangeControl'
-import { useThemeStore } from '../services/theme'
+import { useThemeStore, systemThemeSupported } from '../services/theme'
+import { themeActionLabel, themePreferenceLabel } from '../domain/theme'
+import { ThemeSystemIcon } from '../shared/ThemeSystemIcon'
 import { PlaylistButton, TrackMenuButton, TrackActionsHost } from '../features/library/TrackActions'
 import { showTrackMenu } from '../features/library/trackActionStore'
 import { isMobile } from '../services/platform'
@@ -102,6 +104,7 @@ import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
 import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
+import { RecommendationHomeEntry, RecommendationView } from '../features/recommendations/RecommendationView'
 import { PictureInPicture2 } from 'lucide-react'
 
 const navigation = [
@@ -260,8 +263,9 @@ export function App() {
   const suppressDockClick = useRef(false)
   const dockSwitch = useRef<{ from: string; direction: number; expires: number } | undefined>(undefined)
   const [dockSwipePhase, setDockSwipePhase] = useState<'idle' | 'dragging' | 'enter-left' | 'enter-right'>('idle')
-  const theme = useThemeStore((state) => state.theme)
-  const setTheme = useThemeStore((state) => state.setTheme)
+  const themePreference = useThemeStore((state) => state.preference)
+  const cycleTheme = useThemeStore((state) => state.cycleTheme)
+  const systemSupported = systemThemeSupported()
   const queryClient = useQueryClient()
   useEffect(() => {
     const refresh = () => { void queryClient.invalidateQueries({ queryKey: accountQueryKey('playlists') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }) }
@@ -288,6 +292,7 @@ export function App() {
   const homeActive = !selectedCollection && (activeNav === '此刻' || compact && activeNav === '收藏库')
   const hubActive = !selectedCollection && !compact && activeNav === '收藏库'
   const musicActive = !selectedCollection && activeNav === '音乐库'
+  const recommendationActive = !selectedCollection && activeNav === '每日推荐'
   const creatorsActive = !selectedCollection && activeNav === '关注'
   const settingsActive = !selectedCollection && activeNav === '我的'
   const detailActive = !!selectedCollection || libraryDetail
@@ -676,7 +681,7 @@ export function App() {
         <div ref={stageFrame} className="stage-route-frame" data-edge-track>
         <form className={`topbar ${searchActive ? 'searching' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
-            {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
+            {(libraryDetail || selectedCollection || recommendationActive) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button>}
             <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
           <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && !(activeNav === '搜索' && submittedQuery) && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (activeNav === '搜索' && submittedQuery) ? '返回上一页' : '返回主页'}
@@ -688,7 +693,7 @@ export function App() {
             onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
 
           {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
-          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><AccountControl /></div>
+          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
         </form>
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
@@ -723,10 +728,13 @@ export function App() {
             {current && <button className="hero-cover-button" onClick={event => showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} adaptAspect /></button>}
           </section>
 
+          {compact && <RecommendationHomeEntry compact onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />}
+
           {compact ? hub : <><section className="quick-actions">
             <button onClick={openSearchInput}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
             <button onClick={() => { openSearch('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
             <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
+            <RecommendationHomeEntry onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />
           </section>
 
           <section className="tracks-section">
@@ -750,6 +758,9 @@ export function App() {
               {recentHomeTracks?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
             </div>}
           </section></>}
+        </RetainedStagePage>
+        <RetainedStagePage key={`recommendation:${pageAccount}`} active={recommendationActive} swipe>
+          <RecommendationView active={recommendationActive} />
         </RetainedStagePage>
         {!compact && <RetainedStagePage key={`hub:${pageAccount}`} active={hubActive} swipe>{hub}</RetainedStagePage>}
         <RetainedStagePage key={`music:${pageAccount}`} active={musicActive} className={isMobile ? 'library-stage-pager' : undefined}>
@@ -776,7 +787,7 @@ export function App() {
         {!isMobile && <QueueResizeHandle/>}
         {queueSheet && <button type="button" className="queue-sheet-handle" aria-label="收起播放队列" {...queueDrag}><span /></button>}
         <header>
-          <div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' ? queueSource.title : '接下来'}</h3></div>
+          <div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' || queueSource?.kind === 'recommendation' ? queueSource.title : '接下来'}</h3></div>
           <div className="queue-header-actions">
             {queue.length > 1 && <button type="button" className="queue-organize" aria-pressed={queueSorting}
               aria-label={queueSorting ? '完成整理' : '整理播放队列'} title={queueSorting ? '完成整理' : '整理播放队列'}

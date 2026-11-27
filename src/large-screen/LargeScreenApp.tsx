@@ -7,7 +7,7 @@ import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/P
 import { LargeDownloadDialogHost } from './DownloadDialog'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, ArrowLeft, Cloud, Download, Heart, Home, Library, ListMusic, Play, Search, Settings, Trash2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CalendarHeart, Cloud, Download, Heart, Home, Library, ListMusic, Play, Search, Settings, Trash2 } from 'lucide-react'
 import type { Track } from '../domain/track'
 import { Artwork } from '../shared/Artwork'
 import { captureBookmark, restoreView, type FocusBookmark } from './navigation'
@@ -31,6 +31,7 @@ import { LargeSettings } from './Settings'
 import { LargeTrackActions } from './TrackActions'
 import { LargeOffline } from './Offline'
 import { currentDisplayVersion } from '../shared/version'
+import { RecommendationView } from '../features/recommendations/RecommendationView'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
 export function LargeScreenApp() {
@@ -111,10 +112,11 @@ export function LargeScreenApp() {
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
   const active = ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
   return <div onSubmitCapture={dismissLargeKeyboard} className={`large-shell${route.kind === 'player' ? ' player-open' : route.kind === 'home' ? ' home-open' : ''}`}>
-    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && updateAvailable && !attention && <span className="update-nav-dot" aria-label="有新版本"/>}{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{currentDisplayVersion}</small></nav>
+    <nav className="large-nav" aria-label="主导航"><button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button><div className="large-nav-items">{([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'recommendations', title: '每日推荐', Icon: CalendarHeart }, { kind: 'library', title: '音乐库', Icon: Library }, { kind: 'search', title: '搜索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download }, { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) => <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => { if (route.kind !== kind) navigate({ kind }) }}><Icon/><span>{title}</span>{kind === 'settings' && updateAvailable && !attention && <span className="update-nav-dot" aria-label="有新版本"/>}{kind === 'settings' && attention && <AlertCircle className="large-attention" aria-label="同步需要处理"/>}</button>)}</div><small className="large-version">{currentDisplayVersion}</small></nav>
     <main ref={main} className="large-main" aria-label="内容区">
       {route.kind !== 'player' && <div className="large-topbar"><button className="large-icon" aria-label="返回上一页" disabled={route.kind === 'home' && !history.current.length} onClick={() => back()}><ArrowLeft/></button><button className={attention ? 'large-sync attention' : 'large-sync'} onClick={() => navigate({ kind: 'settings' })}>{attention ? <AlertCircle/> : <Cloud/>}<span>{attention ? '同步待处理' : '账号与同步'}</span></button></div>}
       {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}
+      {route.kind === 'recommendations' && <RecommendationView active/>}
       {route.kind === 'library' && <LargeLibrary filterState={filterState} tab={tab} setTab={setTab} navigate={navigate}/>}
       {route.kind === 'folder' && <LargeLibrary filterState={filterState} key={route.id} tab={tab} setTab={setTab} navigate={navigate} folder={route}/>}
       {activePlaylist && <div hidden={route.kind === 'player'}>

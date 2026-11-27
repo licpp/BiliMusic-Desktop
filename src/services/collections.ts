@@ -10,7 +10,10 @@ export type CollectionFolder = { id: string; name: string; scope?: 'collections'
 export type Collections = { folders: CollectionFolder[]; items: Collection[] }
 export type SubscribedSeason = { reference: string; title: string; coverUrl: string; uploaderName: string; videoCount: number | null }
 export type SubscribedSeasonPage = { items: SubscribedSeason[]; nextPage: number | null }
+export type FollowedCreator = { mid: number; uname: string; face: string; sign?: string }
 export const listCollections = (): Promise<Collections> => inDesktopShell ? invoke('collections_list') : Promise.resolve({ folders: [], items: [] })
+export const getFollowedCreators = (page: number, expectedAccountSession: string) =>
+  invoke<{ page: number; data: { list: FollowedCreator[]; total: number } }>('bili_creator_catalog', { action: 'following', page, expectedAccountSession })
 export const getSubscribedSeasons = (page: number, expectedAccountSession: string) =>
   invoke<SubscribedSeasonPage>('bili_subscribed_seasons', { page, expectedAccountSession })
 export async function importSubscribedSeasons(seasons: SubscribedSeason[], expectedAccountSession: string) {
@@ -38,7 +41,9 @@ export async function cacheCollectionMetadata(item: Collection, client?: QueryCl
   })
 }
 
-export async function changeCollection(action: 'save' | 'remove' | 'move' | 'create' | 'createCreator' | 'rename' | 'delete' | 'note', id = '', name = '', item?: Collection) {
-  await invoke('collections_change', { action, id, name, item })
+export async function changeCollection(action: 'save' | 'importCreator' | 'remove' | 'move' | 'create' | 'createCreator' | 'rename' | 'delete' | 'note', id = '', name = '', item?: Collection, expectedAccountSession?: string) {
+  const epoch = accountEpoch()
+  await invoke('collections_change', { action, id, name, item, expectedAccountSession })
+  if (epoch !== accountEpoch()) throw new Error('ACCOUNT_SESSION_EXPIRED')
   window.dispatchEvent(new Event('bilimusic-data-changed'))
 }

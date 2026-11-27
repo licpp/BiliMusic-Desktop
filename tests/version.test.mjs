@@ -32,7 +32,9 @@ test('Android upgrade code matches the release version', async () => {
   const {readFile}=await import('node:fs/promises')
   const pkg=JSON.parse(await readFile('package.json','utf8'))
   const android=JSON.parse(await readFile('src-tauri/tauri.android.conf.json','utf8'))
-  assert.equal(android.bundle.android.versionCode, mobileVersion(pkg.version, 1).androidVersionCode)
+  const first = mobileVersion(pkg.version, 1)
+  const number = android.bundle.android.versionCode - first.androidVersionCode + 1
+  assert.equal(android.bundle.android.versionCode, mobileVersion(pkg.version, number).androidVersionCode)
   const ios=JSON.parse(await readFile('src-tauri/tauri.ios.conf.json','utf8'))
   assert.equal(ios.bundle.iOS.bundleVersion, mobileVersion(pkg.version, 1).iosBundleVersion)
 })

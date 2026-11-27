@@ -26,10 +26,11 @@ export function rankList<T>(items:T[],preferences:ListPreference[],id:(item:T)=>
  const ranks=new Map(preferences.map(p=>[p.entity,p.displayRank]))
  return items.map((item,index)=>({item,index,rank:ranks.get(id(item))})).sort((a,b)=>a.rank&&b.rank?a.rank.localeCompare(b.rank)||id(a.item).localeCompare(id(b.item)):a.rank?1:b.rank?-1:a.index-b.index).map(row=>row.item)
 }
-const MAX=18446744073709551615n
 const rank=(n:bigint)=>n.toString().padStart(20,'0')
 // Preserve a longest increasing subsequence; normally a drag updates just one rank.
 export function rankChanges(ids:string[],preferences:ListPreference[]):ListPreference[] {
+ // The car WebView loads this module for sorting but saves playlist order natively.
+ const max=BigInt('18446744073709551615')
  if(new Set(ids).size!==ids.length)throw Error('排序项目重复')
  const old=new Map(preferences.filter(p=>p.displayRank&&/^\d{20}$/.test(p.displayRank)).map(p=>[p.entity,p.displayRank!]))
  const tails:number[]=[],previous=new Array<number>(ids.length).fill(-1)
@@ -44,8 +45,8 @@ export function rankChanges(ids:string[],preferences:ListPreference[]):ListPrefe
  while(cursor>=0){anchors.add(cursor);cursor=previous[cursor]}
  const next=new Map<string,string>();let left=-1,low=0n
  for(const right of [...anchors].sort((a,b)=>a-b).concat(ids.length)){
-  const high=right===ids.length?MAX:values[right]!,count=right-left-1,step=(high-low)/BigInt(count+1)
-  if(count&&step<1n)return ids.flatMap((id,i)=>{const value=rank(MAX/BigInt(ids.length+1)*BigInt(i+1));return value===old.get(id)?[]:[{entity:id,displayRank:value}]})
+  const high=right===ids.length?max:values[right]!,count=right-left-1,step=(high-low)/BigInt(count+1)
+  if(count&&step<1n)return ids.flatMap((id,i)=>{const value=rank(max/BigInt(ids.length+1)*BigInt(i+1));return value===old.get(id)?[]:[{entity:id,displayRank:value}]})
   for(let i=left+1;i<right;i++)next.set(ids[i],rank(low+step*BigInt(i-left)))
   if(right<ids.length)next.set(ids[right],old.get(ids[right])!)
   left=right;low=high

@@ -7,13 +7,14 @@ Public releases include machine-readable dependency notices with dependency vers
 - Rust: `cargo deny check licenses`
 - npm: an SPDX-compatible license report generated from the lockfile
 
-The project does not bundle media, lyrics, comments, danmaku, or branding from Bilibili or any metadata provider. Availability of a provider adapter does not imply affiliation or authorization by that provider.
+The project does not bundle media, lyrics, comments, danmaku, or branding from Bilibili or any metadata provider, with one exception: `public/netease-music.png` is the NetEase Cloud Music application icon, used only to identify that recommendation source in the provider picker. It remains the trademark of its owner and implies no affiliation or endorsement. Availability of a provider adapter does not imply affiliation or authorization by that provider.
 
 Runtime services used by the current implementation:
 
 - Bilibili: search, playback sources, account QR login, comments and danmaku. Requests originate from the native provider and are subject to platform availability and account permissions.
 - LRCLIB: lyric search and lyric candidates.
-- NetEase Cloud Music and QQ Music: album/artwork candidates and lyric search, including translation and romanization where supplied. Requests use a separate cookie-free client; no audio is obtained from these providers.
+- NetEase Cloud Music: album/artwork candidates and lyric search, including translation and romanization where supplied; optional QR-code login for the daily-recommendation source and reading its daily recommendation list. Catalog and lyric requests use a separate cookie-free client. Recommendation credentials (`MUSIC_U` and CSRF) are stored only in the device-local recommendation database, are never uploaded or synced, and no audio is obtained from NetEase. The daily-recommendation endpoint is not a documented public API for third-party clients; availability and account risk are described in `docs/DAILY_RECOMMENDATION.md`.
+- QQ Music: album/artwork candidates and lyric search, including translation and romanization where supplied. Requests use a separate cookie-free client; no audio is obtained from this provider.
 - Apple iTunes Search API: album and artwork candidates. Catalog results are not bundled with the application.
 
 Principal UI/runtime dependencies include React (MIT), Zustand (MIT), TanStack Query (MIT), Lucide (ISC), qrcode.react (ISC), and Tauri (MIT OR Apache-2.0). Consult the installed package/crate notices and lockfiles for exact versions and the full dependency graph.

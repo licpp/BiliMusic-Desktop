@@ -179,7 +179,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
       <ChapterRows items={chapters.items} duration={chapters.duration} autoFocus onSeek={seconds => { chapters.seek(seconds); chapters.close() }}/>
     </LargeDialog>}
     {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)} renderDialog={body => <LargeDialog title="更换视频" className="import-match-large-dialog" onClose={() => setReplacingVideo(null)}>{body}</LargeDialog>}/>}
-    {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack"><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting/><CaptionLanguageSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
+    {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack" data-video={video || undefined}><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting/><CaptionLanguageSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
   </div>
 }
 function LargeChapterDirectory({ model }: { model: PlaybackChapters }) {

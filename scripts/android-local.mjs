@@ -8,6 +8,10 @@ import { spawnSync } from 'node:child_process'
 import { androidLargeScreenTarget, androidTarget } from './android-target.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+const isWindows = process.platform === 'win32'
+const exe = isWindows ? '.exe' : ''
+const bat = isWindows ? '.bat' : ''
+const npm = isWindows ? 'npm.cmd' : 'npm'
 const task = process.argv[2] ?? 'doctor'
 if (!['doctor', 'init', 'build', 'test', 'dev', 'large-screen'].includes(task)) throw new Error('Use: npm run android:local -- doctor|init|build|test|dev|large-screen [arguments]')
 const extras = process.argv.slice(3)
@@ -16,7 +20,7 @@ const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || join(hom
 const jdkRoot = join(homedir(), 'Library/Java/JavaVirtualMachines')
 const candidates = [process.env.BILIMUSIC_ANDROID_JAVA_HOME, process.env.JAVA_HOME,
   ...(existsSync(jdkRoot) ? readdirSync(jdkRoot).sort().reverse().map(name => join(jdkRoot, name, 'Contents/Home')) : [])]
-const java = candidates.find(path => path && existsSync(join(path, 'bin/javac')) && existsSync(join(path, 'release')) &&
+const java = candidates.find(path => path && existsSync(join(path, 'bin', `javac${exe}`)) && existsSync(join(path, 'release')) &&
   /^JAVA_VERSION="17(?:\.|\")/m.test(readFileSync(join(path, 'release'), 'utf8')))
 if (!java) throw new Error('JDK 17 not found. Install it in ~/Library/Java/JavaVirtualMachines or set BILIMUSIC_ANDROID_JAVA_HOME.')
 const ndk = process.env.NDK_HOME || join(sdk, 'ndk/27.2.12479018')
@@ -35,13 +39,15 @@ if (proxyValue) {
 }
 
 function run(command, args, cwd = root) {
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' })
+  // Node on Windows cannot spawn .cmd/.bat directly without a shell.
+  const shell = isWindows && /\.(bat|cmd)$/i.test(command)
+  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit', shell })
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 function check() {
-  const required = [join(sdk, 'cmdline-tools/latest/bin/sdkmanager'), join(sdk, 'platform-tools/adb'),
-    join(sdk, 'platforms/android-36/android.jar'), join(sdk, 'build-tools/36.0.0/apksigner'), join(ndk, 'source.properties')]
+  const required = [join(sdk, `cmdline-tools/latest/bin/sdkmanager${bat}`), join(sdk, `platform-tools/adb${exe}`),
+    join(sdk, 'platforms/android-36/android.jar'), join(sdk, `build-tools/36.0.0/apksigner${bat}`), join(ndk, 'source.properties')]
   const missing = required.filter(path => !existsSync(path))
   if (missing.length) throw new Error(`Android components missing:\n${missing.join('\n')}`)
   const rust = spawnSync('rustup', ['target', 'list', '--installed'], { cwd: root, env, encoding: 'utf8' })
@@ -56,16 +62,16 @@ function check() {
 if (task === 'build') await syncMobileVersion(undefined, 'android')
 check()
 if (task === 'doctor') {
-  run(join(java, 'bin/java'), ['-version'])
-  run(join(sdk, 'platform-tools/adb'), ['version'])
+  run(join(java, 'bin', `java${exe}`), ['-version'])
+  run(join(sdk, `platform-tools/adb${exe}`), ['version'])
   console.log('Android local build environment is ready.')
 } else if (task === 'large-screen') {
   run('node', ['scripts/android-large-screen.mjs', ...extras])
 } else {
   const generated = join(root, 'src-tauri/gen/android')
-  if (task === 'init' || !existsSync(join(generated, 'gradlew'))) run('npm', ['run', 'android:init'])
+  if (task === 'init' || !existsSync(join(generated, `gradlew${bat}`))) run(npm, ['run', 'android:init'])
   else if (task === 'build' || task === 'dev') run('node', ['scripts/android-prepare.mjs'])
-  if (task === 'build') run('npm', ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', ...selected.targets, ...selected.args])
-  if (task === 'dev') run('npm', ['run', 'tauri', '--', 'android', 'dev', ...extras])
-  if (task === 'test') run(join(generated, 'gradlew'), [':tauri-plugin-android-player:testReleaseUnitTest', '--no-daemon', ...extras], generated)
+  if (task === 'build') run(npm, ['run', 'tauri', '--', 'android', 'build', '--apk', '--target', ...selected.targets, ...selected.args])
+  if (task === 'dev') run(npm, ['run', 'tauri', '--', 'android', 'dev', ...extras])
+  if (task === 'test') run(join(generated, `gradlew${bat}`), [':tauri-plugin-android-player:testReleaseUnitTest', '--no-daemon', ...extras], generated)
 }

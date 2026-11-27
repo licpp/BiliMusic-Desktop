@@ -9,7 +9,7 @@ xml = xml.replace(/ android:networkSecurityConfig="[^"]*"/g, '')
 xml = xml.replace(/<application\b/, '<application android:networkSecurityConfig="@xml/bilimusic_network_security"')
 // Keep the current WebView and video when the app requests landscape.
 xml = xml.replace(/<activity\b[^>]*>/g, activity => {
-  if (!/android:name="[^"]*MainActivity"/.test(activity)) return activity
+  if (!/android:name="[^"]*(?:MainActivity|CarPlayerActivity)"/.test(activity)) return activity
   const existing = activity.match(/android:configChanges="([^"]*)"/)
   const changes = new Set([...(existing?.[1].split('|') || []), 'orientation', 'screenSize', 'screenLayout', 'smallestScreenSize'])
   const attribute = `android:configChanges="${[...changes].join('|')}"`
@@ -34,4 +34,7 @@ await writeFile(new URL('res/mipmap-anydpi-v26/ic_launcher_round.xml', base), ad
 if (process.argv.includes('--large-screen')) {
   await mkdir(new URL('res/drawable/', base), { recursive: true })
   await cp(new URL('../assets/android/tv_banner.png', import.meta.url), new URL('res/drawable/tv_banner.png', base))
+  const startup = new URL('../src-tauri/android/large-screen/', import.meta.url)
+  await cp(new URL('MainActivity.kt', startup), new URL('java/app/bilimusic/large/MainActivity.kt', base))
+  await cp(new URL('webview_preflight.xml', startup), new URL('res/values/webview_preflight.xml', base))
 }

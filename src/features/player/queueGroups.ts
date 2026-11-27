@@ -20,7 +20,9 @@ export function groupQueue(queue: Track[]) {
   return groups
 }
 
-export function presentQueue(queue: Track[], kind?: 'video' | 'season') {
+type QueueKind = 'video' | 'season' | 'recommendation'
+
+export function presentQueue(queue: Track[], kind?: QueueKind) {
   const structured = kind === 'season' || (!kind && queue.some(track => track.resolveParts))
     || (kind === 'video' && queue.some(track => track.source.bvid !== queue[0]?.source.bvid))
   return {
@@ -45,7 +47,7 @@ export function moveQueueTracks(queue: Track[], ids: string[], direction: -1 | 1
 
 export function reorderQueueTracks(
   queue: Track[], sourceIds: string[], targetIds: string[], position: 'before' | 'after',
-  scope: QueueReorderScope, kind?: 'video' | 'season',
+  scope: QueueReorderScope, kind?: QueueKind,
 ) {
   const { structured, groups } = presentQueue(queue, kind)
   if (scope === 'track' ? structured : !structured) return queue

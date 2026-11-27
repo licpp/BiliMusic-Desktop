@@ -24,6 +24,22 @@ pub(super) fn check_account_session(
     Ok(())
 }
 
+pub(super) async fn authenticated_provider(
+    database: &Database,
+    session: &str,
+) -> Result<BilibiliProvider, CommandError> {
+    let cookie = {
+        let c = database.0.lock().map_err(CommandError::database)?;
+        check_account_session(&c, session)?;
+        AuthRepository::get_cookie(&c, "bilibili")
+            .map_err(CommandError::database)?
+            .ok_or_else(|| CommandError::validation("请先登录 B 站账号"))?
+    };
+    let provider = BilibiliProvider::new().map_err(CommandError::provider)?;
+    provider.set_session_cookie(Some(cookie)).await;
+    Ok(provider)
+}
+
 #[tauri::command]
 pub async fn bili_qr_login_generate(
     provider: State<'_, BilibiliProvider>,
@@ -105,15 +121,7 @@ pub async fn bili_subscribed_seasons(
     if page == 0 {
         return Err(CommandError::validation("无效的订阅合集页码"));
     }
-    let cookie = {
-        let c = database.0.lock().map_err(CommandError::database)?;
-        check_account_session(&c, &expected_account_session)?;
-        AuthRepository::get_cookie(&c, "bilibili")
-            .map_err(CommandError::database)?
-            .ok_or_else(|| CommandError::validation("请先登录 B 站账号"))?
-    };
-    let provider = BilibiliProvider::new().map_err(CommandError::provider)?;
-    provider.set_session_cookie(Some(cookie)).await;
+    let provider = authenticated_provider(&database, &expected_account_session).await?;
     let result = provider.subscribed_seasons(page).await;
     let c = database.0.lock().map_err(CommandError::database)?;
     check_account_session(&c, &expected_account_session)?;

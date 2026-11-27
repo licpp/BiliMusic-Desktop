@@ -58,10 +58,11 @@ import { ReplacementSearch } from '../features/library/ReplacementDialog'
 import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from '../features/library/PlaylistDuplicates'
 import { ImportedPlaylistCompletionContent } from '../features/library/ImportedPlaylistCompletion'
 import { LargeDialog } from './LargeDialog'
+import { LargeLibraryImport } from './LibraryImport'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
 
 export type LibraryTab = 'playlists' | 'collections' | 'creators'
-export type Route = { kind: 'home' | 'library' | 'search' | 'offline' | 'settings' } | { kind: 'player'; previewFrom?: Playlist } | { kind: 'playlist'; playlist: Playlist } | { kind: 'folder'; id: string; title: string; scope: LibraryTab } | { kind: 'collection'; item: Collection; resume?: CollectionResumeRequest; parentRef?: string } | { kind: 'creator'; item: Collection; tab?: 'videos' | 'seasons'; query?: string }
+export type Route = { kind: 'home' | 'library' | 'search' | 'offline' | 'settings' | 'recommendations' } | { kind: 'player'; previewFrom?: Playlist } | { kind: 'playlist'; playlist: Playlist } | { kind: 'folder'; id: string; title: string; scope: LibraryTab } | { kind: 'collection'; item: Collection; resume?: CollectionResumeRequest; parentRef?: string } | { kind: 'creator'; item: Collection; tab?: 'videos' | 'seasons'; query?: string }
 export type Navigate = (route: Route) => void
 type FilterState = [string, (value: string) => void]
 function useFilter(controlled?: FilterState): FilterState { const local = useState(''); return controlled || local }
@@ -103,6 +104,7 @@ export function LargeLibrary({ tab, setTab, navigate, folder, filterState }: { f
   const collections = useQuery({ queryKey: accountQueryKey('collections'), queryFn: listCollections })
   const prefs = useListPreferences(), preferences = prefs.data?.preferences || []
   const [filter, setFilter] = useFilter(filterState)
+  const [importNotice, setImportNotice] = useState('')
   const scope = folder?.scope || tab
   const matches = (text: string) => text.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())
   const items = collections.data?.items.filter(i => i.bvid.startsWith('up:') === (scope === 'creators') && (!folder ? !i.folderId : i.folderId === folder.id)) || []
@@ -110,8 +112,12 @@ export function LargeLibrary({ tab, setTab, navigate, folder, filterState }: { f
   const error = scope === 'playlists' ? playlists.error : collections.error
   return <>
     {folder && <header className="large-page-heading"><h1>{folder.title}</h1></header>}
-    {!folder && <div className="large-tabs" role="tablist" aria-label="音乐库分类">{(['playlists', 'collections', 'creators'] as const).map((t, i) => <button role="tab" aria-selected={tab === t} key={t} data-focus={`library-${t}`} onClick={() => { setFilter(''); setTab(t) }}>{['歌单', '收藏', '关注'][i]}</button>)}</div>}
-    <ListFilter value={filter} onChange={setFilter} label={scope === 'creators' ? '查找关注的 UP 主' : '查找音乐库'}/>
+    {!folder && <div className="large-tabs" role="tablist" aria-label="音乐库分类">{(['playlists', 'collections', 'creators'] as const).map((t, i) => <button role="tab" aria-selected={tab === t} key={t} data-focus={`library-${t}`} onClick={() => { setFilter(''); setImportNotice(''); setTab(t) }}>{['歌单', '收藏', '关注'][i]}</button>)}</div>}
+    <div className="large-library-tools">
+      <ListFilter value={filter} onChange={setFilter} label={scope === 'creators' ? '查找关注的 UP 主' : '查找音乐库'}/>
+      {!folder && <LargeLibraryImport key={scope} scope={scope} navigate={navigate} onViewCollections={() => setFilter('')} onImported={setImportNotice}/>}
+    </div>
+    {importNotice && <p className="large-library-import-notice" role="status">{importNotice}</p>}
     <Failure error={error} retry={() => { void playlists.refetch(); void collections.refetch() }}/>
     <div className="large-grid">
       {scope === 'playlists' ? rankList(playlists.data || [], preferences, playlistEntity).filter(p => matches(p.name)).map(p => <Card playlist key={p.id} id={`playlist-${p.id}`} title={p.name} subtitle={`${p.trackCount} ${p.biliFolderId ? '个视频' : '首'}`} cover={p.coverUrl} linked={Boolean(p.biliFolderId)} onClick={() => navigate({ kind: 'playlist', playlist: p })}/>) : <>
@@ -119,7 +125,7 @@ export function LargeLibrary({ tab, setTab, navigate, folder, filterState }: { f
         {rankList(items, preferences, i => `collection:${i.bvid}`).filter(i => matches(i.note || i.title)).map(i => <CollectionCard key={i.bvid} item={i} navigate={navigate}/>)}
       </>}
     </div>
-    {!error && !(scope === 'playlists' ? playlists.isPending || playlists.data?.length : collections.isPending || items.length || folders.length) && <Empty>还没有内容，可以连接坚果云同步音乐库</Empty>}
+    {!error && !(scope === 'playlists' ? playlists.isPending || playlists.data?.length : collections.isPending || items.length || folders.length) && <Empty>{folder ? '暂无内容' : scope === 'creators' ? '可以从 B 站导入关注的 UP 主' : scope === 'collections' ? '可以从 B 站导入订阅合集' : '可以从 B 站导入收藏夹'}</Empty>}
   </>
 }
 

@@ -19,11 +19,6 @@
   cursor: pointer;
   transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 110ms ease;
 }
-.creator-import-list .creator-select-row > input[type="checkbox"] {
-  width: 1px;
-  min-width: 1px;
-  height: 1px;
-}
 :root:not([data-layout="large"]) input[type="checkbox"].track-select {
   --checkbox-accent: var(--coral);
 }
@@ -765,6 +760,25 @@
   font-weight: 550;
   white-space: nowrap;
   transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+/* Three states share the capsule, so they tighten up to fit narrow windows. */
+.settings-card .theme-options:has(> button:nth-child(3)) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.settings-card .theme-options:has(> button:nth-child(3)) > button {
+  gap: 5px;
+  padding: 6px 9px;
+}
+@media (max-width: 960px) {
+  /* The capsule moves to its own row: sharing the line with the description
+     squeezed the text into a one-character column. */
+  .settings-card:has(> .theme-options > button:nth-child(3)) {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+  .settings-card:has(> .theme-options > button:nth-child(3)) > .theme-options {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
 }
 .settings-card .theme-options > button:hover:not(.selected) {
   color: var(--ink);

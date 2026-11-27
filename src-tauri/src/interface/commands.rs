@@ -1048,7 +1048,7 @@ pub fn collections_change(
     expected_account_session: Option<String>,
 ) -> Result<(), String> {
     let mut c = database.0.lock().map_err(|_| "数据库正忙")?;
-    if action == "cache" {
+    if matches!(action.as_str(), "cache" | "importCreator") {
         let expected = expected_account_session
             .as_deref()
             .ok_or("账号已切换，请重试")?;

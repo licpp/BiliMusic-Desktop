@@ -15,7 +15,8 @@ import { isMobile, isIOS, isOHOS, isAndroid } from '../../services/platform'
 import { AndroidDownloadDestinationField } from '../downloads/AndroidDownloadDestination'
 import { Cloud, Download, FolderOpen, HardDrive, LoaderCircle, Moon, Sun } from 'lucide-react'
 import { SettingsDisclosure } from './SettingsDisclosure'
-import { useThemeStore } from '../../services/theme'
+import { systemThemeSupported, useThemeStore } from '../../services/theme'
+import { ThemeSystemIcon } from '../../shared/ThemeSystemIcon'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
@@ -25,7 +26,7 @@ import { syncStatus } from '../../services/sync'
 export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?: boolean; onOpenDownloads?: () => void }) {
   const runtimeAttention = useSyncAttention(state => state.library || state.statistics)
   const reveal = useSyncAttention(state => state.reveal)
-  const theme = useThemeStore(state => state.theme), setTheme = useThemeStore(state => state.setTheme)
+  const themePreference = useThemeStore(state => state.preference), setTheme = useThemeStore(state => state.setTheme), followsSystem = systemThemeSupported()
   const [downloadDirectory, setDownloadDirectory] = useState('')
   const [loading, setLoading] = useState(true), [error, setError] = useState('')
   const sync = useQuery({ queryKey:accountQueryKey('sync-status'), queryFn:syncStatus, enabled:inDesktopShell, retry:false })
@@ -42,7 +43,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
   return <section className="settings-view settings-organized">
     {!embedded && <header><h2>设置</h2><p>让音乐按你的习惯播放。</p></header>}
     <section className="settings-group" aria-labelledby="settings-appearance"><h3 id="settings-appearance">外观</h3><div className="settings-group-body">
-      <div className="settings-card"><div className="settings-icon"><Sun/></div><div><strong>主题</strong><small>选择你喜欢的明暗</small></div><div className="theme-options" role="group" aria-label="主题外观"><button type="button" className={theme === 'dark' ? 'selected' : ''} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}><Moon size={14}/><span>深色</span></button><button type="button" className={theme === 'light' ? 'selected' : ''} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}><Sun size={14}/><span>浅色</span></button></div></div>
+      <div className="settings-card"><div className="settings-icon"><Sun/></div><div><strong>主题</strong><small>选择你喜欢的明暗</small></div><div className="theme-options" role="group" aria-label="主题外观"><button type="button" className={themePreference === 'dark' ? 'selected' : ''} aria-pressed={themePreference === 'dark'} onClick={() => setTheme('dark')}><Moon size={14}/><span>深色</span></button><button type="button" className={themePreference === 'light' ? 'selected' : ''} aria-pressed={themePreference === 'light'} onClick={() => setTheme('light')}><Sun size={14}/><span>浅色</span></button>{followsSystem && <button type="button" className={themePreference === 'system' ? 'selected' : ''} aria-pressed={themePreference === 'system'} onClick={() => setTheme('system')}><ThemeSystemIcon size={14}/><span>跟随系统</span></button>}</div></div>
     </div></section>
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>

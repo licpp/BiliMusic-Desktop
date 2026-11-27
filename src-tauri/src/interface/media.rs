@@ -1,4 +1,7 @@
-use super::error::CommandError;
+use super::{
+    account::{authenticated_provider, check_account_session},
+    error::CommandError,
+};
 use crate::infrastructure::{
     database::{Database, account_session},
     providers::bilibili::*,
@@ -340,11 +343,25 @@ pub async fn listening_hydrate_tags(
 #[tauri::command]
 pub async fn bili_creator_catalog(
     provider: State<'_, BilibiliProvider>,
+    database: State<'_, Database>,
     action: String,
     keyword: Option<String>,
     mid: Option<i64>,
     page: Option<u32>,
+    expected_account_session: Option<String>,
 ) -> Result<Value, CommandError> {
+    if action == "following" {
+        let session = expected_account_session
+            .as_deref()
+            .ok_or_else(|| CommandError::validation("ACCOUNT_SESSION_EXPIRED"))?;
+        let scoped_provider = authenticated_provider(&database, session).await?;
+        let result = scoped_provider
+            .creator_catalog(&action, "", 0, page.unwrap_or(1))
+            .await;
+        let c = database.0.lock().map_err(CommandError::database)?;
+        check_account_session(&c, session)?;
+        return result.map_err(CommandError::bilibili);
+    }
     provider
         .creator_catalog(
             &action,

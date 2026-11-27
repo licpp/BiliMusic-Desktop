@@ -1,0 +1,79 @@
+.large-library-tools { display:grid;grid-template-columns:minmax(0,1fr) auto;grid-column-gap:12px;margin-bottom:20px; }
+.large-library-tools > .large-search { min-width:0;margin:0; }
+[data-layout="large"] .large-library-import { min-width:0;white-space:nowrap;border:1px solid var(--line);background:var(--panel);color:var(--cyan); }
+.large-library-import > svg { margin-right:10px; }
+[data-layout="large"] .large-library-import { gap:0; }
+.large-library-import-notice { color:var(--cyan);margin:0 0 16px; }
+
+.large-dialog.large-library-import-dialog { display:flex;flex-direction:column;overflow:hidden;padding-bottom:0; }
+.large-library-import-dialog > header { flex:none; }
+.large-library-import-dialog .import-body { flex:1 1 auto;padding:4px 4px 14px; }
+.large-library-import-dialog .import-folder-toolbar { font-size:.9rem;margin:0 0 8px; }
+.large-library-import-dialog .import-footer { flex-wrap:wrap;gap:0;padding:10px 0 12px; }
+.large-library-import-dialog .import-footer > button { margin:2px 0 2px 8px; }
+.large-library-import-dialog .import-footer > small,
+.large-library-import-dialog .import-hint,
+.large-library-import-dialog .import-inline-status,
+.large-library-import-dialog .import-empty p,
+.large-library-import-dialog .import-error { font-size:.9rem; }
+[data-layout="large"] .large-library-import-dialog .import-primary { background:var(--cyan);color:var(--base); }
+[data-layout="large"] .large-library-import-dialog .import-secondary { border:1px solid var(--line);background:var(--panel-raised);color:var(--ink); }
+[data-layout="large"] .large-library-import-dialog .import-primary,
+[data-layout="large"] .large-library-import-dialog .import-secondary,
+[data-layout="large"] .large-library-import-dialog .import-folders > button { gap:0; }
+.large-library-import-dialog .import-footer > button > svg { margin-right:8px; }
+.large-library-import-dialog .import-footer > button > .lucide-arrow-right { margin:0 0 0 8px; }
+.large-library-import-dialog .import-footer button svg { width:20px;height:20px; }
+
+[data-layout="large"] .large-library-import-dialog .import-folders > button {
+  justify-content:flex-start;min-width:0;min-height:68px;text-align:left;
+  border:1px solid transparent;color:var(--ink);
+}
+.large-library-import-dialog .import-folders > button > :first-child { margin-right:14px; }
+.large-library-import-dialog .import-folders > button > :last-child { margin-left:14px; }
+.large-library-import-dialog .import-folders strong { font-size:1rem;word-wrap:break-word; }
+.large-library-import-dialog .import-folders small { font-size:.82rem; }
+.large-library-import-dialog .import-folders > button > .import-selection,
+.large-library-import-dialog .import-folder-icon { display:flex;align-items:center;justify-content:center; }
+.large-library-import-dialog .import-selection { width:24px;height:24px;border-color:var(--range-track); }
+.large-library-import-dialog .import-selection svg,.large-library-import-dialog .import-season-saved svg { width:16px;height:16px; }
+.large-library-import-dialog .import-season-saved svg { margin-right:6px; }
+.large-library-import-dialog .import-season-saved { flex:none;gap:0; }
+.large-library-import-dialog .import-season-meta { gap:0; }
+.large-library-import-dialog .import-season-meta > span + span { margin:0 0 0 4px; }
+[data-layout="large"] .large-library-import-dialog .import-folders > button[aria-pressed="true"] { background:var(--panel-raised);border-color:var(--cyan); }
+[data-layout="large"] .large-library-import-dialog .import-folders > button[data-imported] { opacity:1; }
+.large-library-import-dialog .import-folders [aria-pressed="true"] .import-selection {
+  border-color:var(--cyan);background:var(--cyan);color:var(--base);
+}
+.large-library-import-dialog .import-folder-icon { background:var(--panel-raised); }
+.large-library-import-dialog .import-following-search { min-height:48px;background:var(--base);gap:0; }
+.large-library-import-dialog .import-following-search > span { display:flex;align-items:center;justify-content:center;margin-right:8px; }
+.large-library-import-dialog .import-following-search input { font-size:1rem; }
+.large-library-import-dialog .import-following-toolbar .touch-option-trigger { width:100%; }
+.large-library-import-dialog .touch-option-trigger > small { margin-left:auto; }
+.large-library-import-dialog .bili-copy-setting { margin-top:0; }
+.large-library-import-dialog .bili-copy-setting strong { font-size:1rem; }
+.large-library-import-dialog .bili-copy-setting small { font-size:.82rem; }
+[data-layout="large"] .large-library-import-dialog .bili-copy-switch {
+  --switch-top:12px;position:relative;flex:0 0 48px;height:50px;min-height:50px;
+  padding:0;margin-left:12px;background:transparent;
+}
+.large-library-import-dialog .bili-copy-switch::before { top:12px;bottom:12px;left:1px;right:1px;background:var(--range-track); }
+.large-library-import-dialog .bili-copy-switch[aria-checked="true"]::before { background:var(--cyan); }
+.large-library-import-dialog .bili-copy-switch[aria-checked="true"] > span { transform:translateX(20px); }
+
+.large-library-import:focus,.large-library-import-dialog button:focus { outline:2px solid var(--cyan);outline-offset:-2px; }
+@media (max-width:600px) {
+  .large-library-tools { grid-template-columns:minmax(0,1fr);grid-row-gap:8px; }
+  .large-library-tools > .large-library-import { justify-self:start; }
+}
+@media (max-height:540px) {
+  .large-dialog.large-library-import-dialog { padding-top:10px; }
+  .large-library-import-dialog > header { margin-bottom:6px; }
+  [data-layout="large"] .large-library-import-dialog > header .large-icon { width:48px;min-width:48px;height:48px;min-height:48px; }
+  [data-layout="large"] .large-library-import-dialog .import-folders > button { min-height:58px;padding-top:8px;padding-bottom:8px; }
+  [data-layout="large"] .large-library-import-dialog .import-folder-toolbar > button { min-height:44px;padding-top:6px;padding-bottom:6px; }
+  .large-library-import-dialog .bili-copy-setting { padding-top:6px;padding-bottom:6px;margin-bottom:6px; }
+  .large-library-import-dialog .import-footer { padding:6px 0; }
+}
