@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { jniKeepRules, patchEmptyCookies, WRY_GLUE_CLASSES } from '../scripts/android-glue.mjs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { jniKeepRules, patchEmptyCookies, patchRustWebViewFile, WRY_GLUE_CLASSES } from '../scripts/android-glue.mjs'
 
 // Shape of wry 0.55.1's RustWebView.kt getCookies; wry 0.57 returns "" instead.
 const WRY_055 = `    fun getCookies(url: String): String {
@@ -35,4 +38,19 @@ test('an empty cookie lookup falls back to an empty string', () => {
 
 test('a glue file that no longer matches is rejected instead of patched blindly', () => {
   assert.throws(() => patchEmptyCookies('fun getCookies(url: String) = ""'), /RustWebView\.getCookies/)
+})
+
+test('a missing glue file is left for the Gradle hook instead of failing the build', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'bilimusic-glue-'))
+  const file = join(dir, 'RustWebView.kt')
+  try {
+    // `tauri android init` runs before wry writes the glue during the Rust build.
+    assert.equal(await patchRustWebViewFile(file), false)
+    await writeFile(file, WRY_055)
+    assert.equal(await patchRustWebViewFile(file), true)
+    assert.match(await readFile(file, 'utf8'), /getCookie\(url\) \?: ""/)
+    assert.equal(await patchRustWebViewFile(file), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

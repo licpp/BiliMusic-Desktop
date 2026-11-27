@@ -1,6 +1,10 @@
 // wry's Android glue is reached from Rust through JNI, by class and method name.
 // Two things about it bite release builds; both are fixed by patching the glue
-// after `tauri android init` rather than editing it by hand.
+// after `tauri android init` rather than editing it by hand. wry writes the glue
+// files during the Rust build, so `patchRustWebViewFile` also runs from Gradle
+// right before Kotlin compiles them.
+import { readFile, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 
 // 1. The release shrinker cannot see JNI calls and would strip the methods they
 // target. wry ships `proguard-wry.pro`, but its `RustWebView` rule only lists the
@@ -51,4 +55,29 @@ export function patchEmptyCookies(kotlin) {
     )
   }
   return patched
+}
+
+// wry only writes the glue while the Rust library compiles, so on a fresh
+// `tauri android init` the file is not there yet; the Gradle hook patches it
+// later. Returns whether anything was changed.
+export async function patchRustWebViewFile(path) {
+  let source
+  try {
+    source = await readFile(path, 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+  const patched = patchEmptyCookies(source)
+  if (patched === source) return false
+  await writeFile(path, patched)
+  return true
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const target = process.argv[2]
+  if (!target) throw new Error('usage: node scripts/android-glue.mjs <RustWebView.kt>')
+  if (await patchRustWebViewFile(target)) {
+    console.log('Android: an empty cookie lookup returns an empty string instead of crashing.')
+  }
 }
