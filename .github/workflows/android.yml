@@ -52,11 +52,16 @@ jobs:
       # Optimized native code and stripped symbols; sign the release APK with the existing preview key.
       - run: npm run android:build
       - run: node scripts/verify-frontend-build.mjs dist standard chrome105 android
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric/android-all-instrumented
+          key: robolectric-instrumented-${{ runner.os }}-${{ hashFiles('native/android-player/android/build.gradle.kts') }}
       - name: Test media controls and native lyric rendering
         working-directory: src-tauri/gen/android
         run: ./gradlew :tauri-plugin-android-player:testReleaseUnitTest --no-daemon
       - run: node scripts/android-verify-acl.mjs
       - name: Sign preview with persistent repository key
+        if: github.event_name != 'pull_request'
         env:
           PREVIEW_KEY: ${{ secrets.BILIMUSIC_ANDROID_PREVIEW_KEY_DER }}
           PREVIEW_CERT: ${{ secrets.BILIMUSIC_ANDROID_PREVIEW_CERT_PEM }}
@@ -75,7 +80,9 @@ jobs:
       - name: Verify APK package
         run: |
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          fi
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | head -8
           expected_code=$(node --input-type=module -e "import {mobileVersion} from './scripts/mobile-version.mjs'; import {readFileSync} from 'node:fs'; console.log(mobileVersion(JSON.parse(readFileSync('package.json')).version).androidVersionCode)")
           actual_badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK")

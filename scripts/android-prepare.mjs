@@ -3,13 +3,16 @@ import { readFile, writeFile, mkdir, cp } from 'node:fs/promises'
 import { editionManifest } from './android-manifest.mjs'
 import { jniKeepRules, patchRustWebViewFile } from './android-glue.mjs'
 const base = new URL('../src-tauri/gen/android/app/src/main/', import.meta.url)
+const largeScreen = process.argv.includes('--large-screen')
+const appPackage = largeScreen ? 'app.bilimusic.large' : 'app.bilimusic.mobile'
+const generatedWebView = `java/${appPackage.replaceAll('.', '/')}/generated/RustWebView.kt`
 
 // The release shrinker does not see Rust's JNI calls into the wry glue and would
 // strip the methods they target. `app/build.gradle.kts` applies every `.pro` file
 // in the app directory, so this file lands in the release build automatically.
 await writeFile(
   new URL('../src-tauri/gen/android/app/proguard-bilimusic-jni.pro', import.meta.url),
-  jniKeepRules('app.bilimusic.mobile'),
+  jniKeepRules(appPackage),
 )
 console.log('Android: the wry JNI glue is kept through release shrinking.')
 
@@ -17,7 +20,7 @@ console.log('Android: the wry JNI glue is kept through release shrinking.')
 // the platform and the non-null Kotlin return would crash the app. wry writes the
 // glue while the Rust library builds, so it may not exist yet; the Gradle hook
 // below patches it again before Kotlin compiles.
-const rustWebView = new URL('java/app/bilimusic/mobile/generated/RustWebView.kt', base)
+const rustWebView = new URL(generatedWebView, base)
 if (await patchRustWebViewFile(rustWebView)) {
   console.log('Android: an empty cookie lookup returns an empty string instead of crashing.')
 }
@@ -36,7 +39,8 @@ val patchWryGlue = tasks.register<Exec>("patchWryGlue") {
     workingDir = rootProject.projectDir
     commandLine("node",
         file("../../../../scripts/android-glue.mjs").absolutePath,
-        file("src/main/java/app/bilimusic/mobile/generated/RustWebView.kt").absolutePath)
+        file("src/main/${generatedWebView}").absolutePath)
+    mustRunAfter(tasks.matching { it.name.startsWith("rustBuild") })
 }
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach {
     dependsOn(patchWryGlue)
@@ -46,7 +50,7 @@ tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.c
 console.log('Android: the Kotlin glue is patched before it compiles.')
 const manifest = new URL('AndroidManifest.xml', base)
 let xml = await readFile(manifest, 'utf8')
-xml = editionManifest(xml, process.argv.includes('--large-screen'))
+xml = editionManifest(xml, largeScreen)
 xml = xml.replace(/ android:networkSecurityConfig="[^"]*"/g, '')
 xml = xml.replace(/<application\b/, '<application android:networkSecurityConfig="@xml/bilimusic_network_security"')
 // Keep the current WebView and video when the app requests landscape.
@@ -73,7 +77,7 @@ await cp(new URL('../src-tauri/.android-icons/android/', import.meta.url), new U
 const adaptive = await readFile(new URL('res/mipmap-anydpi-v26/ic_launcher.xml', base), 'utf8')
 await writeFile(new URL('res/mipmap-anydpi-v26/ic_launcher_round.xml', base), adaptive)
 
-if (process.argv.includes('--large-screen')) {
+if (largeScreen) {
   await mkdir(new URL('res/drawable/', base), { recursive: true })
   await cp(new URL('../assets/android/tv_banner.png', import.meta.url), new URL('res/drawable/tv_banner.png', base))
   const startup = new URL('../src-tauri/android/large-screen/', import.meta.url)

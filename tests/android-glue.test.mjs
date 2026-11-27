@@ -46,6 +46,7 @@ test('a missing glue file is left for the Gradle hook instead of failing the bui
   try {
     // `tauri android init` runs before wry writes the glue during the Rust build.
     assert.equal(await patchRustWebViewFile(file), false)
+    await assert.rejects(patchRustWebViewFile(file, { required: true }), { code: 'ENOENT' })
     await writeFile(file, WRY_055)
     assert.equal(await patchRustWebViewFile(file), true)
     assert.match(await readFile(file, 'utf8'), /getCookie\(url\) \?: ""/)

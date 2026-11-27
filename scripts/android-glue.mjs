@@ -60,12 +60,12 @@ export function patchEmptyCookies(kotlin) {
 // wry only writes the glue while the Rust library compiles, so on a fresh
 // `tauri android init` the file is not there yet; the Gradle hook patches it
 // later. Returns whether anything was changed.
-export async function patchRustWebViewFile(path) {
+export async function patchRustWebViewFile(path, { required = false } = {}) {
   let source
   try {
     source = await readFile(path, 'utf8')
   } catch (error) {
-    if (error.code === 'ENOENT') return false
+    if (error.code === 'ENOENT' && !required) return false
     throw error
   }
   const patched = patchEmptyCookies(source)
@@ -77,7 +77,7 @@ export async function patchRustWebViewFile(path) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const target = process.argv[2]
   if (!target) throw new Error('usage: node scripts/android-glue.mjs <RustWebView.kt>')
-  if (await patchRustWebViewFile(target)) {
+  if (await patchRustWebViewFile(target, { required: true })) {
     console.log('Android: an empty cookie lookup returns an empty string instead of crashing.')
   }
 }
