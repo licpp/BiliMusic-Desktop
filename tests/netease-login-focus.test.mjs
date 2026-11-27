@@ -29,7 +29,7 @@ test('Android restores the app page on every exit from embedded login', async ()
   assert.doesNotMatch(loop, /\breturn\b/)
   // Every exit carries the loop's value out: the result is left for the page
   // that the return reloads, and only then is the app page put back.
-  assert.match(loop, /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\);\s+result\s*$/)
+  assert.match(loop, /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\)\.await;\s+result\s*$/)
 })
 
 const source = await readFile(new URL('../src-tauri/src/interface/netease_login_focus.js', import.meta.url), 'utf8')

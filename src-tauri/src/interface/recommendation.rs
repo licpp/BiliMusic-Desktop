@@ -497,7 +497,7 @@ pub async fn netease_web_login(
         source: result.as_ref().ok().cloned(),
         error: result.as_ref().err().map(WebLoginOutcomeError::from),
     });
-    restore_app_page(&window, &app_url);
+    restore_app_page(&window, &app_url).await;
     result
 }
 
@@ -666,14 +666,59 @@ fn persist_web_login(
 /// Puts the app back on screen after the main webview showed the login page.
 /// Navigating is skipped when the page never left, so a failed attempt does
 /// not reload the app and drop its in-memory state for nothing.
+///
+/// `navigate` appends a history entry, and BACK follows that history once the
+/// app is back (the activity's back callback in `src-tauri/android/phone/`
+/// steps through it), so restoring that way would reopen the login page on the
+/// next BACK press. The login page instead steps back to the app page, which is
+/// still the first history entry, so the login entry leaves with it; a document
+/// that cannot run that script falls back to replacing its own entry with
+/// `location.replace`, and the plain navigation covers everything else.
 #[cfg(target_os = "android")]
-fn restore_app_page(window: &tauri::WebviewWindow, app_url: &tauri::Url) {
+async fn restore_app_page(window: &tauri::WebviewWindow, app_url: &tauri::Url) {
     let current = window.url().ok().map(|url| url.to_string());
     login_log(format!("restore current={current:?} app={app_url}"));
-    if window.url().ok().as_ref() != Some(app_url) {
-        login_log("restore navigating back to the app page");
-        let _ = window.navigate(app_url.clone());
+    if window.url().ok().as_ref() == Some(app_url) {
+        return;
     }
+    if window.url().ok().as_ref().is_some_and(is_netease_url) {
+        if window
+            .eval("if (history.length > 1) history.go(1 - history.length)")
+            .is_ok()
+        {
+            if wait_for_app_page(window, app_url).await {
+                login_log("restore stepped back to the app page");
+                return;
+            }
+            login_log("restore step back did not reach the app page");
+        }
+        let app = serde_json::to_string(app_url.as_str()).unwrap_or_default();
+        if window.url().ok().as_ref().is_some_and(is_netease_url)
+            && window
+                .eval(format!("window.location.replace({app})"))
+                .is_ok()
+        {
+            if wait_for_app_page(window, app_url).await {
+                login_log("restore replaced the login page entry");
+                return;
+            }
+            login_log("restore replace did not navigate");
+        }
+    }
+    login_log("restore navigating back to the app page");
+    let _ = window.navigate(app_url.clone());
+}
+
+/// The reload takes a moment; the caller needs to know whether it happened.
+#[cfg(target_os = "android")]
+async fn wait_for_app_page(window: &tauri::WebviewWindow, app_url: &tauri::Url) -> bool {
+    for _ in 0..10 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if window.url().ok().as_ref() == Some(app_url) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(desktop)]
