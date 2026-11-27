@@ -1,7 +1,25 @@
 // Run after `tauri android init`. Keep generated Gradle scaffolding reproducible.
 import { readFile, writeFile, mkdir, cp } from 'node:fs/promises'
 import { editionManifest } from './android-manifest.mjs'
+import { jniKeepRules, patchEmptyCookies } from './android-glue.mjs'
 const base = new URL('../src-tauri/gen/android/app/src/main/', import.meta.url)
+
+// The release shrinker does not see Rust's JNI calls into the wry glue and would
+// strip the methods they target. `app/build.gradle.kts` applies every `.pro` file
+// in the app directory, so this file lands in the release build automatically.
+await writeFile(
+  new URL('../src-tauri/gen/android/app/proguard-bilimusic-jni.pro', import.meta.url),
+  jniKeepRules('app.bilimusic.mobile'),
+)
+console.log('Android: the wry JNI glue is kept through release shrinking.')
+
+// A login page has no cookies yet, so the first `cookies_for_url` gets null from
+// the platform and the non-null Kotlin return would crash the app.
+const rustWebView = new URL('java/app/bilimusic/mobile/generated/RustWebView.kt', base)
+const rustWebViewSource = await readFile(rustWebView, 'utf8')
+const patchedRustWebView = patchEmptyCookies(rustWebViewSource)
+if (patchedRustWebView !== rustWebViewSource) await writeFile(rustWebView, patchedRustWebView)
+console.log('Android: an empty cookie lookup returns an empty string instead of crashing.')
 const manifest = new URL('AndroidManifest.xml', base)
 let xml = await readFile(manifest, 'utf8')
 xml = editionManifest(xml, process.argv.includes('--large-screen'))
