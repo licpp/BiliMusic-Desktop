@@ -91,6 +91,47 @@ Release APK 会经过 R8 压缩。Rust 通过 JNI 按类名和方法名调用 `g
 
 `getCookies` 本身还有一处平台差异：`CookieManager.getCookie` 在页面还没有 Cookie 时返回 null，而胶水声明的返回类型非空，Kotlin 的空检查会在 JNI 调用里直接抛异常。刚打开的登录页正是这种状态，所以第一次轮询就会闪退。`scripts/android-glue.mjs` 把胶水里的 `getCookie(url)` 补成 `?: ""`（wry 0.57 的上游修复），并在找不到预期代码时让构建失败，而不是悄悄跳过。
 
+## 真机调试
+
+### WebView 远程调试
+
+只有调试包能远程调试 WebView：wry 在非 release 编译时才调用 `setWebContentsDebuggingEnabled(true)`，Release 包因此没有可连接的调试 socket。装好调试包后，把应用进程的调试端口转发到本机：
+
+```sh
+adb shell pidof app.bilimusic.mobile                  # 进程号每次启动都会变
+adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>
+curl http://127.0.0.1:9222/json/list                  # 或打开 chrome://inspect/#devices
+```
+
+无线调试与 USB 的用法相同，`adb forward`、`adb reverse` 都绑定在当前这次 adb 连接上。先用 `adb tcpip 5555` 再 `adb connect <手机IP>:5555`（Android 11 及以上也可用「无线调试」配对），之后可以拔线。电脑连手机热点时，地址要填手机自身的局域网 IP，而不是热点网关；`adb devices` 里显示的序列号就是要连的地址。
+
+`/json/list` 返回的 `webSocketDebuggerUrl` 可以接任何 CDP 客户端，不需要额外开端口。页面里直接有 Tauri 的命令通道，`window.__TAURI_INTERNALS__.invoke(命令名, 参数)` 和界面按钮走的是同一条路径，适合在不改界面代码的前提下驱动应用。常用的 CDP 命令：
+
+- `Runtime.evaluate`：执行表达式，读取 `location.href`、DOM 状态，或直接调用上面的 `invoke`。加 `awaitPromise` 可以等异步结果。
+- `Network.enable` 加 `Network.getAllCookies`：列出 Cookie 的域名、名称、`httpOnly` 和有效期。排查登录态要用它，但 Cookie 值是凭据，不能写进日志、文档或截图。
+- `Network.deleteCookies`：按名称、域名、路径删除单个 Cookie。
+
+两个容易踩的点：应用重启后进程号变化，端口转发要按新进程号重建，否则 CDP 连接会被拒绝；`WebviewWindow::navigate` 是整页重载而不是「关闭弹窗」，应用内网页登录把主 WebView 换成登录页再换回来时，React 状态全部丢失，调试时应按重载后的新页面来看待。
+
+网页登录流程的诊断输出在 logcat 的 `BiliMusicLogin` 标签下，只记录页面地址、Cookie 名称和账号接口结果，不含凭据：
+
+```sh
+adb logcat -s BiliMusicLogin
+```
+
+### 只改前端时的快速循环
+
+dev 构建（不启用 `custom-protocol` 特性）会加载 `tauri.conf.json` 里的 `devUrl`（默认 `http://localhost:1420`）而不是打包进 APK 的资源。让手机上的 `localhost` 指向电脑的 Vite 服务即可：
+
+```sh
+adb reverse tcp:1420 tcp:1420   # 手机 localhost:1420 → 本机
+npm run dev                     # 另开一个终端常驻
+```
+
+这样 Rust 只需编译安装一次，之后改前端由 Vite 的热更新生效。网络安全配置已经对 `localhost`/`127.0.0.1` 放开明文 HTTP，不需要额外改配置。`npm run android:dev` 会把这套环境串起来；它和正式构建的差别只在前面的特性开关，正式构建务必用 `android:build` 验证。
+
+Windows 上 `tauri android build` 会在把编译好的 `.so` 链接进 `jniLibs` 时失败（默认账户没有创建符号链接的权限）。开启「开发者模式」即可；或者在 CLI 完成 Rust 编译后，自行把 `target/aarch64-linux-android/<profile>/libbilimusic_lib.so` 复制到 `gen/android/app/src/main/jniLibs/arm64-v8a/`，再用 Gradle 打包并签名，跳过会重建 Rust 的任务。
+
 ## 下载目录
 
 设置 → 音乐资料 → 已下载音乐，展开后可选择保存文件夹。下载歌曲的底部面板也提供同一入口，选择会保存在本机，不参与云同步。取消选择不改变原目录；目录授权失效时需重新选择，不会悄悄改存其他位置。Android 11 及以上限制授权“下载”根目录，可在其中创建并选择子文件夹，或使用默认公共下载目录。
