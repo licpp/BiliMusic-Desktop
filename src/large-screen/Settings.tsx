@@ -1,3 +1,4 @@
+import { SearchPageSettings } from '../features/settings/SearchPageSettings'
 import { LoudnessSettings } from '../features/settings/LoudnessSettings'
 import { SystemTitleLyricsSettings } from '../features/settings/SystemTitleLyricsSettings'
 import { accountQueryKey, accountQueryFilter, resetAccountQueries } from '../services/queryKeys'
@@ -33,7 +34,7 @@ export function LargeSettings() {
       <div className="large-setting-row"><span>界面大小</span><div className="large-options">{[0.9, 1, 1.15].map((value, i) => <button key={value} aria-pressed={size === value} onClick={() => { setSize(value); localStorage.setItem('large-ui-size', String(value)); document.documentElement.style.setProperty('--large-scale', String(value)) }}>{['紧凑', '标准', '较大'][i]}</button>)}</div></div>
       <div className="large-setting-row"><span>歌词字号</span><div className="large-options">{[0.85, 1, 1.2].map((value, i) => <button key={value} aria-pressed={lyrics === value} onClick={() => { setLyrics(value); localStorage.setItem('large-lyrics-size', String(value)); document.documentElement.style.setProperty('--large-lyric-scale', String(value)) }}>{['小', '标准', '大'][i]}</button>)}</div></div>
       <button className="large-setting-toggle" aria-pressed={awake} onClick={() => { const next = !awake; setAwake(next); localStorage.setItem('large-keep-awake', String(next)); window.dispatchEvent(new Event('bilimusic-display-changed')) }}><Sun/><span>播放页面保持亮屏</span><small>{awake ? '已开启' : '未开启'}</small></button>
-    </section></>
+    </section><div className="large-settings-common"><SearchPageSettings/></div></>
 }
 
 function LargeAccount() {

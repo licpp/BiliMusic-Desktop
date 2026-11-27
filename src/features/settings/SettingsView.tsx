@@ -1,3 +1,4 @@
+import { SearchPageSettings } from './SearchPageSettings'
 import { LoudnessSettings } from './LoudnessSettings'
 import { SystemTitleLyricsSettings } from './SystemTitleLyricsSettings'
 import { accountQueryKey } from '../../services/queryKeys'
@@ -44,6 +45,7 @@ export function SettingsView({ embedded = false, onOpenDownloads }: { embedded?:
     {!embedded && <header><h2>设置</h2><p>让音乐按你的习惯播放。</p></header>}
     <section className="settings-group" aria-labelledby="settings-appearance"><h3 id="settings-appearance">外观</h3><div className="settings-group-body">
       <div className="settings-card"><div className="settings-icon"><Sun/></div><div><strong>主题</strong><small>选择你喜欢的明暗</small></div><div className="theme-options" role="group" aria-label="主题外观"><button type="button" className={themePreference === 'dark' ? 'selected' : ''} aria-pressed={themePreference === 'dark'} onClick={() => setTheme('dark')}><Moon size={14}/><span>深色</span></button><button type="button" className={themePreference === 'light' ? 'selected' : ''} aria-pressed={themePreference === 'light'} onClick={() => setTheme('light')}><Sun size={14}/><span>浅色</span></button>{followsSystem && <button type="button" className={themePreference === 'system' ? 'selected' : ''} aria-pressed={themePreference === 'system'} onClick={() => setTheme('system')}><ThemeSystemIcon size={14}/><span>跟随系统</span></button>}</div></div>
+      <SearchPageSettings/>
     </div></section>
     <section className="settings-group" aria-labelledby="settings-playback"><h3 id="settings-playback">播放与歌词</h3><div className="settings-group-body">
       <WindowCloseSettings/>

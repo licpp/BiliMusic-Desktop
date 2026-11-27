@@ -61,6 +61,7 @@ import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from '../features
 import { ImportedPlaylistCompletionContent } from '../features/library/ImportedPlaylistCompletion'
 import { LargeDialog } from './LargeDialog'
 import { LargeLibraryImport } from './LibraryImport'
+import { useSearchPagePreference } from '../services/searchPagePreference'
 import { ExploreLanding } from '../features/search/ExploreLanding'
 import { dismissLargeKeyboard } from './keyboard'
 import { useVideoEntry } from './useVideoEntry'
@@ -382,6 +383,7 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind, onBack }
   const videoTab = useRef<HTMLButtonElement>(null)
   const focusResults = useRef(false)
   const history = useQuery({ queryKey: accountQueryKey('search-history'), queryFn: listSearchHistory })
+  const simpleSearch = useSearchPagePreference(state => state.simple)
   const opener = useVideoEntry(navigate, `${kind}:${query}`)
   const results = useInfiniteQuery({ queryKey: accountQueryKey('large-search', kind, query), initialPageParam: 1, enabled: Boolean(query), queryFn: async ({ pageParam }) => kind === 'video' ? { videos: await searchBilibili(query, pageParam), creators: undefined } : { videos: undefined, creators: await catalog('search', undefined, pageParam, query) }, getNextPageParam: last => last.videos ? last.videos.page * last.videos.pageSize < last.videos.total ? last.videos.page + 1 : undefined : last.creators && last.creators.page * 20 < (last.creators.data.numResults || 0) ? last.creators.page + 1 : undefined })
   useLayoutEffect(() => {
@@ -409,7 +411,7 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind, onBack }
   return <>
     <header className="large-explore-top">
       <button type="button" className="large-icon" aria-label="返回上一页" onClick={query ? () => submit('') : onBack}><ArrowLeft/></button>
-      {!query && <h1>探索</h1>}
+      {!simpleSearch && !query && <h1>探索</h1>}
       <form className="large-search" onSubmit={event => { event.preventDefault(); submit(input) }}>
         <Search size={22}/>
         <input ref={inputRef} data-primary-focus data-focus="search-input" value={input} onChange={event => setInput(event.target.value)}
@@ -418,13 +420,16 @@ export function LargeSearch({ query, setQuery, navigate, kind, setKind, onBack }
         <button className="large-primary" type="submit">搜索</button>
       </form>
     </header>
-    <ExploreLanding active={!query} history={history.data ?? []} onSearch={exploreSearch}
-      onOpenRecommendation={() => navigate({ kind: 'recommendations' })} onOpenBiliFeed={() => navigate({ kind: 'bili-feed' })}/>
+    {!simpleSearch && <ExploreLanding active={!query} history={history.data ?? []} onSearch={exploreSearch}
+      onOpenRecommendation={() => navigate({ kind: 'recommendations' })} onOpenBiliFeed={() => navigate({ kind: 'bili-feed' })}/>}
+    {(query || simpleSearch) && <div className="large-tabs" role="tablist" aria-label="搜索类型">
+      {(['video', 'creator'] as const).map((tab, index) => <button ref={tab === 'video' ? videoTab : undefined}
+        type="button" role="tab" aria-selected={kind === tab} key={tab} onClick={() => setKind(tab)}>{['视频', 'UP主'][index]}</button>)}
+    </div>}
+    {simpleSearch && !query && Boolean(history.data?.length) && <div className="large-history" aria-label="搜索历史">
+      {history.data?.map(keyword => <button type="button" key={keyword} onClick={() => submit(keyword)}>{keyword}</button>)}
+    </div>}
     {query && <>
-      <div className="large-tabs" role="tablist" aria-label="搜索类型">
-        {(['video', 'creator'] as const).map((tab, index) => <button ref={tab === 'video' ? videoTab : undefined}
-          type="button" role="tab" aria-selected={kind === tab} key={tab} onClick={() => setKind(tab)}>{['视频', 'UP主'][index]}</button>)}
-      </div>
       <Failure error={results.error} retry={() => void results.refetch()}/>
       <Failure error={opener.error}/>
       <div className="large-grid large-search-results">

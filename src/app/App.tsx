@@ -74,6 +74,8 @@ import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/player
 import { installWindowShortcuts } from './windowShortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
 import { BilibiliFeedView, SearchView } from '../features/search/SearchView'
+import { useSearchPagePreference } from '../services/searchPagePreference'
+import { SimpleSearchLanding } from '../features/search/SimpleSearchLanding'
 import { ExploreLanding } from '../features/search/ExploreLanding'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
 import { SearchField } from '../features/search/SearchField'
@@ -294,7 +296,9 @@ export function App() {
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined || activeCreatorFolder!==undefined
   const searchActive = activeNav === '探索' && !selectedCollection
-  const exploreLandingActive = searchActive && !submittedQuery
+  const simpleSearch = useSearchPagePreference(state => state.simple)
+  const searchLabel = simpleSearch ? '搜索' : '探索'
+  const exploreLandingActive = !simpleSearch && searchActive && !submittedQuery
   const homeActive = !selectedCollection && (activeNav === '此刻' || compact && activeNav === '收藏库')
   const hubActive = !selectedCollection && !compact && activeNav === '收藏库'
   const musicActive = !selectedCollection && activeNav === '音乐库'
@@ -661,11 +665,11 @@ export function App() {
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
               onClick={() => { libraryReturn.current = null; if (label === '探索') { if (exploreDetail) closeExploreDetail(); else openSearch(); return }; setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false) }}
-              title={label}
-              aria-label={label === '我的' ? `我的${syncAttention ? `，${syncAttention}` : updateAvailable ? '，有新版本' : ''}` : label}
+              title={label === '探索' ? searchLabel : label}
+              aria-label={label === '我的' ? `我的${syncAttention ? `，${syncAttention}` : updateAvailable ? '，有新版本' : ''}` : label === '探索' ? searchLabel : label}
               aria-current={navIsActive(label) ? 'page' : undefined}
             >
-              <Icon size={20} />{label === '我的' && syncAttention && <span className="sync-nav-warning" aria-hidden="true">!</span>}{label === '我的' && updateAvailable && !syncAttention && <span className="update-nav-dot" aria-hidden="true"/>}<span className="mobile-nav-label">{label}</span>
+              <Icon size={20} />{label === '我的' && syncAttention && <span className="sync-nav-warning" aria-hidden="true">!</span>}{label === '我的' && updateAvailable && !syncAttention && <span className="update-nav-dot" aria-hidden="true"/>}<span className="mobile-nav-label">{label === '探索' ? searchLabel : label}</span>
             </button>
           ))}
         </nav>
@@ -711,7 +715,7 @@ export function App() {
         </header> : <form className={`topbar ${searchActive ? 'searching' : ''}${exploreLandingActive ? ' explore-topbar' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
             {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
-            <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
+            <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : searchActive ? searchLabel : activeNav)}</strong>
           </div>
           {exploreLandingActive ? <h1 className="explore-topbar-title">探索</h1> :
             <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (searchActive && submittedQuery) ? '返回上一页' : '返回主页'}
@@ -727,9 +731,10 @@ export function App() {
         </form>}
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>
-          <ExploreLanding active={exploreLandingActive} history={searchHistory.data || []} onSearch={runSearch}
-            onOpenRecommendation={() => openExploreDetail('每日推荐')} recommendationRef={recommendationEntry}
-            onOpenBiliFeed={() => openExploreDetail('B 站推荐')} biliFeedRef={biliFeedEntry}/>
+          {simpleSearch ? !submittedQuery && <SimpleSearchLanding onSearch={runSearch}/> :
+            <ExploreLanding active={exploreLandingActive} history={searchHistory.data || []} onSearch={runSearch}
+              onOpenRecommendation={() => openExploreDetail('每日推荐')} recommendationRef={recommendationEntry}
+              onOpenBiliFeed={() => openExploreDetail('B 站推荐')} biliFeedRef={biliFeedEntry}/>}
           {submittedQuery && <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection}/>}
         </div>
         <div className="stage-scroll" ref={contentScroll} hidden={!detailActive}>

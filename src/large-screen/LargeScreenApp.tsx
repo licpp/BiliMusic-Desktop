@@ -32,6 +32,7 @@ import { LargeTrackActions, type LinkedTrackActions } from './TrackActions'
 import { LargeOffline } from './Offline'
 import { currentDisplayVersion } from '../shared/version'
 import { RecommendationView } from '../features/recommendations/RecommendationView'
+import { useSearchPagePreference } from '../services/searchPagePreference'
 import { LargeBilibiliFeed } from './BilibiliFeed'
 
 type ReturnPoint = { route: Route; scroll: number; focus?: FocusBookmark }
@@ -113,13 +114,14 @@ export function LargeScreenApp() {
   const activePlaylist = route.kind === 'playlist' ? route.playlist : route.kind === 'player' ? route.previewFrom : undefined
   const filterKey = route.kind === 'folder' ? `folder:${route.id}` : activePlaylist ? `playlist:${activePlaylist.id}` : route.kind === 'collection' ? `collection:${route.item.bvid}` : `library:${tab}`
   const filterState: [string, (value: string) => void] = [filters[filterKey] || '', value => setFilters(previous => ({ ...previous, [filterKey]: value }))]
+  const simpleSearch = useSearchPagePreference(state => state.simple)
   const active = exploreDetail ? 'search' : ['playlist', 'folder', 'collection', 'creator'].includes(route.kind) ? 'library' : route.kind
   return <div onSubmitCapture={dismissLargeKeyboard} className={`large-shell${route.kind === 'player' ? ' player-open' : route.kind === 'home' ? ' home-open' : ''}`}>
     <nav className="large-nav" aria-label="主导航">
       <button className="large-brand" aria-label="BiliMusic首页" onClick={() => navigate({ kind: 'home' })}><img src="/app-icon.png" alt=""/><span>BiliMusic</span></button>
       <div className="large-nav-items">
         {([{ kind: 'home', title: '首页', Icon: Home }, { kind: 'library', title: '音乐库', Icon: Library },
-          { kind: 'search', title: '探索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download },
+          { kind: 'search', title: simpleSearch ? '搜索' : '探索', Icon: Search }, { kind: 'offline', title: '离线', Icon: Download },
           { kind: 'settings', title: '设置', Icon: Settings }] as const).map(({ kind, title, Icon }) =>
           <button data-focus={`nav-${kind}`} key={kind} aria-current={active === kind ? 'page' : undefined} onClick={() => {
             if (kind === 'search' && exploreDetail) back()

@@ -299,7 +299,7 @@ test('player header stays in toolbar order and the video window has an exit to b
 })
 test('large-screen navigation opens both recommendation feeds within Explore',async()=>{
  const app=await readFile('src/large-screen/LargeScreenApp.tsx','utf8')
- assert.match(app,/kind: 'search', title: '探索'/)
+ assert.match(app,/kind: 'search', title: simpleSearch \? '搜索' : '探索'/)
  assert.doesNotMatch(app,/kind: 'recommendations', title:/)
  assert.match(app,/exploreDetail = route\.kind === 'recommendations' \|\| route\.kind === 'bili-feed'/)
  assert.match(app,/exploreDetail \? 'search'/)
