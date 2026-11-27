@@ -27,7 +27,9 @@ use infrastructure::database::Database;
 use infrastructure::media_proxy::MediaProxy;
 use infrastructure::providers::bilibili::BilibiliProvider;
 use infrastructure::providers::lrclib::LrclibProvider;
-use infrastructure::providers::music_catalog::MusicCatalogProvider;
+use infrastructure::providers::{
+    hot_search::HotSearchProvider, music_catalog::MusicCatalogProvider,
+};
 use infrastructure::repositories::auth::AuthRepository;
 use tauri::Manager;
 
@@ -118,6 +120,12 @@ pub fn run() {
             app.manage(bilibili);
             app.manage(LrclibProvider::new()?);
             app.manage(MusicCatalogProvider::new()?);
+            app.manage(HotSearchProvider::new(
+                app.path()
+                    .app_cache_dir()
+                    .ok()
+                    .map(|path| path.join("music-hot-search-v1")),
+            )?);
             global_shortcuts::start(app.handle().clone());
             #[cfg(desktop)]
             app.manage(mini_player::MiniPlayerState::default());
@@ -251,7 +259,9 @@ pub fn run() {
             interface::commands::library_toggle_favorite,
             interface::commands::library_update_metadata,
             interface::commands::bili_search,
+            interface::commands::bili_personalized_feed,
             interface::commands::bili_search_suggestions,
+            interface::hot_search::hot_search_chart,
             interface::commands::search_history_list,
             interface::commands::search_history_clear,
             interface::commands::playlists_list,
@@ -297,6 +307,7 @@ pub fn run() {
             interface::recommendation::recommendation_refresh,
             interface::recommendation::recommendation_bind,
             interface::recommendation::recommendation_bind_manual,
+            interface::recommendation::recommendation_prepare_tracks,
             interface::recommendation::recommendation_match_fail,
             interface::recommendation::recommendation_match_reset,
             interface::recommendation::recommendation_source_rename,
@@ -326,6 +337,7 @@ pub fn run() {
             interface::commands::lyrics_complete_selected,
             interface::commands::lyrics_restore_selected,
             interface::commands::lyrics_save,
+            interface::commands::lyrics_clear,
             interface::commands::lyrics_save_with_metadata,
             interface::commands::lyrics_set_bias,
             interface::downloads::mobile_download_directory,

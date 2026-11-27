@@ -147,7 +147,7 @@ class FloatingLyricsRendererTest {
             val second=label("又起风了",true).apply{setTextColor(0xFF91A6B5.toInt())}
             var language = FloatingLyricsLanguage.ORIGINAL
             val actions = mutableListOf<FloatingLyricsToolbar.Action>()
-            val toolbar = FloatingLyricsToolbar(context) { actions += it }
+            val toolbar = FloatingLyricsToolbar(context) { actions += it }.apply { showLanguage(true) }
             val rows = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding((12 * density).toInt(), (8 * density).toInt(), (4 * density).toInt(), (8 * density).toInt())
@@ -178,6 +178,12 @@ class FloatingLyricsRendererTest {
             toolbar.displayFontSize(28f)
             hitTargets[3].performClick()
             assertEquals(FloatingLyricsToolbar.Action.LOCK,actions.last())
+            toolbar.showLanguage(false)
+            assertEquals(View.GONE, languageButton.visibility)
+            assertEquals(View.GONE, toolbar.getChildAt(1).visibility)
+            toolbar.showLanguage(true)
+            assertEquals(View.VISIBLE, languageButton.visibility)
+            assertEquals("双语", languageLabel.text.toString())
             arrange(rows, rows.width)
             val path=File("build/reports/lyric-previews/android-lyrics-$name.png");path.parentFile.mkdirs()
             path.outputStream().use{pixels(rows).compress(Bitmap.CompressFormat.PNG,100,it)}

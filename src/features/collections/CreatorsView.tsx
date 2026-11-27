@@ -5,6 +5,7 @@ import { accountQueryKey } from '../../services/queryKeys'
 import { VideoResultRow } from '../../shared/VideoResultRow'
 import { ScopedSearchField } from '../search/ScopedSearchField'
 import { FolderMenu } from './CollectionFolderControls'
+import { CreatorFolderArtwork } from './CreatorFolderArtwork'
 import { LibraryEntry } from '../library/LibraryEntry'
 import { CreatorActions, CreatorManager } from './CreatorTools'
 import { formatAudienceCount } from '../../shared/count'
@@ -17,7 +18,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { UserRound, ArrowLeft, Folder, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
+import { UserRound, ArrowLeft, ChevronDown, ChevronRight, Bookmark, Check, RefreshCw, Play, LoaderCircle } from 'lucide-react'
 import {
   changeCollection,
   listCollections,
@@ -186,7 +187,10 @@ export function CreatorsView({
       {followed && root && <CreatorManager sidebar={sidebar} expanded={expanded} actionsHost={actionsHost} onToggle={()=>setExpanded(value=>{localStorage.setItem('creators-expanded',String(!value));return !value})} items={items}/>}
       {followed&&!root&&<div className="collections-heading"><h3>{folders.find(f=>f.id===selectedFolder)?.name||'关注文件夹'}</h3><div className="collections-heading-actions">{!folderId&&<button className="collection-icon" aria-label="返回关注" onClick={()=>setGroup('all')}><ArrowLeft size={18}/></button>}{folders.filter(f=>f.id===selectedFolder).map(folder=><FolderMenu key={folder.id} creator folder={folder} onChanged={()=>void saved.refetch()} onRemoved={()=>{setGroup('all');onFolderRemoved?.(folder.id)}}/>)}</div></div>}
       <div hidden={sidebar && !expanded}>
-      {followed&&root&&folders.map(folder=><LibraryEntry coverBadge="folder" key={folder.id} title={folder.name} subtitle={`${items.filter(item=>item.folderId===folder.id).length} 位 UP 主`} sidebar={sidebar} cover={<Artwork fallback={<Folder aria-hidden="true"/>}/>} onOpen={()=>openFolder(folder.id)} menu={position=><FolderMenu creator folder={folder} contextPosition={position} onOpen={()=>openFolder(folder.id)} onChanged={()=>void saved.refetch()} onRemoved={()=>{if(selectedFolder===folder.id)setGroup('all');onFolderRemoved?.(folder.id)}}/>}/>)}
+      {followed&&root&&folders.map(folder=>{
+        const members = items.filter(item => item.folderId === folder.id)
+        return <LibraryEntry key={folder.id} title={folder.name} subtitle={`${members.length} 位 UP 主`} sidebar={sidebar} cover={<CreatorFolderArtwork id={folder.id}/>} onOpen={()=>openFolder(folder.id)} menu={position=><FolderMenu creator folder={folder} contextPosition={position} onOpen={()=>openFolder(folder.id)} onChanged={()=>void saved.refetch()} onRemoved={()=>{if(selectedFolder===folder.id)setGroup('all');onFolderRemoved?.(folder.id)}}/>}/>
+      })}
       {(result.error || saved.error) && (
         <p role="alert">{commandErrorMessage(result.error || saved.error)}</p>
       )}

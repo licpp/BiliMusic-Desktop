@@ -66,7 +66,7 @@ export function SearchField(props: Props) {
           event.preventDefault(); choose(options[active])
         }
       }} placeholder="搜索歌曲、歌手、BV 号或链接" />
-    {props.value && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回搜索首页"
+    {props.value && <button type="button" className="icon-action search-reset" aria-label="清空搜索并返回探索"
       onMouseDown={event => { if (document.activeElement === input.current) event.preventDefault() }}
       onClick={clear}><X size={16}/></button>}
     {visible && <div className="search-history-popover search-suggestions" id="search-suggestions" role="listbox" aria-label={isHistory ? '搜索历史' : 'B站搜索建议'}>

@@ -59,12 +59,7 @@
 .search-result-heading { display:flex;align-items:center;gap:0;padding-right:10px; }
 .search-result-heading .result-main { flex:1;min-width:0; }
 .search-result-heading > .action-menu-trigger { border:0; }
-.lyrics-view { isolation:isolate;--lyrics-shade:rgba(3,10,17,.68); }
-.lyrics-backdrop { position:absolute;inset:0;z-index:-1;overflow:hidden;contain:strict;pointer-events:none; }
-.lyrics-backdrop::after { content:'';position:absolute;inset:0;background:var(--lyrics-shade); }
-.lyrics-backdrop img { position:absolute;left:50%;top:50%;width:256px;height:256px;object-fit:cover;filter:blur(22px) saturate(1.25);opacity:0;transition:opacity .4s ease; }
-.lyrics-backdrop img.ready { opacity:1; }
-:root[data-theme="light"] .lyrics-view { --lyrics-shade:rgba(248,250,253,.73); }
+.lyrics-view { isolation:isolate; }
 .lyrics-actions { align-items:center; }
 .lyrics-actions .lyrics-comments-trigger { width:38px;height:38px;padding:0;justify-content:center; }
 .lyrics-bias { transition:opacity .2s ease; }
@@ -87,7 +82,6 @@
   .part-entry { flex-wrap:wrap; }
   .part-entry > button:first-child { flex-basis:calc(100% - 108px); }
 }
-@media (prefers-reduced-motion:reduce) { .lyrics-backdrop img { transition:none; } }
 
 /* Library rows reserve one compact actions column on every platform. */
 .library-track-actions { display:flex; gap:2px; justify-content:flex-end; }

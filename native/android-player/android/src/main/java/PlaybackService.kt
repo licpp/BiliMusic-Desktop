@@ -210,7 +210,7 @@ class PlaybackService : MediaSessionService() {
         val profile = currentProfile() ?: return
         if (frame.optString("id") != id || frame.optString("session") != lyricSession() ||
             profile != listeningProfile || playbackLyricsAccount != queue.accountSession ||
-            (frame.optJSONArray("lines")?.length() ?: 0) == 0 ||
+            (frame.optJSONArray("lines")?.length() ?: 0) == 0 && !frame.optBoolean("cleared") ||
             frame.optBoolean("subtitles") && !FloatingLyricsOverlay.wantsSubtitles(this)) return
         lyricRequests.supersede()
         FloatingLyricsOverlay.setTimeline(frame)

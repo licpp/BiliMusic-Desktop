@@ -49,7 +49,6 @@ export async function automaticLyricBias(source: TrackSource, lines: readonly Ly
   }
   if (translatedMatch && failure === 'insufficient') return translatedMatch
   if (!failure && fetchError) throw fetchError
-  throw new Error(failure === 'range' ? '时间差超过 30 秒，请更换歌词版本'
-    : failure === 'inconsistent' ? '各段歌词时间差不同，请手动调整或更换版本'
+  throw new Error(failure === 'inconsistent' ? '各段歌词时间差不同，请手动调整或更换版本'
     : '未找到与歌词一致的字幕，请手动微调')
 }

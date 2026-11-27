@@ -73,7 +73,8 @@ import {
 import { startPlaybackOnLaunch, usePlayerStore } from '../features/player/playerStore'
 import { installWindowShortcuts } from './windowShortcuts'
 import { connectMediaSession } from '../features/player/mediaSession'
-import { SearchView } from '../features/search/SearchView'
+import { BilibiliFeedView, SearchView } from '../features/search/SearchView'
+import { ExploreLanding } from '../features/search/ExploreLanding'
 import { ScopedSearchField } from '../features/search/ScopedSearchField'
 import { SearchField } from '../features/search/SearchField'
 import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
@@ -104,12 +105,12 @@ import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
 import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
-import { RecommendationHomeEntry, RecommendationView } from '../features/recommendations/RecommendationView'
+import { RecommendationView } from '../features/recommendations/RecommendationView'
 import { PictureInPicture2 } from 'lucide-react'
 
 const navigation = [
   { label: '此刻', icon: Home },
-  { label: '搜索', icon: Search },
+  { label: '探索', icon: Search },
   { label: '音乐库', icon: Library },
   { label: '收藏库', icon: ListMusic },
   { label: '我的', icon: UserRound },
@@ -150,6 +151,10 @@ export function App() {
   const activeStageScroll = () => stageFrame.current?.querySelector<HTMLElement>(':scope > .stage-scroll:not([hidden])')
   const previewHost = useRef<HTMLDivElement>(null)
   const searchReturn = useRef<ReturnType<typeof captureStagePreview>>(undefined)
+  const recommendationReturn = useRef<ReturnType<typeof captureStagePreview>>(undefined)
+  const recommendationEntry = useRef<HTMLButtonElement>(null)
+  const biliFeedEntry = useRef<HTMLButtonElement>(null)
+  const exploreFocus = useRef<'每日推荐' | 'B 站推荐'>(undefined)
   const stagePreview = () => isMobile ? captureStagePreview(stageFrame.current) : undefined
   const collectionHistory = useRef<{ item: Collection | null; scroll: number; lyrics: boolean; search:string; preview?: ReturnType<typeof captureStagePreview> }[]>([])
   const libraryReturn = useRef<{ nav: string; preview?: ReturnType<typeof captureStagePreview> } | null>(null)
@@ -194,7 +199,7 @@ export function App() {
     scrollCollection(origin?.scroll ?? 0)
   }
   useEffect(() => {
-    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setRematchPlaylist(undefined); setSleepTimerOpen(false); setLyricsOpen(false); libraryReturn.current = null; searchReturn.current = undefined }
+    const clear = () => { resetCollection(); setActiveNav('此刻'); setImportOpen(false); setRematchPlaylist(undefined); setSleepTimerOpen(false); setLyricsOpen(false); libraryReturn.current = null; searchReturn.current = undefined; recommendationReturn.current = undefined; exploreFocus.current = undefined }
     window.addEventListener('bilimusic-account-changing', clear)
     return () => window.removeEventListener('bilimusic-account-changing', clear)
   }, [])
@@ -288,11 +293,14 @@ export function App() {
   const activeFolder = activeNav.startsWith('collections:') ? activeNav.slice('collections:'.length) : undefined
   const activeCreatorFolder=activeNav.startsWith('creator-folder:')?activeNav.slice('creator-folder:'.length):undefined
   const libraryDetail = activeNav.startsWith('playlist:') || activeFolder !== undefined || activeCreatorFolder!==undefined
-  const searchActive = activeNav === '搜索' && !selectedCollection
+  const searchActive = activeNav === '探索' && !selectedCollection
+  const exploreLandingActive = searchActive && !submittedQuery
   const homeActive = !selectedCollection && (activeNav === '此刻' || compact && activeNav === '收藏库')
   const hubActive = !selectedCollection && !compact && activeNav === '收藏库'
   const musicActive = !selectedCollection && activeNav === '音乐库'
   const recommendationActive = !selectedCollection && activeNav === '每日推荐'
+  const biliFeedActive = !selectedCollection && activeNav === 'B 站推荐'
+  const exploreDetail = recommendationActive || biliFeedActive
   const creatorsActive = !selectedCollection && activeNav === '关注'
   const settingsActive = !selectedCollection && activeNav === '我的'
   const detailActive = !!selectedCollection || libraryDetail
@@ -304,14 +312,21 @@ export function App() {
   const recentHomeRows = useListRows(recentHomeTracks || [], 'home-recent', { active: recentHomeActive })
   useListReveal(recentHomeTable, loadingRecentHome, Boolean(recentHomeTracks?.length), recentHomeActive)
   const pageKey = selectedCollection ? `collection:${selectedCollection.bvid}` : searchActive ? `search:${submittedQuery}` : activeNav
-  const pageDepth = Number(libraryDetail) + Number(activeNav === '搜索' && Boolean(submittedQuery)) + (selectedCollection ? collectionHistory.current.length : 0)
+  const pageDepth = Number(libraryDetail) + Number(activeNav === '每日推荐' || activeNav === 'B 站推荐' || activeNav === '探索' && Boolean(submittedQuery)) + (selectedCollection ? collectionHistory.current.length : 0)
   const backPreview = selectedCollection ? collectionHistory.current.at(-1)?.preview :
-    libraryDetail ? libraryReturn.current?.preview : searchActive && submittedQuery ? searchReturn.current : undefined
+    libraryDetail ? libraryReturn.current?.preview : exploreDetail ? recommendationReturn.current :
+    searchActive && submittedQuery ? searchReturn.current : undefined
   useLayoutEffect(() => {
     if (previewHost.current) mountStagePreview(previewHost.current, backPreview)
   }, [backPreview])
   usePageMotion(isMobile ? stageFrame : searchActive ? searchScroll : contentScroll, pageKey, pageDepth, isMobile, undefined, pageDepth > 0)
-  const navIsActive = (label: string) => activeNav === label || (libraryDetail && label === (compact ? '此刻' : '收藏库'))
+  useLayoutEffect(() => {
+    if (!exploreLandingActive || !exploreFocus.current) return
+    const entry = exploreFocus.current === '每日推荐' ? recommendationEntry : biliFeedEntry
+    exploreFocus.current = undefined
+    entry.current?.focus({ preventScroll: true })
+  }, [exploreLandingActive])
+  const navIsActive = (label: string) => activeNav === label || (exploreDetail && label === '探索') || (libraryDetail && label === (compact ? '此刻' : '收藏库'))
   useEffect(resetCollection, [activeNav])
 
   const openLibraryPage = (nav: string) => {
@@ -319,7 +334,7 @@ export function App() {
     setLyricsOpen(false)
     if (nav === activeNav) return
     if (!libraryDetail) {
-      const origin = activeNav === '搜索' ? (compact ? '此刻' : '收藏库') : activeNav
+      const origin = activeNav === '探索' ? (compact ? '此刻' : '收藏库') : activeNav
       libraryReturn.current = { nav: origin, preview: stagePreview() }
     }
     setActiveNav(nav)
@@ -438,7 +453,7 @@ export function App() {
   }
 
   const openSearch = (value?: string, keepInputFocus = false) => {
-    resetCollection(); setActiveNav('搜索'); setLyricsOpen(false)
+    resetCollection(); setActiveNav('探索'); setLyricsOpen(false)
     if (value !== undefined) {
       if (!value.trim()) searchReturn.current = undefined
       else if (searchActive && !submittedQuery) searchReturn.current = stagePreview()
@@ -448,6 +463,16 @@ export function App() {
   const openSearchInput = () => {
     // iOS only shows the keyboard when focus happens within the original tap.
     focusSearch(() => openSearch(), searchInput)
+  }
+  const openExploreDetail = (page: '每日推荐' | 'B 站推荐') => {
+    recommendationReturn.current = stagePreview()
+    searchInput.current?.blur()
+    setSearchFocused(false)
+    setActiveNav(page)
+  }
+  const closeExploreDetail = () => {
+    exploreFocus.current = recommendationActive ? '每日推荐' : 'B 站推荐'
+    openSearch()
   }
   const runSearch = (value: string) => {
     const normalized = value.trim()
@@ -560,12 +585,13 @@ export function App() {
       if (searchFocused) { event.preventDefault(); searchInput.current?.blur(); setSearchFocused(false); return }
       if(selectedCollection){event.preventDefault();closeCollection();return}
       if (libraryDetail) { event.preventDefault(); closeLibraryPage(); return }
-      if (activeNav === '搜索' && submittedQuery) { event.preventDefault(); openSearch(''); return }
+      if (exploreDetail) { event.preventDefault(); closeExploreDetail(); return }
+      if (activeNav === '探索' && submittedQuery) { event.preventDefault(); openSearch(''); return }
       if (activeNav !== '此刻') { event.preventDefault(); setActiveNav('此刻') }
     }
     window.addEventListener('bilimusic-back', back)
     return () => window.removeEventListener('bilimusic-back', back)
-  }, [lyricsOpen, importOpen, searchFocused, libraryDetail, selectedCollection, submittedQuery, activeNav, miniMode])
+  }, [lyricsOpen, importOpen, searchFocused, libraryDetail, selectedCollection, submittedQuery, activeNav, exploreDetail, miniMode])
 
   const browseInert = lyricsPresent
   const wideTabletDock = tabletPlayer && !compactPlayer
@@ -581,7 +607,7 @@ export function App() {
         if (lyricsOpen) setLyricsOpen(false)
         else showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)
       }} disabled={!current} aria-expanded={lyricsOpen} aria-label={lyricsOpen ? (duplicatePreview ? '返回查重' : '收起歌词') : '打开歌词'}>
-        {!(wideTabletDock && showCollapse) && <><Artwork src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></>}
+        {!(wideTabletDock && showCollapse) && <><Artwork variant="thumbnail" src={current?.coverUrl} className="dock-cover" adaptAspect /><span className="dock-track-copy"><strong>{current?.title || '尚未播放'}</strong><small>{current ? trackSubtitle(current) : '从音乐库选择歌曲'}</small></span></>}
         <span className="dock-lyrics-collapse" aria-hidden="true"><ChevronDown size={16} /><span>{duplicatePreview ? '返回查重' : '收起歌词'}</span></span>
       </button>
       <button className={current?.liked ? 'dock-heart liked' : 'dock-heart'} disabled={!current} aria-busy={favoritePending}
@@ -634,7 +660,7 @@ export function App() {
             <button
               className={navIsActive(label) ? 'rail-button active' : 'rail-button'}
               key={label}
-              onClick={() => { libraryReturn.current = null; if (label === '搜索') { openSearchInput(); return }; setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false) }}
+              onClick={() => { libraryReturn.current = null; if (label === '探索') { if (exploreDetail) closeExploreDetail(); else openSearch(); return }; setActiveNav(label); if (label === '我的' && syncAttention) revealSync(); resetCollection(); setLyricsOpen(false) }}
               title={label}
               aria-label={label === '我的' ? `我的${syncAttention ? `，${syncAttention}` : updateAvailable ? '，有新版本' : ''}` : label}
               aria-current={navIsActive(label) ? 'page' : undefined}
@@ -679,24 +705,33 @@ export function App() {
       <main inert={browseInert || queueSheet && queueOpen} className="content-stage" data-stage-route={pageKey} data-edge-back={isMobile && backPreview ? '' : undefined}>
         {isMobile && <div className="stage-back-preview" ref={previewHost} aria-hidden="true" inert/>}
         <div ref={stageFrame} className="stage-route-frame" data-edge-track>
-        <form className={`topbar ${searchActive ? 'searching' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
+        {exploreDetail ? <header className="topbar recommendation-topbar">
+          <button type="button" aria-label="返回探索" onClick={closeExploreDetail}><ArrowLeft size={19}/></button>
+          <h1>{activeNav}</h1>
+        </header> : <form className={`topbar ${searchActive ? 'searching' : ''}${exploreLandingActive ? ' explore-topbar' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
-            {(libraryDetail || selectedCollection || recommendationActive) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button>}
+            {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
             <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
-          <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && !(activeNav === '搜索' && submittedQuery) && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (activeNav === '搜索' && submittedQuery) ? '返回上一页' : '返回主页'}
-            onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : activeNav === '搜索' && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>
+          {exploreLandingActive ? <h1 className="explore-topbar-title">探索</h1> :
+            <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (searchActive && submittedQuery) ? '返回上一页' : '返回主页'}
+              onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : searchActive && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>}
           {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
           <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={searchHistory.data || []}
-            onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('搜索') }} onBlur={() => setSearchFocused(false)}
+            onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('探索') }} onBlur={() => setSearchFocused(false)}
             onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
             onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={() => clearHistory.mutate()} /></>}
 
           {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
           <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
-        </form>
+        </form>}
 
-        <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>{submittedQuery ? <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection} /> : <section className="discover-view search-landing"><span className="eyebrow">SEARCH</span><h2>寻找下一首歌</h2><p>搜索歌曲、歌手、B站音乐与有声内容。</p><div className="quick-actions">{['音乐现场', '纯音乐 合集', '游戏原声', '有声书', '爵士', '钢琴'].map((keyword) => <button key={keyword} onClick={() => openSearch(keyword)}><Search /><strong>{keyword}</strong><ChevronRight /></button>)}</div></section>}</div>
+        <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>
+          <ExploreLanding active={exploreLandingActive} history={searchHistory.data || []} onSearch={runSearch}
+            onOpenRecommendation={() => openExploreDetail('每日推荐')} recommendationRef={recommendationEntry}
+            onOpenBiliFeed={() => openExploreDetail('B 站推荐')} biliFeedRef={biliFeedEntry}/>
+          {submittedQuery && <SearchView key={submittedQuery} query={submittedQuery} active={searchActive} onCollectionOpen={openCollection}/>}
+        </div>
         <div className="stage-scroll" ref={contentScroll} hidden={!detailActive}>
           {[...new Map([...collectionHistory.current.map(entry => entry.item), selectedCollection].filter((item): item is Collection => Boolean(item)).map(item => [item.bvid,item])).values()].map(item => <div key={item.bvid} className="collection-route" hidden={item.bvid !== selectedCollection?.bvid}>
             <CollectionDetail item={item} onBack={closeCollection} hideBack active={item.bvid === selectedCollection?.bvid}
@@ -728,13 +763,11 @@ export function App() {
             {current && <button className="hero-cover-button" onClick={event => showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} adaptAspect /></button>}
           </section>
 
-          {compact && <RecommendationHomeEntry compact onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />}
 
-          {compact ? hub : <><section className="quick-actions">
+          {compact ? hub : <><section className="quick-actions home-quick-actions">
             <button onClick={openSearchInput}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
             <button onClick={() => { openSearch('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
             <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
-            <RecommendationHomeEntry onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />
           </section>
 
           <section className="tracks-section">
@@ -748,7 +781,7 @@ export function App() {
                     <button className="row-play" disabled={offlineUnavailable(track, offline)} onClick={() => usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-current={isCurrent ? 'true' : undefined} aria-label={`播放 ${track.title}`}>
                       {isCurrent ? <PlayingMark /> : <><span>{index + 1}</span><Play className="hover-play" size={15} fill="currentColor" /></>}
                     </button>
-                    <span className="track-title"><button className="home-cover-button" disabled={offlineUnavailable(track, offline)} onClick={() => void usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title} 封面`}><Artwork src={track.coverUrl} className="mini-cover" adaptAspect /></button><strong>{track.title}</strong></span>
+                    <span className="track-title"><button className="home-cover-button" disabled={offlineUnavailable(track, offline)} onClick={() => void usePlayerStore.getState().playFromList(homeTracks.data||[],track.id)} aria-label={`播放 ${track.title} 封面`}><Artwork variant="thumbnail" src={track.coverUrl} className="mini-cover" adaptAspect /></button><strong>{track.title}</strong></span>
                     <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
                     <div className="row-actions"><PlaylistButton track={track} /><TrackMenuButton track={track} tracks={homeTracks.data}/></div>
                   </div>
@@ -761,6 +794,9 @@ export function App() {
         </RetainedStagePage>
         <RetainedStagePage key={`recommendation:${pageAccount}`} active={recommendationActive} swipe>
           <RecommendationView active={recommendationActive} />
+        </RetainedStagePage>
+        <RetainedStagePage key={`bili-feed:${pageAccount}`} active={biliFeedActive} swipe>
+          <BilibiliFeedView active={biliFeedActive} onCollectionOpen={openCollection} onLogin={() => setActiveNav('我的')}/>
         </RetainedStagePage>
         {!compact && <RetainedStagePage key={`hub:${pageAccount}`} active={hubActive} swipe>{hub}</RetainedStagePage>}
         <RetainedStagePage key={`music:${pageAccount}`} active={musicActive} className={isMobile ? 'library-stage-pager' : undefined}>

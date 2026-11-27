@@ -1,0 +1,37 @@
+.lyric-match-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: .85rem;
+}
+.lyric-chooser > .lyric-match-actions { margin-right: 22px; margin-left: 22px; }
+.lyric-match-actions > .lyric-match-option { min-width: 0; margin: 0; }
+.lyric-match-actions input[type="checkbox"] { flex: none; }
+.lyric-clear-prompt { min-width: 0; }
+.lyric-clear-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-left: 8px;
+}
+.lyric-clear-action > button + button { margin-left: 6px; }
+.lyric-clear-action > button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lyric-clear-action > button > svg { flex: none; margin-right: 5px; }
+.lyric-clear-action > .action-danger { color: var(--coral); }
+.lyric-clear-action > button:hover { background: var(--line); }
+.lyric-clear-action > button:disabled { opacity: .5; cursor: default; }

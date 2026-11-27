@@ -926,7 +926,7 @@ fn song_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecommendationSong
     })
 }
 
-fn get_song(
+pub(crate) fn get_song(
     connection: &Connection,
     source_id: &str,
     day: &str,

@@ -6,13 +6,18 @@
 //! and a per-row revision so a late or duplicate response cannot overwrite a
 //! newer login or a manual match.
 use super::error::CommandError;
+use crate::infrastructure::database::Database;
 use crate::infrastructure::providers::netease::{NeteaseError, NeteaseProvider, QrPoll};
 use crate::infrastructure::recommendation_store::{
     self, BindMode, NewRecommendationSong, NewSource, RecommendationBinding,
     RecommendationDatabase, RecommendationSnapshotRecord, RecommendationSongRecord,
     RecommendationSourceRecord, RecommendationStoreError,
 };
-use serde::Serialize;
+use crate::infrastructure::repositories::{
+    library::{LibraryRepository, MetadataPatch, TrackInput, TrackRecord},
+    lyrics::{LyricsRepository, SaveLyricsInput, StoredLyrics},
+};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -717,6 +722,151 @@ pub async fn recommendation_bind_manual(
     )
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecommendationBindingRef {
+    source_id: String,
+    day: String,
+    netease_song_id: String,
+    entry_revision: i64,
+}
+
+#[derive(Deserialize)]
+pub struct PrepareRecommendationTrack {
+    track: TrackInput,
+    reference: RecommendationBindingRef,
+}
+
+#[derive(Serialize)]
+pub struct PreparedRecommendationTrack {
+    track: TrackRecord,
+    lyrics: Option<StoredLyrics>,
+    changed: bool,
+}
+
+/// Materialize the catalog identity before a recommendation enters the player
+/// or library. The lyric body is filled by the standard selected-lyrics cache.
+#[tauri::command]
+pub fn recommendation_prepare_tracks(
+    state: State<'_, RecommendationState>,
+    library: State<'_, Database>,
+    expected_account_session: String,
+    bindings: Vec<PrepareRecommendationTrack>,
+) -> Result<Vec<PreparedRecommendationTrack>, CommandError> {
+    let recommendations = state
+        .database()?
+        .lock()
+        .map_err(CommandError::recommendation)?;
+    let mut library = library.0.lock().map_err(CommandError::database)?;
+    super::account::check_account_session(&library, &expected_account_session)?;
+    let tx = library.transaction().map_err(CommandError::database)?;
+    let results = bindings
+        .into_iter()
+        .map(|binding| prepare_track(&recommendations, &tx, binding))
+        .collect::<Result<Vec<_>, _>>()?;
+    tx.commit().map_err(CommandError::database)?;
+    Ok(results)
+}
+
+fn prepare_track(
+    recommendations: &rusqlite::Connection,
+    library: &rusqlite::Connection,
+    binding: PrepareRecommendationTrack,
+) -> Result<PreparedRecommendationTrack, CommandError> {
+    let PrepareRecommendationTrack { track, reference } = binding;
+    super::commands::validate_track(&track)?;
+    let song = recommendation_store::get_song(
+        recommendations,
+        &reference.source_id,
+        &reference.day,
+        &reference.netease_song_id,
+    )
+    .map_err(CommandError::database)?
+    .filter(|song| {
+        song.match_state == "matched"
+            && song.entry_revision == reference.entry_revision
+            && song.track_id.as_deref() == Some(&track.id)
+            && song.bvid.as_deref() == Some(&track.bvid)
+            && song.cid == Some(track.cid)
+    })
+    .ok_or_else(|| CommandError::validation("每日推荐的匹配已更新，请重试"))?;
+    apply_song(library, &track, song)
+}
+
+fn apply_song(
+    library: &rusqlite::Connection,
+    input: &TrackInput,
+    song: RecommendationSongRecord,
+) -> Result<PreparedRecommendationTrack, CommandError> {
+    use super::batch_matching::{has_override, protected_lyrics, validate_metadata};
+
+    let id = &input.id;
+    let existing = LibraryRepository::get(library, id).map_err(CommandError::database)?;
+    let selection = LyricsRepository::get(library, id).map_err(CommandError::database)?;
+    if let Some(track) = existing {
+        if has_override(library, id).map_err(CommandError::database)?
+            || selection.as_ref().is_some_and(protected_lyrics)
+        {
+            return Ok(PreparedRecommendationTrack {
+                track,
+                lyrics: None,
+                changed: false,
+            });
+        }
+    } else {
+        LibraryRepository::upsert_source(library, input).map_err(CommandError::database)?;
+    }
+    let artists = song
+        .artists
+        .iter()
+        .map(|artist| artist.trim())
+        .filter(|artist| !artist.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let metadata = MetadataPatch {
+        title: song.title,
+        artist: (!artists.is_empty()).then_some(artists),
+        album: song.album.filter(|album| !album.trim().is_empty()),
+        cover_url: song.cover_url.filter(|cover| !cover.trim().is_empty()),
+    };
+    validate_metadata(&metadata)?;
+    let track = LibraryRepository::update_metadata(library, id, &metadata)
+        .map_err(CommandError::database)?;
+    let same_recording_length = song.duration_seconds.is_none_or(|length| {
+        length <= 0.0
+            || track.duration_seconds == 0
+            || (length - track.duration_seconds as f64).abs() <= (length * 0.08).max(15.0)
+    });
+    let has_lyric_id = song.netease_song_id.parse::<i64>().is_ok_and(|id| id > 0);
+    let lyrics = if same_recording_length
+        && has_lyric_id
+        && !selection.as_ref().is_some_and(|lyric| {
+            lyric.provider == "netease" && lyric.provider_lyric_id == song.netease_song_id
+        }) {
+        Some(
+            LyricsRepository::save(
+                library,
+                id,
+                &SaveLyricsInput {
+                    provider: "netease".into(),
+                    provider_lyric_id: song.netease_song_id,
+                    raw_text: String::new(),
+                    parsed_json: "[]".into(),
+                },
+                false,
+            )
+            .map_err(CommandError::database)?,
+        )
+    } else {
+        None
+    };
+    Ok(PreparedRecommendationTrack {
+        track,
+        lyrics,
+        changed: true,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn bind_song(
     state: &RecommendationState,
@@ -1064,7 +1214,161 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use serde_json::json;
+
+    fn matched_song(
+        library: &Connection,
+        recommendations: &mut Connection,
+    ) -> PrepareRecommendationTrack {
+        crate::infrastructure::migrations::migrate(library).unwrap();
+        recommendation_store::migrate(recommendations).unwrap();
+        recommendation_store::insert_source(
+            recommendations,
+            &NewSource {
+                id: "source",
+                provider: "netease",
+                provider_uid: "1",
+                nickname: "测试",
+                name: "测试",
+                cookie: "test",
+                csrf: "",
+                credential_token: "token",
+                terms_accepted_at: None,
+                now: 1,
+            },
+        )
+        .unwrap();
+        recommendation_store::upsert_day(
+            recommendations,
+            "source",
+            "2026-11-27",
+            1,
+            None,
+            &[NewRecommendationSong {
+                netease_song_id: "42".into(),
+                title: "推荐歌名".into(),
+                artists: vec!["歌手甲".into(), "歌手乙".into()],
+                album: Some("推荐专辑".into()),
+                duration_seconds: Some(180.0),
+                cover_url: Some("https://example.com/album.jpg".into()),
+            }],
+            "token",
+        )
+        .unwrap();
+        let track: TrackInput = serde_json::from_value(json!({
+            "id": "bilibili:BV1GJ411x7h7:2", "bvid": "BV1GJ411x7h7", "cid": 2, "page": 2,
+            "title": "分 P 标题", "sourceTitle": "投稿原名", "durationSeconds": 183
+        }))
+        .unwrap();
+        let bound = recommendation_store::bind(
+            recommendations,
+            "source",
+            "2026-11-27",
+            "42",
+            &RecommendationBinding {
+                track_id: track.id.clone(),
+                bvid: track.bvid.clone(),
+                cid: track.cid,
+                track: json!({}),
+            },
+            BindMode::Automatic,
+            0,
+            "token",
+            2,
+        )
+        .unwrap();
+        PrepareRecommendationTrack {
+            track,
+            reference: RecommendationBindingRef {
+                source_id: "source".into(),
+                day: "2026-11-27".into(),
+                netease_song_id: "42".into(),
+                entry_revision: bound.entry_revision,
+            },
+        }
+    }
+
+    #[test]
+    fn matched_recommendation_prepares_catalog_metadata_and_exact_lyrics_without_changing_video() {
+        let library = Connection::open_in_memory().unwrap();
+        let mut recommendations = Connection::open_in_memory().unwrap();
+        let binding = matched_song(&library, &mut recommendations);
+        let result = prepare_track(&recommendations, &library, binding).unwrap();
+        assert_eq!(result.track.title, "推荐歌名");
+        assert_eq!(result.track.artist.as_deref(), Some("歌手甲 / 歌手乙"));
+        assert_eq!(result.track.album.as_deref(), Some("推荐专辑"));
+        assert_eq!(
+            result.track.cover_url.as_deref(),
+            Some("https://example.com/album.jpg")
+        );
+        assert_eq!(result.track.source_video_title, "投稿原名");
+        assert_eq!(result.track.source_display_title, "分 P 标题");
+        assert_eq!(result.track.cid, 2);
+        assert_eq!(result.track.duration_seconds, 183);
+        let selected = result.lyrics.unwrap();
+        assert_eq!(
+            (&*selected.provider, &*selected.provider_lyric_id),
+            ("netease", "42")
+        );
+        assert!(!selected.selected_manually);
+        assert!(selected.raw_text.is_empty());
+        assert!(LibraryRepository::recent(&library, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_recommendation_cannot_write_library_information() {
+        let library = Connection::open_in_memory().unwrap();
+        let mut recommendations = Connection::open_in_memory().unwrap();
+        let mut binding = matched_song(&library, &mut recommendations);
+        binding.reference.entry_revision -= 1;
+        let id = binding.track.id.clone();
+        assert!(prepare_track(&recommendations, &library, binding).is_err());
+        assert!(LibraryRepository::get(&library, &id).unwrap().is_none());
+        assert!(LyricsRepository::get(&library, &id).unwrap().is_none());
+    }
+
+    #[test]
+    fn recommendation_keeps_manual_selection_and_avoids_a_different_recording_length() {
+        for manual in [true, false] {
+            let mut library = Connection::open_in_memory().unwrap();
+            let mut recommendations = Connection::open_in_memory().unwrap();
+            let mut binding = matched_song(&library, &mut recommendations);
+            binding.track.duration_seconds = if manual { 183 } else { 55 };
+            let id = binding.track.id.clone();
+            if manual {
+                LibraryRepository::upsert(&mut library, &binding.track).unwrap();
+                LyricsRepository::save(
+                    &library,
+                    &id,
+                    &SaveLyricsInput {
+                        provider: "local".into(),
+                        provider_lyric_id: String::new(),
+                        raw_text: "[00:01]自己选的歌词".into(),
+                        parsed_json: "[]".into(),
+                    },
+                    true,
+                )
+                .unwrap();
+            }
+            let result = prepare_track(&recommendations, &library, binding).unwrap();
+            assert!(result.lyrics.is_none());
+            assert_eq!(result.changed, !manual);
+            assert_eq!(
+                result.track.title,
+                if manual {
+                    "分 P 标题"
+                } else {
+                    "推荐歌名"
+                }
+            );
+            let stored = LyricsRepository::get(&library, &id).unwrap();
+            assert_eq!(
+                stored.as_ref().map(|lyric| lyric.provider.as_str()),
+                manual.then_some("local")
+            );
+        }
+    }
 
     #[test]
     fn recommendation_id_starts_with_a_bucket_and_is_not_a_timestamp() {

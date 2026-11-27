@@ -60,6 +60,8 @@ export type RecommendationSnapshot = {
   songs: RecommendationSong[]
 }
 
+export type RecommendationBindingRef = Pick<RecommendationSong, 'sourceId' | 'day' | 'neteaseSongId' | 'entryRevision'>
+
 const pad = (value: number) => String(value).padStart(2, '0')
 
 /** Returns the UTC calendar date whose 06:00 Asia/Shanghai window contains `now`. */
@@ -133,7 +135,9 @@ export function playableRecommendationTracks(songs: RecommendationSong[]): Track
       const track = song.matchState === 'matched' ? song.track : undefined
       if (!track || seen.has(track.id)) return []
       seen.add(track.id)
-      return [track]
+      return [{ ...track, recommendationBinding: {
+        sourceId: song.sourceId, day: song.day, neteaseSongId: song.neteaseSongId, entryRevision: song.entryRevision,
+      } }]
     })
 }
 

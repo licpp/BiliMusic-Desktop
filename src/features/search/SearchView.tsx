@@ -23,7 +23,8 @@ import { getSeason, seasonTracks } from '../../services/mediaSources'
 import { adoptSeasonQueue, playbackIntent, seasonPlaybackQueue, usePlayerStore } from '../player/playerStore'
 import { commandErrorMessage, getVideoParts, inDesktopShell, saveLibraryTrack, searchBilibili, toggleStoredFavorite } from '../../services/desktopApi'
 import type { BiliSearchItem, BiliVideoAccess, BiliVideoParts } from '../../domain/bilibili'
-import { retryOnceUnlessBiliPaused } from '../../services/biliRequestStatus'
+import { biliPauseMessage, biliRequestPause, retryOnceUnlessBiliPaused } from '../../services/biliRequestStatus'
+import { getBilibiliFeed } from '../../services/biliFeed'
 import { useVisibleVideoPages } from '../../shared/useVisibleVideoPages'
 import { LoadMore } from '../../shared/LoadMore'
 import { Artwork } from '../../shared/Artwork'
@@ -40,7 +41,17 @@ function readColumnPreference() {
   catch { return false }
 }
 
-function VideoSearchView({ query, active = true, onCollectionOpen }: { query: string; active?: boolean; onCollectionOpen?: (item: Collection) => void }) {
+type VideoResultsProps = {
+  query?: string
+  active?: boolean
+  onCollectionOpen?: (item: Collection) => void
+  onVideoOpen?: (item: BiliSearchItem) => void
+  onLogin?: () => void
+}
+
+function VideoResultsView({ query, active = true, onCollectionOpen, onVideoOpen, onLogin }: VideoResultsProps) {
+  const personalized = query === undefined
+  const listKey = query ?? 'bili-personalized-feed'
   const [columns, setColumns] = useState(readColumnPreference)
   const [roomForColumns, setRoomForColumns] = useState(false)
   const twoColumns = columns && roomForColumns
@@ -59,7 +70,7 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const [downloadResolving,setDownloadResolving]=useState<string>()
   const downloadIntent=useRef(0)
   const client = useQueryClient()
-  useQuery({ queryKey: accountQueryKey('collections'), queryFn: listCollections, enabled: active })
+  useQuery({ queryKey: accountQueryKey('collections'), queryFn: listCollections, enabled: active && !onVideoOpen })
   const resultsSection = useRef<HTMLElement>(null)
   const resultList = useRef<HTMLDivElement>(null)
   const play = usePlayerStore((state) => state.playFromList)
@@ -69,12 +80,29 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const activeRef = useRef(active)
   activeRef.current = active
   useEffect(() => () => { selection.current++; browsing.current++; downloadIntent.current++ }, [])
-  const result = useInfiniteQuery({ queryKey: accountQueryKey('bilibili-search', query), initialPageParam: 1, queryFn: ({ pageParam }) => searchBilibili(query, pageParam), getNextPageParam: (last) => last.items.length && last.page * last.pageSize < last.total ? last.page + 1 : undefined, enabled: Boolean(query) && active, staleTime: Infinity, refetchOnMount: false, retry: retryOnceUnlessBiliPaused })
-  const searchData = useListDataDuringNavigation(result.data, query)
+  const result = useInfiniteQuery({
+    queryKey: personalized ? accountQueryKey('bili-personalized-feed') : accountQueryKey('bilibili-search', query),
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }): Promise<{ items: BiliSearchItem[]; total?: number; nextPage?: number }> => {
+      if (query === undefined) {
+        const page = await getBilibiliFeed(pageParam)
+        return { items: page.items, nextPage: page.nextPage ?? undefined }
+      }
+      const page = await searchBilibili(query, pageParam)
+      const more = page.items.length && page.page * page.pageSize < page.total
+      return { items: page.items, total: page.total, nextPage: more ? page.page + 1 : undefined }
+    },
+    getNextPageParam: last => last.nextPage,
+    enabled: active && inDesktopShell && (personalized || Boolean(query)),
+    staleTime: Infinity,
+    refetchOnMount: false,
+    retry: personalized ? false : retryOnceUnlessBiliPaused,
+  })
+  const searchData = useListDataDuringNavigation(result.data, listKey)
   const loadingResults = result.isLoading || Boolean(result.data && !searchData)
   const items = [...new Map(searchData?.pages.flatMap((page) => page.items).map((item) => [item.bvid, item]) || []).values()]
   const showingResults = loadingResults || items.length > 0
-  const rendered = useListRows(items, `search-videos:${query}`, { active })
+  const rendered = useListRows(items, `video-results:${listKey}`, { active })
   useListReveal(resultList, loadingResults, items.length > 0, active)
   useLayoutEffect(() => {
     const section = resultsSection.current
@@ -192,8 +220,20 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   }
 
   if (!inDesktopShell) return <EmptyState icon={Waves} title="桌面搜索已准备好" detail="请使用 npm run tauri dev 启动原生窗口，浏览器预览不会直接访问平台接口。" />
-  if (loadingResults) return <section ref={resultsSection} className="search-results video-result-layout" data-columns={twoColumns || undefined}><ListSkeleton wide label="正在搜索视频" /></section>
-  if (result.isError && !items.length) return <EmptyState icon={CircleAlert} title="搜索暂时不可用" detail={commandErrorMessage(result.error)} action={<button onClick={() => result.refetch()}><RefreshCw size={15} />重新尝试</button>} />
+  if (loadingResults) return <section ref={resultsSection} className="search-results video-result-layout" data-columns={twoColumns || undefined}><ListSkeleton wide label={personalized ? '正在读取推荐' : '正在搜索视频'} /></section>
+  const feedPause = personalized ? biliRequestPause(result.error) : undefined
+  const errorMessage = feedPause ? biliPauseMessage(feedPause) : commandErrorMessage(result.error)
+  if (feedPause?.reason === 'authRequired') {
+    return <EmptyState icon={Waves} title="登录 B 站后查看推荐"
+      action={<button type="button" onClick={onLogin}>前往账号设置</button>}/>
+  }
+  const retryResults = () => void (result.isFetchNextPageError ? result.fetchNextPage() : result.refetch())
+  const loadMore = result.hasNextPage && !rendered.more && <LoadMore busy={result.isFetchingNextPage}
+    automatic={active && searchData === result.data && !result.isFetchNextPageError}
+    onLoad={() => void result.fetchNextPage({ cancelRefetch: false })}
+    label={result.isFetchNextPageError ? '重试加载' : personalized ? '加载更多推荐' : '加载更多结果'}/>
+  if (result.isError && !items.length) return <EmptyState icon={CircleAlert} title={personalized ? '暂时无法获取推荐' : '搜索暂时不可用'} detail={errorMessage} action={<button onClick={retryResults}><RefreshCw size={15} />重新尝试</button>} />
+  if (personalized && !items.length) return <EmptyState icon={ListVideo} title="暂无推荐视频" action={loadMore}/>
   if (!items.length) return <EmptyState icon={SearchX} title="没有找到结果" detail="可以尝试歌曲名、歌手名或 BV 号" />
 
   const renderParts = (detail: BiliVideoParts) => detail.parts.length ? <VideoPartsList
@@ -208,18 +248,24 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
   const dialogState = partsDialog ? expanded[partsDialog.bvid] : undefined
   const notice = actionNotice && <button className="library-toast" data-tone={actionNotice.kind} role={actionNotice.kind === 'error' ? 'alert' : 'status'} onClick={() => setActionNotice(null)}>{actionNotice.text}</button>
 
-  return <section ref={resultsSection} className="search-results video-result-layout" aria-label="视频搜索结果" data-columns={twoColumns || undefined}>
-    <header className="search-results-toolbar">
-      <span>约 {searchData?.pages[0]?.total.toLocaleString()} 个视频</span>
-      {(!isMobile || roomForColumns) && <button type="button" className="search-layout-button" disabled={!roomForColumns} aria-pressed={twoColumns} onClick={toggleLayout} title={columns ? '切换为单列列表' : '切换为双列列表'}>
+  const showLayout = roomForColumns || !personalized && !isMobile
+  return <section ref={resultsSection} className="search-results video-result-layout" aria-label={personalized ? 'B 站推荐视频' : '视频搜索结果'} data-columns={twoColumns || undefined}>
+    {(!personalized || showLayout) && <header className="search-results-toolbar" data-feed={personalized || undefined}>
+      {!personalized && <span>约 {searchData?.pages[0]?.total?.toLocaleString()} 个视频</span>}
+      {showLayout && <button type="button" className="search-layout-button" disabled={!roomForColumns} aria-pressed={twoColumns} onClick={toggleLayout} title={columns ? '切换为单列列表' : '切换为双列列表'}>
         <Columns2 size={16} aria-hidden="true" />双列
       </button>}
-    </header>
+    </header>}
     {!partsDialog && notice}
     <div className="video-result-list" ref={resultList}>{rendered.rows.map((item) => {
+      if (onVideoOpen) return <article key={item.bvid} className="video-result-card">
+        <VideoResultRow title={item.title} coverUrl={item.coverUrl} durationSeconds={item.durationSeconds}
+          uploaderName={item.uploaderName} playCount={item.playCount} publishedAt={item.publishedAt}
+          focusId={`bili-feed-${item.bvid}`} onClick={() => onVideoOpen(item)}/>
+      </article>
       const state = expanded[item.bvid]
       const open = !twoColumns && Boolean(state?.open)
-      return <SearchResultCard key={item.bvid} bvid={item.bvid} active={active} detail={state?.detail} open={open} onContextMenu={e=>{e.preventDefault(); if (!isMobile) setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>{(partCount, current, access) => <>
+      return <SearchResultCard key={item.bvid} bvid={item.bvid} active={active && !personalized} detail={state?.detail} open={open} onContextMenu={e=>{e.preventDefault(); if (!isMobile) setContext({bvid:item.bvid,left:e.clientX,top:e.clientY,nonce:Date.now()})}}>{(partCount, current, access) => <>
         <VideoResultRow title={item.title || item.bvid} coverUrl={item.coverUrl} durationSeconds={item.durationSeconds} count={partCount}
           uploaderName={item.uploaderName} playCount={item.playCount} publishedAt={item.publishedAt} access={access} currentId={current ? item.bvid : undefined}
           onContextMenu={event => { if (isMobile) { event.preventDefault(); void selectResult(item, partCount) } }}
@@ -253,8 +299,8 @@ function VideoSearchView({ query, active = true, onCollectionOpen }: { query: st
       </div> : dialogState?.detail ? renderParts(dialogState.detail) : <p className="search-parts-message" role="status"><LoaderCircle size={16} className="spin"/>正在加载分 P</p>}
       {notice}
     </CollectionDialog>}
-    {result.hasNextPage && !rendered.more && <LoadMore busy={result.isFetchingNextPage} automatic={active && searchData === result.data && !result.isFetchNextPageError} onLoad={() => void result.fetchNextPage()} label={result.isFetchNextPageError ? '重试加载' : '加载更多结果'}/>}
-    {result.isFetchNextPageError && <p className="inline-error">{commandErrorMessage(result.error)}</p>}
+    {loadMore}
+    {result.isFetchNextPageError && <p className="inline-error">{errorMessage}</p>}
   </section>
 }
 
@@ -268,8 +314,12 @@ function SearchResultCard({ bvid, active, detail, open, onContextMenu, children 
   return <article ref={ref} className="video-result-card" data-expanded={open || undefined} onContextMenu={onContextMenu}>{children(detail?.parts.length ?? pages?.length, current, detail ? detail.access : access)}</article>
 }
 
-function EmptyState({ icon: Icon, title, detail, spinning, action }: { icon: typeof Waves; title: string; detail: string; spinning?: boolean; action?: ReactNode }) {
-  return <div className="search-empty"><span><Icon className={spinning ? 'spin' : ''} /></span><h2>{title}</h2><p>{detail}</p>{action}</div>
+function EmptyState({ icon: Icon, title, detail, spinning, action }: { icon: typeof Waves; title: string; detail?: string; spinning?: boolean; action?: ReactNode }) {
+  return <div className="search-empty"><span><Icon className={spinning ? 'spin' : ''} /></span><h2>{title}</h2>{detail && <p>{detail}</p>}{action}</div>
+}
+
+export function BilibiliFeedView(props: Omit<VideoResultsProps, 'query'>) {
+  return <VideoResultsView {...props}/>
 }
 
 const searchTabs = [{ id: 'video', label: '视频' }, { id: 'creator', label: 'UP 主' }] as const
@@ -279,6 +329,6 @@ export function SearchView(props: { query: string; active?: boolean; onCollectio
   return <div className="search-view-tabs"><SwipeTabPages className="listening-tabs" tabs={searchTabs} value={tab} onChange={setTab}
     idPrefix="search-kind" panelId="search-kind-panel" label="搜索类型"
     renderPanel={(kind, paneActive) => kind === 'video'
-      ? <VideoSearchView {...props} active={Boolean(props.active) && paneActive} />
+      ? <VideoResultsView {...props} active={Boolean(props.active) && paneActive} />
       : <CreatorsView query={props.query} onOpen={item => props.onCollectionOpen?.(item)} />} /></div>
 }

@@ -8,6 +8,27 @@ const trackCheckpoints = 'track-checkpoints';
 const creators = 'creator-progress';
 const creatorGroups='creator-groups';
 const oldCreators = 'creators';
+const wideBiasHeader = 'x-bilimusic-lyric-bias';
+const legacyBias = bias => Math.max(-30000, Math.min(30000, bias));
+
+function projectLyricBias(snapshot) {
+  return {...snapshot, records: Object.fromEntries(Object.entries(snapshot.records).map(([key, record]) => {
+    if (record.kind !== 'lyric' || record.fields.biasMs === legacyBias(record.fields.biasMs)) return [key, record];
+    return [key, {...record, fields: {...record.fields, biasMs: legacyBias(record.fields.biasMs)}}];
+  }))};
+}
+
+function preserveLyricBias(snapshot, previous) {
+  for (const [key, record] of Object.entries(previous.records)) {
+    const update = snapshot.records[key];
+    if (record.kind !== 'lyric' || update?.kind !== 'lyric') continue;
+    const before = record.fields, after = update.fields;
+    if (after.biasMs === legacyBias(before.biasMs) && after.provider === before.provider &&
+        after.providerLyricId === before.providerLyricId && after.manual === before.manual) {
+      after.biasMs = before.biasMs;
+    }
+  }
+}
 function projectedView(snapshot, format) {
   if (format === creatorGroups) return snapshot;
   if (format === creators) return {...snapshot,records:Object.fromEntries(Object.entries(snapshot.records).map(([k,r])=>r.kind==='collectionFolder'?[k,{...r,fields:Object.fromEntries(Object.entries(r.fields).filter(([f])=>f!=='scope'))}]:[k,r]))};
@@ -70,8 +91,11 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
       if(path==='/vault'&&req.method==='GET') {
         const format=req.headers[formatHeader];
         const headers=[checkpoints,trackCheckpoints,oldCreators,creators,creatorGroups].includes(format)?{[formatHeader]:format}:{};
+        const supportsWideBias = req.headers[wideBiasHeader] === 'wide';
+        if (supportsWideBias) headers[wideBiasHeader] = 'wide';
         const v=await store.read(uid);if(!v?.snapshot)return json(404,{message:'尚无同步数据'},headers);
-        return json(200,projectedView(v.snapshot,format),{...headers,ETag:`"${v.revision}"`});
+        const view = projectedView(v.snapshot, format);
+        return json(200,supportsWideBias ? view : projectLyricBias(view),{...headers,ETag:`"${v.revision}"`});
       }
       if(path==='/vault'&&req.method==='PUT') {
         const snapshot=validateSnapshot(await readJson(req),uid);
@@ -79,13 +103,21 @@ export function createHandler(store,{verify=verifyBilibili,trustProxy=false}={})
         if(!match&&!create)throw new ApiError(428,'必须提供版本条件');
         if(match&&!/^"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"$/i.test(match))throw new ApiError(400,'版本标识无效');
         const expected=match?.replace(/^"|"$/g,'');
-        if (expected && !create && ![creators,creatorGroups].includes(req.headers[formatHeader])) {
+        const format = req.headers[formatHeader];
+        const supportsWideBias = req.headers[wideBiasHeader] === 'wide';
+        if (expected && !create && (format !== creatorGroups || !supportsWideBias)) {
           const current=await store.read(uid);
           if(current?.revision!==expected)throw new ApiError(412,'云端已更新，请重新合并');
-          if(current.snapshot)preserveExtendedRecords(snapshot,current.snapshot,req.headers[formatHeader]);
+          if (current.snapshot) {
+            if (format === creators) {
+              for (const [key, record] of Object.entries(current.snapshot.records)) {
+                if (record.kind === 'collectionFolder' && record.fields.scope && snapshot.records[key]?.kind === 'collectionFolder') snapshot.records[key].fields.scope = record.fields.scope;
+              }
+            } else if (format !== creatorGroups) preserveExtendedRecords(snapshot, current.snapshot, format);
+            if (!supportsWideBias) preserveLyricBias(snapshot, current.snapshot);
+          }
           validateSnapshot(snapshot,uid);
         }
-        if(expected&&!create&&req.headers[formatHeader]===creators){const current=await store.read(uid);if(current?.revision!==expected)throw new ApiError(412,'云端已更新，请重新合并');for(const[k,r]of Object.entries(current.snapshot?.records||{}))if(r.kind==='collectionFolder'&&r.fields.scope&&snapshot.records[k]?.kind==='collectionFolder')snapshot.records[k].fields.scope=r.fields.scope;validateSnapshot(snapshot,uid);}
         const revision=await store.write(uid,expected,create,snapshot,hash(token));
         if(!revision)throw new ApiError(412,'云端已更新，请重新合并');return json(200,{ok:true},{ETag:`"${revision}"`});
       }

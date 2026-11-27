@@ -3,7 +3,7 @@ import type { Playlist } from '../domain/library'
 import { folderPlayableTracks } from '../domain/recommendation'
 import type { Track } from '../domain/track'
 import { accountEpoch } from './accountScope'
-import { addTracksToPlaylist, changeLinkedVideo, createLinkedPlaylist, createPlaylist, saveLibraryTrack } from './desktopApi'
+import { addTracksToPlaylist, changeLinkedVideo, createLinkedPlaylist, createPlaylist, prepareRecommendationTracks, saveLibraryTrack } from './desktopApi'
 import type {
   RecommendationMatchMode,
   RecommendationMatchState,
@@ -221,9 +221,11 @@ export async function addRecommendationTracksToPlaylist(playlist: Playlist, trac
 async function writeLocalTracks(playlist: Playlist, tracks: Track[], guard: () => void) {
   const ids: string[] = []
   try {
-    for (const track of tracks) {
+    const prepared = await prepareRecommendationTracks(tracks)
+    guard()
+    for (const [index, track] of prepared.entries()) {
       guard()
-      ids.push((await saveLibraryTrack(track)).id)
+      ids.push(track === tracks[index] ? (await saveLibraryTrack(track)).id : track.id)
     }
     if (ids.length) {
       guard()

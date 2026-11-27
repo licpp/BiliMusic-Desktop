@@ -16,7 +16,7 @@ import {
   type RecommendationPlaylistWrite,
 } from '../../services/recommendations'
 import { CollectionDialog } from '../../shared/CollectionDialog'
-import { usePlayerStore } from '../player/playerStore'
+import { updatePlaybackFavorites } from '../player/playerStore'
 
 const PLAYLIST_NAME_MAX = 80
 const LINKED_NAME_MAX = 40
@@ -51,8 +51,7 @@ export function RecommendationPlaylistDialog({ day, sourceName, tracks, onClose 
   // it hollow until the next playback.
   const markLiked = (playlistId: string) => {
     if (playlistId !== FAVORITES_PLAYLIST_ID) return
-    const store = usePlayerStore.getState()
-    for (const track of tracks) store.updateTrack({ ...track, liked: true })
+    updatePlaybackFavorites(new Map(tracks.map(track => [track.id, true])))
   }
 
   const write = async (run: () => Promise<RecommendationPlaylistWrite>) => {

@@ -2,6 +2,7 @@ pub mod account;
 pub mod commands;
 pub mod downloads;
 pub mod error;
+pub mod hot_search;
 pub mod linked_folders;
 
 #[cfg(all(desktop, not(target_env = "ohos")))]

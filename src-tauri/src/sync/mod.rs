@@ -607,6 +607,11 @@ async fn sync_now_inner(
             initial.omit_folder_scopes();
             baseline.omit_folder_scopes();
         }
+        let initial_with_full_bias = initial.clone();
+        if !remote.wide_lyric_bias {
+            cloud_transport::project_lyric_bias(&mut initial);
+            cloud_transport::project_lyric_bias(&mut baseline);
+        }
         let mut local = initial.clone();
         if !cfg.history {
             preserve_history(&mut baseline, &mut local, &remote.snapshot);
@@ -636,7 +641,7 @@ async fn sync_now_inner(
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
             c.execute(
                 "INSERT INTO sync_info(key,value) VALUES('backup',?1) ON CONFLICT(key) DO NOTHING",
-                [serde_json::to_string(&initial).unwrap()],
+                [serde_json::to_string(&initial_with_full_bias).unwrap()],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -653,7 +658,7 @@ async fn sync_now_inner(
         if cancellation.is_cancelled() {
             return Err("同步已取消".into());
         }
-        let final_local = {
+        let changed = {
             let c = database.0.lock().map_err(|_| "数据库正忙")?;
             let mut current = storage::export(&c, &cfg.uid, cfg.history)?;
             let local_linked = current.linked_folders();
@@ -688,8 +693,16 @@ async fn sync_now_inner(
                 current.omit_creators();
             }
             // Rebase edits made while network IO was in flight. Never overwrite a new local edit.
-            let (mut final_local, post_conflicts) =
-                merge(&initial, &current, &merged, Some("local"));
+            let mut merged_for_device = merged.clone();
+            if !remote.wide_lyric_bias {
+                cloud_transport::restore_local_lyric_bias(
+                    &mut merged_for_device,
+                    &initial_with_full_bias,
+                );
+            }
+            let (mut final_local, post_conflicts) = merge(
+                &initial_with_full_bias, &current, &merged_for_device, Some("local"),
+            );
             final_local.records.extend(local_linked.records);
             if !remote.creators {
                 final_local.records.extend(local_creators);
@@ -712,7 +725,7 @@ async fn sync_now_inner(
             c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(|e|e.to_string())?;
             c.execute("INSERT INTO sync_info(key,value) VALUES('active_target',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
-            final_local
+            initial_with_full_bias != final_local
         };
         cfg.initialized = true;
         save(&database, &cfg)?;
@@ -725,7 +738,7 @@ async fn sync_now_inner(
             favorite_order_error: None,
             records: count,
             bytes,
-            changed: initial != final_local,
+            changed,
         });
     }
     Err("其它设备正在修改，请稍后重新同步".into())

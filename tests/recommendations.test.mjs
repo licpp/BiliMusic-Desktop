@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {build} from 'esbuild'
+import {readFile} from 'node:fs/promises'
 
 const built = await build({entryPoints: ['src/domain/recommendation.ts'], bundle: true, write: false, format: 'esm'})
 const {
@@ -18,6 +19,11 @@ const track = (id, bvid = `BV${id.padEnd(10, '0')}`) => ({
 const song = (id, position, extra = {}) => ({
   sourceId: 'source-1', day: '2026-11-24', position, neteaseSongId: id, title: `歌 ${id}`, artists: ['歌手'],
   matchState: 'pending', entryRevision: 0, matchAttempts: 0, ...extra,
+})
+
+test('the shared daily recommendations page does not read or display playback history', async () => {
+  const page = await readFile(new URL('../src/features/recommendations/RecommendationView.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(page, /listRecentTracks|home-recent|最近播放/)
 })
 
 test('the recommendation day changes at 06:00 Asia/Shanghai, not at UTC midnight', () => {
@@ -136,6 +142,8 @@ test('play-all keeps upstream order, includes only matched tracks and de-duplica
     song('4', 4, {matchState: 'matched', track: track('1')}),
   ])
   assert.deepEqual(tracks.map(item => item.id), ['1', '3'])
+  assert.deepEqual(tracks[0].recommendationBinding, {sourceId: 'source-1', day: '2026-11-24', neteaseSongId: '1', entryRevision: 0})
+  assert.equal(tracks[0].title, 'B 站 1')
 })
 
 test('play-all explains skipped songs instead of silently dropping them', () => {

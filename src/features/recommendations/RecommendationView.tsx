@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CalendarHeart,
   Check,
-  ChevronRight,
   ListPlus,
   LoaderCircle,
   MoreHorizontal,
@@ -14,9 +13,9 @@ import {
   RefreshCw,
   Repeat2,
 } from 'lucide-react'
-import { accountQueryKey } from '../../services/queryKeys'
-import { listRecentTracks } from '../../services/desktopApi'
 import { commandErrorMessage } from '../../services/userErrors'
+import { prepareRecommendationTracks } from '../../services/desktopApi'
+import { accountEpoch } from '../../services/accountScope'
 import {
   dailyRecommendation,
   listRecommendationSources,
@@ -44,7 +43,8 @@ import { ListSkeleton } from '../../shared/ListSkeleton'
 import { PlayingMark } from '../../shared/PlayingMark'
 import { formatDuration } from '../../shared/time'
 import { TrackMenuButton } from '../library/TrackActions'
-import { usePlayerStore } from '../player/playerStore'
+import { playbackIntent, usePlayerStore } from '../player/playerStore'
+import type { Track } from '../../domain/track'
 import { RecommendationReplaceDialog } from './RecommendationReplaceDialog'
 import { RecommendationPlaylistDialog } from './RecommendationPlaylistDialog'
 import { RecommendationSourceDialog } from './RecommendationSourceDialog'
@@ -169,13 +169,33 @@ export function RecommendationView({ active }: { active: boolean }) {
   const current = usePlayerStore(state => state.current)
   const queueSource = usePlayerStore(state => state.queueSource)
 
-  const play = (trackId?: string) => {
+  const playRequest = useRef(0)
+  const play = async (trackId?: string) => {
     if (!source || !playable.length || !trackId) return
-    void usePlayerStore.getState().playFromList(playable, trackId, {
-      kind: 'recommendation',
-      title: source.name,
-      visibilityManaged: false,
-    })
+    const request = ++playRequest.current
+    const intent = playbackIntent()
+    const epoch = accountEpoch()
+    const current = () => request === playRequest.current && intent === playbackIntent() && epoch === accountEpoch()
+    try {
+      const tracks = await prepareRecommendationTracks(playable)
+      if (!current()) return
+      void usePlayerStore.getState().playFromList(tracks, trackId, {
+        kind: 'recommendation',
+        title: source.name,
+        visibilityManaged: false,
+      })
+    } catch (error) {
+      if (current()) setActionError(commandErrorMessage(error))
+    }
+  }
+  const enqueue = async (track: Track) => {
+    const epoch = accountEpoch()
+    try {
+      const tracks = await prepareRecommendationTracks([track])
+      if (epoch === accountEpoch()) usePlayerStore.getState().enqueue(tracks)
+    } catch (error) {
+      if (epoch === accountEpoch()) setActionError(commandErrorMessage(error))
+    }
   }
   const retryRefresh = () => {
     if (!source) return
@@ -218,16 +238,14 @@ export function RecommendationView({ active }: { active: boolean }) {
 
   return (
     <section className="recommendation-view" aria-label="每日推荐">
-      <header className="recommendation-banner">
+      {source && <header className="recommendation-banner">
         <div className="recommendation-date" aria-label={`${label.month} 月 ${label.day} 日`}>
           <strong>{label.day}</strong><span>/ {label.month}</span>
         </div>
         <div className="recommendation-banner-copy">
-          <span className="eyebrow coral">DAILY MIX</span>
-          <h2>每日推荐</h2>
-          <p>从推荐源读取每日歌单，自动匹配成 B 站视频</p>
+          <h2>今日歌单</h2>
           <div className="recommendation-banner-meta">
-            {source ? <span className="recommendation-current-source">{source.name}</span> : <span>还没有添加推荐源</span>}
+            <span className="recommendation-current-source">{source.name}</span>
             {snapshot && <span>{summary.matched} / {summary.total} 首已匹配</span>}
             {matchingLabel && <span className="recommendation-match-status" role="status">{matchingLabel}</span>}
           </div>
@@ -253,7 +271,7 @@ export function RecommendationView({ active }: { active: boolean }) {
             </>}
           </ActionMenu>
         </div>
-      </header>
+      </header>}
 
       {sourceList.length > 0 && <div className="recommendation-sources" role="tablist" aria-label="推荐源">
         {sourceList.map(item => <button key={item.id} type="button" role="tab" aria-selected={item.id === source?.id}
@@ -279,10 +297,10 @@ export function RecommendationView({ active }: { active: boolean }) {
         <button type="button" onClick={() => { setConfirmEmpty(false); void client.invalidateQueries({ queryKey: dailyKey }) }}>保留</button>
       </div>}
 
-      {!source ? <NoSource onAdd={() => setSourceDialog('add')} /> : daily.isLoading && !snapshot ? <ListSkeleton label="正在读取今日推荐" /> : snapshot
+      {!source ? (sources.isLoading ? <ListSkeleton label="正在读取推荐源"/> : <NoSource onAdd={() => setSourceDialog('add')} />) : daily.isLoading && !snapshot ? <ListSkeleton label="正在读取今日推荐" /> : snapshot
         ? <RecommendationTracks songs={snapshot.songs} playable={playable} currentId={current?.id}
           queueActive={queueSource?.kind === 'recommendation' && queueSource.title === source.name}
-          notice={notice} onPlay={play} onReplace={setReplacing} />
+          notice={notice} onPlay={play} onEnqueue={enqueue} onReplace={setReplacing} />
         : !refreshing && !actionError && <div className="recommendation-empty">
           <CalendarHeart size={26} />
           <strong>今天还没有可显示的推荐</strong>
@@ -290,7 +308,6 @@ export function RecommendationView({ active }: { active: boolean }) {
           <button type="button" className="recommendation-primary" onClick={retryRefresh}><RefreshCw size={15} />立即获取</button>
         </div>}
 
-      <RecentListens />
       {replacing && source && snapshot && <RecommendationReplaceDialog song={replacing} source={source} day={snapshot.day}
         onBound={boundSong} onClose={() => setReplacing(undefined)} />}
       {sourceDialog && <RecommendationSourceDialog initialView={sourceDialog} sources={sourceList} selectedId={source?.id} onSelect={selectSource}
@@ -317,22 +334,22 @@ function useRecommendationDay(active: boolean) {
 }
 
 function NoSource({ onAdd }: { onAdd: () => void }) {
-  return <div className="recommendation-empty">
-    <CalendarHeart size={28} />
-    <strong>还没有推荐源</strong>
-    <p>推荐源是你自己的外部音乐账号。添加后，每日推荐会读取它生成的每日歌单，再自动在 B 站找到可播放的视频；歌单什么时候更新、包含哪些歌曲，都由推荐源自己决定。</p>
-    <button type="button" className="recommendation-primary" onClick={onAdd}><Plus size={15} />添加推荐源</button>
-    <small>使用非官方接口，仅保存在本机；请自行评估账号风险。</small>
+  return <div className="recommendation-empty recommendation-connect">
+    <CalendarHeart size={28} aria-hidden="true"/>
+    <strong>连接网易云音乐</strong>
+    <p>在这里查看你的每日推荐。</p>
+    <button type="button" className="recommendation-primary" onClick={onAdd}>添加推荐源</button>
   </div>
 }
 
-function RecommendationTracks({ songs, playable, currentId, queueActive, notice, onPlay, onReplace }: {
+function RecommendationTracks({ songs, playable, currentId, queueActive, notice, onPlay, onEnqueue, onReplace }: {
   songs: RecommendationSong[]
   playable: ReturnType<typeof playableRecommendationTracks>
   currentId?: string
   queueActive: boolean
   notice?: string
   onPlay: (trackId: string) => void
+  onEnqueue: (track: Track) => void
   onReplace: (song: RecommendationSong) => void
 }) {
   const byTrack = new Map(playable.map(track => [track.id, track]))
@@ -366,7 +383,7 @@ function RecommendationTracks({ songs, playable, currentId, queueActive, notice,
           </div>
           <span className="recommendation-duration">{song.durationSeconds ? formatDuration(song.durationSeconds) : '--:--'}</span>
           <div className="recommendation-row-actions">
-            {track && <TrackMenuButton track={track} tracks={playable} />}
+            {track && <TrackMenuButton track={track} actions={{ play: () => onPlay(track.id), enqueue: () => onEnqueue(track) }} />}
             <button type="button" aria-label={`为 ${song.title} 更换 B 站视频`} title="更换 B 站视频" onClick={() => onReplace(song)}><Repeat2 size={16} /></button>
           </div>
         </li>
@@ -374,40 +391,4 @@ function RecommendationTracks({ songs, playable, currentId, queueActive, notice,
     </ol>
     {!songs.length && <p className="recommendation-empty-line">今天还没有推荐歌曲。</p>}
   </section>
-}
-
-function RecentListens() {
-  const recent = useQuery({ queryKey: accountQueryKey('home-recent'), queryFn: listRecentTracks })
-  const current = usePlayerStore(state => state.current)
-  const tracks = (recent.data ?? []).slice(0, 8)
-  return <section className="recommendation-recent tracks-section" aria-label="最近听过的声音">
-    <header><div><span className="eyebrow">RECENTLY PLAYED</span><h3>最近听过的声音</h3></div><small className="recommendation-recent-scope">当前 B 站账号 · 所有推荐源</small></header>
-    {recent.isLoading ? <ListSkeleton label="正在读取最近播放" /> : tracks.length ? <div className="track-table" role="table">
-      <div className="track-row table-head" role="row"><span>#</span><span>歌曲</span><span>歌手</span><span>专辑</span><span>时长</span><span /></div>
-      {tracks.map((track, index) => <div className="track-row playing-row" role="row" key={track.id} data-current-row={current?.id === track.id ? track.id : undefined}
-        onDoubleClick={event => { if (!(event.target as Element).closest('button')) void usePlayerStore.getState().playFromList(recent.data || [], track.id) }}>
-        <button className="row-play" onClick={() => void usePlayerStore.getState().playFromList(recent.data || [], track.id)} aria-label={`播放 ${track.title}`}>
-          {current?.id === track.id ? <PlayingMark /> : <><span>{index + 1}</span><Play className="hover-play" size={15} fill="currentColor" /></>}
-        </button>
-        <span className="track-title"><Artwork src={track.coverUrl} className="mini-cover" adaptAspect /><strong>{track.title}</strong></span>
-        <span>{track.artist || '歌手未知'}</span><span>{track.album || '专辑未知'}</span><span>{formatDuration(track.durationSeconds)}</span>
-        <div className="row-actions"><TrackMenuButton track={track} tracks={recent.data} /></div>
-      </div>)}
-    </div> : <p className="recommendation-empty-line">播放过的歌曲会出现在这里。</p>}
-  </section>
-}
-
-/** Home quick action and compact home entry share one label and date. */
-export function RecommendationHomeEntry({ compact = false, onOpen }: { compact?: boolean; onOpen: () => void }) {
-  if (!compact) return <button type="button" onClick={onOpen}>
-    <span className="quick-icon amber-bg"><CalendarHeart /></span>
-    <span><strong>每日推荐</strong><small>根据口味生成每日歌单</small></span>
-    <ChevronRight size={16} aria-hidden="true" />
-  </button>
-  const label = recommendationDayLabel(recommendationDay(new Date()))
-  return <button type="button" className="recommendation-mobile-entry" onClick={onOpen}>
-    <span className="recommendation-mobile-date"><strong>{label.day}</strong><small>/ {label.month}</small></span>
-    <span className="recommendation-mobile-copy"><strong>每日推荐</strong><small>根据你的音乐口味生成</small></span>
-    <ChevronRight size={18} aria-hidden="true" />
-  </button>
 }

@@ -65,4 +65,4 @@ export function createBiasWriter(
   }
 }
 
-export const clampBias = (milliseconds: number) => Math.max(-30_000, Math.min(30_000, Math.round(milliseconds)))
+export const roundedLyricBias = Math.round

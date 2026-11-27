@@ -238,6 +238,9 @@ pub struct LinkedMatchedCover {
     bvid: String,
     cover_url: String,
     single_part: bool,
+    title: Option<String>,
+    artist: Option<String>,
+    album: Option<String>,
 }
 
 fn matched_covers(
@@ -247,18 +250,18 @@ fn matched_covers(
     let bvids = serde_json::to_string(bvids).map_err(CommandError::database)?;
     let mut query = connection
         .prepare_cached(
-            "SELECT t.id, s.bvid, m.cover_url,
+            "SELECT t.id, s.bvid, COALESCE(m.cover_url, ''),
                     COALESCE(sc.part_count = 1, 0) AND NOT EXISTS (
                       SELECT 1 FROM source_items other
                       WHERE other.provider = s.provider AND other.bvid = s.bvid
                         AND other.cid > 0 AND other.cid <> s.cid
-                    )
+                    ), m.title, m.artist, m.album
              FROM (SELECT DISTINCT value FROM json_each(?1)) requested
              CROSS JOIN source_items s ON s.provider = 'bilibili' AND s.bvid = requested.value AND s.cid > 0
              JOIN tracks t ON t.source_item_id = s.id AND t.id = 'bilibili:' || s.bvid || ':' || s.cid
              JOIN metadata_overrides m ON m.track_id = t.id
              LEFT JOIN source_title_cache sc ON sc.track_id = t.id
-             WHERE NULLIF(trim(m.cover_url), '') IS NOT NULL",
+             WHERE m.title IS NOT NULL OR m.artist IS NOT NULL OR m.album IS NOT NULL OR NULLIF(trim(m.cover_url), '') IS NOT NULL",
         )
         .map_err(CommandError::database)?;
     query
@@ -268,6 +271,9 @@ fn matched_covers(
                 bvid: row.get(1)?,
                 cover_url: row.get(2)?,
                 single_part: row.get(3)?,
+                title: row.get(4)?,
+                artist: row.get(5)?,
+                album: row.get(6)?,
             })
         })
         .map_err(CommandError::database)?
@@ -993,5 +999,19 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(!result[0].single_part);
         assert!(matched_covers(&c, &[]).unwrap().is_empty());
+
+        c.execute(
+            "INSERT INTO metadata_overrides(track_id,title,artist,album) VALUES(?1,'更正歌名','歌手','专辑')",
+            [format!("bilibili:{multi}:3")],
+        )
+        .unwrap();
+        let result = matched_covers(&c, &[multi.into()]).unwrap();
+        let edited_id = format!("bilibili:{multi}:3");
+        let part = result.iter().find(|part| part.track_id == edited_id).unwrap();
+        assert_eq!(part.title.as_deref(), Some("更正歌名"));
+        assert_eq!(part.artist.as_deref(), Some("歌手"));
+        assert_eq!(part.album.as_deref(), Some("专辑"));
+        assert!(part.cover_url.is_empty());
+        assert!(!part.single_part);
     }
 }

@@ -11,10 +11,11 @@ import { knownArtist } from '../../domain/sourceTitle'
 import { useSourceTitleMetadata } from '../player/useSourceTitleMetadata'
 import { accountQueryKey } from '../../services/queryKeys'
 import { chooseDownload } from '../downloads/downloadRequest'
-import { storedLyricLines, lyricAt } from '../../domain/lyricTimeline'
+import { storedLyricLines } from '../../domain/lyricTimeline'
 import { FloatingLyricsToggle } from './FloatingLyricsToggle'
 import { useFloatingLyrics } from '../../services/floatingLyrics'
 import { WordLyric } from './WordLyric'
+import { useLyricClockIndex } from './useLyricClockIndex'
 import { touchDirection, type TouchDirection } from '../../shared/touchDirection'
 import { listen } from '@tauri-apps/api/event'
 import { useCompactLayout, useTabletWidth } from '../../shared/useCompactLayout'
@@ -28,9 +29,7 @@ import { useBiliSubtitles } from './useBiliSubtitles'
 import { isMobile, isIOS, isOHOS } from '../../services/platform'
 import { controlMobileAudio } from '../player/mobileAudio'
 import { formatDuration } from '../../shared/time'
-import { LyricsChooser } from './LyricsChooser'
-import { rankLyricCandidates } from '../../services/musicMatchRanking'
-import { firstSongQuery } from '../../domain/songIdentity'
+import { TrackLyricsDialog } from './TrackLyricsDialog'
 import { useArtworkFit } from './useArtworkFit'
 import { AiSubtitleIcon } from './AiSubtitleIcon'
 import { createPortal, flushSync } from 'react-dom'
@@ -44,10 +43,9 @@ import { TouchOptions } from '../../shared/TouchOptions'
 import { ActionMenu } from '../../shared/ActionMenu'
 import { chooseTrackPlaylist } from '../library/trackActionStore'
 import { playbackClock, playbackRates, reloadCurrentAudioSource, usePlayerStore } from '../player/playerStore'
-import { commandErrorMessage, getDanmaku, getStoredLyrics, enrichStoredLyricLines, getVideoParts, lyricMatchVersion, saveLyricsWithMetadata, saveStoredLyrics, searchLyrics, setStoredLyricsBias } from '../../services/desktopApi'
-import { metadataForLyric } from '../../services/batchMatching'
-import { LyricBiasConflict, type LyricCandidate, type LyricLine, type StoredLyrics } from '../../domain/lyrics'
-import { candidateLines, hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, parseLrc, type LyricSupplement } from '../../domain/lrc'
+import { commandErrorMessage, getDanmaku, getStoredLyrics, enrichStoredLyricLines, getVideoParts, setStoredLyricsBias } from '../../services/desktopApi'
+import { LyricBiasConflict, lyricsWereCleared, type LyricLine, type StoredLyrics } from '../../domain/lyrics'
+import { hasTimedLyrics, lyricSupplementModes, nextLyricSupplement, type LyricSupplement } from '../../domain/lrc'
 import { Artwork } from '../../shared/Artwork'
 import { MobilePartsPage } from '../library/MobilePartsPage'
 import { CommentsPanel } from '../comments/CommentsPanel'
@@ -59,7 +57,7 @@ import type { PlaybackIssue } from '../player/playbackIssue'
 import { VideoStartup } from './VideoStartup'
 import { Heart } from 'lucide-react'
 import { accountEpoch } from '../../services/accountScope'
-import { createBiasWriter, clampBias } from './biasWriter'
+import { createBiasWriter, roundedLyricBias } from './biasWriter'
 import { LyricsBiasControl } from './LyricsBiasControl'
 import { useAutoLyricAlignment } from './useAutoLyricAlignment'
 import { createLyricSpringController, lyricAnchorRatio, lyricInterludeState, lyricLineVisual, lyricScrollTarget } from './appleLyricMotion'
@@ -104,14 +102,10 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     const saved = localStorage.getItem('lyrics-supplement')
     return saved === 'translation' || saved === 'romanization' ? saved : 'off'
   })
-  const [candidates, setCandidates] = useState<LyricCandidate[]>([])
   const [chooserOpen, setChooserOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const subtitles = useBiliSubtitles()
   const [error, setError] = useState('')
-  const [warning, setWarning] = useState('')
-  const [manualOpen, setManualOpen] = useState(false)
-  const [manualText, setManualText] = useState('')
   const lineRefs = useRef<Array<HTMLParagraphElement | null>>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const [mediaPreference, setMediaPreference] = useState<'cover' | 'video'>(() => localStorage.getItem('lyrics-media-mode') === 'video' ? 'video' : 'cover')
@@ -187,6 +181,7 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
   const lyricDragged = useRef(false)
   const [foregroundRevision, setForegroundRevision] = useState(0)
   const instantCenter = useRef(false)
+  const seekCenter = useRef(false)
   useEffect(() => {
     const resume = () => {
       instantCenter.current = true
@@ -204,9 +199,9 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
   const anchorRatioRef = useRef(anchorRatio)
   anchorRatioRef.current = anchorRatio
   useEffect(() => {
-    if (!open) springRef.current?.stop(true)
+    if (!open) springRef.current?.stop()
   }, [open])
-  useEffect(() => () => { springRef.current?.stop(true) }, [])
+  useEffect(() => () => { springRef.current?.stop() }, [])
   const browseLyrics = () => { springRef.current?.releaseForUserScroll(); browseActivity.current = Date.now(); setBrowsingLyrics(true); updateBrowseLine() }
   const [hoveredLine, setHoveredLine] = useState<number | null>(null)
   const [biasActivity, setBiasActivity] = useState(0)
@@ -263,8 +258,6 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     void biasWriter.flush()
   }, [open, biasWriter])
   const lyricRequest = useRef(0)
-  const savingSelection = useRef(false)
-  const [savingLyrics, setSavingLyrics] = useState(false)
   const videoRequest = useRef(0)
   const [videoRetry, setVideoRetry] = useState(0)
   useEffect(() => {
@@ -273,16 +266,14 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     }).catch(() => undefined)
     return () => { void subscription.then(stop => stop?.()) }
   }, [])
-  const [lyricQuery, setLyricQuery] = useState(current ? firstSongQuery(current).title : '')
-  const [lyricArtist, setLyricArtist] = useState(current ? firstSongQuery(current).artist : '')
-  const [searched, setSearched] = useState(false)
 
   useEffect(() => {
     const update = (event: Event) => {
       const lyrics = (event as CustomEvent<StoredLyrics>).detail
       if (lyrics.trackId !== current?.id) return
+      ++lyricRequest.current
       storedRef.current = lyrics
-      setStored(lyrics); setLines(storedLyricLines(lyrics)); setError(''); setWarning('')
+      setStored(lyrics); setLines(storedLyricLines(lyrics)); setLoading(false); setError('')
     }
     window.addEventListener('bilimusic-lyrics-updated', update)
     return () => window.removeEventListener('bilimusic-lyrics-updated', update)
@@ -292,7 +283,7 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     let cancelled = false
     const request = ++lyricRequest.current
     instantCenter.current = true
-    setStored(null); setBiasSaveError(false); setLines([]); setCandidates([]); setError(''); setWarning(''); setManualOpen(false); setManualText(''); setSearched(false)
+    setStored(null); setBiasSaveError(false); setLines([]); setError('')
     if (!current) return () => { cancelled = true }
     const load = async () => {
       setLoading(true)
@@ -302,7 +293,6 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
         if (existing) {
           setStored(existing)
           setLines(storedLyricLines(existing))
-          if (!existing.rawText) setWarning(existing.provider === 'local' ? '本地导入的歌词正文未上传，请在这台设备重新导入。时间偏移已保留。' : '歌词选择和时间偏移已同步，歌词服务暂未返回正文，可稍后重试匹配。')
           return
         }
       } catch (cause) {
@@ -319,14 +309,14 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     if (!stored || stored.trackId !== current?.id || !stored.rawText || lines.some(line => line.translation || line.romanization)) return
     let cancelled = false
     void enrichStoredLyricLines(stored).then(enriched => {
-      if (!cancelled && enriched?.some(line => line.translation || line.romanization)) setLines(enriched)
+      if (!cancelled && storedRef.current?.writeToken === stored.writeToken && enriched?.some(line => line.translation || line.romanization)) setLines(enriched)
     }).catch(() => undefined) // Supplement failure must not hide existing lyrics.
     return () => { cancelled = true }
   }, [stored?.trackId, stored?.provider, stored?.providerLyricId, stored?.rawText, current?.id])
 
   useEffect(() => {
     setSeasonOpen(false); setPartsOpen(false); setControlsShown(false); setVideoFullscreen(false); setCommentsOpen(false); setChooserOpen(false); setEditing(null); setBiasOpen(false)
-    setVideoFailed(false); setVideoIssue(undefined); setLyricQuery(current ? firstSongQuery(current).title : ''); setLyricArtist(current ? firstSongQuery(current).artist : '')
+    setVideoFailed(false); setVideoIssue(undefined)
   }, [current?.id])
 
   useEffect(() => {
@@ -443,21 +433,21 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
   const biasMs = subtitles.lines ? 0 : stored?.biasMs || 0
   const lyricTimeMs = progressSeconds * 1_000 - biasMs
   const lyricClock = useCallback(() => playbackClock() * 1000 - biasMs, [biasMs])
-  const activeIndex = useMemo(() => {
-    if (!subtitles.lines && !syncedLyrics) return -1
-    // Keep the displayed sentence enlarged through subtitle gaps. Its
-    // end timestamp still controls word progress and system captions.
-    return lyricAt(displayLines, lyricTimeMs)
-  }, [displayLines, lyricTimeMs, syncedLyrics, subtitles.lines])
+  const liveClock = open && (syncedLyrics || subtitles.lines) && status === 'playing' ? lyricClock : undefined
+  const clockIndex = useLyricClockIndex(displayLines, lyricTimeMs, liveClock)
+  // Hold the highlighted line through gaps until the next line starts.
+  const activeIndex = subtitles.lines || syncedLyrics ? clockIndex : -1
   const interlude = useMemo(() => {
     if (!clickableLyrics || browsingLyrics) return null
     return lyricInterludeState(displayLines, lyricTimeMs)
   }, [clickableLyrics, browsingLyrics, displayLines, lyricTimeMs])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setBrowsingLyrics(false); setBrowseIndex(-1); prevActiveRef.current = -1
+    instantCenter.current = true
+    seekCenter.current = false
     lineRefs.current.length = displayLines.length
-    springRef.current?.stop(true)
+    springRef.current?.stop()
   }, [current?.id, displayLines])
   useEffect(() => {
     if (!browsingLyrics) return
@@ -497,77 +487,36 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
     syncSpacers()
     return () => observer.disconnect()
   }, [current?.id, anchorRatio])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || browsingLyrics || timingPreview && hoveredLine !== null) return
     const scroll = scrollRef.current
     if (!scroll) return
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const instant = instantCenter.current || biasOpen || reduced
+    const seekChangedLine = seekCenter.current && activeIndex !== prevActiveRef.current
+    const instant = instantCenter.current || seekChangedLine || biasOpen || reduced
+    if (seekChangedLine) seekCenter.current = false
     const line = lineRefs.current[activeIndex]
     if (line) {
       const target = lyricScrollTarget(line.offsetTop, line.offsetHeight, scroll.clientHeight, anchorRatio)
-      springRef.current?.animate(scroll, target, lineRefs.current, activeIndex, prevActiveRef.current, instant)
+      const currentTime = displayLines[activeIndex].timeMs
+      const previousTime = displayLines[activeIndex - 1]?.timeMs ?? -Infinity
+      const nextTime = displayLines[activeIndex + 1]?.timeMs ?? Infinity
+      const intervalMs = Math.min(currentTime - previousTime, nextTime - currentTime) / usePlayerStore.getState().rate
+      springRef.current?.animate(scroll, target, lineRefs.current, activeIndex, prevActiveRef.current, instant, intervalMs)
       prevActiveRef.current = activeIndex
       instantCenter.current = false
-    } else if (activeIndex < 0 && displayLines.length > 0 && instant) {
+    } else if (activeIndex < 0 && displayLines.length > 0 && (instant || prevActiveRef.current >= 0)) {
       springRef.current?.animate(scroll, 0, lineRefs.current, -1, -1, true)
       prevActiveRef.current = -1
       instantCenter.current = false
     }
   }, [open, activeIndex, browsingLyrics, timingPreview, hoveredLine === null, biasMs, displayLines, supplementMode, foregroundRevision, anchorRatio, biasOpen])
 
-  async function refreshCandidates() {
-    if (!current) return
-    const request = ++lyricRequest.current
-    setLoading(true); setError(''); setWarning(''); setSearched(true)
-    try { const results = await searchLyrics(lyricQuery.trim(), lyricArtist.trim() || undefined, true); if (request === lyricRequest.current) { setCandidates(rankLyricCandidates(results.candidates,lyricQuery,lyricArtist,current.durationSeconds)); setWarning(results.warning || '') } }
-    catch (cause) { if (request === lyricRequest.current) setError(commandErrorMessage(cause)) }
-    finally { if (request === lyricRequest.current) setLoading(false) }
-  }
-
-  useEffect(() => {
-    if (chooserOpen && isMobile && lyricQuery.trim()) void refreshCandidates()
-  }, [chooserOpen])
-
-  async function importManualLyrics() {
-    if (!current || !manualText.trim()) return
-    setLoading(false)
-    const synced = parseLrc(manualText).length > 0
-    await selectCandidate({ provider: 'local', id: 0, trackName: current.title, artistName: current.artist || '', albumName: current.album || '', duration: current.durationSeconds, instrumental: false, syncedLyrics: synced ? manualText.trim() : undefined, plainLyrics: synced ? undefined : manualText.trim() }, true)
-  }
-
-  async function selectCandidate(candidate: LyricCandidate, manual: boolean, updateMetadata = false) {
-    if (!current || savingSelection.current) return
-    const request = ++lyricRequest.current
-    const epoch = accountEpoch()
-    const valid = () => epoch === accountEpoch() && request === lyricRequest.current
-    const parsed = candidateLines(candidate)
-    if (!parsed.length) { setError('这个版本没有可显示的歌词'); return }
-    savingSelection.current = true; setSavingLyrics(true)
-    try {
-      let saved
-      if (updateMetadata) {
-        const version = await lyricMatchVersion(current.id)
-        const metadata = await metadataForLyric(candidate)
-        if (!valid()) return
-        const pair = await saveLyricsWithMetadata(current.id, candidate, parsed, metadata, version)
-        if (epoch !== accountEpoch()) return
-        usePlayerStore.getState().updateTrack(pair.track)
-        void queryClient.invalidateQueries({ predicate: q => ['library', 'playlists', 'playlist-tracks', 'home-recent'].includes(String(q.queryKey[0])) })
-        saved = pair.stored
-      } else saved = await saveStoredLyrics(current.id, candidate, parsed, manual)
-      if (!valid()) return
-      storedRef.current = saved
-      setStored(saved); setLines(parsed); setChooserOpen(false); setError('')
-    } catch (cause) { if (valid()) setError(commandErrorMessage(cause)) }
-    finally { savingSelection.current = false; setSavingLyrics(false) }
-  }
-
   function adjustBias(delta: number) {
     const lyrics = storedRef.current
     if (!current || !lyrics || lyrics.trackId !== current.id || autoAlignment.busy) return
     const epoch = accountEpoch(), playback = usePlayerStore.getState().current
-    const next = { ...lyrics, biasMs: clampBias(lyrics.biasMs + delta) }
+    const next = { ...lyrics, biasMs: roundedLyricBias(lyrics.biasMs + delta) }
     storedRef.current = next
     window.dispatchEvent(new CustomEvent('bilimusic-lyric-bias',{detail:next}))
     setStored(next); setBiasSaveError(false); setError(''); setBiasActivity(Date.now())
@@ -577,14 +526,14 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
 
   function alignLine(timeMs: number) {
     if (!biasOpen || !storedRef.current) return
-    const target = progressSeconds * 1000 - timeMs
-    if (Math.abs(target) > 30_000) { setError('这句距离当前播放超过 30 秒，请选择附近的歌词对齐'); return }
-    adjustBias(clampBias(target) - storedRef.current.biasMs)
+    const target = playbackClock() * 1000 - timeMs
+    adjustBias(roundedLyricBias(target) - storedRef.current.biasMs)
   }
 
   const seekLine = (index: number) => {
     const line = displayLines[index]
     if (!line) return
+    if (index !== activeIndex) seekCenter.current = true
     usePlayerStore.getState().seek(Math.max(0, (line.timeMs + (subtitles.lines ? 0 : biasMs)) / 1000))
     if (usePlayerStore.getState().status === 'paused') void usePlayerStore.getState().toggle()
     setBrowsingLyrics(false)
@@ -665,7 +614,7 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
             {current.source.provider === 'bilibili' && <button role={isMobile ? undefined : 'menuitem'} type="button" onClick={() => { close(); chooseDownload([current]) }}><Download size={16}/>下载歌曲</button>}
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setEditing(current); setChooserOpen(false); setCommentsOpen(false) }}><Pencil size={16} />编辑歌曲信息</button>
             <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); chooseTrackPlaylist([current]) }}><FolderPlus size={16} />加入歌单…</button>
-            <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored ? '更换歌词' : '匹配歌词'}</button>
+            <button role={isMobile ? undefined : "menuitem"} onClick={() => { close(); setChooserOpen(true) }}><RefreshCw size={16} />{stored && !lyricsWereCleared(stored) ? '更换歌词' : '匹配歌词'}</button>
             <button role={isMobile ? undefined : "menuitem"} disabled={Boolean(subtitles.lines)} onClick={() => { close(); setHoveredLine(null); setBiasOpen(true); setBiasActivity(Date.now()) }}><SlidersHorizontal size={16} />调整歌词时间</button>
             {(isMobile || (videoDetail && videoDetail.parts.length > 1)) && <button role={isMobile ? undefined : "menuitem"} disabled={!videoDetail || videoDetail.parts.length <= 1} onClick={() => {
               if (!videoDetail || videoDetail.parts.length <= 1) return
@@ -681,7 +630,7 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
       </header>
       <div className={videoFullscreen ? 'lyrics-album-pane video-fullscreen' : 'lyrics-album-pane'}>
         <div className="lyrics-media" ref={artworkFit.stage}>
-        <div ref={videoCover} style={artworkFit.style} className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'} data-swipe-cover={swipeCover || undefined} data-media-mode={mediaMode} {...(swipeCover ? coverDrag : {})} onClick={undefined}>{videoUrl && <SyncedVideo key={current?.id} onReload={reloadVideo} src={videoUrl} poster={coverUrl} track={current} codecs={videoSource?.codecs} diagnostic={videoSource?.diagnostic} active={mediaMode === 'video'} suspended={!open} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <VideoStartup key={current.id} poster={coverUrl} message={open ? "正在解析视频线路…" : undefined}/>}{open && danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={coverUrl} adaptAspect onAspectRatio={artworkFit.onRatio} />}{isMobile && mediaMode === 'video' && videoReady && <button type="button" className="video-reveal-controls" aria-label={mobileFullscreen && !controlsHidden ? '隐藏视频控件' : '显示视频控件'} onClick={toggleVideoControls}/>}</div>
+        <div ref={videoCover} style={artworkFit.style} className={mediaMode === 'video' ? 'lyrics-cover video-active' : 'lyrics-cover'} data-swipe-cover={swipeCover || undefined} data-media-mode={mediaMode} {...(swipeCover ? coverDrag : {})} onClick={undefined}>{videoUrl && <SyncedVideo key={current?.id} onReload={reloadVideo} src={videoUrl} poster={coverUrl} track={current} codecs={videoSource?.codecs} diagnostic={videoSource?.diagnostic} active={mediaMode === 'video'} suspended={!open} onReady={setReadyVideoUrl} />}{mediaMode === 'video' ? <>{!videoUrl && <VideoStartup key={current.id} poster={coverUrl} message={open ? "正在解析视频线路…" : undefined}/>}{open && danmakuVisible && videoReady && danmaku.data && danmaku.data.length > 0 && <DanmakuCanvas items={danmaku.data} scale={danmakuSize} opacity={danmakuOpacity} density={2 ** (danmakuDensity - 3)} />}</> : <Artwork src={coverUrl} adaptAspect variant="progressive" onAspectRatio={artworkFit.onRatio} />}{isMobile && mediaMode === 'video' && videoReady && <button type="button" className="video-reveal-controls" aria-label={mobileFullscreen && !controlsHidden ? '隐藏视频控件' : '显示视频控件'} onClick={toggleVideoControls}/>}</div>
         {videoTools}
         {mobileFullscreen && <div className="video-fullscreen-transport" data-controls-hidden={controlsHidden || undefined} onPointerDown={revealControls}>
           <button aria-label={status === 'playing' ? '暂停' : '播放'} onClick={() => void usePlayerStore.getState().toggle()}>{status === 'playing' ? <Pause size={20} fill="currentColor"/> : <Play size={20} fill="currentColor"/>}</button>
@@ -721,12 +670,22 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
         {loading && !displayLines.length ? <div className="lyrics-status"><LoaderCircle className="spin" />正在读取歌词</div> : displayLines.length ? displayLines.map((line, index) => {
           const visual = lyricLineVisual(index, activeIndex, browsingLyrics || timingPreview)
           const nearActive = activeIndex >= 0 && Math.abs(index - activeIndex) <= 6
-          const showInterlude = interlude && interlude.beforeIndex === index
+          const showInterlude = interlude && interlude.beforeIndex === index && index > activeIndex
+          const active = index === activeIndex
           return <Fragment key={`${line.timeMs}-${index}`}>
             {showInterlude && <div className="lyric-interlude" data-exiting={interlude.exiting || undefined} aria-hidden="true">
               {interlude.dots.map((level, dotIdx) => <span key={dotIdx} className="lyric-interlude-dot" style={{ '--dot-fill': String(level) } as CSSProperties} />)}
             </div>}
-            <p ref={(node) => { lineRefs.current[index] = node }} style={{ '--lyric-blur': `${visual.blurPx}px`, '--lyric-opacity': String(visual.opacity) } as CSSProperties} data-lyric-near={nearActive || undefined} data-lyric-clickable={clickableLyrics || undefined} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && clickableLyrics && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview || clickableLyrics ? 'button' : undefined} tabIndex={timingPreview || clickableLyrics ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : clickableLyrics ? () => { if (lyricDragged.current) { lyricDragged.current = false; return } seekLine(index) } : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : clickableLyrics ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); seekLine(index) } } : undefined}><span className="lyric-line-body"><span className="lyric-original"><WordLyric line={line} active={index === activeIndex} timeMs={lyricTimeMs} clock={open && status === 'playing' ? lyricClock : undefined}/></span>{supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}</span>{browsingLyrics && clickableLyrics && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={event => { event.stopPropagation(); seekLine(index) }}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}</p>
+            <p ref={(node) => { lineRefs.current[index] = node }} style={{ '--lyric-blur': `${visual.blurPx}px`, '--lyric-opacity': String(visual.opacity) } as CSSProperties} data-lyric-near={nearActive || undefined} data-lyric-clickable={clickableLyrics || undefined} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && clickableLyrics && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview || clickableLyrics ? 'button' : undefined} tabIndex={timingPreview || clickableLyrics ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : clickableLyrics ? () => { if (lyricDragged.current) { lyricDragged.current = false; return } seekLine(index) } : undefined} onKeyDown={timingPreview ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); alignLine(line.timeMs) } } : clickableLyrics ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); seekLine(index) } } : undefined}>
+              <span className="lyric-line-body">
+                <span className="lyric-original">
+                  <WordLyric line={line} active={active} timeMs={active ? liveClock?.() ?? lyricTimeMs : 0}
+                    clock={active ? liveClock : undefined} stableLayout/>
+                </span>
+                {supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}
+              </span>
+              {browsingLyrics && clickableLyrics && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={event => { event.stopPropagation(); seekLine(index) }}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}
+            </p>
           </Fragment>
         }) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}
       </div>
@@ -742,17 +701,15 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
         </div>
       </div>}
       {!videoIssue && (floatingError || subtitles.message || autoAlignment.message || (error && displayLines.length > 0)) && <div className={`lyrics-toast${autoAlignment.message && !floatingError && !subtitles.message ? ' lyrics-alignment-toast' : ''}`} role={floatingError || autoAlignment.failed ? 'alert' : 'status'}>{floatingError || subtitles.message || autoAlignment.message || error}{floatingError && <button type="button" onClick={() => useFloatingLyrics.setState({error:''})}>知道了</button>}</div>}
-      {open && chooserOpen && <LyricsChooser title={lyricQuery} artist={lyricArtist} onTitle={setLyricQuery} onArtist={setLyricArtist}
-        loading={loading} searched={searched} error={error} warning={warning} candidates={candidates} stored={stored}
-        saving={savingLyrics} onSearch={refreshCandidates} onChoose={(candidate, update) => selectCandidate(candidate, true, update)} onClose={() => { ++lyricRequest.current; setChooserOpen(false); setManualOpen(false) }}
-        manualOpen={manualOpen} onManualOpen={setManualOpen} manualText={manualText} onManualText={setManualText} onImport={importManualLyrics}/>}
+      {open && chooserOpen && <TrackLyricsDialog key={current.id} track={current} stored={stored} onClose={() => setChooserOpen(false)}
+        onSaved={() => { if (subtitles.active) subtitles.toggle() }}/>}
       {open && rateOpen && <MobilePlaybackRate onClose={() => setRateOpen(false)}/>}
       {open && seasonOpen && season && <SeasonBrowser locateCurrent summary={season} onClose={() => setSeasonOpen(false)}/>}
       {open && partsOpen && videoDetail && <MobilePartsPage locateCurrent detail={videoDetail} onBack={() => setPartsOpen(false)}/>}
       {commentsPresent && current.source.aid && <CommentsPanel open={commentsOpen && open} key={current.id} trackId={current.id} aid={current.source.aid} onClose={closeComments} chapters={chapters.canImport ? {
         durationSeconds: chapters.duration, existingChapters: chapters.existingChapters, isCurrent: chapters.isCurrent, onSave: chapters.save,
       } : undefined} video={mediaMode === 'video' ? videoCover.current : null} />}
-      {open && editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); setLyricQuery(updated.title); setLyricArtist(updated.artist || ''); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
+      {open && editing && <MetadataDialog track={editing} onClose={() => setEditing(null)} onSaved={(updated) => { usePlayerStore.getState().updateTrack(updated); setEditing(null); void queryClient.invalidateQueries({ queryKey: accountQueryKey('library') }); void queryClient.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }} />}
       {open && replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)}/>}
     </section>
   )

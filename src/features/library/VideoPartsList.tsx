@@ -82,18 +82,19 @@ export function VideoPartsList({ tracks, visibleTracks = tracks, renderActions, 
     <div ref={rows} className={videoCollection ? 'video-result-list' : undefined}>{rendered.rows.map((track, index) => <Fragment key={track.id}><VideoPartsRow track={track} index={index}
       hidden={rowHidden(track)} visibilityScope={scope} restore={()=>void change([track],false)} active={track.id === activeTrack?.id} videoCollection={videoCollection} selecting={selection.selecting}
       checked={selection.ids.has(track.id)} onSelect={() => selection.toggle(track.id)}
-      actionTrack={byId.get(track.id) ?? track} playbackTracks={playbackTracks} queueSource={playbackSource} onOpenParts={onOpenParts} renderActions={renderActions}/>
+      actionTrack={byId.get(track.id) ?? track} playbackTracks={playbackTracks} queueSource={playbackSource} onOpenParts={onOpenParts} renderActions={renderActions} editLyrics={Boolean(linkedFolderId)}/>
       {!selection.selecting && renderDetails?.(track)}
     </Fragment>)}{rendered.more && <div ref={rendered.tail} className="list-render-tail" aria-hidden="true"/>}</div>
     {!rendered.more && footer}
   </div>
 }
 
-function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, videoCollection, selecting, checked, onSelect, actionTrack, playbackTracks, queueSource, onOpenParts, renderActions }: {
+function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, videoCollection, selecting, checked, onSelect, actionTrack, playbackTracks, queueSource, onOpenParts, renderActions, editLyrics }: {
   visibilityScope?: string; hidden:boolean; restore:()=>void;
   track: Track; index: number; active: boolean; videoCollection: boolean; selecting: boolean; checked: boolean
   onSelect: () => void; actionTrack: Track; playbackTracks: Track[]; queueSource?: QueueSource
   onOpenParts?: (track: Track) => void; renderActions?: (track: Track) => ReactNode
+  editLyrics: boolean
 }) {
   const unavailable = useOfflinePlayback(state => offlineUnavailable(track, state, videoCollection || track.resolveParts === true || track.source.cid <= 0))
   const offline = useOfflinePlayback(state => state.offline)
@@ -101,7 +102,7 @@ function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, vi
   const count = track.partCount ?? pages?.length
   const openParts = onOpenParts && (count ?? 0) > 1 ? () => onOpenParts(track) : undefined
   const play = () => void usePlayerStore.getState().playFromList(playbackTracks, track.id, queueSource)
-  const actions = { openParts, play, visibilityScope }
+  const actions = { openParts, play, visibilityScope, editLyrics }
   const duration = track.durationSeconds || (count === 1 ? pages?.[0]?.durationSeconds : undefined)
   const title = videoCollection ? track.videoTitle || track.title : track.title
   const currentId = active ? track.id : undefined
@@ -128,10 +129,10 @@ function VideoPartsRow({ visibilityScope,hidden,restore,track, index, active, vi
   return <div ref={ref} data-offline-unavailable={unavailable || undefined} data-current-row={currentId} className={`part-entry video-part-row${selecting ? '' : ' playing-row'}${hidden?' visibility-hidden':''}`} onContextMenu={onContextMenu}>
     {selecting ? <label className="video-part-select">
       <input className="track-select" type="checkbox" aria-label={`选择 ${title}`} checked={checked} onChange={onSelect}/>
-      {track.coverUrl || videoCollection ? <span className="video-part-select-art"><Artwork src={track.coverUrl}/>{videoCollection && <CoverCount count={count}/>}</span> : <span>{label}</span>}<strong>{title}</strong><small>{formatTrackDuration(track.durationSeconds)}</small>
+      {track.coverUrl || videoCollection ? <span className="video-part-select-art"><Artwork variant="thumbnail" src={track.coverUrl}/>{videoCollection && <CoverCount count={count}/>}</span> : <span>{label}</span>}<strong>{title}</strong><small>{formatTrackDuration(track.durationSeconds)}</small>
     </label> : <>
       <button type="button" className="video-part-play" disabled={hidden || unavailable} aria-current={active ? 'true' : undefined} aria-label={`播放 ${track.title}`} onClick={play}>
-        <span className="video-part-index">{active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta"><small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
+        <span className="video-part-index">{active ? <PlayingMark/> : label}</span><span className="video-part-copy"><strong>{track.title}</strong><span className="video-part-meta">{editLyrics && track.artist && <small>{track.artist}{track.album ? ` · ${track.album}` : ''}</small>}<small className="video-part-inline-duration">{duration ? formatDuration(duration) : '—'}</small></span></span><small className="video-part-duration">{duration ? formatDuration(duration) : '—'}</small><Play size={14}/>
       </button>
       {rowActions}
     </>}

@@ -12,8 +12,13 @@ pub(crate) use audio::prefer_progressive_startup;
 use audio::*;
 #[path = "bilibili_extras.rs"]
 mod extras;
+#[path = "bilibili_feed.rs"]
+mod feed;
+pub use feed::FeedPage;
 #[path = "bilibili_requests.rs"]
 mod requests;
+#[path = "bilibili_wbi.rs"]
+mod wbi;
 pub use extras::*;
 pub(crate) use requests::{Priority as RequestPriority, initialize as initialize_requests};
 use reqwest::{
@@ -23,7 +28,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -1619,6 +1624,15 @@ impl BilibiliProvider {
 
     fn api_url(&self, path: &str) -> Url {
         Url::parse(&format!("{API_ORIGIN}{path}")).expect("static API URL")
+    }
+
+    pub(super) async fn hot_search(&self, limit: usize) -> Result<serde_json::Value, ProviderError> {
+        let mut url = self.api_url("/x/web-interface/search/square");
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string())
+            .append_pair("platform", "web");
+        self.get_data_with_priority(url, RequestPriority::Background)
+            .await
     }
 
     async fn get_data<T: DeserializeOwned>(&self, url: Url) -> Result<T, ProviderError> {

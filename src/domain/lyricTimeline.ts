@@ -54,8 +54,11 @@ export function translatedLyricLine(line: LyricLine | undefined): LyricLine | un
   return text && line ? { timeMs: line.timeMs, endTimeMs: line.endTimeMs, text } : undefined
 }
 
+export const hasLyricTranslation = (lines: readonly LyricLine[]) => lines.some(line => Boolean(line.translation?.trim()))
+
 export function floatingDisplaySlots(lines: LyricLine[], timeMs: number, subtitles: boolean, language: FloatingLanguage) {
   const slots = floatingLineSlots(lines, timeMs, subtitles)
+  if (language !== 'original' && !hasLyricTranslation(lines)) return slots
   if (language === 'original') return slots
   if (language === 'translation') {
     return slots.map(slot => ({ ...slot, line: translatedLyricLine(slot.line) ?? slot.line }))

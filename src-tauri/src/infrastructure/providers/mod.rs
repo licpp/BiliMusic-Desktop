@@ -1,4 +1,5 @@
 pub mod bilibili;
+pub mod hot_search;
 pub(crate) mod domestic_music;
 pub mod lrclib;
 pub mod music_catalog;

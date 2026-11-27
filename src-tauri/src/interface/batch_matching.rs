@@ -79,14 +79,14 @@ fn token(lyrics: &StoredLyrics) -> String {
         .expect("lyric snapshot serializes"),
     )
 }
-fn has_override(c: &Connection, track_id: &str) -> rusqlite::Result<bool> {
+pub(super) fn has_override(c: &Connection, track_id: &str) -> rusqlite::Result<bool> {
     c.query_row(
         "SELECT EXISTS(SELECT 1 FROM metadata_overrides WHERE track_id=?1)",
         [track_id],
         |r| r.get(0),
     )
 }
-fn protected_lyrics(lyrics: &StoredLyrics) -> bool {
+pub(super) fn protected_lyrics(lyrics: &StoredLyrics) -> bool {
     lyrics.selected_manually || lyrics.bias_ms != 0 || lyrics.provider == "local"
 }
 fn snapshot(
@@ -131,10 +131,7 @@ struct LyricLine {
 fn time_valid(t: f64) -> bool {
     t.is_finite() && (0.0..=604_800_000.0).contains(&t)
 }
-pub(super) fn validate(
-    metadata: &MetadataPatch,
-    lyrics: &SaveLyricsInput,
-) -> Result<(), CommandError> {
+pub(super) fn validate_metadata(metadata: &MetadataPatch) -> Result<(), CommandError> {
     if metadata.title.trim().is_empty()
         || metadata.title.chars().count() > 1000
         || metadata
@@ -155,6 +152,14 @@ pub(super) fn validate(
     {
         return Err(CommandError::validation("匹配的歌曲信息无效"));
     }
+    Ok(())
+}
+
+pub(super) fn validate(
+    metadata: &MetadataPatch,
+    lyrics: &SaveLyricsInput,
+) -> Result<(), CommandError> {
+    validate_metadata(metadata)?;
     if !["qq", "netease", "lrclib"].contains(&lyrics.provider.as_str()) {
         return Err(CommandError::validation("不支持的自动歌词来源"));
     }

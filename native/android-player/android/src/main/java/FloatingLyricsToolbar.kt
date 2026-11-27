@@ -22,6 +22,7 @@ internal class FloatingLyricsToolbar(context: Context, private val onAction: (Ac
     private val accent = 0xFFB4F3E9.toInt()
     private val languageButton = LinearLayout(context)
     private val languageLabel = TextView(context)
+    private val languageDivider: View
     private val smallerButton = iconButton(FloatingControlIcon.Kind.MINUS, "减小歌词字号", Action.SMALLER)
     private val largerButton = iconButton(FloatingControlIcon.Kind.PLUS, "增大歌词字号", Action.LARGER)
 
@@ -60,13 +61,20 @@ internal class FloatingLyricsToolbar(context: Context, private val onAction: (Ac
             addView(languageLabel, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT).apply { marginStart = dp(5) })
         }
         addView(languageButton, LayoutParams(dp(76), dp(44)))
-        divider()
+        languageDivider = divider()
         addView(smallerButton, buttonSize())
         addView(largerButton, buttonSize())
         divider()
         addView(iconButton(FloatingControlIcon.Kind.LOCK, "锁定悬浮歌词", Action.LOCK), buttonSize())
         addView(iconButton(FloatingControlIcon.Kind.CLOSE, "关闭悬浮歌词", Action.CLOSE), buttonSize())
         displayLanguage(FloatingLyricsLanguage.ORIGINAL)
+        showLanguage(false)
+    }
+
+    fun showLanguage(available: Boolean) {
+        val state = if (available) View.VISIBLE else View.GONE
+        languageButton.visibility = state
+        languageDivider.visibility = state
     }
 
     fun displayLanguage(language: FloatingLyricsLanguage) {
@@ -92,12 +100,13 @@ internal class FloatingLyricsToolbar(context: Context, private val onAction: (Ac
             setOnClickListener { onAction(action) }
         }
 
-    private fun divider() {
+    private fun divider(): View {
         val space = LayoutParams(dp(1), dp(18)).apply { marginStart = dp(2); marginEnd = dp(2) }
-        addView(View(context).apply {
+        return View(context).apply {
             setBackgroundColor(0x32C4D9E7)
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, space)
+            addView(this, space)
+        }
     }
 
     private fun buttonSize() = LayoutParams(dp(44), dp(44))
