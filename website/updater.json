@@ -1,32 +1,32 @@
 {
-  "version": "0.4.4",
+  "version": "0.4.5",
   "platforms": {
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUWFrY3lhQXFuNFdNdmJVRFlJTGFGREhNYlhzS2E4VDhkbkF3UlVOR1dmTUo5akJ5TWFrVmtjdFFjUkZISlg4R0pQdkwxTlhmNFNDV0ZtZkpFbDN1VlFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTE0ODk0CWZpbGU6QmlsaU11c2ljLmFwcC50YXIuZ3oKenlQZ20rNlJOVS8wRkRRL3dCcHlJZU1RcnF6ckFMNi8ycmtTeVRPVW5ZUnY4RFVmYkJML09sSmozRlVhZlhIS3JyWklaTjVKbzg3cWtRdThEWnprQkE9PQo=",
-      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.4/BiliMusic_0.4.4_build1_macOS_x64.app.tar.gz",
-      "size": 8219045,
-      "sha256": "6d022f5160c9aae2a9ade78e044d8dd5e3857262f247a16bfd6fd2d9dac1b771",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUVhLNWtUYmZIcnpITkI1ZDVOUWdYeWd1aFJwUEN2Q01FbE9NNXJ1cHhjYkRhM0tXbzB1YXIyUjdqcVBiMzJ0NWlHcHpwSjVtTXNrSlpSemVwTXpqOXc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjE2MjcyCWZpbGU6QmlsaU11c2ljLmFwcC50YXIuZ3oKaEVNOS82SkF0cURHMVpHWnJnTjlFOEVLS216c1E3NzhnSVZSeWNUazFqL1VVa0dnZmg3U2cxWjZVTnJhRlpCM3Fwd25EMjR3Y0FNSWlzSVJ0MWcwREE9PQo=",
+      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_macOS_x64.app.tar.gz",
+      "size": 8197714,
+      "sha256": "bb3f6c9ba4f3d62d030c3829139369510b43d681a6d95cfa1b5a27d77478ff29",
       "build": 1
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUWFXTmJqWCs3RStaMnlmUXh5RUd6M0NjT3psdmg0ZXVFYXA5VVl6M0l5YjJQUTFoMy81VXJVaXhQSkJLdFF2S3lrR25wc1ROQzYzTFRObXBzSDRtY0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTE0NzU1CWZpbGU6QmlsaU11c2ljXzAuNC40X3g2NC1zZXR1cC5leGUKLzhoUUdzaHlNUDc0UEVkd0NLTTRIUXR2dElRTUNlRk9XTmYyODc0cTFCeWJJNjU5d1p3ZFpBZnpSR1BFSTEwR2t2YkxtbkVRTDU0ZmVubzhaM2pJQlE9PQo=",
-      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.4/BiliMusic_0.4.4_build1_Windows_x64_setup.exe",
-      "size": 5861548,
-      "sha256": "f0dd7c85a0cb807e8dc1554a12b31fbfe86b8eeb91d23928a37a4dbd1f3fdf7d",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUVJTMUN5cHI1SGoxYjhHZ1hTS3NDdlF1Q1ozS05kUXNKY1JhTGZjRDBkWmlvM2ZGeEo1a2drVG1VOThYOEVxV05HSGpIVGpoSDFZcVJrZDRMZWxPR3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjE2MjE2CWZpbGU6QmlsaU11c2ljXzAuNC41X3g2NC1zZXR1cC5leGUKbUsxOUFsaXB0RmI3WmJYZ1JFTWNtcC9DTEVya0dEaEFlUklnU3ZHc1NBV01xYTBBQVlIbWpkMkFLUmlRYjUveU83RDE3dXZZTlZBbitucHhkUUplQkE9PQo=",
+      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Windows_x64_setup.exe",
+      "size": 5840237,
+      "sha256": "52784ffa9bc80b3cbba7e19dfe0b1fdf03157512aeaec283776b3c612be972f0",
       "build": 1
     },
     "windows-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUWFLMWh2V2RLUzFtT2RUUmM2ekd4MTUra3U4K2tSTzVpNVVTTGZabWZrb1dlM2p3S2M4NVc0a2YzdEhZNklQNisyRWF3a3kwWWNCbnJDRGZJOW5DQ0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTE0Nzk5CWZpbGU6QmlsaU11c2ljXzAuNC40X2FybTY0LXNldHVwLmV4ZQpGdUs1LzRTWkNlYklKNEJlYVh5VEk3dTR4ajNPcE0vcFFUeVp5NFJoVzNueFA0MmxjVXFNejZEclVsOUtxOWx1d0RWSDZZUXRCTS9wYTZMVlJCY0tBZz09Cg==",
-      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.4/BiliMusic_0.4.4_build1_Windows_arm64_setup.exe",
-      "size": 5227990,
-      "sha256": "8b24ac1352324c16ae183add62ca32ce2c7bbb30f48e2b5e1a6cd0036dbee0fd",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUWV4NmhacW9zRlducnNpNzRQWWhPMTB2SmEyaFZrS1dkU3ZScGw0dTlJelFhQTZiRTBlQTdDUUJwQ2pzQ055dDVab3B4VG5mMEF1RjBEU2dsWUoxYWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjE2MTk0CWZpbGU6QmlsaU11c2ljXzAuNC41X2FybTY0LXNldHVwLmV4ZQpkWlhvb1VkZTZlZ2hSKzRUQ1ltRkJuWnhQSUxnWEN0TmdiWUZlU0Y2UGFkbmdtRlNMamozZXBSVzFzd1Fub3hFOC8yczhUcmFOZWhrVmsvTU10VWxDUT09Cg==",
+      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_Windows_arm64_setup.exe",
+      "size": 5216965,
+      "sha256": "3a78c2f467c0b51f24214a59febff6fddb0a8e92d09e4ca122bf995986732688",
       "build": 1
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUVZQRmRjMHBPQVI4S2pTeEgweHNoeTh2dzVQYzBxSEJ6WkUvN2hwVFlDQWcwUVFOcHIzeThBOHlTTUxDbUlSY09EYUhORjRjdmF1Z0hSUXNSL09XbXdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NTE0NjUyCWZpbGU6QmlsaU11c2ljLmFwcC50YXIuZ3oKR1dHSFZ3V1RoRzMrSWU1NXRoZ3ZKRFRXVjQxdW5EWmFVeWlQWFNOc0dWYXY4UStkTjM1S1ViNWRScDFZZTJBS3JEb25VZmVBRkE4Wi9OOGN6Y1NOQ0E9PQo=",
-      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.4/BiliMusic_0.4.4_build1_macOS_arm64.app.tar.gz",
-      "size": 7743208,
-      "sha256": "afaabd8701fd4c9a461edbdb74687356567a63c4160a02c6cdf844c1b299e0a9",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUTlIwUlNnMzJEUVRSUGRtajdpa1ZETzBTZDVZT0FWS0FDL1VZTWF1VGhxZllTK3hKSnBoU3RNWHZ4dkc5YlFFTmk3cVcxcExQakQ4ZVBUeENOZ2FoZlBrdjZRejErYkFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NjE1NjQ1CWZpbGU6QmlsaU11c2ljLmFwcC50YXIuZ3oKMmZXZWs1QldTbjRCdHhNTGMzRHZFYkR4SXplcnlJZ1FhOVR3aTFkNEVUNkRid1VVbngzeVhSK3ZrMi9TY0hINnNSL3ZybkZtaXhaUGxzd3lDalZLQkE9PQo=",
+      "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.5/BiliMusic_0.4.5_build1_macOS_arm64.app.tar.gz",
+      "size": 7721851,
+      "sha256": "d7d3b0370e6ddc9385fbd046b699a73bdc4c1ae73170782892b97c3487e98bb7",
       "build": 1
     }
   }
