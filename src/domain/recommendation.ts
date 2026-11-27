@@ -89,6 +89,16 @@ export function recommendationSourceName(source: Pick<RecommendationSource, 'nam
   return source.nameCustom && source.name.trim() ? source.name.trim() : defaultRecommendationSourceName(source.nickname, index)
 }
 
+/**
+ * The account line under a source. A default name already ends with the
+ * nickname, so repeating it would print the same text twice; a renamed source
+ * keeps the line, because its name no longer tells which account it is.
+ */
+export function recommendationSourceAccount(source: Pick<RecommendationSource, 'name' | 'nickname'>): string | undefined {
+  const nickname = source.nickname.trim()
+  return nickname && source.name.includes(nickname) ? undefined : nickname || '未命名账号'
+}
+
 export function validateRecommendationSourceName(name: string): string | undefined {
   const clean = name.trim()
   if (!clean) return '推荐源名称不能为空'

@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises'
 const built = await build({entryPoints: ['src/domain/recommendation.ts'], bundle: true, write: false, format: 'esm'})
 const {
   recommendationDay, recommendationDayLabel, defaultRecommendationSourceName, recommendationSourceName,
+  recommendationSourceAccount,
   validateRecommendationSourceName, canApplyAutomaticMatch, bindRecommendationSong,
   playableRecommendationTracks, recommendationPlaybackNotice,
   recommendationMatchSummary, recommendationPendingSongs, replaceRecommendationSong,
@@ -49,6 +50,17 @@ test('default source names follow the nickname and fall back to an ordinal', () 
   assert.equal(defaultRecommendationSourceName('', 2), '推荐源 2')
   assert.equal(recommendationSourceName({name: '旧的默认名', nameCustom: false, nickname: '小明'}), '网易云音乐 · 小明')
   assert.equal(recommendationSourceName({name: '我的推荐', nameCustom: true, nickname: '小明'}), '我的推荐')
+})
+
+test('the account line is dropped when the name already ends with it', () => {
+  // The default name is "网易云音乐 · <nickname>", so printing the nickname
+  // again under it would show the same account twice.
+  assert.equal(recommendationSourceAccount({name: '网易云音乐 · 小明', nickname: '小明'}), undefined)
+  // A renamed source no longer says which account it is.
+  assert.equal(recommendationSourceAccount({name: '工作号', nickname: '小明'}), '小明')
+  assert.equal(recommendationSourceAccount({name: '网易云音乐 · 小明', nickname: '  小明  '}), undefined)
+  // Without a nickname the account is worth stating, whatever the name is.
+  assert.equal(recommendationSourceAccount({name: '推荐源 2', nickname: ''}), '未命名账号')
 })
 
 test('source names reject empty, overlong and control-character values', () => {
