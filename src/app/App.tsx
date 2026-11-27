@@ -104,6 +104,7 @@ import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
 import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
+import { RecommendationHomeEntry, RecommendationView } from '../features/recommendations/RecommendationView'
 import { PictureInPicture2 } from 'lucide-react'
 
 const navigation = [
@@ -291,6 +292,7 @@ export function App() {
   const homeActive = !selectedCollection && (activeNav === '此刻' || compact && activeNav === '收藏库')
   const hubActive = !selectedCollection && !compact && activeNav === '收藏库'
   const musicActive = !selectedCollection && activeNav === '音乐库'
+  const recommendationActive = !selectedCollection && activeNav === '每日推荐'
   const creatorsActive = !selectedCollection && activeNav === '关注'
   const settingsActive = !selectedCollection && activeNav === '我的'
   const detailActive = !!selectedCollection || libraryDetail
@@ -679,7 +681,7 @@ export function App() {
         <div ref={stageFrame} className="stage-route-frame" data-edge-track>
         <form className={`topbar ${searchActive ? 'searching' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
           <div className="mobile-page-heading">
-            {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
+            {(libraryDetail || selectedCollection || recommendationActive) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button>}
             <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : activeNav)}</strong>
           </div>
           <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && !(activeNav === '搜索' && submittedQuery) && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (activeNav === '搜索' && submittedQuery) ? '返回上一页' : '返回主页'}
@@ -726,10 +728,13 @@ export function App() {
             {current && <button className="hero-cover-button" onClick={event => showLyrics(event.currentTarget, !compactPlayer || event.detail === 0)} aria-label="查看当前歌曲歌词"><Artwork src={current.coverUrl} adaptAspect /></button>}
           </section>
 
+          {compact && <RecommendationHomeEntry compact onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />}
+
           {compact ? hub : <><section className="quick-actions">
             <button onClick={openSearchInput}><span className="quick-icon coral-bg"><Sparkles /></span><span><strong>探索音乐</strong><small>寻找下一首歌</small></span><ChevronRight /></button>
             <button onClick={() => { openSearch('放松 纯音乐') }}><span className="quick-icon cyan-bg"><Waves /></span><span><strong>此刻放松</strong><small>搜索舒缓旋律</small></span><ChevronRight /></button>
             <button onClick={() => setActiveNav('音乐库')}><span className="quick-icon blue-bg"><ListMusic /></span><span><strong>我的音乐</strong><small>回到你的收藏</small></span><ChevronRight /></button>
+            <RecommendationHomeEntry onOpen={() => { setLyricsOpen(false); setActiveNav('每日推荐') }} />
           </section>
 
           <section className="tracks-section">
@@ -753,6 +758,9 @@ export function App() {
               {recentHomeTracks?.length === 0 && <div className="home-tracks-empty">播放过的歌曲会出现在这里</div>}
             </div>}
           </section></>}
+        </RetainedStagePage>
+        <RetainedStagePage key={`recommendation:${pageAccount}`} active={recommendationActive} swipe>
+          <RecommendationView active={recommendationActive} />
         </RetainedStagePage>
         {!compact && <RetainedStagePage key={`hub:${pageAccount}`} active={hubActive} swipe>{hub}</RetainedStagePage>}
         <RetainedStagePage key={`music:${pageAccount}`} active={musicActive} className={isMobile ? 'library-stage-pager' : undefined}>
@@ -779,7 +787,7 @@ export function App() {
         {!isMobile && <QueueResizeHandle/>}
         {queueSheet && <button type="button" className="queue-sheet-handle" aria-label="收起播放队列" {...queueDrag}><span /></button>}
         <header>
-          <div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' ? queueSource.title : '接下来'}</h3></div>
+          <div><span className="eyebrow coral">播放队列 · {queue.length}</span><h3 className="queue-heading-title">{queueSource?.kind === 'video' && queue.length > 1 ? '视频选集' : queueSource?.kind === 'season' || queueSource?.kind === 'recommendation' ? queueSource.title : '接下来'}</h3></div>
           <div className="queue-header-actions">
             {queue.length > 1 && <button type="button" className="queue-organize" aria-pressed={queueSorting}
               aria-label={queueSorting ? '完成整理' : '整理播放队列'} title={queueSorting ? '完成整理' : '整理播放队列'}

@@ -70,7 +70,9 @@ export default defineConfig(({ mode }) => ({
     host: process.env.TAURI_DEV_HOST || '127.0.0.1',
     port: 1420,
     strictPort: true,
-    watch: { ignored: ['**/artifacts/**', '**/dist-large-screen/**'] },
+    // The Tauri build owns src-tauri. Watching target/ crashes Vite on Windows
+    // when Cargo replaces a locked .exe (EBUSY) and is wasted work everywhere else.
+    watch: { ignored: ['**/artifacts/**', '**/dist-large-screen/**', '**/src-tauri/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {

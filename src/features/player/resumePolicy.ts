@@ -46,6 +46,9 @@ export function automaticResumePosition(position: number, mediaDuration: number,
 }
 
 export function isCollectionPlayback(track: Track, queue: Track[], source?: { kind: string; collectionRef?: string }) {
+  // Recommendation rows are independent songs even when several were found in
+  // the same compilation video, so they must not turn into a collection queue.
+  if (source?.kind === 'recommendation') return false
   return Boolean(source?.collectionRef) || source?.kind === 'season' || (track.partCount ?? 0) > 1 || track.source.page > 1 ||
     queue.some(item => item.id !== track.id && item.source.bvid === track.source.bvid)
 }

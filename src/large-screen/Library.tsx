@@ -62,7 +62,7 @@ import { LargeLibraryImport } from './LibraryImport'
 import type { ImportedEntry, ImportedEntriesSnapshot } from '../domain/importedEntry'
 
 export type LibraryTab = 'playlists' | 'collections' | 'creators'
-export type Route = { kind: 'home' | 'library' | 'search' | 'offline' | 'settings' } | { kind: 'player'; previewFrom?: Playlist } | { kind: 'playlist'; playlist: Playlist } | { kind: 'folder'; id: string; title: string; scope: LibraryTab } | { kind: 'collection'; item: Collection; resume?: CollectionResumeRequest; parentRef?: string } | { kind: 'creator'; item: Collection; tab?: 'videos' | 'seasons'; query?: string }
+export type Route = { kind: 'home' | 'library' | 'search' | 'offline' | 'settings' | 'recommendations' } | { kind: 'player'; previewFrom?: Playlist } | { kind: 'playlist'; playlist: Playlist } | { kind: 'folder'; id: string; title: string; scope: LibraryTab } | { kind: 'collection'; item: Collection; resume?: CollectionResumeRequest; parentRef?: string } | { kind: 'creator'; item: Collection; tab?: 'videos' | 'seasons'; query?: string }
 export type Navigate = (route: Route) => void
 type FilterState = [string, (value: string) => void]
 function useFilter(controlled?: FilterState): FilterState { const local = useState(''); return controlled || local }

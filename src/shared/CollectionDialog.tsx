@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCompactLayout } from './useCompactLayout'
 import { X } from 'lucide-react'
 
-export function CollectionDialog({ title, onClose, children, className = '', mobileSheet = false }: {mobileSheet?:boolean;title:string;className?:string;onClose:()=>void;children:ReactNode}) {
+export function CollectionDialog({ title, onClose, children, className = '', mobileSheet = false, stacked = false }: {mobileSheet?:boolean;stacked?:boolean;title:string;className?:string;onClose:()=>void;children:ReactNode}) {
   const compact = useCompactLayout()
   const sheet = mobileSheet && compact
   const layer = useRef<HTMLDivElement>(null)
@@ -55,7 +55,7 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
       if (previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true })
     }
   }, [])
-  return createPortal(<div ref={layer} data-closing={closing || undefined} className={`dialog-backdrop collection-dialog-layer${sheet?' collection-dialog-sheet-layer':''}`} onMouseDown={e=>{if(e.target===e.currentTarget)requestClose()}}><section ref={panel} data-closing={closing || undefined} className={'collection-dialog ' + className+(sheet?' collection-dialog-mobile-sheet':'')} role="dialog" aria-modal="true" aria-label={title}>
+  return createPortal(<div ref={layer} data-closing={closing || undefined} className={`dialog-backdrop collection-dialog-layer${sheet?' collection-dialog-sheet-layer':''}${stacked?' collection-dialog-stacked-layer':''}`} onMouseDown={e=>{if(e.target===e.currentTarget)requestClose()}}><section ref={panel} data-closing={closing || undefined} className={'collection-dialog ' + className+(sheet?' collection-dialog-mobile-sheet':'')} role="dialog" aria-modal="true" aria-label={title}>
     {sheet && <button type="button" className="collection-sheet-handle" aria-label={`收起${title}`} {...drag}><span/></button>}
     <header><h3>{title}</h3>{!sheet&&<button className="collection-icon" aria-label="关闭" onClick={requestClose}><X size={19}/></button>}</header>{children}</section></div>,document.body)
 }

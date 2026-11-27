@@ -11,6 +11,8 @@ pub mod playback;
 pub mod playback_cache;
 pub mod playlist_import;
 
+pub mod recommendation;
+
 pub mod list_preferences;
 
 mod playlist_sources;
