@@ -704,7 +704,14 @@ pub fn project(c: &Connection) -> Result<(), String> {
             }
         }
     }
-    c.execute("DELETE FROM playlist_items WHERE EXISTS(SELECT 1 FROM imported_entry_owned o WHERE o.playlist_id=playlist_items.playlist_id AND o.track_id=playlist_items.track_id)",[]).map_err(err)?;
+    let candidates = super::track_cleanup::track_ids(
+        c,
+        "DELETE FROM playlist_items WHERE EXISTS(SELECT 1 FROM imported_entry_owned o
+             WHERE o.playlist_id=playlist_items.playlist_id AND o.track_id=playlist_items.track_id)
+         RETURNING track_id",
+        [],
+    )
+    .map_err(err)?;
     let mut winners = regs
         .into_iter()
         .filter_map(|(key, r)| selected(&r).map(|v| (key, r, v)))
@@ -742,7 +749,7 @@ pub fn project(c: &Connection) -> Result<(), String> {
         }
         c.execute("INSERT INTO playlist_items(playlist_id,track_id,position) VALUES(?1,?2,?3) ON CONFLICT(playlist_id,track_id) DO UPDATE SET position=excluded.position",params![v.playlist_id,t.id,v.order as i64]).map_err(err)?;
     }
-    Ok(())
+    super::track_cleanup::collect_unreferenced(c, &candidates).map_err(err)
 }
 pub fn owned(c: &Connection, playlist: &str, track: &str) -> rusqlite::Result<bool> {
     init(c)?;

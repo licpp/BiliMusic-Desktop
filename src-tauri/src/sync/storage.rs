@@ -1,4 +1,5 @@
 use super::model::*;
+use crate::infrastructure::repositories::track_cleanup;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
@@ -163,7 +164,7 @@ pub fn export(c: &Connection, uid: &str, history: bool) -> Result<Snapshot, Stri
                 "SELECT h.track_id,h.played_at,p.seconds,p.observed_at FROM (
                   SELECT track_id,MAX(played_at) played_at FROM play_history
                   WHERE track_id NOT IN (SELECT track_id FROM local_audio)
-                  GROUP BY track_id ORDER BY played_at DESC,track_id LIMIT 200
+                  GROUP BY track_id ORDER BY played_at DESC,MAX(id) DESC LIMIT 200
                 ) h LEFT JOIN playback_positions p ON p.track_id=h.track_id",
             )?;
             for row in q.query_map([], |r| {
@@ -275,6 +276,7 @@ pub fn apply_with_inferred_tracks(
         .map_err(|e| e.to_string())?;
     let tx = c;
     let result = (|| -> rusqlite::Result<()> {
+        let mut candidates = Vec::new();
         // Remove only sync-owned selections. Preserve local audio and B站 subtitles;
         // archive the former text before deleting so local content is recoverable.
         let keep: std::collections::BTreeSet<_> = s
@@ -311,6 +313,7 @@ pub fn apply_with_inferred_tracks(
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for id in existing {
             if !linked.records.contains_key(&format!("linkedFolder:{id}")) {
+                candidates.extend(track_cleanup::linked_folder_candidates(tx, id)?);
                 tx.execute(
                     "DELETE FROM linked_bili_folders WHERE folder_id=?1 AND owner_uid=?2",
                     params![id, owner],
@@ -349,6 +352,9 @@ pub fn apply_with_inferred_tracks(
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             for id in existing {
                 if !keep.contains(id.as_str()) {
+                    if kind == "playlist" {
+                        candidates.extend(track_cleanup::playlist_candidates(tx, &id)?);
+                    }
                     tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), [&id])?;
                 }
             }
@@ -371,6 +377,7 @@ pub fn apply_with_inferred_tracks(
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for id in existing {
             if !keep.contains(&id) {
+                candidates.extend(track_cleanup::collection_candidates(tx, &id)?);
                 tx.execute("DELETE FROM collections WHERE bvid=?1", [id])?;
             }
         }
@@ -390,13 +397,14 @@ pub fn apply_with_inferred_tracks(
                 .filter(|r| r.kind == "collectionProgress")
             {
                 if let Some((time, bvid, cid, position)) = parse_checkpoint(text(r, "checkpoint")) {
-                    crate::infrastructure::repositories::collections::save_progress(
+                    let (_, previous) = crate::infrastructure::repositories::collections::save_progress_in_transaction(
                         tx,
                         text(r, "reference"),
                         &format!("bilibili:{bvid}:{cid}"),
                         position as f64 / 1000.0,
                         time,
                     )?;
+                    candidates.extend(previous);
                 }
             }
         }
@@ -468,14 +476,21 @@ pub fn apply_with_inferred_tracks(
                 _ => {}
             }
         }
-        tx.execute_batch(
+        candidates.extend(track_cleanup::track_ids(
+            tx,
             "DELETE FROM playlist_items WHERE track_id NOT IN (SELECT track_id FROM local_audio)
-               AND NOT EXISTS(SELECT 1 FROM sync_item_keys k WHERE k.playlist_id=playlist_items.playlist_id AND k.track_id=playlist_items.track_id);
-             DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio)
-               AND NOT EXISTS(SELECT 1 FROM sync_favorite_keys k WHERE k.track_id=favorites.track_id);
-             DROP TABLE sync_item_keys;
-             DROP TABLE sync_favorite_keys;",
-        )?;
+               AND NOT EXISTS(SELECT 1 FROM sync_item_keys k WHERE k.playlist_id=playlist_items.playlist_id AND k.track_id=playlist_items.track_id)
+               RETURNING track_id",
+            [],
+        )?);
+        candidates.extend(track_cleanup::track_ids(
+            tx,
+            "DELETE FROM favorites WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+               AND NOT EXISTS(SELECT 1 FROM sync_favorite_keys k WHERE k.track_id=favorites.track_id)
+               RETURNING track_id",
+            [],
+        )?);
+        tx.execute_batch("DROP TABLE sync_item_keys; DROP TABLE sync_favorite_keys;")?;
         if history {
             tx.execute_batch("CREATE TEMP TABLE sync_history_keys(track_id TEXT PRIMARY KEY);")?;
             for r in s.records.values().filter(|r| r.kind == "history") {
@@ -498,13 +513,19 @@ pub fn apply_with_inferred_tracks(
                     )?;
                 }
             }
-            tx.execute_batch("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
-                AND track_id NOT IN (SELECT track_id FROM sync_history_keys); DROP TABLE sync_history_keys;")?;
+            candidates.extend(track_cleanup::track_ids(
+                tx,
+                "DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM local_audio)
+                    AND track_id NOT IN (SELECT track_id FROM sync_history_keys) RETURNING track_id",
+                [],
+            )?);
+            tx.execute_batch("DROP TABLE sync_history_keys;")?;
         }
         crate::infrastructure::repositories::list_preferences::apply(&tx, s)?;
         crate::infrastructure::repositories::imported_entries::project(tx)
             .map_err(rusqlite::Error::InvalidParameterName)?;
-        prune(&tx)?;
+        candidates.extend(track_cleanup::trim_recent(tx)?);
+        track_cleanup::collect_unreferenced(tx, &candidates)?;
         Ok(())
     })();
     match result {
@@ -516,14 +537,6 @@ pub fn apply_with_inferred_tracks(
             Err(e.to_string())
         }
     }
-}
-pub fn prune(c: &Connection) -> rusqlite::Result<()> {
-    // Keep exactly the visible recent-list references, never an unbounded metadata archive.
-    c.execute("DELETE FROM play_history WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,track_id LIMIT 200)",[])?;
-    c.execute("DELETE FROM playback_positions WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC,MAX(id) DESC LIMIT 200)", [])?;
-    c.execute("DELETE FROM metadata_overrides WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
-    c.execute("DELETE FROM lyrics WHERE track_id NOT IN (SELECT track_id FROM favorites UNION SELECT track_id FROM playlist_items UNION SELECT track_id FROM play_history UNION SELECT track_id FROM local_audio)",[])?;
-    Ok(())
 }
 #[cfg(test)]
 mod tests {
@@ -1163,8 +1176,7 @@ mod tests {
         crate::infrastructure::migrations::migrate(&d).unwrap();
         apply(&d, &s, false).unwrap();
         assert_eq!(s, export(&d, "42", false).unwrap());
-        c.execute("DELETE FROM favorites", []).unwrap();
-        prune(&c).unwrap();
+        apply(&c, &Snapshot::empty("42"), false).unwrap();
         assert_eq!(
             c.query_row("SELECT COUNT(*) FROM metadata_overrides", [], |r| r
                 .get::<_, i64>(0))

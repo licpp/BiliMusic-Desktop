@@ -28,6 +28,7 @@ import { Card, Failure, LargeLibrary, LargePlaylist, LargeCollection, LargeCreat
 import { LargeControls, LargePlayer } from './Player'
 import { LargeDialog } from './LargeDialog'
 import { LargeSettings } from './Settings'
+import { HistoryDeleteDialog } from '../features/library/HistoryDeleteDialog'
 import { LargeTrackActions, type LinkedTrackActions } from './TrackActions'
 import { LargeOffline } from './Offline'
 import { currentDisplayVersion } from '../shared/version'
@@ -56,7 +57,8 @@ export function LargeScreenApp() {
   }, [searchExtensions])
   const pageDepth = exploreDetail || extensionsDetail || ['creator', 'collection', 'folder', 'playlist', 'player'].includes(route.kind) ? 1 : 0
   usePageMotion(main, pageKey, pageDepth, false, pageMotion)
-  const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean; visibilityScope?:string; replaceVideo?:()=>void; linked?:LinkedTrackActions }>(), [sleep, setSleep] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false), [menu, setMenu] = useState<{ track: Track; queue?: boolean; recent?: boolean; visibilityScope?:string; replaceVideo?:()=>void; linked?:LinkedTrackActions }>(), [sleep, setSleep] = useState(false)
+  const [historyDelete, setHistoryDelete] = useState<Track[]>()
   const current = usePlayerStore(s => s.current), queue = usePlayerStore(s => s.queue)
   const playbackError = usePlayerStore(s => s.error)
   const playbackFailed = usePlayerStore(s => s.status === 'error')
@@ -96,7 +98,7 @@ export function LargeScreenApp() {
   useEffect(connectMediaSession, [])
   useEffect(() => { if (queue.length) void hydrateSourceTitles(queue.slice(0, 50).map(t => t.id), client).catch(() => undefined) }, [queue, client])
   useEffect(() => {
-    const changed = () => { history.current = []; setFilters({}); setQuery(''); setSearchKind('video'); setMenu(undefined); setQueueOpen(false); setSleep(false); setActionError(''); setRoute({ kind: 'home' }) }
+    const changed = () => { history.current = []; setFilters({}); setQuery(''); setSearchKind('video'); setMenu(undefined); setHistoryDelete(undefined); setQueueOpen(false); setSleep(false); setActionError(''); setRoute({ kind: 'home' }) }
     const status = (event: Event) => setMessage(String((event as CustomEvent).detail || ''))
     const recent = () => { void client.invalidateQueries({ queryKey: accountQueryKey('home-recent') }) }
     window.addEventListener('bilimusic-account-changing', changed); window.addEventListener('bilimusic-sync-status', status); window.addEventListener('bilimusic-recent-changed', recent)
@@ -144,7 +146,7 @@ export function LargeScreenApp() {
     </nav>
     <main ref={main} className="large-main" aria-label="内容区">
       {route.kind !== 'player' && route.kind !== 'search' && !exploreDetail && !extensionsDetail && <div className="large-topbar"><button className="large-icon" aria-label="返回上一页" disabled={route.kind === 'home' && !history.current.length} onClick={() => back()}><ArrowLeft/></button><button className={attention ? 'large-sync attention' : 'large-sync'} onClick={() => navigate({ kind: 'settings' })}>{attention ? <AlertCircle/> : <Cloud/>}<span>{attention ? '同步待处理' : '账号与同步'}</span></button></div>}
-      {route.kind === 'home' && <LargeHome navigate={navigate} onMore={showMenu}/>}
+      {route.kind === 'home' && <LargeHome navigate={navigate} onMore={track => setMenu({ track, recent: true })}/>}
       {exploreDetail && routeAvailable(route) && <>
         <header className="recommendation-topbar large-recommendation-topbar">
           <button type="button" className="large-icon" aria-label="返回搜索" onClick={back}><ArrowLeft/></button>
@@ -174,7 +176,10 @@ export function LargeScreenApp() {
     </main>
     {route.kind !== 'player' && <footer className="large-dock"><button className="large-dock-song" data-focus="dock-song" disabled={!current} onClick={() => navigate({ kind: 'player' })}><Artwork variant="thumbnail" adaptAspect src={current?.coverUrl}/><span><strong>{current?.displayTitle || current?.title || '让音乐开始'}</strong><small>{current?.artist || current?.source.uploaderName || '选择一首喜欢的歌'}</small></span></button><LargeControls/><div className="large-dock-actions"><button aria-label="定时暂停" onClick={() => setSleep(true)} disabled={!current}>定时</button><button onClick={() => setQueueOpen(true)} aria-label={`播放队列，${queue.length}首`}><ListMusic/><span>队列</span><small>{queue.length}</small></button></div></footer>}
     {queueOpen && <LargeQueue onClose={() => setQueueOpen(false)} onMore={track => setMenu({ track, queue: true })}/>}
-    {menu && <LargeTrackActions key={menu.track.id} track={menu.track} visibilityScope={menu.visibilityScope} replaceVideo={menu.replaceVideo} linked={menu.linked} queue={menu.queue} onClose={() => setMenu(undefined)} onFavorite={favorite}/>}
+    {menu && <LargeTrackActions key={menu.track.id} track={menu.track} visibilityScope={menu.visibilityScope} replaceVideo={menu.replaceVideo} linked={menu.linked} queue={menu.queue} onDeleteHistory={menu.recent ? () => { setMenu(undefined); setHistoryDelete([menu.track]) } : undefined} onClose={() => setMenu(undefined)} onFavorite={favorite}/>}
+    {historyDelete && <HistoryDeleteDialog tracks={historyDelete} onClose={() => setHistoryDelete(undefined)}
+      onDeleted={() => { setHistoryDelete(undefined); setMessage('已删除播放记录') }}
+      renderDialog={(body, close) => <LargeDialog title="删除播放记录" onClose={close}>{body}</LargeDialog>}/>}
     <LargeDownloadDialogHost/>
     <LargeKeyboardBar/>
     <LargeSleep open={sleep} onClose={() => setSleep(false)}/>

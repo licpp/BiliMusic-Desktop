@@ -598,7 +598,8 @@ impl PlaylistRepository {
             favorite_order::save(&tx, root, &positions)?;
         }
         if already_present && keep_existing == Some(false) {
-            Self::remove_track(&tx, playlist_id, &track.id)?;
+            // The competing track takes the original slot, so keep its edits.
+            Self::unlink_track(&tx, playlist_id, &track.id)?;
         }
         if move_to_previous
             && playlist_id.starts_with("import:")
@@ -631,8 +632,9 @@ impl PlaylistRepository {
                 )?;
             }
         } else {
-            Self::remove_track(&tx, playlist_id, previous)?;
+            Self::unlink_track(&tx, playlist_id, previous)?;
         }
+        super::track_cleanup::collect_unreferenced(&tx, &[previous.to_owned()])?;
         if !favorite {
             tx.execute(
                 "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
@@ -718,16 +720,9 @@ impl PlaylistRepository {
         }
         connection.execute_batch("SAVEPOINT playlist_remove")?;
         let result = (|| {
-            super::imported_entries::remove(connection, playlist_id, Some(track_id))
-                .map_err(rusqlite::Error::InvalidParameterName)?;
-            connection.execute(
-                "DELETE FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
-                params![playlist_id, track_id],
-            )?;
-            connection.execute(
-                "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
-                params![playlist_id],
-            )?;
+            if Self::unlink_track(connection, playlist_id, track_id)? > 0 {
+                super::track_cleanup::collect_unreferenced(connection, &[track_id.to_owned()])?;
+            }
             Ok(())
         })();
         match result {
@@ -740,13 +735,36 @@ impl PlaylistRepository {
         }
     }
 
+    fn unlink_track(
+        connection: &Connection,
+        playlist_id: &str,
+        track: &str,
+    ) -> rusqlite::Result<usize> {
+        if playlist_id == FAVORITES_PLAYLIST_ID {
+            return connection.execute("DELETE FROM favorites WHERE track_id=?1", [track]);
+        }
+        super::imported_entries::remove(connection, playlist_id, Some(track))
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+        let removed = connection.execute(
+            "DELETE FROM playlist_items WHERE playlist_id=?1 AND track_id=?2",
+            params![playlist_id, track],
+        )?;
+        connection.execute(
+            "UPDATE playlists SET updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            [playlist_id],
+        )?;
+        Ok(removed)
+    }
+
     pub fn delete(connection: &Connection, id: &str) -> rusqlite::Result<()> {
         Self::ensure_custom(id)?;
         connection.execute_batch("SAVEPOINT playlist_delete")?;
         let result = (|| {
+            let candidates = super::track_cleanup::playlist_candidates(connection, id)?;
             super::imported_entries::remove(connection, id, None)
                 .map_err(rusqlite::Error::InvalidParameterName)?;
             connection.execute("DELETE FROM playlists WHERE id=?1", params![id])?;
+            super::track_cleanup::collect_unreferenced(connection, &candidates)?;
             Ok(())
         })();
         match result {

@@ -148,46 +148,25 @@ pub fn library_update_metadata(
 }
 
 #[tauri::command]
-pub async fn library_history_presence(
-    app: tauri::AppHandle,
+pub fn library_history_presence(
     database: State<'_, Database>,
-    sync: State<'_, crate::sync::SyncState>,
     expected_account_session: String,
-    track_ids: Vec<String>,
 ) -> Result<crate::sync::HistoryPresence, CommandError> {
-    validate_history_ids(&track_ids)?;
-    {
-        let connection = database
-            .0
-            .lock()
-            .map_err(|_| CommandError::database("数据库正忙"))?;
-        check_account_session(&connection, &expected_account_session)?;
-    }
-    crate::sync::history_presence(&app, &database, &sync, &track_ids)
-        .await
+    crate::sync::history_presence(&database, &expected_account_session)
         .map_err(|error| CommandError::new("sync_error", error, true))
 }
 
 #[tauri::command]
 pub async fn library_remove_history(
-    app: tauri::AppHandle,
     database: State<'_, Database>,
     sync: State<'_, crate::sync::SyncState>,
     expected_account_session: String,
     track_ids: Vec<String>,
-    cloud: bool,
 ) -> Result<usize, CommandError> {
     validate_history_ids(&track_ids)?;
-    crate::sync::remove_history(
-        &app,
-        &database,
-        &sync,
-        &track_ids,
-        cloud,
-        &expected_account_session,
-    )
-    .await
-    .map_err(|error| CommandError::new("sync_error", error, true))
+    crate::sync::remove_history(&database, &sync, &track_ids, &expected_account_session)
+        .await
+        .map_err(|error| CommandError::new("sync_error", error, true))
 }
 
 fn validate_history_ids(ids: &[String]) -> Result<(), CommandError> {

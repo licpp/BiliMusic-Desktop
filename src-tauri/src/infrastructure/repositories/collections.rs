@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 const MAX_COLLECTIONS: usize = 2000;
@@ -57,7 +57,6 @@ pub struct CollectionProgress {
 }
 
 pub fn progress(c: &Connection, reference: &str) -> rusqlite::Result<Option<CollectionProgress>> {
-    use rusqlite::OptionalExtension;
     let creator = reference.starts_with("up:");
     let sql = if creator {
         "SELECT bvid,cid,position_ms,reference FROM collection_progress
@@ -85,14 +84,46 @@ pub fn save_progress(
     seconds: f64,
     observed_at: i64,
 ) -> rusqlite::Result<bool> {
+    c.execute_batch("SAVEPOINT collection_progress_save")?;
+    let result = (|| {
+        let (changed, previous) =
+            save_progress_in_transaction(c, reference, track_id, seconds, observed_at)?;
+        if let Some(previous) = previous {
+            super::track_cleanup::collect_unreferenced(c, &[previous])?;
+        }
+        Ok(changed)
+    })();
+    match result {
+        Ok(changed) => {
+            c.execute_batch("RELEASE collection_progress_save")?;
+            Ok(changed)
+        }
+        Err(error) => {
+            let _ = c.execute_batch(
+                "ROLLBACK TO collection_progress_save; RELEASE collection_progress_save",
+            );
+            Err(error)
+        }
+    }
+}
+
+/// Returns the previous track if the update moved this collection checkpoint.
+/// The caller checks remaining references after all changes in its transaction.
+pub(crate) fn save_progress_in_transaction(
+    c: &Connection,
+    reference: &str,
+    track_id: &str,
+    seconds: f64,
+    observed_at: i64,
+) -> rusqlite::Result<(bool, Option<String>)> {
     let Some((bvid, cid)) = track_id
         .strip_prefix("bilibili:")
         .and_then(|id| id.split_once(':'))
     else {
-        return Ok(false);
+        return Ok((false, None));
     };
     let Ok(cid) = cid.parse::<i64>() else {
-        return Ok(false);
+        return Ok((false, None));
     };
     if bvid.len() <= 2
         || !bvid.starts_with("BV")
@@ -104,15 +135,26 @@ pub fn save_progress(
         || !(0.0..=604800.0).contains(&seconds)
         || !(1..=9_007_199_254_740_991).contains(&observed_at)
     {
-        return Ok(false);
+        return Ok((false, None));
     }
-    c.execute(
+    let previous = c
+        .query_row(
+            "SELECT t.id FROM collection_progress p
+         JOIN source_items s ON s.provider='bilibili' AND s.bvid=p.bvid AND s.cid=p.cid
+         JOIN tracks t ON t.source_item_id=s.id
+         WHERE p.reference=?1 AND (p.bvid<>?2 OR p.cid<>?3) AND p.observed_at<=?4",
+            params![reference, bvid, cid, observed_at],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let changed = c.execute(
         "INSERT INTO collection_progress(reference,bvid,cid,position_ms,observed_at)
          SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM collections WHERE bvid=?1 OR bvid=?6)
          ON CONFLICT(reference) DO UPDATE SET bvid=excluded.bvid,cid=excluded.cid,position_ms=excluded.position_ms,observed_at=excluded.observed_at
          WHERE excluded.observed_at >= collection_progress.observed_at",
         params![reference, bvid, cid, (seconds * 1000.0).round() as i64, observed_at, season_creator_reference(reference)],
-    ).map(|changed| changed > 0)
+    )? > 0;
+    Ok((changed, previous.filter(|_| changed)))
 }
 
 pub fn prune_progress(c: &Connection) -> rusqlite::Result<usize> {
@@ -389,9 +431,15 @@ pub fn change(
                 }
             }
             "remove" => {
+                let candidates = super::track_cleanup::collection_candidates(&tx, id)
+                    .map_err(|e| e.to_string())?;
                 execute("DELETE FROM creator_notes WHERE bvid=?1", &[&id])?;
-                execute("DELETE FROM collections WHERE bvid=?1", &[&id])?;
+                let removed = execute("DELETE FROM collections WHERE bvid=?1", &[&id])?;
                 prune_progress(&tx).map_err(|e| e.to_string())?;
+                if removed > 0 {
+                    super::track_cleanup::collect_unreferenced(&tx, &candidates)
+                        .map_err(|e| e.to_string())?;
+                }
             }
             _ => return Err("不支持的收藏操作".into()),
         }
@@ -403,6 +451,32 @@ pub fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn advancing_a_collection_checkpoint_releases_its_previous_track() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO collections(bvid) VALUES ('up:42');
+             INSERT INTO source_items(id,provider,bvid,cid) VALUES
+                 ('bilibili:BVcheckpoint:1','bilibili','BVcheckpoint',1),
+                 ('bilibili:BVcheckpoint:2','bilibili','BVcheckpoint',2);
+             INSERT INTO tracks(id,source_item_id,title) SELECT id,id,'Track' FROM source_items;
+             INSERT INTO metadata_overrides(track_id,title) VALUES ('bilibili:BVcheckpoint:1','Edit');
+             INSERT INTO saved_chapters VALUES ('BVcheckpoint',1,'{}'),('BVcheckpoint',2,'{}');",
+        ).unwrap();
+        let first = "bilibili:BVcheckpoint:1";
+        let second = "bilibili:BVcheckpoint:2";
+        assert!(save_progress(&c, "season:42:99", first, 30.0, 20).unwrap());
+        assert!(!save_progress(&c, "season:42:99", second, 40.0, 15).unwrap());
+        assert!(save_progress(&c, "season:42:99", first, 35.0, 25).unwrap());
+        let count = |sql| c.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM metadata_overrides"), 1);
+        assert!(save_progress(&c, "season:42:99", second, 40.0, 30).unwrap());
+        assert_eq!(count("SELECT COUNT(*) FROM metadata_overrides"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM saved_chapters WHERE cid=1"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM saved_chapters WHERE cid=2"), 1);
+    }
 
     fn season(id: usize, title: &str, folder_id: &str) -> Collection {
         Collection {

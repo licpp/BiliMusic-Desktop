@@ -223,6 +223,8 @@ html[data-layout="large"],html[data-layout="large"] body,html[data-layout="large
 .large-setting-row { display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line); }
 .large-setting-row>span { flex:none;margin-right:12px; }
 .large-options { display:flex;gap:10px;flex-wrap:wrap; }
+.large-dialog .history-delete-actions { display:flex;justify-content:flex-end;gap:8px; }
+:root[data-layout="large"] .large-dialog .history-delete-actions > button { min-width:var(--large-target);min-height:var(--large-target);padding-inline:16px;font-size:1rem; }
 [data-layout="large"] .large-options button { border:1px solid var(--line); }
 .large-setting-row .large-options { gap:0;justify-content:flex-end; }
 [data-layout="large"] .large-setting-row .large-options button { gap:0;margin:2px 0 2px 10px; }

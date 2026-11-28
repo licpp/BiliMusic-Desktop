@@ -119,24 +119,20 @@ impl LibraryRepository {
         connection: &mut Connection,
         track: &TrackInput,
     ) -> rusqlite::Result<TrackRecord> {
-        let record = Self::upsert(connection, track)?;
-        connection.execute(
+        let tx = connection.transaction()?;
+        Self::upsert_source(&tx, track)?;
+        tx.execute(
             "INSERT INTO play_history (track_id,played_at) VALUES (?1,strftime('%Y-%m-%d %H:%M:%f','now'))",
             params![track.id],
         )?;
-        connection.execute(
-            "DELETE FROM play_history WHERE id NOT IN (SELECT id FROM play_history ORDER BY played_at DESC, id DESC LIMIT 1000)",
-            [],
-        )?;
-        connection.execute("DELETE FROM playback_positions WHERE track_id NOT IN (SELECT track_id FROM play_history GROUP BY track_id ORDER BY MAX(played_at) DESC, MAX(id) DESC LIMIT 200)", [])?;
-        Ok(record)
+        let candidates = super::track_cleanup::trim_recent(&tx)?;
+        super::track_cleanup::collect_unreferenced(&tx, &candidates)?;
+        tx.commit()?;
+        Self::get(connection, &track.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
-    /// Drops every play-history row for these tracks. The delete leaves resume positions alone:
-    /// removing a song from the recent list is not a request to forget where playback stopped.
-    /// The existing sync cleanup still trims positions that fall outside the top-200 recent list,
-    /// as it does for any track that ages out. Callers own the transaction so the local delete
-    /// and any cloud tombstone commit together.
+    /// Drop play-history rows. The caller owns the transaction and collects unreferenced edits
+    /// after recording any sync deletion.
     pub fn remove_history(connection: &Connection, ids: &[String]) -> rusqlite::Result<usize> {
         let mut delete = connection.prepare("DELETE FROM play_history WHERE track_id=?1")?;
         let mut removed = 0;
@@ -259,7 +255,21 @@ impl LibraryRepository {
                 params![id],
             )?;
         } else {
-            connection.execute("DELETE FROM favorites WHERE track_id=?1", params![id])?;
+            connection.execute_batch("SAVEPOINT favorite_remove")?;
+            let result = (|| {
+                if connection.execute("DELETE FROM favorites WHERE track_id=?1", [id])? > 0 {
+                    super::track_cleanup::collect_unreferenced(connection, &[id.to_owned()])?;
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => connection.execute_batch("RELEASE favorite_remove")?,
+                Err(error) => {
+                    let _ = connection
+                        .execute_batch("ROLLBACK TO favorite_remove; RELEASE favorite_remove");
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }

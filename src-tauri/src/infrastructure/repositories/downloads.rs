@@ -184,7 +184,8 @@ mod tests {
     #[test]
     fn deletion_preserves_active_download_and_removes_duplicate_completed_rows() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE downloads(id TEXT PRIMARY KEY,track_id TEXT,target_path TEXT,status TEXT,received_bytes INTEGER DEFAULT 0,total_bytes INTEGER,error_message TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP);").unwrap();
+        crate::infrastructure::migrations::migrate(&connection).unwrap();
+        connection.execute_batch("INSERT INTO source_items(id,provider,bvid,cid) VALUES ('source','bilibili','BVTEST00001',1); INSERT INTO tracks(id,source_item_id,title) VALUES ('track','source','歌曲');").unwrap();
         let path =
             std::env::temp_dir().join(format!("bilimusic-test-{}.m4a", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"fixture").unwrap();
@@ -301,36 +302,48 @@ impl DownloadRepository {
     }
 
     pub fn remove(connection: &Connection, id: &str) -> Result<(), RemoveDownloadError> {
-        let Some((path, status)) = connection
+        let tx = connection.unchecked_transaction()?;
+        let Some((path, status, track_id)) = tx
             .query_row(
-                "SELECT target_path,status FROM downloads WHERE id=?1",
+                "SELECT target_path,status,track_id FROM downloads WHERE id=?1",
                 [id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?
         else {
             return Ok(());
         };
         if status == "failed" {
-            connection.execute("DELETE FROM downloads WHERE id=?1", [id])?;
+            tx.execute("DELETE FROM downloads WHERE id=?1", [id])?;
+            super::track_cleanup::collect_unreferenced(&tx, &[track_id])?;
+            tx.commit()?;
             return Ok(());
         }
-        let busy = connection.query_row(
+        let busy = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM downloads WHERE target_path=?1 AND status IN ('queued','downloading'))",
             [&path], |row| row.get::<_, bool>(0),
         )?;
         if status != "completed" || busy {
             return Err(RemoveDownloadError::InProgress);
         }
+        let candidates = super::track_cleanup::track_ids(
+            &tx,
+            "DELETE FROM downloads WHERE target_path=?1 AND status='completed' RETURNING track_id",
+            [&path],
+        )?;
+        super::track_cleanup::collect_unreferenced(&tx, &candidates)?;
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(RemoveDownloadError::FileUnavailable),
         }
-        connection.execute(
-            "DELETE FROM downloads WHERE target_path=?1 AND status='completed'",
-            [&path],
-        )?;
+        tx.commit()?;
         Ok(())
     }
 

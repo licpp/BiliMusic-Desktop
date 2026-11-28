@@ -23,7 +23,7 @@ const { outputFiles: [output] } = await build({
     name: 'recent-history-delete-fixtures',
     setup(builder) {
       const stubs = {
-        desktopApi: `export const checkHistoryCloudPresence=async()=>({cloudIds:[],historySync:false})
+        desktopApi: `export const checkHistoryDeletionScope=async()=>({canSync:false})
           export const removeHistoryRecords=async()=>0
           export const commandErrorMessage=error=>String(error)`,
         accountScope: 'export const accountEpoch=()=>0',
@@ -54,9 +54,9 @@ const { HistoryDeletePanel, BatchTrackActions } = mod.exports
 const track = id => ({ id, source: { provider: 'bilibili', bvid: id, cid: 1, page: 1 }, title: id, artist: '', coverUrl: '', durationSeconds: 60, liked: false, partCount: 1 })
 const selection = { selecting: true, ids: new Set(['a', 'b']), selected: [track('a'), track('b')], all() {}, exit() {}, toggle() {} }
 
-function panel(presence, extra = {}) {
+function panel(scope, extra = {}) {
   return renderToStaticMarkup(createElement(HistoryDeletePanel, {
-    count: 2, presence, busy: false, error: '', onCancel() {}, onRemove() {}, ...extra,
+    count: 2, scope, busy: false, error: '', onCancel() {}, onRemove() {}, onRetry() {}, ...extra,
   }))
 }
 
@@ -68,54 +68,26 @@ test('recent batch toolbar only offers delete where the history view wires it', 
   assert.doesNotMatch(without, /删除|移除所选|隐藏所选/)
 })
 
-test('delete dialog fails open to a local-only delete while the cloud check runs', () => {
+test('delete waits for the local settings check and offers retry if it fails', () => {
   const checking = panel({ state: 'checking' })
-  assert.match(checking, /正在核对云端播放记录/)
-  assert.match(checking, /<details class="history-delete-details">/)
-  assert.doesNotMatch(checking, /<details[^>]* open/)
-  const danger = checking.match(/<button[^>]*action-danger[^>]*>[^<]*<\/button>/)[0]
-  assert.match(danger, /disabled/)
-  const failed = panel({ state: 'failed', error: '网络不可用' })
-  assert.match(failed, /无法核对云端记录：网络不可用/)
-  assert.match(failed, /下次同步可能让它们重新出现/)
-  assert.doesNotMatch(failed, /同时删除云端/)
-  const local = failed.match(/<button[^>]*action-danger[^>]*>[^<]*<\/button>/)[0]
-  assert.doesNotMatch(local, /disabled/)
+  assert.match(checking, /正在读取同步设置/)
+  assert.match(checking, /<button[^>]*action-danger[^>]*disabled/)
+  const failed = panel({ state: 'failed', error: '读取同步设置失败' })
+  assert.match(failed, /role="alert"[^>]*>读取同步设置失败/)
+  assert.match(failed, />重试</)
+  assert.doesNotMatch(failed, /action-danger/)
 })
 
-test('expanded hints state what deletion leaves alone, in the app-wide wording', () => {
-  const html = panel({ state: 'ready', cloudIds: [], historySync: false, checked: true })
-  assert.match(html, /<summary>[^<]*云端没有这些记录，只删除本机记录[^<]*<svg/)
-  assert.match(html, /收藏、歌单和下载不受影响，删除不会清除续播进度/)
-  assert.doesNotMatch(html, /续播位置/)
-})
-
-test('an unchecked cloud state is never presented as "the cloud has none"', () => {
-  const unchecked = panel({ state: 'ready', cloudIds: [], historySync: true, checked: false })
-  assert.match(unchecked, /云同步未连接，只能删除本机记录/)
-  assert.match(unchecked, /恢复连接并同步后可能重新出现/)
-  assert.doesNotMatch(unchecked, /云端没有这些记录/)
-  assert.doesNotMatch(unchecked, /同时删除云端/)
-  const silent = panel({ state: 'ready', cloudIds: [], historySync: false, checked: false })
-  assert.doesNotMatch(silent, /恢复连接并同步后可能重新出现/)
-})
-
-test('cloud records exist only when the check finds them, and both consequences are stated', () => {
-  const none = panel({ state: 'ready', cloudIds: [], historySync: true, checked: true })
-  assert.match(none, /云端没有这些记录/)
-  assert.doesNotMatch(none, /同时删除云端/)
-  assert.match(none, />删除</)
-  const some = panel({ state: 'ready', cloudIds: ['a', 'b'], historySync: true, checked: true })
-  assert.match(some, /其中 2 条也在云端同步里/)
-  assert.match(some, /同步播放记录/)
-  assert.match(some, /下一次同步时生效/)
-  assert.match(some, /同时删除云端/)
-  assert.match(some, />仅删除本机</)
-  const silent = panel({ state: 'ready', cloudIds: ['a'], historySync: false, checked: true })
-  assert.doesNotMatch(silent, /已开启“同步播放记录”/)
+test('delete has one action and states the configured sync scope', () => {
+  const local = panel({ state: 'ready', canSync: false })
+  assert.match(local, /仅删除本机播放记录/)
+  assert.equal([...local.matchAll(/>删除</g)].length, 1)
+  const synced = panel({ state: 'ready', canSync: true })
+  assert.match(synced, /其他设备将在下次同步时移除/)
+  assert.equal([...synced.matchAll(/>删除</g)].length, 1)
 })
 
 test('a failed delete keeps the dialog open with the command error', () => {
-  const html = panel({ state: 'ready', cloudIds: [], historySync: false, checked: true }, { error: '账号已切换，请重试' })
+  const html = panel({ state: 'ready', canSync: true }, { error: '账号已切换，请重试' })
   assert.match(html, /role="alert"[^>]*>账号已切换，请重试/)
 })

@@ -13,6 +13,7 @@ mod cloud_transport;
 pub mod device_policy;
 pub mod devices;
 mod engine;
+mod history_delete;
 pub mod migration;
 pub mod model;
 pub mod outbox;
@@ -554,7 +555,7 @@ async fn sync_now_inner(
     if cfg.provider != "cloud" {
         return Err("未知的同步服务".into());
     }
-    let (initial, base) = {
+    let (initial, base, history_deletions) = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
         storage::bind_cloud_baseline(&c, &target)?;
         let current = storage::export(&c, &cfg.uid, cfg.history)?;
@@ -569,7 +570,12 @@ async fn sync_now_inner(
             .map(|s| serde_json::from_str::<Snapshot>(&s).map_err(|_| "同步基准损坏"))
             .transpose()?
             .unwrap_or_else(|| Snapshot::empty(&cfg.uid));
-        (current, base)
+        let history_deletions = if cfg.history {
+            history_delete::pending(&c, &target)?
+        } else {
+            Default::default()
+        };
+        (current, base, history_deletions)
     };
     for _ in 0..3 {
         let response = tokio::select! {
@@ -614,11 +620,20 @@ async fn sync_now_inner(
             cloud_transport::project_lyric_bias(&mut baseline);
         }
         let mut local = initial.clone();
-        if !cfg.history {
-            preserve_history(&mut baseline, &mut local, &remote.snapshot);
+        let mut remote_projection = remote.snapshot.clone();
+        if cfg.history {
+            history_delete::merge_cloud_history(
+                &mut baseline,
+                &mut local,
+                &mut remote_projection,
+                &history_deletions,
+                remote.legacy_cloud,
+            );
+        } else {
+            preserve_history(&mut baseline, &mut local, &remote_projection);
         }
         let (mut merged, conflicts) =
-            merge(&baseline, &local, &remote.snapshot, resolution.as_deref());
+            merge(&baseline, &local, &remote_projection, resolution.as_deref());
         merged.compact(true);
         merged.restore_missing_tracks();
         merged.validate(&cfg.uid)?;
@@ -701,12 +716,18 @@ async fn sync_now_inner(
                     &initial_with_full_bias,
                 );
             }
-            let (mut final_local, post_conflicts) = merge(
-                &initial_with_full_bias,
-                &current,
-                &merged_for_device,
-                Some("local"),
-            );
+            let mut local_baseline = initial_with_full_bias.clone();
+            if cfg.history {
+                history_delete::merge_cloud_history(
+                    &mut local_baseline,
+                    &mut current,
+                    &mut merged_for_device,
+                    &history_delete::Deletions::new(),
+                    remote.legacy_cloud,
+                );
+            }
+            let (mut final_local, post_conflicts) =
+                merge(&local_baseline, &current, &merged_for_device, Some("local"));
             final_local.records.extend(local_linked.records);
             if !remote.creators {
                 final_local.records.extend(local_creators);
@@ -725,6 +746,9 @@ async fn sync_now_inner(
             }
             let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
             storage::apply_with_inferred_tracks(&c, &final_local, cfg.history, &inferred)?;
+            if !history_deletions.is_empty() {
+                history_delete::clear(&c, &target)?;
+            }
             c.execute("INSERT INTO sync_target_base(target,json) VALUES(?1,?2) ON CONFLICT(target) DO UPDATE SET json=excluded.json",params![target,serde_json::to_string(&merged).unwrap()]).map_err(|e|e.to_string())?;
             c.execute("INSERT INTO sync_info(key,value) VALUES(?1,datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[format!("last_success:{target}")]).map_err(|e|e.to_string())?;
             c.execute("INSERT INTO sync_info(key,value) VALUES('active_target',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[&target]).map_err(|e|e.to_string())?;
@@ -870,74 +894,51 @@ pub async fn sync_delete_cloud(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryPresence {
-    /// Selected records the joined vault still holds, so the dialog can stay local-only otherwise.
-    pub cloud_ids: Vec<String>,
-    /// Whether "同步播放记录" is on: a local-only delete can then be restored by the next sync.
-    pub history_sync: bool,
-    /// False when sync is off, paused or not joined, so an empty `cloud_ids` must not be read as
-    /// "the cloud has none of these records".
-    pub checked: bool,
+    pub can_sync: bool,
 }
-/// Cloud half of the recent-list delete: which selected records the joined vault still holds.
-/// Read-only and behind the sync gate, so it never races a running synchronization.
-pub(crate) async fn history_presence(
-    app: &AppHandle,
+/// Describe the current local sync scope without contacting the vault.
+pub(crate) fn history_presence(
     database: &Database,
-    state: &SyncState,
-    ids: &[String],
+    session: &str,
 ) -> Result<HistoryPresence, String> {
-    let _gate = state.gate.lock().await;
-    let cfg = config(database)?;
-    if !cfg.enabled || !cfg.initialized || cfg.provider != "webdav" || cfg.uid.is_empty() {
-        return Ok(HistoryPresence {
-            cloud_ids: Vec::new(),
-            history_sync: cfg.history,
-            checked: false,
-        });
-    }
-    active(database, &cfg.uid)?;
-    let credentials = credentials(app, &cfg)?;
-    let cloud_ids = engine::history_presence(database, &cfg, &credentials, ids).await?;
-    let Some(cloud_ids) = cloud_ids else {
-        return Ok(HistoryPresence {
-            cloud_ids: Vec::new(),
-            history_sync: cfg.history,
-            checked: false,
-        });
-    };
+    let c = database.0.lock().map_err(|_| "数据库正忙")?;
+    history_delete::check_session(&c, session)?;
+    let cfg = config_from_connection(&c)?.unwrap_or_default();
     Ok(HistoryPresence {
-        cloud_ids,
-        history_sync: cfg.history,
-        checked: true,
+        can_sync: history_delete::can_sync(&cfg),
     })
 }
-/// Deletes play-history rows and optionally the matching cloud records. The cloud tombstones
-/// join the Progress outbox, so they reach the vault with the next synchronization.
+/// Commit a delete under the same sync scope as the active account.
 pub(crate) async fn remove_history(
-    app: &AppHandle,
     database: &Database,
     state: &SyncState,
     ids: &[String],
-    cloud: bool,
     session: &str,
 ) -> Result<usize, String> {
     let _gate = state.gate.lock().await;
-    if !cloud {
+    let (cfg, target) = {
         let c = database.0.lock().map_err(|_| "数据库正忙")?;
-        return engine::remove_history_local(&c, ids, session);
-    }
-    let cfg = config(database)?;
-    if !cfg.enabled || !cfg.initialized || cfg.provider != "webdav" || cfg.uid.is_empty() {
-        return Err("云同步未连接或已暂停，无法删除云端记录".into());
-    }
-    active(database, &cfg.uid)?;
-    let credentials = credentials(app, &cfg)?;
-    let target = storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &credentials.username)?;
+        history_delete::check_session(&c, session)?;
+        let cfg = config_from_connection(&c)?.unwrap_or_default();
+        if !history_delete::can_sync(&cfg) || history_delete::syncable_rows(&c, ids)?.is_empty() {
+            return history_delete::remove_local(&c, ids, session, None);
+        }
+        active(database, &cfg.uid)?;
+        let target: String = c
+            .query_row(
+                "SELECT value FROM sync_info WHERE key='active_target'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or("请先完成同步，再删除云端播放记录")?;
+        if cfg.provider == "cloud" {
+            return history_delete::remove_local(&c, ids, session, Some(&target));
+        }
+        (cfg, target)
+    };
     engine::remove_history_cloud(database, &cfg, &target, ids, session)
-}
-fn credentials(app: &AppHandle, c: &Config) -> Result<transport::Secret, String> {
-    serde_json::from_str(&secret(app, c, None, false)?.ok_or("请重新连接同步服务")?)
-        .map_err(|_| "凭据无效，请重新连接".into())
 }
 
 #[cfg(test)]

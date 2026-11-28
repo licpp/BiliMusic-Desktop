@@ -2,7 +2,11 @@ use crate::infrastructure::database::{Database, account_session};
 use crate::infrastructure::providers::bilibili::{
     BilibiliProvider, FavoriteFolder, FavoritePage, FavoriteVideo, ProviderError, RequestPriority,
 };
-use crate::infrastructure::repositories::{auth::AuthRepository, playlists::PlaylistRecord};
+use crate::infrastructure::repositories::{
+    auth::AuthRepository,
+    playlists::PlaylistRecord,
+    track_cleanup::{collect_unreferenced, linked_folder_candidates},
+};
 use crate::interface::error::CommandError;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -350,6 +354,7 @@ fn save_folder(
     let tx = connection
         .unchecked_transaction()
         .map_err(CommandError::database)?;
+    let candidates = linked_folder_candidates(&tx, folder.id).map_err(CommandError::database)?;
     let encoded = serde_json::to_string(&videos).map_err(CommandError::database)?;
     tx.execute(
         "INSERT INTO linked_bili_folders(folder_id,owner_uid,name,videos_json,refreshed_at)
@@ -358,6 +363,7 @@ fn save_folder(
         params![folder.id, uid, folder.title, encoded],
     ).map_err(CommandError::database)?;
     tx.execute("INSERT OR IGNORE INTO linked_bili_folder_order(folder_id,added_at) VALUES(?1,(julianday('now')-2440587.5)*86400)", [folder.id]).map_err(CommandError::database)?;
+    collect_unreferenced(&tx, &candidates).map_err(CommandError::database)?;
     let saved = read(&tx, folder.id)?.ok_or_else(|| CommandError::database("未能保存收藏夹"))?;
     tx.commit().map_err(CommandError::database)?;
     Ok(saved)
@@ -672,12 +678,18 @@ pub async fn bili_linked_remove_selected(
             .videos
             .retain(|video| !removed.contains(&video.bvid));
         let encoded = serde_json::to_string(&current.videos).map_err(CommandError::database)?;
-        connection
-            .execute(
-                "UPDATE linked_bili_folders SET videos_json=?2 WHERE folder_id=?1",
-                params![folder_id, encoded],
-            )
+        let tx = connection
+            .unchecked_transaction()
             .map_err(CommandError::database)?;
+        let candidates =
+            linked_folder_candidates(&tx, folder_id).map_err(CommandError::database)?;
+        tx.execute(
+            "UPDATE linked_bili_folders SET videos_json=?2 WHERE folder_id=?1",
+            params![folder_id, encoded],
+        )
+        .map_err(CommandError::database)?;
+        collect_unreferenced(&tx, &candidates).map_err(CommandError::database)?;
+        tx.commit().map_err(CommandError::database)?;
         current
     };
     Ok(LinkedRemoval {
@@ -705,15 +717,21 @@ struct LinkedRemovalFailure {
 pub fn bili_linked_unlink(
     database: State<'_, Database>,
     folder_id: i64,
+    expected_account_session: String,
 ) -> Result<(), CommandError> {
     let connection = database.0.lock().map_err(CommandError::database)?;
-    connection
-        .execute(
-            "DELETE FROM linked_bili_folders WHERE folder_id=?1",
-            [folder_id],
-        )
+    super::account::check_account_session(&connection, &expected_account_session)?;
+    let tx = connection
+        .unchecked_transaction()
         .map_err(CommandError::database)?;
-    Ok(())
+    let candidates = linked_folder_candidates(&tx, folder_id).map_err(CommandError::database)?;
+    tx.execute(
+        "DELETE FROM linked_bili_folders WHERE folder_id=?1",
+        [folder_id],
+    )
+    .map_err(CommandError::database)?;
+    collect_unreferenced(&tx, &candidates).map_err(CommandError::database)?;
+    tx.commit().map_err(CommandError::database)
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use crate::infrastructure::database::Database;
 use crate::infrastructure::repositories::library::{LibraryRepository, MetadataPatch, TrackInput};
 use crate::infrastructure::repositories::playlists::{PlaylistRecord, PlaylistRepository};
+use crate::infrastructure::repositories::track_cleanup::collect_unreferenced;
 use crate::interface::error::CommandError;
 use reqwest::{Client, Url};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -697,6 +698,7 @@ fn commit(
         .map_err(CommandError::database)?
         .collect::<Result<_, _>>()
         .map_err(CommandError::database)?;
+    let mut replaced = Vec::new();
     for entry in entries {
         let track = &entry.track;
         let replacement_position: Option<i64> = entry
@@ -771,12 +773,7 @@ fn commit(
                 params![playlist_id, old],
             )
             .map_err(CommandError::database)?;
-        }
-        if let Some(old) = entry
-            .replace_track_id
-            .as_ref()
-            .filter(|old| *old != &track.id)
-        {
+            replaced.push(old.clone());
             positions.remove(old);
         }
         if let Some(order) = entry.original_position {
@@ -810,6 +807,7 @@ fn commit(
         [playlist_id],
     )
     .map_err(CommandError::database)?;
+    collect_unreferenced(&tx, &replaced).map_err(CommandError::database)?;
     tx.commit().map_err(CommandError::database)?;
     PlaylistRepository::get(connection, playlist_id).map_err(CommandError::database)
 }

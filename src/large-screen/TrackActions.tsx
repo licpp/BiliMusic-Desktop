@@ -35,7 +35,7 @@ export function DownloadListButton({ tracks, visibilityScope }: { tracks: Track[
   }}><Download/>{busy || preparing ? '准备下载…' : '下载'}</button>{error && <p className="large-error" role="alert">{error}</p>}</>
 }
 
-export function LargeTrackActions({ track, onClose, onFavorite, queue = false, visibilityScope, replaceVideo, linked }: { replaceVideo?:()=>void; visibilityScope?:string; track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean; linked?: LinkedTrackActions }) {
+export function LargeTrackActions({ track, onClose, onFavorite, queue = false, visibilityScope, replaceVideo, linked, onDeleteHistory }: { onDeleteHistory?:()=>void; replaceVideo?:()=>void; visibilityScope?:string; track: Track; onClose: () => void; onFavorite: (track: Track) => Promise<void>; queue?: boolean; linked?: LinkedTrackActions }) {
   const unavailable = useOfflinePlayback(state => offlineUnavailable(track, state))
   const visibilityRules=useVisibilityRules()
   const [page, setPage] = useState<'menu' | 'playlists'>('menu'), [busy, setBusy] = useState(false), [error, setError] = useState('')
@@ -84,6 +84,7 @@ export function LargeTrackActions({ track, onClose, onFavorite, queue = false, v
       <button disabled={busy || Boolean(linked) && unavailable} onClick={() => void edit(true)}><Captions/>匹配或更换歌词</button>
     </>}
     {linked && <button className="action-danger" disabled={busy} onClick={() => { onClose(); linked.remove() }}><Trash2/>从 B 站收藏夹移除</button>}
+    {onDeleteHistory && <button className="action-danger" disabled={busy} onClick={onDeleteHistory}><Trash2/>删除播放记录</button>}
     {queue && <button disabled={busy} onClick={() => { usePlayerStore.getState().removeFromQueue(track.id); onClose() }}><Trash2/>移出队列</button>}
   </> : <>{playlists.data?.filter(p => p.biliFolderId ? capabilities.linked : capabilities.local).map(p => <button key={p.id} disabled={busy} onClick={() => void run(async () => { const saved = await saveLibraryTrack(track); if (epoch !== accountEpoch()) return; if (p.biliFolderId) await changeLinkedVideo(p.biliFolderId, track.source.bvid, true); else await addTrackToPlaylist(p.id, saved.id); await client.invalidateQueries({ queryKey: accountQueryKey('playlists') }); await client.invalidateQueries({ queryKey: accountQueryKey('library') }) })}>{p.biliFolderId ? <Link2/> : <ListMusic/>}{p.name}</button>)}{playlists.isPending && <p role="status">正在读取歌单…</p>}{(playlists.error || detail.error) && <p role="alert">{commandErrorMessage(playlists.error || detail.error)}</p>}<button onClick={() => setPage('menu')}>返回歌曲操作</button></>}{error && <p className="large-error" role="alert">{error}</p>}</div></LargeDialog>
 }
