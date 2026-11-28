@@ -4,6 +4,7 @@ import { useListDataDuringNavigation, useListReveal } from '../../shared/useList
 import { ListSkeleton } from '../../shared/ListSkeleton'
 import { offlineUnavailable, useOfflinePlayback } from '../player/offlinePlayback'
 import { trackSubtitle } from '../../domain/sourceTitle'
+import { customControlActivation } from '../../domain/shortcuts'
 import { accountQueryKey } from '../../services/queryKeys'
 import { accountEpoch } from '../../services/accountScope'
 import { useQuery,useQueryClient } from '@tanstack/react-query'
@@ -189,7 +190,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
         <i><Play fill="currentColor" /></i>
         {currentId === track.id && <PlayingMark/>}
       </button>}
-      <div className="library-copy" role={selection.selecting ? undefined : 'button'} aria-current={currentId === track.id ? 'true' : undefined} aria-disabled={!selection.selecting && unavailable || undefined} tabIndex={selection.selecting || unavailable ? undefined : 0} onClick={() => { if (selection.selecting) selection.toggle(track.id); else if (!unavailable) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!unavailable && !selection.selecting && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{playlistTrackTitle(track, entry?.song)}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
+      <div className="library-copy" role={selection.selecting ? undefined : 'button'} aria-current={currentId === track.id ? 'true' : undefined} aria-disabled={!selection.selecting && unavailable || undefined} tabIndex={selection.selecting || unavailable ? undefined : 0} onClick={() => { if (selection.selecting) selection.toggle(track.id); else if (!unavailable) void play(visibleTracks, track.id) }} onKeyDown={event => { if (!unavailable && !selection.selecting && customControlActivation(event)) { event.preventDefault(); void play(visibleTracks, track.id) } }}><strong>{playlistTrackTitle(track, entry?.song)}</strong><small>{originalSong ? originalSong.artists.join(' / ') || '歌手未知' : trackSubtitle(track)}{originalSong?.album || track.album ? ` · ${originalSong?.album || track.album}` : ''}</small></div>
       <span className="library-duration">{formatTrackDuration(track.durationSeconds)}</span>
       {!selection.selecting && <div className="library-track-actions">
       <button className={track.liked ? 'icon-action liked' : 'icon-action'} aria-busy={favoritePending.has(track.id)} onClick={() => void toggleFavorite(track)} aria-label={track.liked ? '取消喜欢' : '添加喜欢'}><Heart size={17} fill={track.liked ? 'currentColor' : 'none'} /></button>

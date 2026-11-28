@@ -15,12 +15,17 @@ export function installWindowShortcuts() {
       return
     }
     const target = event.target as HTMLElement
-    if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+    // Text fields keep every key for typing. Sliders have no native action for
+    // Space, so seeking with the mouse must not swallow the playback shortcut.
+    const field = target.closest('input, textarea, select, [contenteditable="true"]')
+    if (field && !(event.key === ' ' && field.matches('input[type="range"]'))) return
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
-    // Space belongs to playback controls even after a mouse click leaves
-    // previous/next focused. Other buttons retain native keyboard activation.
+    // Space stays an app-wide shortcut wherever focus happens to be, so a
+    // clicked button or lyric line cannot swallow it. Enter keeps native
+    // activation for buttons, links and summaries; transport controls prefer the
+    // user's own binding even for Enter.
     if (target.isContentEditable) return
-    if (!event.metaKey && !event.ctrlKey && !event.altKey && [' ', 'Enter'].includes(event.key) && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'Enter' && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
     if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
     const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
     if (!shortcut) return
