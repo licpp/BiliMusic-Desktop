@@ -82,6 +82,12 @@ pub fn deterministic_id(playlist: &str, order: usize) -> String {
 fn valid_playlist(id: &str) -> bool {
     id.starts_with("import:") && id.len() <= 100 && !id.contains(['|', '\n', '\r'])
 }
+fn valid_import_source(source: &str) -> bool {
+    matches!(
+        source,
+        "text" | "netease" | "qq" | "kugou" | "kuwo" | "migu" | "spotify"
+    )
+}
 fn valid_song(s: &Song) -> bool {
     !s.source_id.is_empty()
         && s.source_id.len() <= 2000
@@ -422,10 +428,7 @@ pub fn seed(
         || name.chars().count() > 80
         || rows.is_empty()
         || rows.len() > 5000
-        || !matches!(
-            source,
-            "text" | "netease" | "qq" | "kugou" | "kuwo" | "migu"
-        )
+        || !valid_import_source(source)
         || rows.iter().any(|r| r.order >= 5000 || !valid_song(&r.song))
         || rows.iter().map(|r| r.order).collect::<BTreeSet<_>>().len() != rows.len()
     {
@@ -563,10 +566,7 @@ pub fn migrate_archive(c: &Connection, playlist: &str) -> Result<(), String> {
     };
     let value: serde_json::Value = serde_json::from_str(&archive).map_err(err)?;
     let source = value["source"].as_str().unwrap_or("");
-    if !matches!(
-        source,
-        "text" | "qq" | "netease" | "kugou" | "kuwo" | "migu"
-    ) {
+    if !valid_import_source(source) {
         return Ok(());
     }
     let Some(rows) = value["rows"].as_array().filter(|r| r.len() <= 5000) else {
@@ -895,6 +895,48 @@ mod tests {
         merge(b, &registers(a, false).unwrap()).unwrap();
         tx.commit().unwrap()
     }
+    #[test]
+    fn spotify_import_uses_existing_archive_and_sync_registers() {
+        let source = db();
+        let synced = db();
+        let archive_only = db();
+        let mut song = song("示例曲目");
+        song.source_id = "spotify:track:4uLU6hMCjMI75M1A2tKUQC".into();
+        song.album = Some("示例专辑".into());
+        let rows = [SeedRow {
+            order: 0,
+            song: song.clone(),
+        }];
+        seed(&source, LIST, "Spotify 歌单", "spotify", &rows).unwrap();
+        edit(&source, 0, 1, "manual");
+        replicate(&source, &synced);
+        let entry = list(&synced, LIST).unwrap().remove(0);
+        assert_eq!(entry.song.source_id, song.source_id);
+        assert_eq!(entry.song.album, song.album);
+        assert_eq!(entry.track_id, Some(track(1).id));
+
+        archive_only
+            .execute(
+                "INSERT INTO playlists(id,name) VALUES(?1,'Spotify 歌单')",
+                [LIST],
+            )
+            .unwrap();
+        let archive = serde_json::json!({
+            "source": "spotify",
+            "rows": [{"order": 0, "song": song, "status": "missing"}]
+        });
+        archive_only
+            .execute(
+                "INSERT INTO playlist_import_archives VALUES(?1,?2,CURRENT_TIMESTAMP)",
+                params![LIST, archive.to_string()],
+            )
+            .unwrap();
+        migrate_archive(&archive_only, LIST).unwrap();
+        let recovered = list(&archive_only, LIST).unwrap().remove(0);
+        assert_eq!(recovered.song.source_id, entry.song.source_id);
+        assert!(recovered.track_id.is_none());
+    }
+
     #[test]
     fn removing_unmatched_slot_survives_sync_and_reseeding() {
         let a = db();

@@ -5,7 +5,7 @@ import type { Track } from '../domain/track'
 
 import type { ImportSong } from '../domain/importedEntry'
 export type { ImportSong } from '../domain/importedEntry'
-export type ImportPlaylist = { name: string; source: 'netease' | 'qq' | 'kugou' | 'kuwo' | 'migu' | 'text'; songs: ImportSong[]; reportedCount: number; unavailableCount: number }
+export type ImportPlaylist = { name: string; source: 'netease' | 'qq' | 'kugou' | 'kuwo' | 'migu' | 'spotify' | 'text'; songs: ImportSong[]; reportedCount: number; unavailableCount: number }
 export type ImportChoice = { track: Track; evidence: SongCandidate }
 
 export function parseSongList(text: string): ImportPlaylist {
@@ -73,4 +73,17 @@ export function playlistLinkPlatform(input:string):string|undefined {
     [['kuwo.cn','www.kuwo.cn','m.kuwo.cn','h5app.kuwo.cn'],'酷我音乐'],
     [['music.migu.cn','m.music.migu.cn','h5.nf.migu.cn','c.migu.cn'],'咪咕音乐'],
   ];return groups.find(([hosts])=>hosts.includes(host))?.[1]}catch{return}
+}
+
+export function isSpotifyPlaylistLink(input: string) {
+  if (/\bspotify:playlist:[A-Za-z0-9]{22}\b/.test(input)) return true
+  return (input.match(/https?:\/\/[^\s]+/g) ?? []).some(link => {
+    try {
+      const url = new URL(link)
+      return url.hostname === 'spotify.link' || (url.hostname === 'open.spotify.com'
+        && /^\/(?:intl-[a-z-]+\/)?playlist\/[A-Za-z0-9]{22}\/?$/.test(url.pathname.replace(/[),，。】]+$/, '')))
+    } catch {
+      return false
+    }
+  })
 }

@@ -55,9 +55,15 @@ test('QQ original aliases never discard orchestral and instrumental version requ
 
 test('分享文字自动识别五个平台，拒绝伪造后缀域名',async()=>{
  const {outputFiles}=await build({entryPoints:['src/services/playlistImportModel.ts'],bundle:true,write:false,format:'esm',platform:'node'})
- const {playlistLinkPlatform}=await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
+ const {playlistLinkPlatform,isSpotifyPlaylistLink}=await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
  for(const [url,name] of [['https://m.kugou.com/songlist/gcid_a/','酷狗音乐'],['https://www.kuwo.cn/playlist_detail/1','酷我音乐'],['https://h5.nf.migu.cn/app/v4/p/share/playlist/index.html?id=1','咪咕音乐'],['https://music.163.com/#/playlist?id=1','网易云音乐'],['https://y.qq.com/n/ryqq/playlist/1','QQ 音乐']])assert.equal(playlistLinkPlatform('分享给你 '+url),name)
  assert.equal(playlistLinkPlatform('https://m.kugou.com.evil.test/playlist/1'),undefined)
+ const spotifyId='37i9dQZF1DZ06evO3eIivx'
+ for (const url of [`https://open.spotify.com/playlist/${spotifyId}?si=123`,`https://open.spotify.com/intl-zh-hans/playlist/${spotifyId}`, `spotify:playlist:${spotifyId}`, 'https://spotify.link/demo']) {
+  assert.equal(isSpotifyPlaylistLink(`分享给你 ${url}`),true)
+ }
+ assert.equal(isSpotifyPlaylistLink(`https://open.spotify.com.evil.test/playlist/${spotifyId}`),false)
+ assert.equal(isSpotifyPlaylistLink(`https://open.spotify.com/track/${spotifyId}`),false)
 })
 
 test('搜索词保留共用版本标记，Inst/Orch 的简化只影响召回不影响版本校验',()=>{

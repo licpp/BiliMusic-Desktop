@@ -1,0 +1,18 @@
+{
+  "kind": "added",
+  "platforms": [
+    "mac",
+    "mac-intel",
+    "windows",
+    "windows-arm64",
+    "android",
+    "ios",
+    "ohos",
+    "linux-x64-deb",
+    "linux-x64-appimage",
+    "linux-arm64-deb",
+    "linux-arm64-appimage"
+  ],
+  "summary": "支持从 Spotify 导出的歌单文件导入歌曲。",
+  "detail": "可选择 Spotify 账号导出的 Playlist JSON 或 Exportify CSV，再使用现有 B 站匹配流程。"
+}
