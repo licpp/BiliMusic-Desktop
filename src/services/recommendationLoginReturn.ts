@@ -72,3 +72,23 @@ export function outcomeForAttempt<T extends { finishedAt: number }>(
 ): T | undefined {
   return outcome && outcome.finishedAt >= marker.startedAt ? outcome : undefined
 }
+
+/**
+ * The outcome can arrive after the reload that reads it: when the back key
+ * reloads the app page, the backend login loop notices the URL change up to one
+ * poll later and only then leaves the result. A login that ended before the
+ * reload is there on the first read, so this costs nothing in that case.
+ */
+export async function outcomeAfterReload<T>(
+  read: () => Promise<T | undefined>,
+  wait: (milliseconds: number) => Promise<unknown> = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  attempts = 12,
+  intervalMilliseconds = 150,
+): Promise<T | undefined> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const outcome = await read().catch(() => undefined)
+    if (outcome) return outcome
+    if (attempt < attempts - 1) await wait(intervalMilliseconds)
+  }
+  return undefined
+}

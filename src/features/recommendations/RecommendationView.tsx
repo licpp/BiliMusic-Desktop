@@ -26,7 +26,7 @@ import {
   webLoginOutcome,
 } from '../../services/recommendations'
 import { runRecommendationMatching, stopRecommendationMatching, useRecommendationMatch } from '../../services/recommendationMatching'
-import { clearWebLoginReturn, outcomeForAttempt, peekWebLoginReturn, sourceAddedByLogin } from '../../services/recommendationLoginReturn'
+import { clearWebLoginReturn, outcomeAfterReload, outcomeForAttempt, peekWebLoginReturn, sourceAddedByLogin } from '../../services/recommendationLoginReturn'
 import {
   isNeteaseLoginCancelled,
   playableRecommendationTracks,
@@ -91,7 +91,9 @@ export function RecommendationView({ active }: { active: boolean }) {
     // The login replaced this page, so its result waits in the backend: the
     // source list alone cannot tell a failed login from a cancelled one. An
     // outcome older than this attempt's marker belongs to an earlier login.
-    void webLoginOutcome()
+    // The back key reloads the page before the backend notices, so wait briefly
+    // instead of assuming the result is already there.
+    void outcomeAfterReload(webLoginOutcome)
       .then(outcome => outcomeForAttempt(outcome, loginReturn))
       .catch(() => undefined)
       .then(outcome => {

@@ -13,7 +13,7 @@ const localStorage = {
 globalThis.localStorage = localStorage
 
 const built = await build({ entryPoints: ['src/services/recommendationLoginReturn.ts'], bundle: true, write: false, format: 'esm' })
-const { markWebLoginReturn, peekWebLoginReturn, clearWebLoginReturn, sourceAddedByLogin, outcomeForAttempt } =
+const { markWebLoginReturn, peekWebLoginReturn, clearWebLoginReturn, sourceAddedByLogin, outcomeForAttempt, outcomeAfterReload } =
   await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 
 const KEY = 'bilimusic.recommendation.web-login'
@@ -82,6 +82,60 @@ test('only the outcome of this attempt is read, not one left by an earlier login
   assert.equal(outcomeForAttempt(undefined, marker), undefined)
 })
 
+test('the outcome is returned at once when the login ended before the reload', async () => {
+  let reads = 0
+  const waits = []
+  const outcome = await outcomeAfterReload(
+    async () => { reads += 1; return { finishedAt: 2_000 } },
+    async milliseconds => { waits.push(milliseconds) },
+  )
+  assert.deepEqual(outcome, { finishedAt: 2_000 })
+  assert.equal(reads, 1)
+  assert.deepEqual(waits, [], 'nothing to wait for once the result is there')
+})
+
+test('an outcome that lands after the reload is still read', async () => {
+  // The back key reloads the page before the login loop notices the URL change,
+  // so the first reads after the reload can be empty.
+  let reads = 0
+  const waits = []
+  const outcome = await outcomeAfterReload(
+    async () => { reads += 1; return reads < 3 ? undefined : { finishedAt: 2_000 } },
+    async milliseconds => { waits.push(milliseconds) },
+  )
+  assert.deepEqual(outcome, { finishedAt: 2_000 })
+  assert.equal(reads, 3)
+  assert.equal(waits.length, 2, 'waits between attempts, not after the last one')
+})
+
+test('a login that never reports an outcome gives up instead of waiting forever', async () => {
+  let reads = 0
+  let waits = 0
+  const outcome = await outcomeAfterReload(
+    async () => { reads += 1; return undefined },
+    async () => { waits += 1 },
+    4,
+    10,
+  )
+  assert.equal(outcome, undefined)
+  assert.equal(reads, 4)
+  assert.equal(waits, 3)
+})
+
+test('a failed read is retried, not surfaced as a broken dialog', async () => {
+  let reads = 0
+  const outcome = await outcomeAfterReload(
+    async () => {
+      reads += 1
+      if (reads === 1) throw new Error('command unavailable')
+      return { finishedAt: 2_000 }
+    },
+    async () => {},
+  )
+  assert.deepEqual(outcome, { finishedAt: 2_000 })
+  assert.equal(reads, 2)
+})
+
 test('reopening the source dialog is wired on both ends of the reload', async () => {
   const dialog = await readFile(new URL('../src/features/recommendations/RecommendationSourceDialog.tsx', import.meta.url), 'utf8')
   // The login page replaces the app page, so the marker has to be written
@@ -96,8 +150,9 @@ test('reopening the source dialog is wired on both ends of the reload', async ()
   assert.match(view, /sourceAddedByLogin\(sourceList, loginReturn\)/)
   assert.match(view, /setSourceDialog\('list'\)/, 'the reload reopens the dialog the login started from')
   // A failed login has to say why: the command's rejection went to a document
-  // that no longer exists, so the reloaded page reads the outcome instead.
-  assert.match(view, /webLoginOutcome\(\)/)
+  // that no longer exists, so the reloaded page reads the outcome instead, and
+  // waits briefly because the back key reloads before the backend notices.
+  assert.match(view, /outcomeAfterReload\(webLoginOutcome\)/)
   assert.match(view, /outcomeForAttempt\(outcome, loginReturn\)/)
   assert.match(view, /isNeteaseLoginCancelled\(outcome\.error\)/, 'a cancel is not an error')
 

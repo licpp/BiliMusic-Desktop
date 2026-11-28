@@ -32,13 +32,14 @@ test('both activities own the single WebView back navigation', async () => {
       /onBackPressedDispatcher\.addCallback\(this, object : OnBackPressedCallback\(true\)/,
       label,
     )
-    // Back inside the WebView steps through its history; only the last entry
-    // leaves the app, and the task keeps its state as the system did before.
-    assert.match(
-      activity,
-      /if \(webView != null && webView\.canGoBack\(\)\) webView\.goBack\(\) else moveTaskToBack\(true\)/,
-      label,
-    )
+    // The app page is remembered from the WebView's own first URL, because the
+    // embedded login can replace the app entry in the back/forward list and
+    // `canGoBack()` then reports nothing to go back to.
+    assert.match(activity, /private fun rememberHome\(webView: WebView, attempt: Int\)/, label)
+    assert.match(activity, /webView\.postDelayed\(\{ rememberHome\(webView, attempt \+ 1\) \}, 100\)/, label)
+    // Back on the login page reloads the app page; only the app page itself
+    // leaves the app, and it keeps the task alive as the system did.
+    assert.match(activity, /if \(sameOrigin\(webView\.url, home\)\) moveTaskToBack\(true\) else webView\.loadUrl\(home\)/, label)
     // wry's handler is off in TauriActivity; switching it back on would hand
     // the press to a callback that never received this WebView.
     assert.doesNotMatch(activity, /handleBackNavigation = true/, label)
