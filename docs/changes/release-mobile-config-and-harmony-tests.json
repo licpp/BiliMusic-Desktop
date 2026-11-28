@@ -1,0 +1,6 @@
+{
+  "kind": "internal",
+  "platforms": ["android", "android-large", "android-large-armv7", "ios", "ohos"],
+  "summary": "对齐移动端安装版本号，并修复鸿蒙播放单元测试的构建。",
+  "detail": "用 DevEco 编译 ArkUI 登录窗口，在 Node 播放测试中替换窗口边界。"
+}

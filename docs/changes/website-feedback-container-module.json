@@ -1,0 +1,5 @@
+{
+  "kind": "internal",
+  "platforms": ["all"],
+  "summary": "将反馈进度模块加入官网容器的打包清单。"
+}

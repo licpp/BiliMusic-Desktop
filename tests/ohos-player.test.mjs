@@ -6,6 +6,11 @@ import { createRequire } from 'node:module'
 const output = await build({
   entryPoints: ['native/ohos-player/ohos/PlayerPlugin.ets'], loader: { '.ets': 'ts' }, resolveExtensions: ['.ets', '.ts', '.js'], bundle: true, write: false, format: 'cjs', platform: 'node',
   plugins: [{ name: 'harmony-system', setup(b) {
+    // ArkUI declarative views are compiled by DevEco, outside the Node player harness.
+    b.onResolve({ filter: /^\.\/NeteaseLogin$/ }, args => ({ path: args.path, namespace: 'harmony-ui' }))
+    b.onLoad({ filter: /.*/, namespace: 'harmony-ui' }, () => ({
+      contents: 'export class NeteaseLoginDialog { async open() { return { status: "cancelled" } } async cancel() {} }',
+    }))
     b.onResolve({ filter: /^(@kit\.|libbilimusic_lib)/ }, args => ({ path: args.path, namespace: 'harmony' }))
     b.onLoad({ filter: /.*/, namespace: 'harmony' }, args => ({ contents: args.path === 'libbilimusic_lib.so' ? 'export default globalThis.ohosTest.native' : `
       export const wantAgent = globalThis.ohosTest.wantAgent;

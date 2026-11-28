@@ -1,0 +1,6 @@
+{
+  "kind": "fixed",
+  "platforms": ["android"],
+  "summary": "修复部分 Android 手机和平板在应用内更新时误报签名不一致的问题。",
+  "detail": "这项安装包签名读取修复已随 0.4.6.4 车机通用版发布。"
+}

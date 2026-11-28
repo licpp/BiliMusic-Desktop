@@ -1,0 +1,5 @@
+{
+  "kind": "fixed",
+  "platforms": ["mac", "mac-intel", "windows", "windows-arm64", "android", "ios", "ohos", "linux-x64-appimage", "linux-x64-deb", "linux-arm64-appimage", "linux-arm64-deb"],
+  "summary": "每日推荐列表不再重复显示网易云账号昵称。"
+}
