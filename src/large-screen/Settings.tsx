@@ -10,6 +10,7 @@ import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell
 import type { QrLogin } from '../domain/account'
 import { resetPlayerForAccount } from '../features/player/playerStore'
 import { DiagnosticsSettings } from '../features/settings/DiagnosticsSettings'
+import { FeedbackSettings } from '../features/settings/FeedbackSettings'
 import { UpdateSettings } from '../features/settings/UpdateSettings'
 import { ResumeSettings } from '../features/settings/ResumeSettings'
 import { PlaybackCacheSettings } from '../features/settings/PlaybackCacheSettings'
@@ -26,7 +27,8 @@ export function LargeSettings({ onOpenExtensions }: { onOpenExtensions: () => vo
   const [size, setSize] = useState(() => Number(localStorage.getItem('large-ui-size')) || 1)
   const [lyrics, setLyrics] = useState(() => Number(localStorage.getItem('large-lyrics-size')) || 1)
   const [awake, setAwake] = useState(() => localStorage.getItem('large-keep-awake') === 'true')
-  return <><LargeAccount/><ExtensionSettingsEntry onOpen={onOpenExtensions}/><div className="large-settings-common"><UpdateSettings/><DiagnosticsSettings large/></div>
+  const [accountOpenRequest, requestAccountOpen] = useState(0)
+  return <><LargeAccount openRequest={accountOpenRequest}/><ExtensionSettingsEntry onOpen={onOpenExtensions}/><div className="large-settings-common"><UpdateSettings large/><DiagnosticsSettings large/><FeedbackSettings large onLogin={() => requestAccountOpen(value => value + 1)}/></div>
     <details className="large-disclosure" open={attention ? true : undefined}><summary><Cloud/><span><strong>云同步</strong><small>{attention || '在不同设备间同步音乐库与听歌记录'}</small></span></summary><SyncSettings embedded/></details>
     <div className="large-settings-common"><ResumeSettings/><LoudnessSettings/><SystemTitleLyricsSettings/></div>
     <details className="large-disclosure"><summary><HardDrive/><span><strong>播放缓存</strong><small>容量与已用空间</small></span></summary><PlaybackCacheSettings embedded/></details>
@@ -37,9 +39,16 @@ export function LargeSettings({ onOpenExtensions }: { onOpenExtensions: () => vo
     </section></>
 }
 
-function LargeAccount() {
+function LargeAccount({ openRequest }: { openRequest: number }) {
   const client = useQueryClient(), profile = useQuery({ queryKey: accountQueryKey('account'), queryFn: getAccountProfile, retry: false })
   const [open, setOpen] = useState(false), [qr, setQr] = useState<QrLogin>(), [revision, setRevision] = useState(0), [message, setMessage] = useState(''), [busy, setBusy] = useState(false)
+  const refetchProfile = profile.refetch
+  useEffect(() => {
+    if (!openRequest) return
+    setMessage('')
+    setOpen(true)
+    void refetchProfile()
+  }, [openRequest, refetchProfile])
   useEffect(() => {
     if (!open || profile.data?.loggedIn || !inDesktopShell) return
     let cancelled = false, timer = 0

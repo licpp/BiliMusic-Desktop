@@ -2,6 +2,7 @@ pub mod account;
 pub mod commands;
 pub mod downloads;
 pub mod error;
+pub mod feedback;
 pub mod hot_search;
 pub mod linked_folders;
 

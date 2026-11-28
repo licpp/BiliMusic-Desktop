@@ -914,6 +914,57 @@ input::placeholder, textarea::placeholder { color: #677480; }
 textarea { resize: vertical; min-height: 120px; max-height: 400px; line-height: 1.65; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
+.feedback-attachments {
+  min-inline-size: 0;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+.feedback-attachments legend { padding: 0; color: #c7ced4; font-size: 12px; font-weight: 500; }
+.feedback-attachments legend span { color: #87939c; font-size: 11px; font-weight: 400; }
+.feedback-attachments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  border: 1px dashed #3b454f;
+  border-radius: 9px;
+  padding: 10px 12px;
+  margin-top: 7px;
+  background: #11151a;
+}
+.feedback-attachments-header p { flex: 1 1 180px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.feedback-image-add.button { min-height: 42px; padding: 7px 10px; gap: 7px; font-size: 12px; white-space: nowrap; }
+.feedback-image-add svg { width: 17px; height: 17px; color: var(--mint); }
+.feedback-image-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+.feedback-image-preview { position: relative; aspect-ratio: 4 / 3; border: 1px solid var(--line); border-radius: 9px; background: #11151a; }
+.feedback-image-preview img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
+.feedback-image-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(16, 18, 22, .9);
+  color: var(--text);
+  font-size: 23px;
+  line-height: 1;
+}
+.feedback-image-remove:hover { background: #303943; }
+.feedback-image-status { margin-top: 8px; color: #fca58f; font-size: 12px; }
+.feedback-image-status:empty { display: none; }
+
 .checkbox-label {
   display: flex;
   align-items: flex-start;
