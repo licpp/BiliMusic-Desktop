@@ -1,12 +1,11 @@
 import { useEffect, useId, useState, type Ref } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, TvMinimalPlay } from 'lucide-react'
-import { recommendationDay, recommendationDayLabel } from '../../domain/recommendation'
 import { hotSearchQuery, type HotSearchBadge } from '../../services/hotSearch'
 import { inDesktopShell } from '../../services/desktopApi'
 import { EXTENSIONS, useSearchExtensions } from '../../services/extensions'
 import { isLargeScreen } from '../../services/platform'
 import { useTabletWidth } from '../../shared/useCompactLayout'
+import { BiliFeedCard, DailyRecommendationCard } from './ExploreCards'
 import { SearchHistoryStrip } from './SearchHistoryStrip'
 import './explore.css'
 
@@ -38,22 +37,11 @@ export function ExploreLanding({ active = true, history, onClearHistory, clearin
   const showDaily = enabled.includes('daily')
   const showBiliFeed = enabled.includes('feed')
   const hotSources = hotSearchExtensions.filter(extension => enabled.includes(extension.id))
-  const { day, month } = recommendationDayLabel(recommendationDay(new Date()))
   return <section className="explore-landing" hidden={!active} aria-label="搜索首页">
     {active && <SearchHistoryStrip history={history} onClear={onClearHistory} clearing={clearingHistory} onSearch={onSearch}/>}
     {(showDaily || showBiliFeed) && <div className="explore-recommendations">
-      {showDaily && <button ref={recommendationRef} type="button" className="explore-card explore-daily" data-focus="explore-daily"
-        onClick={onOpenRecommendation} aria-label="每日推荐">
-        <span className="explore-card-mark explore-date" aria-hidden="true"><strong>{day}</strong><small>{month}月</small></span>
-        <span className="explore-card-copy"><strong>每日推荐</strong><small>网易云音乐</small></span>
-        <ChevronRight size={19} aria-hidden="true"/>
-      </button>}
-      {showBiliFeed && <button ref={biliFeedRef} type="button" className="explore-card explore-bili-feed" data-focus="explore-bili-feed"
-        onClick={onOpenBiliFeed} aria-label="B 站推荐">
-        <span className="explore-card-mark" aria-hidden="true"><TvMinimalPlay size={27}/></span>
-        <span className="explore-card-copy"><strong>B 站推荐</strong><small>个性化视频</small></span>
-        <ChevronRight size={19} aria-hidden="true"/>
-      </button>}
+      {showDaily && <DailyRecommendationCard onOpen={onOpenRecommendation} cardRef={recommendationRef}/>}
+      {showBiliFeed && <BiliFeedCard onOpen={onOpenBiliFeed} cardRef={biliFeedRef}/>}
     </div>}
     {inDesktopShell && hotSources.length > 0 && <HotSearchGroup active={active} sources={hotSources} onSearch={onSearch}/>}
   </section>

@@ -5,7 +5,7 @@ import {createRequire} from 'node:module'
 const built=await build({entryPoints:['src/features/player/nativeAudio.ts','src/features/player/iosAudio.ts'],outdir:'out',bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'ipc',setup(b){b.onResolve({filter:/^@tauri-apps\/api\/core$/},()=>({path:'ipc',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const invoke=(...args)=>globalThis.mediaIPC(...args);export const addPluginListener=(...args)=>globalThis.iosListenerIPC(...args);'}))}}]})
 function load(name) {
  const m={exports:{}}
- const file=built.outputFiles.find(file=>file.path.endsWith(`/${name}.js`))
+ const file=built.outputFiles.find(file=>file.path.split(/[/\\]/).pop()===`${name}.js`)
  new Function('require','module','exports',file.text)(createRequire(import.meta.url),m,m.exports)
  return m.exports
 }
