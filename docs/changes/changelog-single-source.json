@@ -1,0 +1,6 @@
+{
+  "kind": "internal",
+  "platforms": ["all"],
+  "summary": "统一更新日志的维护入口。",
+  "detail": "根目录 CHANGELOG.md 指向自动生成的待发布预览和各渠道发布记录，协作者只需随代码新增变更条目。"
+}

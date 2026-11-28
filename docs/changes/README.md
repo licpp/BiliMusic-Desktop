@@ -1,6 +1,6 @@
 # 更新日志协作记录
 
-和代码一起新增独立的 JSON 文件。文件名用小写英文、数字与连字符描述这项改动，例如 `ios-system-appearance.json`。直接提交和 PR 使用同一流程。
+和代码一起在此目录新增独立的 JSON 文件，作为各处发布说明的统一来源。文件名用小写英文、数字与连字符描述这项改动，例如 `ios-system-appearance.json`。直接提交和 PR 使用同一流程。[CHANGELOG.md](../../CHANGELOG.md) 提供查阅入口。
 
 ```json
 {
