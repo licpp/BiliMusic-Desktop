@@ -1,0 +1,16 @@
+{
+  "kind": "changed",
+  "platforms": [
+    "mac",
+    "mac-intel",
+    "windows",
+    "windows-arm64",
+    "linux-x64-appimage",
+    "linux-x64-deb",
+    "linux-arm64-appimage",
+    "linux-arm64-deb"
+  ],
+  "summary": "桌面端改用无边框窗口：品牌、搜索、账号与窗口控件合并为一条自定义顶部栏。",
+  "detail": "最小化、最大化/还原与关闭由应用绘制；Windows / Linux 的控件在右侧，macOS 的红黄绿三点在左侧。",
+  "pr": 37
+}

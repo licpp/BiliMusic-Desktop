@@ -1,0 +1,7 @@
+{
+  "kind": "changed",
+  "platforms": ["ios", "ohos"],
+  "summary": "iOS 与 HarmonyOS NEXT 的歌词页进入沉浸模式时隐藏状态栏与系统栏，退出后恢复。",
+  "detail": "平板播放器保留状态栏；iOS 的沉浸与视频全屏可以同时使用，退出时恢复进入前的状态。",
+  "pr": 37
+}

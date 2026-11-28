@@ -33,9 +33,8 @@ test('Harmony loads safe insets at startup, preserves them across pages and igno
   const controls = []
   const invoke = async (command, args) => {
     assert.equal(command, 'plugin:ohos-player|control')
-    assert.deepEqual(args, { action: 'windowInsets' })
     controls.push(args)
-    return response
+    if (args.action === 'windowInsets') return response
   }
   const module = { exports: {} }
   new Function('module', 'document', 'window', 'globalThis', outputFiles[0].text)(module, document, window, { ohosWindowTestInvoke: invoke })
@@ -50,16 +49,26 @@ test('Harmony loads safe insets at startup, preserves them across pages and igno
   assert.equal(style.get('--native-safe-bottom'), '28px')
   await setImmersiveWindow(true)
   await setImmersiveWindow(false)
-  assert.equal(controls.length, 1)
+  assert.deepEqual(controls.filter(args => args.action === 'immersive'), [
+    { action: 'immersive', value: 1, keepSystemInsets: false },
+    { action: 'immersive', value: 0, keepSystemInsets: false },
+  ])
+  // Immersive hides both bars, so the plugin also asks for fresh avoid areas.
+  await flush()
+  assert.ok(controls.some(args => args.action === 'windowInsets'))
   assert.equal(attributes.has('data-ohos-edge-to-edge'), true)
   assert.equal(style.get('--native-safe-top'), '42px')
+  await setImmersiveWindow(true, true)
+  assert.deepEqual(controls.filter(args => args.action === 'immersive').at(-1),
+    { action: 'immersive', value: 1, keepSystemInsets: true })
+  await setImmersiveWindow(false)
 
   response = insets(0, 0, 16, 36)
   window.dispatchEvent(new Event('resize'))
   window.visualViewport.dispatchEvent(new Event('resize'))
-  const beforeGeometry = controls.length
+  const beforeGeometry = controls.filter(args => args.action === 'windowInsets').length
   await flush()
-  assert.equal(controls.length, beforeGeometry + 1)
+  assert.equal(controls.filter(args => args.action === 'windowInsets').length, beforeGeometry + 1)
   assert.equal(style.get('--native-safe-top'), '0px')
   assert.equal(style.get('--native-safe-left'), '36px')
 

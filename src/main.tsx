@@ -86,3 +86,7 @@ import './features/chapters/chapters.css'
 import './features/comments/chapterEditor.css'
 
 import './features/settings/diagnostics.css'
+
+// Desktop-only chrome; imported last so the frameless layout offsets win over
+// the full-viewport rules in global.css and immersive.css.
+import './styles/desktop-titlebar.css'

@@ -19,6 +19,8 @@ struct PlayArgs: Decodable {
 struct ControlArgs: Decodable {
     let settingsRevision: Double?
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
+    /// Tablets keep the status bar while the browse page draws behind it.
+    let keepSystemInsets: Bool?
     let track: QueueTrack?
     /// Theme actions send the preference (`light`, `dark`, `system`) so the
     /// native window can be handed back to the OS instead of pinned to a colour.
@@ -103,7 +105,12 @@ class PlayerPlugin: Plugin {
     private var sleepDeadline: Double = 0
     private var sleepDuration: Double = 0
     private var sleepExpired = false
-    private var fullscreenState: (orientation: UIInterfaceOrientation, mask: UIInterfaceOrientationMask, statusHidden: Bool, homeHidden: Bool)?
+    private var fullscreenState: (orientation: UIInterfaceOrientation, mask: UIInterfaceOrientationMask)?
+    /// Status/home-indicator values of the page before lyrics or fullscreen
+    /// took them over; captured once and restored when both are done.
+    private var chromeBase: (statusHidden: Bool, homeHidden: Bool)?
+    private var immersive = false
+    private var immersiveKeepsStatusBar = false
     private var listeningAt = ProcessInfo.processInfo.systemUptime
     private var listeningActive = false
     private var listeningID: String?
@@ -513,7 +520,7 @@ class PlayerPlugin: Plugin {
                 let normalized = ["light", "dark", "system"].contains(preference) ? preference : "dark"
                 UserDefaults.standard.set(normalized, forKey: Self.themePreferenceKey)
                 applyWindowTheme(preference: normalized)
-            case "immersive": break
+            case "immersive": setImmersive(args.value == 1, keepSystemInsets: args.keepSystemInsets == true)
             case "videoFullscreen": setVideoFullscreen(args.value == 1)
             default: invoke.reject("不支持的播放操作"); return
             }
@@ -553,26 +560,56 @@ class PlayerPlugin: Plugin {
         if #available(iOS 15.0, *) { webview?.underPageBackgroundColor = color }
     }
 
+    /// Lyrics and the phone player hide the status bar and home indicator
+    /// without rotating. Tablets pass `keepSystemInsets` and keep the status
+    /// bar visible.
+    private func setImmersive(_ enabled: Bool, keepSystemInsets: Bool) {
+        guard let controller = webview?.window?.rootViewController else { return }
+        immersive = enabled
+        immersiveKeepsStatusBar = keepSystemInsets
+        applySystemBars(controller)
+    }
+
+    /// Video fullscreen owns the same two flags as immersive lyrics, so both
+    /// compose from one capture: whichever starts first records the page's own
+    /// values, and the last one to finish puts them back.
+    private func applySystemBars(_ controller: UIViewController) {
+        let overridden = fullscreenState != nil || immersive
+        if overridden && chromeBase == nil {
+            chromeBase = (controller.prefersStatusBarHidden, controller.prefersHomeIndicatorAutoHidden)
+        }
+        guard let base = chromeBase else { return }
+        let hidden = fullscreenState != nil || (immersive && !immersiveKeepsStatusBar)
+        // These setters belong to the vendored Tao view controller, like the
+        // video fullscreen path; no private orientation API is involved.
+        for (selector, key, value) in [
+            ("setPrefersStatusBarHidden:", "prefersStatusBarHidden", NSNumber(value: hidden || base.statusHidden)),
+            ("setPrefersHomeIndicatorAutoHidden:", "prefersHomeIndicatorAutoHidden", NSNumber(value: hidden || base.homeHidden))
+        ] {
+            if controller.responds(to: NSSelectorFromString(selector)) { controller.setValue(value, forKey: key) }
+        }
+        if !overridden { chromeBase = nil }
+        controller.setNeedsStatusBarAppearanceUpdate()
+        if #available(iOS 11.0, *) { controller.setNeedsUpdateOfHomeIndicatorAutoHidden() }
+    }
+
     private func setVideoFullscreen(_ enabled: Bool) {
         guard let window = webview?.window, let scene = window.windowScene, let controller = window.rootViewController else { return }
         if enabled && fullscreenState != nil { return }
         if !enabled && fullscreenState == nil { return }
         if enabled {
-            fullscreenState = (scene.interfaceOrientation, controller.supportedInterfaceOrientations, controller.prefersStatusBarHidden, controller.prefersHomeIndicatorAutoHidden)
+            fullscreenState = (scene.interfaceOrientation, controller.supportedInterfaceOrientations)
         }
         guard let previous = fullscreenState else { return }
         let orientation = enabled ? (scene.interfaceOrientation.isLandscape ? scene.interfaceOrientation : .landscapeRight) : previous.orientation
         let supported = enabled ? UIInterfaceOrientationMask.landscape : previous.mask
         // These setters belong to the vendored Tao view controller. Check them
         // before using KVC; no UIDevice private orientation API is involved.
-        for (selector, key, value) in [
-            ("setSupportedInterfaceOrientations:", "supportedInterfaceOrientations", NSNumber(value: supported.rawValue)),
-            ("setPrefersStatusBarHidden:", "prefersStatusBarHidden", NSNumber(value: enabled || previous.statusHidden)),
-            ("setPrefersHomeIndicatorAutoHidden:", "prefersHomeIndicatorAutoHidden", NSNumber(value: enabled || previous.homeHidden))
-        ] {
-            if controller.responds(to: NSSelectorFromString(selector)) { controller.setValue(value, forKey: key) }
+        if controller.responds(to: NSSelectorFromString("setSupportedInterfaceOrientations:")) {
+            controller.setValue(NSNumber(value: supported.rawValue), forKey: "supportedInterfaceOrientations")
         }
         if !enabled { fullscreenState = nil }
+        applySystemBars(controller)
         if #available(iOS 16.0, *) {
             controller.setNeedsUpdateOfSupportedInterfaceOrientations()
             let target: UIInterfaceOrientationMask

@@ -2,6 +2,7 @@ import { isTauri, invoke } from '@tauri-apps/api/core'
 import { isAndroid, isIOS, isMobile, isOHOS } from './platform'
 
 let appearance = Promise.resolve()
+let refreshOHOSInsets: (() => void) | undefined
 
 const insetSides = ['top', 'right', 'bottom', 'left'] as const
 type OHOSWindowInsets = { active: boolean } & Record<(typeof insetSides)[number], number>
@@ -38,7 +39,13 @@ export function installOHOSWindowInsets(): Promise<void> {
   window.addEventListener('resize', refresh)
   viewport?.addEventListener('resize', refresh)
   document.addEventListener('visibilitychange', refresh)
+  refreshOHOSInsets = refresh
   return read(revision)
+}
+
+/** Re-read avoid areas after the system bars are hidden or shown. */
+export function refreshOHOSWindowInsets() {
+  refreshOHOSInsets?.()
 }
 
 export const miniPlayerSupported = !isMobile && (isTauri() || import.meta.env.DEV)
@@ -57,11 +64,16 @@ export function setMiniPlayerPanel(expanded: boolean): Promise<void> {
 }
 export function setImmersiveWindow(active: boolean, keepSystemInsets = false) {
   // Desktop lyrics use the same window viewport as the underlying browse page.
-  if (!isMobile || isOHOS) return Promise.resolve()
+  if (!isMobile) return Promise.resolve()
   // Serialize mobile system bar changes so a quick open/close restores the insets.
   appearance = appearance.catch(() => undefined).then(async () => {
-    if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
-    else if (isIOS) await invoke('plugin:ios-player|control', { action: 'immersive', value: active ? 1 : 0 })
+    if (isOHOS) {
+      await invoke('plugin:ohos-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
+      // Hiding the status and navigation bars changes the avoid areas; the
+      // safe-area variables must follow before the lyrics layout is measured.
+      refreshOHOSWindowInsets()
+    } else if (isAndroid) await invoke('plugin:android-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
+    else if (isIOS) await invoke('plugin:ios-player|control', { action: 'immersive', value: active ? 1 : 0, keepSystemInsets })
   })
   return appearance
 }
