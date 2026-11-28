@@ -151,7 +151,11 @@ adb logcat -c && adb logcat -s BiliMusicLogin
 # 应用里「添加推荐源」→ 网易云网页登录，等登录页出现后按一次返回键
 # 期望：日志出现 end ok=false reached=true，应用停在推荐页且进程仍在，
 #       而不是回到桌面
+# 再在应用页打开「添加推荐源」弹窗按一次返回键
+# 期望：只关掉弹窗，应用留在前台；没有弹窗时再按一次才退到后台
 ```
+
+应用内的返回顺序由页面的 `bilimusic-back` 事件决定，改 Activity 时要确认这条链还在：在页面里注册一个 `event.preventDefault()` 的 `bilimusic-back` 监听再按返回键，应用应留在前台（事件确实派发到了页面）；去掉监听后按返回键才退回后台。
 
 在 x86_64 模拟器上验收需要 x86_64 ABI 的包（`rustup target add x86_64-linux-android`），arm64 包装不上模拟器；API 37 的 Play Store 镜像在模拟器里有 surfaceflinger 崩溃问题，网页登录建议用 API 36 的 AOSP 镜像。
 
