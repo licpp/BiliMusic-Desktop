@@ -140,9 +140,12 @@ test('reopening the source dialog is wired on both ends of the reload', async ()
   const dialog = await readFile(new URL('../src/features/recommendations/RecommendationSourceDialog.tsx', import.meta.url), 'utf8')
   // The login page replaces the app page, so the marker has to be written
   // before the command navigates away.
-  const mark = dialog.indexOf('if (android) markWebLoginReturn(sourceIds)')
+  const mark = dialog.search(/if \(android\)\s*markWebLoginReturn\(sourceIds\)/)
   assert.ok(mark > 0, 'NeteaseWebLogin must mark the login before navigating away')
   assert.ok(mark < dialog.indexOf('await webLoginNetease(true)'), 'the marker must be written before the login command runs')
+  // What existed before the login is what tells the reload which source the
+  // login added, so the ids come from the source list, not from the response.
+  assert.match(dialog, /sourceIds=\{sources\.map\(source => source\.id\)\}/, 'the marker records the sources that already existed')
   assert.match(dialog, /clearWebLoginReturn\(\)/, 'pages that keep their JavaScript must clear the marker')
 
   const view = await readFile(new URL('../src/features/recommendations/RecommendationView.tsx', import.meta.url), 'utf8')
@@ -163,4 +166,7 @@ test('reopening the source dialog is wired on both ends of the reload', async ()
   const app = await readFile(new URL('../src/app/App.tsx', import.meta.url), 'utf8')
   assert.match(app, /peekWebLoginReturn\(\)/)
   assert.match(app, /openExploreDetail\('每日推荐'\)/, 'the reload returns to the recommendations page')
+  // The marker outlives the reload, so the redirect may happen once per page
+  // load; otherwise every later step away from the page snaps back to it.
+  assert.match(app, /if \(loginReturnUsed\.current \|\| !loginReturn/, 'the redirect runs once, not for every navigation')
 })

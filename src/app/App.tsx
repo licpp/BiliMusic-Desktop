@@ -499,8 +499,14 @@ export function App() {
   // the way back and forgets which page it was on. Return to the recommendation
   // page the dialog was opened from instead of dropping the user on the home tab.
   const [loginReturn] = useState(() => peekWebLoginReturn())
+  // Only the reload has to land on the recommendations page. The marker lives
+  // for fifteen minutes and the recommendations page clears it, so without this
+  // guard leaving the page would pull the user straight back to it for as long
+  // as the marker lasts.
+  const loginReturnUsed = useRef(false)
   useEffect(() => {
-    if (!loginReturn || !showDaily || activeNav === '每日推荐') return
+    if (loginReturnUsed.current || !loginReturn || !showDaily || activeNav === '每日推荐') return
+    loginReturnUsed.current = true
     openExploreDetail('每日推荐')
   }, [loginReturn, showDaily, activeNav])
   const openExtensions = () => {
