@@ -20,6 +20,9 @@ struct ControlArgs: Decodable {
     let settingsRevision: Double?
     let action: String; let value: Double?; let id: String?; let collectionRef: String?
     let track: QueueTrack?
+    /// Theme actions send the preference (`light`, `dark`, `system`) so the
+    /// native window can be handed back to the OS instead of pinned to a colour.
+    let theme: String?
 }
 struct QueueArgs: Decodable {
     let offlineOnly: Bool?
@@ -199,7 +202,7 @@ class PlayerPlugin: Plugin {
     override func load(webview: WKWebView) {
         if #available(iOS 14.0, *) { _ = PlaybackMetricSubscriber.registered }
         self.webview = webview
-        applyWindowTheme(light: UserDefaults.standard.bool(forKey: "bilimusic-light-window"))
+        applyWindowTheme(preference: storedThemePreference())
         activePlayer = self
         webview.scrollView.contentInsetAdjustmentBehavior = .never
         webview.scrollView.bounces = false
@@ -505,9 +508,10 @@ class PlayerPlugin: Plugin {
             case "loudness": if outputGain.configure((args.value ?? 0)>0,args.settingsRevision ?? 0) {applyOutput(smooth:true)}
             case "volume": userVolume = Float(min(1, max(0, args.value ?? Double(userVolume))));applyOutput()
             case "theme":
-                let light = args.value == 1
-                UserDefaults.standard.set(light, forKey: "bilimusic-light-window")
-                applyWindowTheme(light: light)
+                let preference = args.theme ?? (args.value == 1 ? "light" : "dark")
+                let normalized = ["light", "dark", "system"].contains(preference) ? preference : "dark"
+                UserDefaults.standard.set(normalized, forKey: Self.themePreferenceKey)
+                applyWindowTheme(preference: normalized)
             case "immersive": break
             case "videoFullscreen": setVideoFullscreen(args.value == 1)
             default: invoke.reject("不支持的播放操作"); return
@@ -515,10 +519,32 @@ class PlayerPlugin: Plugin {
             invoke.resolve()
         }
     }
-    private func applyWindowTheme(light: Bool) {
-        let color = light ? UIColor(red: 244/255, green: 246/255, blue: 250/255, alpha: 1)
-                          : UIColor(red: 7/255, green: 16/255, blue: 25/255, alpha: 1)
-        webview?.window?.overrideUserInterfaceStyle = light ? .light : .dark
+    private static let themePreferenceKey = "bilimusic-theme-preference"
+    /// Resolved against the window's current interface style, so native chrome
+    /// follows the OS while the window is not pinned to light or dark.
+    private static let themeBackground = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 7/255, green: 16/255, blue: 25/255, alpha: 1)
+            : UIColor(red: 244/255, green: 246/255, blue: 250/255, alpha: 1)
+    }
+
+    /// New builds store the preference so `system` survives a cold launch;
+    /// older builds only stored the resolved colour as a Bool.
+    private func storedThemePreference() -> String {
+        if let stored = UserDefaults.standard.string(forKey: Self.themePreferenceKey),
+           ["light", "dark", "system"].contains(stored) { return stored }
+        return UserDefaults.standard.bool(forKey: "bilimusic-light-window") ? "light" : "dark"
+    }
+
+    private func applyWindowTheme(preference: String) {
+        let color = Self.themeBackground
+        switch preference {
+        case "light": webview?.window?.overrideUserInterfaceStyle = .light
+        // Hand the window back so WKWebView's prefers-color-scheme reports the
+        // OS scheme again; the dynamic colours then track appearance changes.
+        case "system": webview?.window?.overrideUserInterfaceStyle = .unspecified
+        default: webview?.window?.overrideUserInterfaceStyle = .dark
+        }
         webview?.window?.backgroundColor = color
         webview?.isOpaque = false
         webview?.backgroundColor = color
