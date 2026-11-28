@@ -1,8 +1,8 @@
-/* Frameless desktop chrome. The titlebar is a real flex row above the app
-   shell, so every fixed overlay that used to start at the viewport top has to
-   keep clear of it. */
+/* Frameless desktop chrome. The header is the app's only top bar: brand,
+   search/navigation and window controls share one strip. On mobile the same
+   topbar stays inside the page, so every desktop rule is scoped to the header. */
 :root { --desktop-titlebar-height: 0px; }
-:root[data-layout="desktop"] { --desktop-titlebar-height: 40px; }
+:root[data-layout="desktop"] { --desktop-titlebar-height: 54px; }
 
 .desktop-titlebar {
   position: relative;
@@ -14,24 +14,62 @@
   height: var(--desktop-titlebar-height);
   color: var(--muted);
   background: var(--base);
-  border-bottom: 1px solid var(--line);
   user-select: none;
   -webkit-user-select: none;
 }
+.desktop-titlebar input { user-select: text; -webkit-user-select: text; }
+
 .desktop-titlebar-brand {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   flex: 0 0 auto;
-  padding: 0 4px 0 16px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .01em;
+  padding: 0 12px 0 16px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
 }
-.desktop-titlebar-brand svg { color: var(--coral); }
-.desktop-titlebar-brand span { white-space: nowrap; }
-.desktop-titlebar-drag { flex: 1 1 auto; min-width: 0; }
+.desktop-titlebar-brand:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.desktop-titlebar-brand:focus-visible { outline-offset: -2px; }
+.desktop-titlebar-logo {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.desktop-titlebar-logo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.desktop-titlebar-wordmark { white-space: nowrap; }
+.desktop-titlebar-drag { flex: 0 0 10px; }
+.desktop-titlebar-body { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; }
+
+/* The page topbar becomes the header row: same controls, no extra padding. */
+.desktop-titlebar .topbar {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  grid-template-columns: auto minmax(200px, 380px) 1fr;
+}
+.desktop-titlebar .topbar.recommendation-topbar { height: 100%; padding: 0; }
+.desktop-titlebar .search-field { height: 36px; }
+.desktop-titlebar .topbar-actions { justify-self: stretch; padding-right: 4px; }
+.topbar-drag { display: none; }
+.desktop-titlebar .topbar-drag { display: block; flex: 1 1 auto; align-self: stretch; }
+
+/* mobile.css narrows the page topbar below 960px; the desktop header keeps the
+   search and account actions even when the window is that narrow. */
+:root[data-layout="desktop"] .desktop-titlebar .topbar { grid-template-columns: auto minmax(200px, 380px) 1fr; padding: 0; }
+:root[data-layout="desktop"] .desktop-titlebar .topbar .history-buttons { display: flex; }
+:root[data-layout="desktop"] .desktop-titlebar .topbar .search-field { display: flex; grid-column: 2; animation: none; }
+:root[data-layout="desktop"] .desktop-titlebar .topbar .topbar-actions { display: flex; grid-column: 3; }
+:root[data-layout="desktop"] .desktop-titlebar .topbar .mobile-page-heading,
+:root[data-layout="desktop"] .desktop-titlebar .topbar .mobile-search-entry { display: none; }
 
 .desktop-window-controls {
   display: flex;
@@ -63,9 +101,9 @@
   order: -1;
   align-items: center;
   gap: 0;
-  padding: 0 14px 0 14px;
+  padding: 0 14px;
 }
-.desktop-titlebar[data-platform="macos"] .desktop-titlebar-brand { padding-left: 2px; }
+.desktop-titlebar[data-platform="macos"] .desktop-titlebar-brand { padding-left: 6px; }
 .desktop-titlebar[data-platform="macos"] .desktop-window-control {
   position: relative;
   width: 24px;
@@ -105,13 +143,22 @@
 :root[data-layout="desktop"] #root > .app-shell { flex: 1 1 auto; min-height: 0; height: auto; }
 :root[data-layout="desktop"] :is(.app-shell, .desktop-lyrics-surface) .lyrics-view { top: var(--desktop-titlebar-height); }
 :root[data-layout="desktop"] .queue-drawer { top: var(--desktop-titlebar-height); }
+/* The header owns the topbar on desktop, so the scroll area fills the stage. */
+:root[data-layout="desktop"] .stage-scroll { height: 100%; }
+/* The header carries the brand, so the rail and sidebar do not repeat it. */
+:root[data-layout="desktop"] .rail > .brand-mark,
+:root[data-layout="desktop"] .library-brand { display: none; }
+:root[data-layout="desktop"] .rail { padding-top: 10px; }
+:root[data-layout="desktop"] .rail-nav { padding-top: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   .desktop-window-control, .desktop-titlebar[data-platform="macos"] .desktop-window-control-glyph { transition: none; }
 }
 
 @media (max-height: 520px) {
-  /* Desktop narrow windows keep the bar compact without shrinking the hit area. */
-  :root[data-layout="desktop"] { --desktop-titlebar-height: 34px; }
+  /* Short windows keep the header compact without shrinking the hit area. */
+  :root[data-layout="desktop"] { --desktop-titlebar-height: 48px; }
+  .desktop-titlebar .search-field { height: 34px; }
+  .desktop-titlebar-brand { font-size: 13px; }
   .desktop-window-control { width: 42px; min-width: 42px; }
 }

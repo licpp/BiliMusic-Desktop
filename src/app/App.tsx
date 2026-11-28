@@ -675,8 +675,37 @@ export function App() {
     )
   }
 
+  // The desktop header owns this row; on mobile it stays the page top bar.
+  // `topbar-drag` is invisible on mobile and fills the free header space on
+  // desktop so the window can be dragged outside the search field.
+  const topbar = exploreDetail || extensionsActive ? <header className="topbar recommendation-topbar">
+    <button type="button" aria-label={extensionsActive ? '返回设置' : '返回搜索'} onClick={extensionsActive ? () => setActiveNav('我的') : closeExploreDetail}><ArrowLeft size={19}/></button>
+    <h1>{activeNav}</h1>
+    <div className="topbar-drag" data-tauri-drag-region aria-hidden="true"/>
+  </header> : <form className={`topbar ${searchActive ? 'searching' : ''}${exploreLandingActive ? ' explore-topbar' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
+    <div className="mobile-page-heading">
+      {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
+      <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : searchActive ? searchLabel : activeNav)}</strong>
+    </div>
+    {exploreLandingActive && !desktopChrome ? <h1 className="explore-topbar-title">搜索</h1> :
+      <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (searchActive && submittedQuery) ? '返回上一页' : '返回主页'}
+        onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : searchActive && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>}
+    {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
+    <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={exploreLandingActive && enabledSearchExtensions.length ? [] : searchHistory}
+      onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('探索') }} onBlur={() => setSearchFocused(false)}
+      onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
+      onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={clearHistory} /></>}
+
+    {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
+    <div className="topbar-actions"><span className="topbar-drag" data-tauri-drag-region aria-hidden="true"/>{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
+  </form>
+
   return (
-    <>{desktopChrome && !miniMode && <DesktopTitleBar />}
+    <>{desktopChrome && !miniMode && (
+      <DesktopTitleBar inert={browseInert || queueSheet && queueOpen} onBrandClick={() => { resetCollection(); setActiveNav('此刻') }}>
+        {topbar}
+      </DesktopTitleBar>
+    )}
     <div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${desktopLyrics ? 'desktop-lyrics-present' : immersivePresent && !compactPlayer ? 'lyrics-immersive frame-browser' : ''}`}>
       {isMobile && immersivePresent && !compactPlayer && <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" open={lyricsOpen} />}
       <aside inert={browseInert || queueSheet && queueOpen} className="rail" aria-label="主导航">
@@ -733,26 +762,7 @@ export function App() {
       <main inert={browseInert || queueSheet && queueOpen} className="content-stage" data-stage-route={pageKey} data-edge-back={isMobile && backPreview ? '' : undefined}>
         {isMobile && <div className="stage-back-preview" ref={previewHost} aria-hidden="true" inert/>}
         <div ref={stageFrame} className="stage-route-frame" data-edge-track>
-        {exploreDetail || extensionsActive ? <header className="topbar recommendation-topbar">
-          <button type="button" aria-label={extensionsActive ? '返回设置' : '返回搜索'} onClick={extensionsActive ? () => setActiveNav('我的') : closeExploreDetail}><ArrowLeft size={19}/></button>
-          <h1>{activeNav}</h1>
-        </header> : <form className={`topbar ${searchActive ? 'searching' : ''}${exploreLandingActive ? ' explore-topbar' : ''}${selectedCollection ? ' scoped-content-search' : ''}`} onSubmit={submitSearch}>
-          <div className="mobile-page-heading">
-            {(libraryDetail || selectedCollection) && <button type="button" aria-label="返回上一页" onClick={selectedCollection ? closeCollection : closeLibraryPage}><ArrowLeft size={18}/></button>}
-            <strong>{selectedCollection ? selectedCollection.bvid.startsWith('up:') ? 'UP 主详情' : '合集详情' : activePlaylist?.name || (activeCreatorFolder!==undefined?'关注文件夹':activeFolder !== undefined ? '收藏夹' : searchActive ? searchLabel : activeNav)}</strong>
-          </div>
-          {exploreLandingActive ? <h1 className="explore-topbar-title">搜索</h1> :
-            <div className="history-buttons"><button type="button" disabled={!selectedCollection && !libraryDetail && activeNav === '此刻'} aria-label={libraryDetail || selectedCollection || (searchActive && submittedQuery) ? '返回上一页' : '返回主页'}
-              onClick={selectedCollection ? closeCollection : libraryDetail ? closeLibraryPage : searchActive && submittedQuery ? () => openSearch('') : () => setActiveNav('此刻')}><ArrowLeft size={18}/></button></div>}
-          {selectedCollection ? <ScopedSearchField className="collection-topbar-search" creator={selectedCollection.bvid.startsWith('up:')} value={collectionSearch} onChange={setCollectionSearch}/> : <>
-          <SearchField inputRef={searchInput} value={query} focused={searchFocused} history={exploreLandingActive && enabledSearchExtensions.length ? [] : searchHistory}
-            onFocus={() => { setSearchFocused(true); resetCollection(); setActiveNav('探索') }} onBlur={() => setSearchFocused(false)}
-            onChange={value => { setQuery(value); if (!value.trim()) setSubmittedQuery('') }}
-            onSearch={runSearch} onClear={() => openSearch('', true)} onClearHistory={clearHistory} /></>}
-
-          {!selectedCollection && <button className="mobile-search-entry" type="button" aria-label="搜索歌曲" onClick={openSearchInput}><Search size={20} /></button>}
-          <div className="topbar-actions">{miniPlayerSupported&&<button type="button" aria-label="迷你播放器" title="迷你播放器 · 置顶悬浮" disabled={miniBusy||!windowReady} onClick={()=>void changeMiniMode(true)}><PictureInPicture2 size={19}/></button>}<button type="button" className="theme-toggle" aria-label={themeActionLabel(themePreference, systemSupported)} title={`${themeActionLabel(themePreference, systemSupported)}（当前${themePreferenceLabel(themePreference)}）`} onClick={() => cycleTheme()}>{themePreference === 'light' ? <Sun size={19} /> : themePreference === 'dark' ? <Moon size={19} /> : <ThemeSystemIcon size={19} />}</button><AccountControl /></div>
-        </form>}
+        {!desktopChrome && topbar}
 
         <div className="stage-scroll" ref={searchScroll} hidden={!searchActive}>
           {enabledSearchExtensions.length === 0 ? !submittedQuery && <SimpleSearchLanding onSearch={runSearch}/> :

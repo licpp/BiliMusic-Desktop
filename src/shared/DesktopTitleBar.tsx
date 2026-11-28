@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Copy, Minus, Square, Waves, X } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Copy, Minus, Square, X } from 'lucide-react'
 import {
   windowControlLabel,
   windowControlOrder,
@@ -26,11 +26,21 @@ function controlIcon(action: WindowControl, maximized: boolean) {
 }
 
 /**
- * Frameless desktop shell header. The whole bar drags the window through
- * `data-tauri-drag-region`; the controls sit outside that region so a click
- * never turns into a drag. Double-clicking the bar restores or maximises.
+ * Frameless desktop shell header. It is the app's only top bar: the brand,
+ * the search/navigation row and the window controls share one strip, like the
+ * reference design. Draggable fillers sit between those pieces; no control is
+ * inside a drag region, so a click never turns into a drag.
  */
-export function DesktopTitleBar() {
+export function DesktopTitleBar({
+  children,
+  onBrandClick,
+  inert = false,
+}: {
+  children?: ReactNode
+  onBrandClick?: () => void
+  /** True while a dialog owns the page; the header content stops taking input. */
+  inert?: boolean
+}) {
   const [maximized, setMaximized] = useState(false)
   useEffect(() => watchMaximized(setMaximized), [])
   const platform = desktopChromePlatform
@@ -41,11 +51,16 @@ export function DesktopTitleBar() {
       data-platform={platform}
       data-maximized={maximized ? 'true' : undefined}
     >
-      <div className="desktop-titlebar-brand" data-tauri-drag-region>
-        <Waves size={15} strokeWidth={2.4} aria-hidden="true" />
-        <span>BiliMusic</span>
-      </div>
+      <button type="button" className="desktop-titlebar-brand" aria-label="BiliMusic 首页" onClick={onBrandClick}>
+        <span className="desktop-titlebar-logo">
+          <img src="/app-icon.png" alt="" draggable={false} />
+        </span>
+        <span className="desktop-titlebar-wordmark">BiliMusic</span>
+      </button>
       <div className="desktop-titlebar-drag" data-tauri-drag-region aria-hidden="true" />
+      <div className="desktop-titlebar-body" inert={inert || undefined}>
+        {children}
+      </div>
       <div className="desktop-window-controls" role="group" aria-label="窗口控制">
         {windowControlOrder(platform).map(action => {
           const label = windowControlLabel(action, maximized)

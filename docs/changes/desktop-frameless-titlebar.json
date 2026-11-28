@@ -10,7 +10,7 @@
     "linux-arm64-appimage",
     "linux-arm64-deb"
   ],
-  "summary": "桌面端改用无边框窗口和自定义标题栏，最小化、最大化/还原与关闭由应用绘制。",
-  "detail": "标题栏跟随深浅色主题；Windows / Linux 的控件在右侧，macOS 的红黄绿三点在左侧。",
+  "summary": "桌面端改用无边框窗口：品牌、搜索、账号与窗口控件合并为一条自定义顶部栏。",
+  "detail": "最小化、最大化/还原与关闭由应用绘制；Windows / Linux 的控件在右侧，macOS 的红黄绿三点在左侧。",
   "pr": 37
 }
