@@ -143,6 +143,8 @@ Android 只有一个主 WebView，网易云网页登录直接把它换成官方�
 - 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页。这个记录不设放弃时限（前 2 秒每 100 ms 查一次，之后每秒一次），冷启动再慢也会在用户能操作之前记下应用页；提前放弃会让登录页的返回落到应用自己的链上，而没有应用页可回时那条链会直接退到后台。
 - 只有在应用页时返回值交给应用自己决定。原来这里直接 `moveTaskToBack(true)`，但应用本来就有完整的返回链：`PlayerPlugin` 把按键以 `bilimusic-back` 事件交给页面，页面关掉弹窗、全屏、歌词和播放队列，都没处理才退回后台。覆盖优先级的回调会挡在 androidx 桥接前面，若它自己把按键消费掉，应用内的返回就全部失效（弹窗关不掉，一按就退到桌面）。所以应用页改为 `onBackPressedDispatcher.onBackPressed()`，用 `chaining` 标记避免再次回到自己；没有可调用的回调时才退回后台，与系统原本的行为一致。
 - 按返回键回应用页时，后端轮询要等到下一次 tick（500 ms）才发现网址离开登录页，并把这次登录记成取消、留下结果。前端因此用 `outcomeAfterReload` 短暂等待 `netease_web_login_outcome`，避免重载后抢先读到空结果：结果是取消时不报错，只是重新打开弹窗。
+- 登录页每次从「未登录」开始：主 WebView 的 Cookie 是跨尝试保留的，而 wry 在 Android 上删不掉 Cookie（`delete_cookie`、`set_cookie` 是空实现，`clear_all_browsing_data` 也不清 Cookie）。实测删掉网易云源后重新添加，登录页一闪就被旧 `MUSIC_U` 通过账号接口判成登录成功并关闭。因此 Android 分支在打开登录页前调用 `PlayerPlugin` 的 `clear_netease_web_data`（`NeteaseWebSession.kt`）删掉 `music.163.com`、`.music.163.com`、`163.com`、`.163.com` 名下的 Cookie，API 33 及以上同时 `deleteOrigin` 该来源的 WebStorage；只删这些域名，同一 Cookie 库里的 B 站登录不受影响。换回应用页后再删一次，成功、取消、超时都走这条路，凭据只留在本地数据库。打开登录页前还会记下当时已有的 `MUSIC_U`，删除失败时也不会把旧值当成这次登录。桌面版用 incognito 窗口，Cookie 随窗口关闭消失，不走这条路径。
+
 
 验收（调试包，`BiliMusicLogin` 只记录页面地址、Cookie 名称和账号接口结果）：
 
@@ -153,6 +155,8 @@ adb logcat -c && adb logcat -s BiliMusicLogin
 #       而不是回到桌面
 # 再在应用页打开「添加推荐源」弹窗按一次返回键
 # 期望：只关掉弹窗，应用留在前台；没有弹窗时再按一次才退到后台
+# 删掉网易云源后重新添加：期望登录页停在二维码，日志有 reset removed=N remaining=0，
+#       不会闪一下就被旧会话结束
 ```
 
 应用内的返回顺序由页面的 `bilimusic-back` 事件决定，改 Activity 时要确认这条链还在：在页面里注册一个 `event.preventDefault()` 的 `bilimusic-back` 监听再按返回键，应用应留在前台（事件确实派发到了页面）；去掉监听后按返回键才退回后台。

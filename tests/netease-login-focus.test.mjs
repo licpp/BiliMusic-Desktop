@@ -28,8 +28,12 @@ test('Android restores the app page on every exit from embedded login', async ()
   assert.match(loop, /AppLoginTick::Left => break Err\(CommandError::netease_login_cancelled\(\)\)/)
   assert.doesNotMatch(loop, /\breturn\b/)
   // Every exit carries the loop's value out: the result is left for the page
-  // that the return reloads, and only then is the app page put back.
-  assert.match(loop, /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\)\.await;\s+result\s*$/)
+  // that the return reloads, the app page is put back, and only then is the
+  // NetEase session cleared out of the shared cookie store.
+  assert.match(
+    loop,
+    /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\)\.await;[\s\S]*?\breset_netease_web_session\(&app\)\.await;[\s\S]*?\bresult\s*$/,
+  )
   // A plain navigation would leave the login entry in the WebView history, and
   // the next BACK press would reopen the login page. The login page has to step
   // back to the app page, which is still the first entry; replacing that entry

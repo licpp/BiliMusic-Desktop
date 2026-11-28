@@ -399,16 +399,25 @@ pub async fn netease_web_login(
     let cookie_url = NETEASE_LOGIN_COOKIE_URL
         .parse::<tauri::Url>()
         .map_err(CommandError::netease_login_window)?;
+    // An earlier attempt's session is still in the shared cookie store; wry
+    // cannot delete a cookie on Android, so the native side does it here.
+    // Whatever survives is an earlier login rather than this one, so its value
+    // is never accepted below -- even if the account call would still take it.
+    let mut baseline_music_u = stored_music_u(&window, &cookie_url);
+    reset_netease_web_session(&app).await;
+    if let Some(survivor) = stored_music_u(&window, &cookie_url) {
+        login_log("stored session survived the reset");
+        baseline_music_u.get_or_insert(survivor);
+    }
     window
         .navigate(login_url)
         .map_err(CommandError::netease_login_window)?;
     let started = Instant::now();
     let deadline = started + NETEASE_LOGIN_TIMEOUT;
     let mut reached_login = false;
-    // The main webview keeps the cookie store between attempts and wry cannot
-    // delete a cookie on Android, so a session from an earlier attempt stays
-    // visible here. Only the account call can tell whether it still
-    // authenticates; remember the value it rejected instead of asking again.
+    // The reset above normally leaves the page signed out; a value the page
+    // carries anyway can only be judged by the account call, so remember what
+    // it rejected instead of asking again.
     let mut rejected_music_u: Option<String> = None;
     // A failed account call that may pass on its own is not retried on every
     // poll: every 500ms would be two requests per second for minutes.
@@ -448,7 +457,9 @@ pub async fn netease_web_login(
                     ));
                     logged = Some(state_key);
                 }
-                if let Some((music_u, csrf)) = login_credentials(&cookies) {
+                if let Some((music_u, csrf)) =
+                    fresh_login_credentials(&cookies, baseline_music_u.as_deref())
+                {
                     if rejected_music_u.as_deref() != Some(music_u.as_str())
                         && Instant::now() >= profile_retry_at
                     {
@@ -498,6 +509,10 @@ pub async fn netease_web_login(
         error: result.as_ref().err().map(WebLoginOutcomeError::from),
     });
     restore_app_page(&window, &app_url).await;
+    // As on the desktop path, the credentials now live in the device database;
+    // do not leave a second copy in the webview store. Cancelled and timed-out
+    // attempts land here too, so a half-finished login never keeps a session.
+    reset_netease_web_session(&app).await;
     result
 }
 
@@ -632,6 +647,39 @@ fn login_credentials(
         }
     }
     music_u.map(|music_u| (music_u, csrf))
+}
+
+/// What the shared cookie jar held before this attempt opened the login page.
+/// A `MUSIC_U` found there is an earlier session, never a result of this login.
+#[cfg(any(target_os = "android", test))]
+fn fresh_login_credentials(
+    cookies: &[tauri::webview::cookie::Cookie<'static>],
+    baseline_music_u: Option<&str>,
+) -> Option<(String, String)> {
+    login_credentials(cookies).filter(|(music_u, _)| baseline_music_u != Some(music_u.as_str()))
+}
+
+/// The `MUSIC_U` the shared webview store holds right now, if any.
+#[cfg(target_os = "android")]
+fn stored_music_u(window: &tauri::WebviewWindow, cookie_url: &tauri::Url) -> Option<String> {
+    window
+        .cookies_for_url(cookie_url.clone())
+        .ok()
+        .and_then(|cookies| login_credentials(&cookies))
+        .map(|(music_u, _)| music_u)
+}
+
+/// Clears the NetEase session out of the webview the Android login reuses. A
+/// failure is reported, not fatal: the baseline check still keeps an old
+/// session from being accepted as a fresh login.
+#[cfg(target_os = "android")]
+async fn reset_netease_web_session(app: &tauri::AppHandle) {
+    match tauri_plugin_android_player::clear_netease_web_data(app).await {
+        Ok((removed, remaining)) => {
+            login_log(format!("reset removed={removed} remaining={remaining}"))
+        }
+        Err(error) => login_log(format!("reset failed error={error}")),
+    }
 }
 
 /// Writes the freshly captured session as the device's recommendation source.
@@ -1744,5 +1792,32 @@ mod tests {
         );
         assert_eq!(login_credentials(&cookies[..2]), None);
         assert_eq!(login_credentials(&[Cookie::new("MUSIC_U", " ")]), None);
+    }
+
+    #[test]
+    fn a_session_that_was_there_before_the_attempt_is_not_a_login() {
+        use tauri::webview::cookie::Cookie;
+        // Android's webview keeps its cookies between attempts, so the value
+        // still in the jar when the page opens cannot count as a new login --
+        // the account call would report the old session as valid.
+        let stored = [
+            Cookie::new("MUSIC_U", "old"),
+            Cookie::new("__csrf", "token"),
+        ];
+        assert_eq!(fresh_login_credentials(&stored, Some("old")), None);
+        // A real login replaces the value; the reset removing it also works.
+        assert_eq!(
+            fresh_login_credentials(&stored, Some("other")),
+            Some(("old".to_owned(), "token".to_owned()))
+        );
+        assert_eq!(
+            fresh_login_credentials(&stored, None),
+            Some(("old".to_owned(), "token".to_owned()))
+        );
+        let now = [Cookie::new("MUSIC_U", "new"), Cookie::new("__csrf", "t2")];
+        assert_eq!(
+            fresh_login_credentials(&now, Some("old")),
+            Some(("new".to_owned(), "t2".to_owned()))
+        );
     }
 }

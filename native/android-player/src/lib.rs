@@ -18,6 +18,31 @@ pub async fn diagnostic_environment<R: Runtime>(
         .ok()
 }
 
+/// Removes the NetEase cookies from the app webview's store.
+///
+/// The Android embedded login reuses the app page's webview, so an earlier
+/// session would otherwise be read back as a fresh login. Only 163.com entries
+/// are removed; the Bilibili login shares the same jar. Returns how many names
+/// were removed and how many a fresh read still shows.
+#[cfg(target_os = "android")]
+pub async fn clear_netease_web_data<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(usize, usize), String> {
+    let result: serde_json::Value = app
+        .state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("clear_netease_web_data", serde_json::json!({}))
+        .await
+        .map_err(|error| error.to_string())?;
+    let count = |key: &str| {
+        result
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize
+    };
+    Ok((count("removed"), count("remaining")))
+}
+
 #[cfg(target_os = "android")]
 pub fn secret<R: Runtime>(
     app: &tauri::AppHandle<R>,

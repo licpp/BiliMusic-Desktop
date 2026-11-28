@@ -159,6 +159,24 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    // Rust-only. The embedded login replaces the app page inside this webview,
+    // so its cookie jar outlives every attempt and a session from last time
+    // would load as if the login had just succeeded. wry cannot delete cookies
+    // on Android, so the reset lives here; see NeteaseWebSession for the scope.
+    @Command
+    fun clear_netease_web_data(invoke: Invoke) {
+        activity.runOnUiThread {
+            try {
+                val report = NeteaseWebSession.clear()
+                invoke.resolve(JSObject()
+                    .put("removed", report.removed.size)
+                    .put("remaining", report.remaining.size))
+            } catch (error: Exception) {
+                invoke.reject(error.message ?: "无法清理网易云登录状态")
+            }
+        }
+    }
+
     @Command
     fun lyrics(invoke: Invoke) {
         val args=invoke.parseArgs(LyricsArgs::class.java)
