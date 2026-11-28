@@ -2,6 +2,7 @@
 
 ## 待发布
 
+- 补齐合并、构建和正式发布的交付收尾清单。
 - 修复 Windows Rust 测试清理临时目录时的文件占用。感谢 @Sunsy30。 [PR #28](https://github.com/licpp/BiliMusic-Desktop/pull/28)
 - 最近播放支持多选删除。启用播放记录同步时，删除会同步到其他设备。车机和 TV 可从最近播放的单曲菜单删除记录。感谢 @Sunsy30。 [PR #26](https://github.com/licpp/BiliMusic-Desktop/pull/26)
 - 最近播放保留 200 首。歌曲失去最后一处保留它的位置时，清理自定义信息、歌词、章节和续播位置。
