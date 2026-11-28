@@ -26,6 +26,7 @@ interface Args {
   loudnessGainDb?: number; loudnessEnabled?: boolean; loudnessRevision?: number; settingsRevision?: number;
   position?: number; volume?: number; playing?: boolean; collectionRef?: string;
   rate?: number; seamless?: boolean; action?: string; value?: number | string; accountSession?: string;
+  keepSystemInsets?: boolean;
   key?: string; remove?: boolean;
   automaticResume?: AutomaticResumePolicy; preserveSession?: boolean; request?: number;
 }
@@ -162,6 +163,7 @@ export class PlayerPlugin {
   private win: window.Window | null = null;
   private neteaseLogin = new NeteaseLoginDialog();
   private lightTheme: boolean = false;
+  private immersive: boolean = false;
   private windowAppearanceTasks: Promise<void> = Promise.resolve();
   private tasks: Promise<void> = Promise.resolve();
   private id: string = '';
@@ -324,11 +326,26 @@ export class PlayerPlugin {
     try {
       let result: Object = new EmptyResult();
       if (args.action === 'windowInsets') result = this.windowInsets();
+      else if (args.action === 'immersive') await this.setImmersive(Number(args.value) === 1, args.keepSystemInsets === true);
       else await this.applyBarTheme(Number(args.value) === 1);
       native.tauriOhosPluginResponse(request.id, true, JSON.stringify(result));
     } catch (error) {
       native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message: String(error) } as BridgeError));
     }
+  }
+
+  /// Lyrics immersion hides both system bars; the page keeps drawing edge to
+  /// edge and the safe-area variables shrink with the avoid areas afterwards.
+  /// Tablets keep the status bar because `keepSystemInsets` is set.
+  private async setImmersive(active: boolean, keepSystemInsets: boolean): Promise<void> {
+    const win = this.win;
+    if (!win || this.destroyed) return;
+    const hidden = active && !keepSystemInsets;
+    if (hidden === this.immersive) { await this.applyBarTheme(); return; }
+    this.immersive = hidden;
+    const bars: Array<'status' | 'navigation'> = ['status', 'navigation'];
+    await win.setWindowSystemBarEnable(hidden ? [] : bars).catch(() => {});
+    await this.applyBarTheme();
   }
 
   dispatch(raw: string): void {
@@ -372,7 +389,7 @@ export class PlayerPlugin {
         }
         return;
       }
-      if (args.action === 'theme' || args.action === 'windowInsets') {
+      if (args.action === 'theme' || args.action === 'windowInsets' || args.action === 'immersive') {
         this.respondToWindowControl(request, args);
         return;
       }
