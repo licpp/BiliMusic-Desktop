@@ -140,7 +140,8 @@ Android 只有一个主 WebView，网易云网页登录直接把它换成官方�
 
 - 应用 `targetSdk` 是 36：Android 16 起不再调用 `Activity.onBackPressed`，也不再以 `KEYCODE_BACK` 把返回交给 Activity，只剩平台的 `OnBackInvokedCallback`。`scripts/android-manifest.mjs` 为此写入 `android:enableOnBackInvokedCallback="true"`，缺了它平台会忽略这个 API。
 - Activity 用 `OnBackInvokedDispatcher.PRIORITY_OVERLAY` 注册回调。androidx 会用默认优先级桥接同一套 API，且注册得比 Activity 晚，同优先级下会先拿到按键；覆盖优先级保证返回键回到持有 WebView 的地方。Android 12 及以下走同一逻辑的 `OnBackPressedCallback`。
-- 回调里 WebView 还能后退就 `goBack()`（退出登录页、回到应用页），否则 `moveTaskToBack(true)`，与系统原本的行为一致：回到桌面但保留任务状态。
+- 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页，在应用页才 `moveTaskToBack(true)`，与系统原本的行为一致。
+- 按返回键回应用页时，后端轮询要等到下一次 tick（500 ms）才发现网址离开登录页，并把这次登录记成取消、留下结果。前端因此用 `outcomeAfterReload` 短暂等待 `netease_web_login_outcome`，避免重载后抢先读到空结果：结果是取消时不报错，只是重新打开弹窗。
 
 验收（调试包，`BiliMusicLogin` 只记录页面地址、Cookie 名称和账号接口结果）：
 
