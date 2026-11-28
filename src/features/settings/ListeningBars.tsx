@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { listeningDuration } from '../../shared/listeningDuration'
-import { customControlActivation } from '../../domain/shortcuts'
 export type ListeningBar = { key:string; label:string; seconds:number; future:boolean }
 
 export function ListeningBars({bars,max,today,weekly}:{bars:ListeningBar[];max:number;today:string;weekly:boolean}) {
@@ -25,7 +24,7 @@ export function ListeningBars({bars,max,today,weekly}:{bars:ListeningBar[];max:n
           if(event.key==='Escape'){event.preventDefault();setSelected(null);return}
           const next=event.key==='ArrowLeft'?i-1:event.key==='ArrowRight'?i+1:event.key==='Home'?0:event.key==='End'?bars.length-1:undefined
           if(next!==undefined){event.preventDefault();root.current?.querySelectorAll<HTMLElement>('.listening-bar')[Math.max(0,Math.min(bars.length-1,next))]?.focus()}
-          else if(customControlActivation(event)){event.preventDefault();setSelected(bar.key)}
+          else if(event.key===' '||event.key==='Enter'){event.preventDefault();setSelected(bar.key)}
         }}>
         <span style={{height:`${bar.seconds>0?Math.max(4,bar.seconds/max*100):2}%`}}/><small>{weekly||i===0||(i+1)%5===0||i===bars.length-1?bar.label:''}</small>
       </div>)}</div>

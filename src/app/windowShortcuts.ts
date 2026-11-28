@@ -7,27 +7,59 @@ import { installMouseShortcuts } from '../shared/installMouseShortcuts'
 import { suppressBrowserContextMenu } from '../shared/nativeTextEditing'
 import { dispatchBack } from '../shared/overlayStack'
 
+const playbackRange = 'input[type="range"][data-playback-space-range]'
+const pointerPlaybackControl = '[data-playback-space-pointer]'
+const interactiveControl = 'button, a, summary, [role="button"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]'
+const menu = '[role="menu"], [role="menubar"]'
+const shortcutEditor = '[data-shortcut-editor]'
+const modal = '[aria-modal="true"]'
+
 export function installWindowShortcuts() {
+  let pointerControl: Element | null = null
+  const clearPointer = () => { pointerControl = null }
+  const rememberPointer = (event: PointerEvent) => {
+    pointerControl = event.pointerType === 'mouse' && event.button === 0
+      ? (event.target as Element)?.closest?.(pointerPlaybackControl) ?? null
+      : null
+  }
+  const clearOnFocusChange = (event: FocusEvent) => {
+    if (event.target !== pointerControl) clearPointer()
+  }
+  const shortcutFor = (event: KeyboardEvent) => isMobile
+    ? playerShortcut(event)
+    : resolveShortcut(event, useShortcutStore.getState().bindings)
+
+  // A lyric or track row handles keyboard activation before the window's
+  // bubbling listener. Only take Space early for explicit playback controls.
+  const playbackSpace = (event: KeyboardEvent) => {
+    const modified = event.metaKey || event.ctrlKey || event.altKey
+    if (event.key === 'Tab' || (!modified && /^(Arrow.*|Home|End|PageUp|PageDown)$/.test(event.key))) clearPointer()
+    if (event.key !== ' ' || modified || event.shiftKey || event.defaultPrevented || event.isComposing) return
+    const target = event.target as HTMLElement | null
+    if (!target?.matches || target !== document.activeElement || target.isContentEditable) return
+    const pointerFocused = target === pointerControl && target.matches(pointerPlaybackControl)
+    if (!target.matches(playbackRange) && !pointerFocused) return
+    if (target.closest(shortcutEditor) || target.closest(menu) || document.querySelector(modal)) return
+    if (shortcutFor(event) !== 'toggle') return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!event.repeat) run('toggle')
+  }
   const handler = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || (event.target as HTMLElement)?.closest('[data-shortcut-editor]')) return
+    const target = event.target as HTMLElement | null
+    if (event.defaultPrevented || event.isComposing || target?.closest?.(shortcutEditor)) return
     if (event.key === 'Escape' || event.key === 'BrowserBack') {
       if (dispatchBack()) event.preventDefault()
       return
     }
-    const target = event.target as HTMLElement
-    // Text fields keep every key for typing. Sliders have no native action for
-    // Space, so seeking with the mouse must not swallow the playback shortcut.
-    const field = target.closest('input, textarea, select, [contenteditable="true"]')
-    if (field && !(event.key === ' ' && field.matches('input[type="range"]'))) return
+    if (target?.isContentEditable || target?.closest?.('input, textarea, select')) return
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); return }
-    // Space stays an app-wide shortcut wherever focus happens to be, so a
-    // clicked button or lyric line cannot swallow it. Enter keeps native
-    // activation for buttons, links and summaries; transport controls prefer the
-    // user's own binding even for Enter.
-    if (target.isContentEditable) return
-    if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key === 'Enter' && target.closest('button, a, summary') && !target.closest('.dock-controls,.mini-player-controls')) return
-    if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return
-    const shortcut = isMobile ? playerShortcut(event) : resolveShortcut(event, useShortcutStore.getState().bindings)
+    if (document.querySelector(modal) || (event.key === ' ' && target?.closest?.(menu))) return
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && target?.closest?.(interactiveControl)) {
+      if (event.key === ' ') return
+      if (event.key === 'Enter' && !target.closest('.dock-controls,.mini-player-controls')) return
+    }
+    const shortcut = shortcutFor(event)
     if (!shortcut) return
     if (event.repeat && ['show','toggle','next','previous','refreshSync'].includes(shortcut)) { event.preventDefault();return }
     if(run(shortcut))event.preventDefault()
@@ -50,8 +82,23 @@ export function installWindowShortcuts() {
   const stopGlobal = isMobile ? () => undefined : listenGlobalShortcuts(run)
   const stopSync = isMobile ? () => undefined : useShortcutStore.subscribe(state => syncGlobalShortcuts(state.bindings,state.globalEnabled))
   if (!isMobile) { const state=useShortcutStore.getState();syncGlobalShortcuts(state.bindings,state.globalEnabled) }
+  window.addEventListener('pointerdown', rememberPointer, true)
+  window.addEventListener('focusin', clearOnFocusChange)
+  window.addEventListener('blur', clearPointer)
+  window.addEventListener('keydown', playbackSpace, true)
   window.addEventListener('keydown', handler)
   const disableBrowserMenu = (event: MouseEvent) => suppressBrowserContextMenu(event, isMobile)
   document.addEventListener('contextmenu', disableBrowserMenu)
-  return () => { stopMouse();stopGlobal();stopSync();if(!isMobile)syncGlobalShortcuts(useShortcutStore.getState().bindings,false);window.removeEventListener('keydown', handler); document.removeEventListener('contextmenu', disableBrowserMenu) }
+  return () => {
+    stopMouse()
+    stopGlobal()
+    stopSync()
+    if (!isMobile) syncGlobalShortcuts(useShortcutStore.getState().bindings, false)
+    window.removeEventListener('pointerdown', rememberPointer, true)
+    window.removeEventListener('focusin', clearOnFocusChange)
+    window.removeEventListener('blur', clearPointer)
+    window.removeEventListener('keydown', playbackSpace, true)
+    window.removeEventListener('keydown', handler)
+    document.removeEventListener('contextmenu', disableBrowserMenu)
+  }
 }

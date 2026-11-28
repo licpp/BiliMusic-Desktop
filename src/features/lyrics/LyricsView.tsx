@@ -12,7 +12,6 @@ import { useSourceTitleMetadata } from '../player/useSourceTitleMetadata'
 import { accountQueryKey } from '../../services/queryKeys'
 import { chooseDownload } from '../downloads/downloadRequest'
 import { storedLyricLines } from '../../domain/lyricTimeline'
-import { customControlActivation } from '../../domain/shortcuts'
 import { FloatingLyricsToggle } from './FloatingLyricsToggle'
 import { useFloatingLyrics } from '../../services/floatingLyrics'
 import { WordLyric } from './WordLyric'
@@ -677,7 +676,12 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
             {showInterlude && <div className="lyric-interlude" data-exiting={interlude.exiting || undefined} aria-hidden="true">
               {interlude.dots.map((level, dotIdx) => <span key={dotIdx} className="lyric-interlude-dot" style={{ '--dot-fill': String(level) } as CSSProperties} />)}
             </div>}
-            <p ref={(node) => { lineRefs.current[index] = node }} style={{ '--lyric-blur': `${visual.blurPx}px`, '--lyric-opacity': String(visual.opacity) } as CSSProperties} data-lyric-near={nearActive || undefined} data-lyric-clickable={clickableLyrics || undefined} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && clickableLyrics && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview || clickableLyrics ? 'button' : undefined} tabIndex={timingPreview || clickableLyrics ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : clickableLyrics ? () => { if (lyricDragged.current) { lyricDragged.current = false; return } seekLine(index) } : undefined} onKeyDown={timingPreview ? event => { if (customControlActivation(event)) { event.preventDefault(); alignLine(line.timeMs) } } : clickableLyrics ? event => { if (customControlActivation(event)) { event.preventDefault(); seekLine(index) } } : undefined}>
+            <p ref={(node) => { lineRefs.current[index] = node }} style={{ '--lyric-blur': `${visual.blurPx}px`, '--lyric-opacity': String(visual.opacity) } as CSSProperties} data-lyric-near={nearActive || undefined} data-lyric-clickable={clickableLyrics || undefined} data-playback-space-pointer={!timingPreview && clickableLyrics || undefined} className={`${index === activeIndex ? 'active' : index < activeIndex ? 'past' : ''}${timingPreview && hoveredLine === index ? ' timing-target' : ''}${browsingLyrics && clickableLyrics && browseIndex === index ? ' browse-target' : ''}`} onPointerEnter={timingPreview ? event => { if (event.pointerType === 'mouse') setHoveredLine(index) } : undefined} role={timingPreview || clickableLyrics ? 'button' : undefined} tabIndex={timingPreview || clickableLyrics ? 0 : undefined} title={timingPreview ? '将这一句对齐到现在' : undefined} onClick={timingPreview ? () => alignLine(line.timeMs) : clickableLyrics ? () => { if (lyricDragged.current) { lyricDragged.current = false; return } seekLine(index) } : undefined} onKeyDown={timingPreview || clickableLyrics ? event => {
+              if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+              event.preventDefault()
+              if (timingPreview) alignLine(line.timeMs)
+              else seekLine(index)
+            } : undefined}>
               <span className="lyric-line-body">
                 <span className="lyric-original">
                   <WordLyric line={line} active={active} timeMs={active ? liveClock?.() ?? lyricTimeMs : 0}
@@ -685,7 +689,7 @@ export function LyricsView({ open = true, duplicatePreview, chapters, fullscreen
                 </span>
                 {supplementMode !== 'off' && line[supplementMode] && <span className="lyric-secondary">{line[supplementMode]}</span>}
               </span>
-              {browsingLyrics && clickableLyrics && browseIndex === index && <button type="button" className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={event => { event.stopPropagation(); seekLine(index) }}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}
+              {browsingLyrics && clickableLyrics && browseIndex === index && <button type="button" data-playback-space-pointer className="lyric-seek-button" aria-label={`从这句播放：${line.text}`} title="从这句播放" onClick={event => { event.stopPropagation(); seekLine(index) }}><Play size={17} fill="currentColor" aria-hidden="true" /></button>}
             </p>
           </Fragment>
         }) : <div className="lyrics-status"><span>{error || '还没有歌词，手动搜索并选择一个版本吧'}</span><button className="load-more" onClick={() => setChooserOpen(true)}>匹配或导入歌词</button></div>}

@@ -51,12 +51,12 @@ export function MiniPlayer({busy,onRestore,onFavorite,favoritePending,onError}: 
     </div>
     <div className="mini-player-controls">
       <button className={current?.liked?'liked':''} type="button" disabled={!current} aria-busy={favoritePending} aria-pressed={Boolean(current?.liked)} title={current?.liked?'取消喜欢':'喜欢'} aria-label={current?.liked?'取消喜欢':'喜欢'} onClick={onFavorite}><Heart size={19} fill={current?.liked?'currentColor':'none'}/></button>
-      <button type="button" title="上一首" aria-label="上一首" disabled={!current} onClick={()=>void usePlayerStore.getState().previous()}><SkipBack size={17} fill="currentColor"/></button>
-      <button type="button" className="mini-play-toggle" title={active?'暂停':'播放'} aria-label={active?'暂停':'播放'} disabled={!current} onClick={()=>void usePlayerStore.getState().toggle()}>{active?<Pause size={21} fill="currentColor"/>:<Play size={21} fill="currentColor"/>}</button>
-      <button type="button" title="下一首" aria-label="下一首" disabled={!current} onClick={()=>void usePlayerStore.getState().next()}><SkipForward size={17} fill="currentColor"/></button>
+      <button type="button" data-playback-space-pointer title="上一首" aria-label="上一首" disabled={!current} onClick={()=>void usePlayerStore.getState().previous()}><SkipBack size={17} fill="currentColor"/></button>
+      <button type="button" data-playback-space-pointer className="mini-play-toggle" title={active?'暂停':'播放'} aria-label={active?'暂停':'播放'} disabled={!current} onClick={()=>void usePlayerStore.getState().toggle()}>{active?<Pause size={21} fill="currentColor"/>:<Play size={21} fill="currentColor"/>}</button>
+      <button type="button" data-playback-space-pointer title="下一首" aria-label="下一首" disabled={!current} onClick={()=>void usePlayerStore.getState().next()}><SkipForward size={17} fill="currentColor"/></button>
       <button type="button" title="迷你播放队列" aria-label="迷你播放队列" aria-expanded={queueOpen} disabled={busy} onClick={()=>setQueueOpen(value=>!value)}><ListMusic size={17}/></button>
       <button type="button" title="显示歌词" aria-label="显示歌词" aria-pressed={lyricsVisible} disabled={!current||busy} onClick={()=>setLyricsVisible(value=>!value)}><Captions size={17}/></button>
-      <div className="mini-volume-group"><button type="button" title="音量" aria-label="音量" aria-expanded={volumeOpen} onClick={()=>setVolumeOpen(value=>!value)}><Volume2 size={18}/></button>{volumeOpen&&<div className="mini-volume-panel"><RangeControl aria-label="迷你播放器音量" min={0} max={1} step={.01} value={volume} onChange={event=>usePlayerStore.getState().setVolume(Number(event.target.value))}/><small>{Math.round(volume*100)}%</small></div>}</div>
+      <div className="mini-volume-group"><button type="button" title="音量" aria-label="音量" aria-expanded={volumeOpen} onClick={()=>setVolumeOpen(value=>!value)}><Volume2 size={18}/></button>{volumeOpen&&<div className="mini-volume-panel"><RangeControl data-playback-space-range aria-label="迷你播放器音量" min={0} max={1} step={.01} value={volume} onChange={event=>usePlayerStore.getState().setVolume(Number(event.target.value))}/><small>{Math.round(volume*100)}%</small></div>}</div>
     </div>
     <MiniProgress/>
     {queueOpen&&<MiniQueue/>}
@@ -95,5 +95,5 @@ function MarqueeText({text,title=false}:{text:string;title?:boolean}){
 function MiniProgress(){
   const position=usePlayerStore(state=>state.progressSeconds)
   const duration=usePlayerStore(state=>state.durationSeconds)
-  return <div className="mini-player-progress" title={`${formatDuration(position)} / ${formatDuration(duration)}`}><RangeControl aria-label="迷你播放器播放进度" min={0} max={Math.max(1,duration)} step={.1} value={Math.min(position,duration||0)} onChange={event=>usePlayerStore.getState().seek(Number(event.target.value))}/></div>
+  return <div className="mini-player-progress" title={`${formatDuration(position)} / ${formatDuration(duration)}`}><RangeControl data-playback-space-range aria-label="迷你播放器播放进度" min={0} max={Math.max(1,duration)} step={.1} value={Math.min(position,duration||0)} onChange={event=>usePlayerStore.getState().seek(Number(event.target.value))}/></div>
 }

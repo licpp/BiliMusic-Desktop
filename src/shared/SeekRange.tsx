@@ -33,7 +33,7 @@ export function SeekRange({ value, duration, trackKey, onSeek, onPreview, onValu
     current.value = progressAtPointerInRect(event.clientX, event.clientY, rect, duration)
     setDraft({ key: current.key, value: current.value }); onPreview?.(current.value)
   }
-  return <RangeControl {...props} ref={input} min={0} max={Math.max(1, duration)} step={props.step ?? .1} disabled={props.disabled || duration <= 0}
+  return <RangeControl {...props} ref={input} data-playback-space-range min={0} max={Math.max(1, duration)} step={props.step ?? .1} disabled={props.disabled || duration <= 0}
     value={draft?.key === trackKey ? draft?.value ?? value : value}
     onPointerDown={event => {
       if (event.button !== 0 || duration <= 0) return

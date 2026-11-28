@@ -59,12 +59,6 @@ export function resolveShortcut(event: KeyEvent, bindings: ShortcutBindings): Sh
   const key = shortcutFromEvent(event)
   return shortcutActions.find(item => sameShortcut(bindings[item.id],key))?.id
 }
-// Button-like surfaces built from non-native elements respond to Enter only.
-// Space resolves as an app-wide shortcut (playback toggle by default) wherever a
-// click leaves focus, such as a lyric line, song row or chart bar.
-export function customControlActivation(event: Pick<KeyboardEvent, 'key'>) {
-  return event.key === 'Enter'
-}
 export function shortcutLabel(key: Shortcut | null, mac=false) {
   if (!key) return '未设置'
   const names:Record<string,string> = {MouseBack:'鼠标后退键',MouseForward:'鼠标前进键',Space:'空格',ArrowLeft:'←',ArrowRight:'→',ArrowUp:'↑',ArrowDown:'↓',Enter:'Enter',Backspace:'退格',Delete:'Delete',PageUp:'Page Up',PageDown:'Page Down',Minus:'−',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`',NumpadAdd:'数字 +',NumpadSubtract:'数字 −',NumpadMultiply:'数字 ×',NumpadDivide:'数字 ÷',NumpadDecimal:'数字 .',NumpadEnter:'数字 Enter'}
