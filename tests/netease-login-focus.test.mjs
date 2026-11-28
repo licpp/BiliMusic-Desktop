@@ -30,6 +30,17 @@ test('Android restores the app page on every exit from embedded login', async ()
   // Every exit carries the loop's value out: the result is left for the page
   // that the return reloads, and only then is the app page put back.
   assert.match(loop, /};[\s\S]*?state\.set_web_login_outcome\([\s\S]*?\brestore_app_page\(&window, &app_url\)\.await;\s+result\s*$/)
+  // A plain navigation would leave the login entry in the WebView history, and
+  // the next BACK press would reopen the login page. The login page has to step
+  // back to the app page, which is still the first entry; replacing that entry
+  // is the fallback for a page that cannot run the script.
+  const restore = source.split('async fn restore_app_page(')[1]?.split('\n}\n')[0]
+  assert.ok(restore, 'restore_app_page exists')
+  const stepBack = restore.indexOf('history.go(1 - history.length)')
+  const replace = restore.indexOf('window.location.replace({app})')
+  assert.ok(stepBack > 0, 'the login entry is stepped out of, not appended to')
+  assert.ok(stepBack < replace, 'replacing the login entry only happens when stepping back failed')
+  assert.match(restore, /is_netease_url/, 'an app page that is already back must not be reloaded')
 })
 
 const source = await readFile(new URL('../src-tauri/src/interface/netease_login_focus.js', import.meta.url), 'utf8')
