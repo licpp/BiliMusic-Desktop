@@ -55,6 +55,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual([a['name'] for a in plan['assets'] if a['binary']], [main['file']])
             self.assertEqual((output / 'SHA256SUMS.txt').read_text().count(main['file']), 1)
             verifier.assert_called_once_with(output / main['file'], package['platform'], version, None, 'universal', 4)
+            with self.assertRaisesRegex(ValueError, 'only supports the Android phone/tablet APK'):
+                prepare(root, {}, root / 'notes.md', root / 'replace-car', 'car-replacement',
+                        plan['manifest'], ota, replace_android_build=True)
 
     def test_universal_apk_rejects_a_missing_or_mislabeled_architecture(self):
         arm64 = b'\x7fELF\x02\x01' + bytes(12) + (183).to_bytes(2, 'little')
@@ -132,6 +135,37 @@ class ReleaseWorkflowTests(unittest.TestCase):
             package.write_text(json.dumps(candidate))
             with self.assertRaisesRegex(ValueError, 'Unbuilt platform'):
                 validate_bundle(output, verifier)
+
+            active = plan['manifest']
+            build_info_path = root / 'build-info.json'
+            build_info = json.loads(build_info_path.read_text())
+            build_info['replaceAndroidBuild'] = True
+            build_info_path.write_text(json.dumps(build_info))
+            with self.assertRaisesRegex(ValueError, 'Platform build must increase'):
+                prepare(root, {}, root / 'notes.md', root / 'implicit-replacement',
+                        'phone-replacement', active, ota)
+            with self.assertRaisesRegex(ValueError, 'current published build number'):
+                prepare(root, {}, root / 'notes.md', root / 'wrong-build',
+                        'phone-replacement', previous, ota, replace_android_build=True)
+            with self.assertRaisesRegex(ValueError, 'new asset name'):
+                prepare(root, {}, root / 'notes.md', root / 'reused-name',
+                        'android-build-2', active, ota, replace_android_build=True)
+
+            replacement = prepare(
+                root, {}, root / 'notes.md', root / 'explicit-replacement', 'android-build-2-webview91',
+                active, ota, ['Expand Android WebView compatibility'], replace_android_build=True,
+            )
+            replaced = validate_bundle(replacement, verifier)
+            phone = replaced['manifest']['platforms'][0]
+            self.assertEqual(phone['build'], active['platforms'][0]['build'])
+            self.assertNotEqual(phone['file'], active['platforms'][0]['file'])
+            self.assertEqual(replaced['manifest']['platforms'][1:], active['platforms'][1:])
+            self.assertEqual(replaced['updater'], ota)
+            self.assertEqual([asset['name'] for asset in replaced['assets'] if asset['binary']], [phone['file']])
+            verifier.assert_called_with(replacement / phone['file'], 'Android', version, None, 'arm64', 2)
+            (replacement / 'updater.json').write_text(json.dumps(ota | {'metadata': 'changed'}))
+            with self.assertRaisesRegex(ValueError, 'preserve the desktop updater feed'):
+                validate_bundle(replacement, verifier)
 
     def test_large_upload_timeout_scales_with_payload_size(self):
         with tempfile.TemporaryDirectory() as folder:

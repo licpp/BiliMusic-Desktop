@@ -250,12 +250,14 @@ test('only a standard Android build gates its module before old WebViews can loa
   }
   const plugin = config => config.plugins.find(plugin => plugin.name === 'bilimusic-android-webview-preflight')
   try {
-    assert.equal(plugin(await config('windows', 'production')), undefined)
+    const windows = await config('windows', 'production')
+    assert.equal(windows.build.target, 'chrome105')
+    assert.equal(plugin(windows), undefined)
     const car = await config('android', 'large-screen')
     assert.equal(car.build.target, 'chrome66')
     assert.equal(plugin(car), undefined)
     const android = await config('android', 'production')
-    assert.equal(android.build.target, 'chrome105')
+    assert.equal(android.build.target, 'chrome91')
     const gate = plugin(android).transformIndexHtml
     const html = gate.handler('<script type="module" crossorigin src="/assets/app.js"></script><link rel="modulepreload" crossorigin href="/assets/dependency.js">')
     const entry = html.match(/<meta name="bilimusic-android-entry" content="([^"]+)">/)
@@ -263,7 +265,13 @@ test('only a standard Android build gates its module before old WebViews can loa
     assert.doesNotMatch(html, /<script|modulepreload/)
 
     const boot = await readFile('public/boot.js', 'utf8')
-    for (const [gated, supported] of [[true, false], [true, true], [false, false]]) {
+    for (const [gated, engine, supported] of [
+      [true, 'Chrome/90.0.4430.91', false],
+      [true, 'Chrome/91.0.4472.114', true],
+      [true, 'Chrome/134.0.6998.39', true],
+      [true, 'Version/4.0', false],
+      [false, 'Chrome/66.0.3359.158', false],
+    ]) {
       const scripts = [], notices = [], warning = { hidden: true }
       let ready
       const document = {
@@ -277,8 +285,8 @@ test('only a standard Android build gates its module before old WebViews can loa
             : warning
         },
       }
-      const CSS = { supports: feature => feature === 'selector(:has(*))' && supported }
-      runInContext(boot, createContext({ document, window: { CSS }, CSS }))
+      const navigator = { userAgent: `Mozilla/5.0 (Linux; Android 10; wv) ${engine} Mobile Safari/537.36` }
+      runInContext(boot, createContext({ document, navigator }))
       assert.equal(scripts.length, 0)
       ready()
       assert.deepEqual(scripts, gated && supported ? [{ type: 'module', crossOrigin: 'anonymous', src: '/assets/app.js' }] : [])
