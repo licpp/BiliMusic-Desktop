@@ -90,9 +90,11 @@ export function recommendationSourceName(source: Pick<RecommendationSource, 'nam
 }
 
 /**
- * The account line under a source. A default name already ends with the
- * nickname, so repeating it would print the same text twice; a renamed source
- * keeps the line, because its name no longer tells which account it is.
+ * The account line under a source. The default name ("网易云音乐 · <nickname>")
+ * already shows the nickname, and a renamed source usually keeps it if it names
+ * the account, so the line is dropped whenever the name already contains the
+ * nickname; a source whose name never mentions it keeps the line, because only
+ * the line tells which account it is.
  */
 export function recommendationSourceAccount(source: Pick<RecommendationSource, 'name' | 'nickname'>): string | undefined {
   const nickname = source.nickname.trim()
