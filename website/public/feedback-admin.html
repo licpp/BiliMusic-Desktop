@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#131d22" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <title>反馈管理 · BiliMusic</title>
+  <link rel="icon" href="/assets/app-icon.png">
+  <link rel="stylesheet" href="/style.css?v=feedback-images-1">
+  <link rel="stylesheet" href="/feedback-admin.css?v=6">
+  <script type="module" src="/feedback-admin.js?v=5"></script>
+</head>
+<body class="feedback-admin">
+  <header class="admin-topbar">
+    <div class="admin-brand">
+      <a class="brand" href="/" aria-label="BiliMusic 官网"><img src="/assets/app-icon.png" alt="" width="30" height="30">BiliMusic</a>
+      <h1>反馈管理</h1>
+    </div>
+    <button class="button admin-secondary" id="admin-logout" type="button" hidden>退出登录</button>
+  </header>
+  <main class="admin-page">
+    <p id="admin-session-message" class="admin-message admin-session-message" role="status">正在检查登录状态…</p>
+    <form class="admin-login" id="admin-login" method="post" action="/api/v1/admin/feedback/session" hidden>
+      <h2>登录工作台</h2>
+      <label>管理员账号<input name="username" autocomplete="username" required maxlength="80"></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="512"></label>
+      <button class="button primary" type="submit">登录</button>
+      <p id="admin-login-message" class="admin-message" role="status"></p>
+    </form>
+    <div class="admin-workspace" id="admin-workspace" data-view="list" hidden>
+      <section class="admin-inbox" aria-labelledby="admin-inbox-title">
+        <div class="admin-inbox-header">
+          <h2 id="admin-inbox-title">反馈收件箱</h2>
+          <button class="button admin-secondary" id="admin-refresh" type="button">刷新</button>
+        </div>
+        <div class="admin-status-shortcuts" id="admin-status-shortcuts" role="group" aria-label="按状态筛选">
+          <button type="button" data-filter-status="" aria-pressed="true"><span>全部</span><b data-status-count="all">—</b></button>
+          <button type="button" data-filter-status="new" aria-pressed="false"><span>待处理</span><b data-status-count="new">—</b></button>
+          <button type="button" data-filter-status="in_progress" aria-pressed="false"><span>处理中</span><b data-status-count="in_progress">—</b></button>
+          <button type="button" data-filter-status="resolved" aria-pressed="false"><span>已解决</span><b data-status-count="resolved">—</b></button>
+          <button type="button" data-filter-status="closed" aria-pressed="false"><span>已关闭</span><b data-status-count="closed">—</b></button>
+        </div>
+        <form class="admin-filters" id="admin-filters">
+          <input type="hidden" name="status" id="admin-filter-status" value="">
+          <div class="admin-search">
+            <input name="q" type="search" autocomplete="off" maxlength="260" aria-label="搜索反馈" placeholder="搜索标题、编号、UID 或邮箱" title="可输入完整邮箱，或用 uid:123 精确查询 B 站 UID">
+            <button class="button admin-secondary" type="submit">搜索</button>
+          </div>
+          <div class="admin-filter-options">
+            <select name="category" aria-label="反馈分类">
+              <option value="">所有分类</option><option value="bug">遇到问题</option><option value="suggestion">功能建议</option><option value="copyright">版权与权利反馈</option><option value="other">其他</option>
+            </select>
+            <select name="platform" aria-label="使用平台">
+              <option value="">所有平台</option><option value="macOS">macOS</option><option value="Windows">Windows</option><option value="Linux">Linux</option><option value="Android">Android</option><option value="Android Large Screen">车机 / TV</option><option value="iOS">iOS</option><option value="HarmonyOS">HarmonyOS</option><option value="website">网站</option><option value="other">其他</option>
+            </select>
+            <select name="sort" aria-label="排序方式">
+              <option value="newest">最新提交</option><option value="oldest">最早提交</option><option value="activity">最近更新</option>
+            </select>
+          </div>
+        </form>
+        <div class="admin-list-header">
+          <p class="admin-count" id="admin-count" role="status"></p>
+          <button class="admin-text-button" id="admin-clear-filters" type="button" hidden>清除筛选</button>
+        </div>
+        <ul class="admin-list" id="admin-list" aria-label="反馈列表"></ul>
+        <div class="admin-pagination" id="admin-pagination" hidden>
+          <button class="button admin-secondary" id="admin-prev" type="button">上一页</button>
+          <span id="admin-page-number"></span>
+          <button class="button admin-secondary" id="admin-next" type="button">下一页</button>
+        </div>
+      </section>
+      <section class="admin-detail" aria-label="反馈详情">
+        <div class="admin-detail-toolbar">
+          <button class="admin-back" id="admin-back" type="button"><span aria-hidden="true">‹</span>返回收件箱</button>
+          <button class="button admin-secondary" id="admin-reload-detail" type="button" hidden>放弃草稿并刷新</button>
+        </div>
+        <div class="admin-detail-scroll" id="admin-detail-scroll">
+          <p class="admin-detail-placeholder" id="admin-detail-placeholder" role="status">选择一条反馈查看详情</p>
+          <div class="admin-detail-layout">
+            <header class="admin-record" id="admin-record" hidden>
+              <div class="admin-record-overline">
+                <div class="admin-record-badges">
+                  <span class="admin-status" id="admin-record-status" hidden></span>
+                  <span class="admin-category" id="admin-record-category" hidden></span>
+                </div>
+                <div class="admin-record-dates">
+                  <time id="admin-record-time"></time>
+                  <time id="admin-status-time" hidden></time>
+                </div>
+              </div>
+              <h2 id="admin-record-heading" tabindex="-1">反馈详情</h2>
+              <dl class="admin-record-meta">
+                <div><dt>使用平台</dt><dd id="admin-record-platform"></dd></div>
+                <div><dt>其他联系方式</dt><dd id="admin-record-contact"></dd></div>
+                <div class="admin-email" id="admin-record-reply-email" hidden>
+                  <dt>回复邮箱</dt>
+                  <dd><span id="admin-record-email"></span><button type="button" id="admin-copy-email" class="admin-text-button" aria-label="复制回复邮箱">复制</button></dd>
+                </div>
+                <div class="admin-bilibili" id="admin-record-account" hidden>
+                  <dt>B 站 UID</dt>
+                  <dd><span id="admin-record-uid"></span><button type="button" id="admin-copy-uid" class="admin-text-button" aria-label="复制 B 站 UID">复制</button></dd>
+                </div>
+                <div class="admin-identity"><dt>反馈编号</dt><dd id="admin-record-id"></dd></div>
+              </dl>
+              <div class="admin-record-actions">
+                <button class="button admin-secondary" id="admin-copy-id" type="button">复制编号</button>
+                <button class="button admin-secondary" id="admin-copy-link" type="button">复制链接</button>
+                <a class="button admin-secondary admin-notes-jump" href="#admin-notes">查看备注</a>
+                <span class="admin-visually-hidden" id="admin-copy-status" role="status"></span>
+              </div>
+            </header>
+            <form class="admin-editor" id="admin-editor" hidden>
+              <h3 class="admin-panel-title">反馈内容</h3>
+              <label>标题<input name="title" required minlength="3" maxlength="120"></label>
+              <div class="form-row">
+                <label>反馈分类<select name="category" required>
+                  <option value="bug">遇到问题</option><option value="suggestion">功能建议</option><option value="copyright">版权与权利反馈</option><option value="other">其他</option>
+                </select></label>
+                <label>处理状态<select name="status" required>
+                  <option value="new">待处理</option><option value="in_progress">处理中</option><option value="resolved">已解决</option><option value="closed">已关闭</option>
+                </select></label>
+              </div>
+              <label>描述<textarea name="message" rows="5" required minlength="10" maxlength="5000"></textarea></label>
+              <label class="admin-close-reason" id="admin-close-reason" hidden>关闭原因 · 反馈人可见
+                <textarea name="reply" rows="3" maxlength="2000" placeholder="简要说明关闭原因"></textarea>
+              </label>
+              <details class="admin-original" id="admin-original" hidden>
+                <summary>原始反馈</summary>
+                <div id="admin-original-fields"></div>
+              </details>
+              <section class="admin-environment" id="admin-environment" aria-labelledby="admin-environment-heading" hidden>
+                <h3 class="admin-panel-title" id="admin-environment-heading">设备环境</h3>
+                <dl class="admin-environment-values" id="admin-environment-values"></dl>
+              </section>
+              <section class="admin-images" id="admin-images" aria-labelledby="admin-images-heading" hidden>
+                <h3 id="admin-images-heading">截图</h3>
+                <ul class="admin-image-list" id="admin-image-list"></ul>
+              </section>
+            </form>
+            <div class="admin-collaboration" id="admin-collaboration" hidden>
+              <section class="admin-replies" id="admin-replies" aria-labelledby="admin-replies-heading" hidden>
+                <div class="admin-notes-header">
+                  <h3 class="admin-panel-title" id="admin-replies-heading">回复反馈人</h3>
+                  <span>反馈人可见</span>
+                </div>
+                <p class="admin-note-empty" id="admin-reply-empty">还没有回复</p>
+                <ol class="admin-note-list" id="admin-reply-list" aria-label="回复记录"></ol>
+                <form class="admin-note-form" id="admin-reply-form">
+                  <label>回复内容<textarea name="body" rows="3" required maxlength="2000" placeholder="反馈人可在应用中查看这条回复"></textarea></label>
+                  <div class="admin-note-actions">
+                    <p class="admin-message" id="admin-reply-message" role="status"></p>
+                    <button class="button admin-reply-submit" type="submit">发送回复</button>
+                  </div>
+                </form>
+              </section>
+              <section class="admin-notes" id="admin-notes" aria-labelledby="admin-notes-heading">
+                <div class="admin-notes-header">
+                  <h3 class="admin-panel-title" id="admin-notes-heading">内部备注</h3>
+                  <span>仅管理员可见</span>
+                </div>
+                <p class="admin-note-empty" id="admin-note-empty">还没有备注</p>
+                <ol class="admin-note-list" id="admin-note-list" aria-label="备注记录"></ol>
+                <form class="admin-note-form" id="admin-note-form">
+                  <label>署名 <span>（选填）</span><input name="author" autocomplete="off" maxlength="32" placeholder="填写你的名字"></label>
+                  <label>备注内容<textarea name="body" rows="3" required maxlength="2000" placeholder="记录排查结果或下一步"></textarea></label>
+                  <div class="admin-note-actions">
+                    <p class="admin-message" id="admin-note-message" role="status"></p>
+                    <button class="button admin-note-submit" type="submit">添加备注</button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          </div>
+        </div>
+        <div class="admin-save-row" id="admin-detail-actions" hidden>
+          <p class="admin-message" id="admin-save-message" role="status"></p>
+          <button class="button primary" id="admin-save-button" type="submit" form="admin-editor" disabled>保存修改</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <dialog class="admin-image-dialog" id="admin-image-dialog" aria-labelledby="admin-image-title">
+    <div class="admin-image-dialog-bar"><h2 id="admin-image-title">截图</h2><button class="close-dialog" id="admin-image-close" type="button" aria-label="关闭截图">×</button></div>
+    <img id="admin-large-image" alt="反馈截图">
+  </dialog>
+</body>
+</html>

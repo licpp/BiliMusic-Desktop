@@ -233,7 +233,7 @@ document.querySelectorAll('[data-jump-platform]').forEach(chip => {
 // Auto-preselect detected platform in feedback form
 (() => {
   const detected = detectedDownloadFamily(navigator.userAgent, navigator.maxTouchPoints);
-  const map = { mac: 'macOS', windows: 'Windows', android: 'Android', ios: 'iOS', ohos: 'HarmonyOS' };
+  const map = { mac: 'macOS', windows: 'Windows', linux: 'Linux', android: 'Android', ios: 'iOS', ohos: 'HarmonyOS' };
   const selectEl = $('#feedback-form [name="platform"]');
   if (selectEl && detected && map[detected]) selectEl.value = map[detected];
 })();
@@ -353,18 +353,95 @@ $('#rights-feedback').addEventListener('click', () => {
 });
 function updateCategory() { $('#feedback-form [name=contact]').required = $('#feedback-form [name=category]').value === 'copyright'; }
 $('#feedback-form [name=category]').addEventListener('change',updateCategory);
+
+const feedbackImages = [];
+const feedbackImageInput = $('#feedback-images');
+const feedbackImageList = $('#feedback-image-list');
+const feedbackImageStatus = $('#feedback-image-status');
+const addFeedbackImages = $('#add-feedback-images');
+const feedbackImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const feedbackImageExtensions = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const feedbackImageLimit = 3;
+const feedbackImageSizeLimit = 2 * 1024 * 1024;
+
+function renderFeedbackImages() {
+  feedbackImageList.replaceChildren();
+  feedbackImageList.hidden = feedbackImages.length === 0;
+  for (const [index, entry] of feedbackImages.entries()) {
+    const thumbnail = element('li', null, 'feedback-image-preview');
+    const image = element('img');
+    image.src = entry.url;
+    image.alt = `截图 ${index + 1}`;
+    const remove = element('button', '×', 'feedback-image-remove');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `移除截图 ${index + 1}`);
+    remove.addEventListener('click', () => {
+      URL.revokeObjectURL(entry.url);
+      feedbackImages.splice(index, 1);
+      feedbackImageStatus.textContent = '';
+      renderFeedbackImages();
+      addFeedbackImages.focus();
+    });
+    thumbnail.append(image, remove);
+    feedbackImageList.append(thumbnail);
+  }
+}
+
+addFeedbackImages.addEventListener('click', () => feedbackImageInput.click());
+feedbackImageInput.addEventListener('change', () => {
+  const messages = new Set();
+  for (const file of feedbackImageInput.files) {
+    const type = file.type || feedbackImageExtensions[file.name.split('.').pop().toLowerCase()];
+    if (!feedbackImageTypes.has(type) || file.size === 0) {
+      messages.add('请选择有效的 JPG、PNG 或 WebP 图片。');
+      continue;
+    }
+    if (file.size > feedbackImageSizeLimit) {
+      messages.add('每张图片最多 2 MB。');
+      continue;
+    }
+    const sameImage = feedbackImages.some(({ file: selected }) => selected.name === file.name && selected.size === file.size && selected.lastModified === file.lastModified);
+    if (sameImage) continue;
+    if (feedbackImages.length >= feedbackImageLimit) {
+      messages.add('最多可添加 3 张图片。');
+      break;
+    }
+    const image = file.type ? file : new File([file], file.name, { type, lastModified: file.lastModified });
+    feedbackImages.push({ file: image, url: URL.createObjectURL(image) });
+  }
+  feedbackImageInput.value = '';
+  feedbackImageStatus.textContent = [...messages].join(' ');
+  renderFeedbackImages();
+});
+
 $('#feedback-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = event.currentTarget, button = $('#submit-feedback'), status = $('#feedback-status');
+  const attachments = $('#feedback-attachments');
   button.disabled = true; button.textContent='正在提交…'; status.textContent=''; status.className='';
+  attachments.disabled = true;
   try {
     const policy = await getPolicy(), data = Object.fromEntries(new FormData(form));
     data.consent = form.elements.consent.checked; data.policyVersion = policy.version;
-    const response = await fetch('/api/v1/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data), signal:AbortSignal.timeout(15000) });
+    const request = { method:'POST', signal:AbortSignal.timeout(feedbackImages.length ? 60000 : 15000) };
+    if (feedbackImages.length) {
+      const upload = new FormData();
+      upload.append('feedback', JSON.stringify(data));
+      for (const { file } of feedbackImages) upload.append('images', file);
+      request.body = upload;
+    } else {
+      request.headers = { 'Content-Type':'application/json' };
+      request.body = JSON.stringify(data);
+    }
+    const response = await fetch('/api/v1/feedback', request);
     const result = await response.json();
     if (!response.ok) throw new Error(result.message || '提交失败，请稍后重试。');
     status.textContent = `${result.message} 反馈编号：${result.id}。请保留编号，便于后续联系。`;
+    for (const { url } of feedbackImages) URL.revokeObjectURL(url);
+    feedbackImages.length = 0;
+    feedbackImageStatus.textContent = '';
+    renderFeedbackImages();
     form.reset(); updateCategory();
   } catch (error) {
     status.className='error'; status.textContent = error.name === 'TimeoutError' ? '请求超时，反馈可能已收到；请稍后确认，避免重复提交。' : error.message || '网络连接失败，请稍后重试。';
-  } finally { button.disabled=false; button.textContent='提交反馈 ↗'; }
+  } finally { attachments.disabled=false; button.disabled=false; button.textContent='提交反馈 ↗'; }
 });

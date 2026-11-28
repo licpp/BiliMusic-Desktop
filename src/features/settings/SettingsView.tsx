@@ -8,6 +8,7 @@ import { TriangleAlert } from 'lucide-react'
 import { ShortcutSettings } from './ShortcutSettings'
 import { FloatingLyricsSettings } from './FloatingLyricsSettings'
 import { DiagnosticsSettings } from './DiagnosticsSettings'
+import { FeedbackSettings } from './FeedbackSettings'
 import { UpdateSettings } from './UpdateSettings'
 import { PlaybackCacheSettings } from './PlaybackCacheSettings'
 import { ResumeSettings } from './ResumeSettings'
@@ -24,10 +25,11 @@ import { commandErrorMessage, inDesktopShell } from '../../services/desktopApi'
 import { chooseDownloadDirectory, getDownloadDirectory } from '../../services/settings'
 import { syncStatus } from '../../services/sync'
 
-export function SettingsView({ embedded = false, onOpenDownloads, onOpenExtensions }: {
+export function SettingsView({ embedded = false, onOpenDownloads, onOpenExtensions, onFeedbackLogin }: {
   embedded?: boolean
   onOpenDownloads?: () => void
   onOpenExtensions: () => void
+  onFeedbackLogin?: () => void
 }) {
   const runtimeAttention = useSyncAttention(state => state.library || state.statistics)
   const reveal = useSyncAttention(state => state.reveal)
@@ -66,6 +68,6 @@ export function SettingsView({ embedded = false, onOpenDownloads, onOpenExtensio
       {isAndroid ? <SettingsDisclosure icon={<Download/>} title="已下载音乐" description="查看下载，选择保存文件夹"><AndroidDownloadDestinationField onOpenDownloads={onOpenDownloads}/></SettingsDisclosure> : <div className="settings-card"><div className="settings-icon"><Download/></div><div><strong>{isMobile ? '已下载音乐' : '下载目录'}</strong><small>{!inDesktopShell ? '在客户端中管理本地文件' : isMobile ? '保存在这台设备中' : loading ? '正在读取…' : downloadDirectory || '下载时选择保存位置'}</small></div><button onClick={isMobile ? onOpenDownloads : () => void chooseDirectory()} disabled={loading || !inDesktopShell}>{loading ? <LoaderCircle className="spin"/> : <FolderOpen/>}{isMobile ? '查看' : '更改'}</button></div>}
       {error && <p className="settings-error" role="alert">{error}</p>}
     </div></section>
-    <section className="settings-group" aria-labelledby="settings-about"><h3 id="settings-about">关于 BiliMusic</h3><div className="settings-group-body"><UpdateSettings/><DiagnosticsSettings/></div></section>
+    <section className="settings-group" aria-labelledby="settings-about"><h3 id="settings-about">关于 BiliMusic</h3><div className="settings-group-body"><UpdateSettings/><DiagnosticsSettings/><FeedbackSettings onLogin={onFeedbackLogin}/></div></section>
   </section>
 }

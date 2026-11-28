@@ -1097,6 +1097,19 @@ pub async fn bili_open_verification_page(app: tauri::AppHandle) -> Result<(), Co
     open_external_page(&app, "https://www.bilibili.com/").await
 }
 
+#[tauri::command]
+pub async fn feedback_open_link(
+    app: tauri::AppHandle,
+    destination: &str,
+) -> Result<(), CommandError> {
+    let url = match destination {
+        "author" => "https://space.bilibili.com/295967580",
+        "website" => "https://bilimusic.cn/",
+        _ => return Err(CommandError::validation("未知的联系入口")),
+    };
+    open_external_page(&app, url).await
+}
+
 async fn open_external_page(app: &tauri::AppHandle, url: &'static str) -> Result<(), CommandError> {
     #[cfg(target_env = "ohos")]
     return tauri_plugin_ohos_player::open_url(app, url)

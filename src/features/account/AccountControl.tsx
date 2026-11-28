@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { commandErrorMessage, generateLoginQr, getAccountProfile, inDesktopShell, logoutBilibili, pollLoginQr } from '../../services/desktopApi'
 import { resolveVipBadge, type QrLogin } from '../../domain/account'
 
-export function AccountControl({ expanded = false }: { expanded?: boolean }) {
+export function AccountControl({ expanded = false, openRequest = 0 }: { expanded?: boolean; openRequest?: number }) {
   const client = useQueryClient()
   const profile = useQuery({ queryKey: accountQueryKey('account'), queryFn: getAccountProfile, retry: false })
   const [open, setOpen] = useState(false)
@@ -21,6 +21,13 @@ export function AccountControl({ expanded = false }: { expanded?: boolean }) {
   const [qrState, setQrState] = useState<'loading' | 'waiting' | 'confirmed' | 'expired' | 'error'>('loading')
   const [status, setStatus] = useState('')
   const [copied, setCopied] = useState(false)
+
+  const refetchProfile = profile.refetch
+  useEffect(() => {
+    if (!openRequest) return
+    setOpen(true)
+    void refetchProfile()
+  }, [openRequest, refetchProfile])
 
   useEffect(() => {
     if (!open || profile.data?.loggedIn || !inDesktopShell) return

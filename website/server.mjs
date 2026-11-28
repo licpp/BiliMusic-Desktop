@@ -2,10 +2,13 @@ import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve, sep, extname } from 'node:path';
-import { randomUUID, createHmac } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import pg from 'pg';
 import { policy } from './policy.mjs';
-import { HttpError, validateFeedback } from './validation.mjs';
+import { HttpError } from './validation.mjs';
+import { admitFeedbackRequest, initializeFeedbackSubmissions, readFeedbackLookup, readFeedbackSubmission, saveFeedback } from './feedback-submission.mjs';
+import { createFeedbackAdmin, initializeFeedbackAdmin } from './feedback-admin.mjs';
+import { admitFeedbackLookup, initializeFeedbackTracking, lookupFeedback, removeExpiredFeedback } from './feedback-tracking.mjs';
 import { updaterManifest, validateUpdateDownload } from './updater.mjs';
 import { releases, resolveDownload } from './releases.mjs';
 import { apkDownloadPath, apkDownloadPrefix, serveApk } from './apk-downloads.mjs';
@@ -22,12 +25,26 @@ if (pool) {
     id uuid PRIMARY KEY, category text NOT NULL, title text NOT NULL, message text NOT NULL,
     platform text NOT NULL, version text NOT NULL DEFAULT '', contact text NOT NULL DEFAULT '',
     policy_version text NOT NULL, status text NOT NULL DEFAULT 'new', created_at timestamptz NOT NULL DEFAULT now());
-    CREATE TABLE IF NOT EXISTS feedback_limits (address_hash text PRIMARY KEY, count integer NOT NULL, window_start timestamptz NOT NULL);
     CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback(created_at DESC);`);
   await initializeDownloadStats(pool);
+  await initializeFeedbackSubmissions(pool);
+  await initializeFeedbackTracking(pool);
+  await initializeFeedbackAdmin(pool);
 }
+function clientAddress(req) {
+  const forwarded = process.env.TRUST_PROXY === 'true' ? req.headers['x-forwarded-for']?.split(',').at(-1)?.trim() : null;
+  return forwarded || req.socket.remoteAddress || 'unknown';
+}
+function clientAddressHash(req) {
+  return createHmac('sha256', process.env.IP_HASH_SECRET).update(clientAddress(req)).digest('hex');
+}
+const handleFeedbackAdmin = createFeedbackAdmin({ pool, origin, clientAddress });
+let activeFeedbackUploads = 0;
 async function housekeeping() {
-  await pool?.query("DELETE FROM feedback_limits WHERE window_start < now() - interval '24 hours'; DELETE FROM feedback WHERE created_at < now() - interval '180 days' AND category <> 'copyright' AND status <> 'in_progress'");
+  if (!pool) return;
+  await pool.query(`DELETE FROM feedback_limits WHERE GREATEST(window_start,daily_window_start) < now() - interval '24 hours';
+    DELETE FROM feedback_lookup_limits WHERE window_start < now() - interval '24 hours';`);
+  await removeExpiredFeedback(pool);
 }
 await housekeeping();
 const cleanup = setInterval(() => housekeeping().catch(() => console.error('Feedback cleanup failed')), 3600000); cleanup.unref();
@@ -52,11 +69,12 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Frame-Options','DENY');
   res.setHeader('Referrer-Policy','no-referrer');
   res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
   const json = (status, data) => { res.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' }); res.end(JSON.stringify(data)); };
   try {
     // Versioned API leaves room for future account/sync services; retain original paths for existing clients.
     const path = new URL(req.url, 'http://localhost').pathname.replace(/^\/api\/v1(?=\/)/, '/api');
+    if (await handleFeedbackAdmin(req, res, path, json)) return;
     if (req.method === 'GET' && path === '/api/policy') return json(200, policy);
     if (req.method === 'GET' && path === '/api/health') {
       try { if (!pool) return json(503, { status:'preview', feedback:false }); await pool.query('SELECT 1'); return json(200, { status:'ok', feedback:true }); }
@@ -99,31 +117,45 @@ const server = http.createServer(async (req, res) => {
       }
       return json(200, { ...download, ...(downloadStats ? { downloadStats } : {}) });
     }
-    if (req.method === 'POST' && path === '/api/feedback') {
-      if (req.headers.origin !== origin) throw new HttpError(403, '请通过本站反馈表单提交。');
-      if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, '请提交 JSON 格式。');
-      let size = 0, chunks = [];
-      for await (const chunk of req) { size += chunk.length; if (size > 24000) throw new HttpError(413, '反馈内容过长。'); chunks.push(chunk); }
-      let body; try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new HttpError(400, '反馈格式不正确。'); }
-      const data = validateFeedback(body, policy.version);
+    if (path === '/api/app/feedback/status') {
+      if (req.method !== 'POST') throw new HttpError(405, '不支持此操作。');
+      if (req.headers.origin !== undefined) throw new HttpError(403, '请通过 BiliMusic 客户端查询。');
       if (!pool) throw new HttpError(503, '反馈服务暂未连接，请稍后重试。');
-      const ip = process.env.TRUST_PROXY === 'true' ? req.headers['x-forwarded-for']?.split(',').at(-1)?.trim() || req.socket.remoteAddress : req.socket.remoteAddress;
-      const hash = createHmac('sha256', process.env.IP_HASH_SECRET).update(ip || 'unknown').digest('hex');
-      const quota = await pool.query(`INSERT INTO feedback_limits(address_hash, count, window_start) VALUES($1,1,now())
-        ON CONFLICT(address_hash) DO UPDATE SET count=CASE WHEN feedback_limits.window_start < now()-interval '1 hour' THEN 1 ELSE feedback_limits.count+1 END,
-        window_start=CASE WHEN feedback_limits.window_start < now()-interval '1 hour' THEN now() ELSE feedback_limits.window_start END
-        RETURNING count`, [hash]);
-      if (quota.rows[0].count > 5) { res.setHeader('Retry-After','3600'); throw new HttpError(429, '提交较频繁，请一小时后再试。'); }
-      const id = randomUUID();
-      await pool.query('INSERT INTO feedback(id,category,title,message,platform,version,contact,policy_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [id,data.category,data.title,data.message,data.platform,data.version,data.contact,policy.version]);
-      return json(201, { id, message:'反馈已收到，谢谢你帮助 BiliMusic 变得更好。' });
+      await admitFeedbackLookup(pool, clientAddressHash(req));
+      return json(200, await lookupFeedback(pool, await readFeedbackLookup(req)));
+    }
+    if ((req.method === 'POST' && path === '/api/feedback') || path === '/api/app/feedback') {
+      if (req.method !== 'POST') throw new HttpError(405, '不支持此操作。');
+      const app = path === '/api/app/feedback';
+      if (app && req.headers.origin !== undefined) throw new HttpError(403, '请通过 BiliMusic 客户端提交。');
+      if (!app && req.headers.origin !== origin) throw new HttpError(403, '请通过本站反馈表单提交。');
+      if (!pool) throw new HttpError(503, '反馈服务暂未连接，请稍后重试。');
+      const mediaType = req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase();
+      const upload = mediaType === 'multipart/form-data';
+      if (!upload && mediaType !== 'application/json') throw new HttpError(415, '请通过反馈表单提交。');
+      if (upload && activeFeedbackUploads >= 2) {
+        res.setHeader('Retry-After', '5');
+        throw new HttpError(503, '图片上传繁忙，请稍后重试。');
+      }
+      if (upload) activeFeedbackUploads += 1;
+      try {
+        const hash = clientAddressHash(req);
+        await admitFeedbackRequest(pool, hash, { app });
+        const data = await readFeedbackSubmission(req, policy.version, { app });
+        const id = await saveFeedback(pool, data, policy.version, hash);
+        return json(201, { id, message:'反馈已收到，谢谢你帮助 BiliMusic 变得更好。' });
+      } finally {
+        if (upload) activeFeedbackUploads -= 1;
+      }
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, '不支持此操作。');
     if (path.startsWith(apkDownloadPrefix)) {
       return await serveApk(req, res, releases.platforms.find(platform => apkDownloadPath(platform) === path));
     }
     const parsedUrl = new URL(req.url, 'http://localhost');
-    const relative = path === '/' ? 'index.html' : decodeURIComponent(path).replace(/^\/+/, '');
+    const relative = path === '/' ? 'index.html' : /^\/admin\/feedback\/?$/.test(path) ? 'feedback-admin.html' : decodeURIComponent(path).replace(/^\/+/, '');
+    const adminPage = relative === 'feedback-admin.html';
+    if (adminPage) res.setHeader('X-Robots-Tag', 'noindex');
     const file = resolve(root, relative);
     if (!file.startsWith(root + sep) || relative.split('/').some(x => x.startsWith('.'))) throw new HttpError(404, '页面不存在。');
     let info; try { info = await stat(file); } catch { throw new HttpError(404, '页面不存在。'); }
@@ -132,7 +164,7 @@ const server = http.createServer(async (req, res) => {
     const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
     const isHtml = ext === '.html';
     const isAsset = relative.startsWith('assets/') || Boolean(parsedUrl.searchParams.get('v'));
-    const cacheControl = isHtml ? 'no-cache' : isAsset ? 'public, max-age=86400, stale-while-revalidate=604800' : 'public, max-age=3600';
+    const cacheControl = adminPage ? 'no-store' : isHtml ? 'no-cache' : isAsset ? 'public, max-age=86400, stale-while-revalidate=604800' : 'public, max-age=3600';
     const headers = {
       'Content-Type': mime[ext] || 'application/octet-stream',
       'Cache-Control': cacheControl,
@@ -148,12 +180,18 @@ const server = http.createServer(async (req, res) => {
     res.end(req.method === 'HEAD' ? undefined : await readFile(file));
   } catch (error) {
     if (res.destroyed) return;
+    if ((error.status === 413 || error.status === 429) && !req.complete) res.setHeader('Connection', 'close');
+    if (error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
     if (!(error instanceof HttpError)) console.error('Request failed:', error.code || error.name);
-    if (!res.headersSent) json(error.status || 503, { message: error instanceof HttpError ? error.message : '服务暂时不可用，请稍后重试。' });
+    if (!res.headersSent) {
+      json(error.status || 503, error instanceof HttpError
+        ? { message: error.message, code: error.code }
+        : { message: '服务暂时不可用，请稍后重试。' });
+    }
     else res.end();
   }
 });
-server.requestTimeout = 15000; server.headersTimeout = 10000;
+server.requestTimeout = 60000; server.headersTimeout = 10000;
 server.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`BiliMusic website: http://${process.env.HOST || '127.0.0.1'}:${port}`));
 async function shutdown() { clearInterval(cleanup); server.close(); await pool?.end(); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
