@@ -52,13 +52,15 @@ test('default source names follow the nickname and fall back to an ordinal', () 
   assert.equal(recommendationSourceName({name: '我的推荐', nameCustom: true, nickname: '小明'}), '我的推荐')
 })
 
-test('the account line is dropped when the name already ends with it', () => {
+test('the account line is dropped when the name already shows it', () => {
   // The default name is "网易云音乐 · <nickname>", so printing the nickname
   // again under it would show the same account twice.
   assert.equal(recommendationSourceAccount({name: '网易云音乐 · 小明', nickname: '小明'}), undefined)
   // A renamed source no longer says which account it is.
   assert.equal(recommendationSourceAccount({name: '工作号', nickname: '小明'}), '小明')
   assert.equal(recommendationSourceAccount({name: '网易云音乐 · 小明', nickname: '  小明  '}), undefined)
+  // The nickname can also sit inside a longer name; the line would repeat it.
+  assert.equal(recommendationSourceAccount({name: '小明的工作号', nickname: '小明'}), undefined)
   // Without a nickname the account is worth stating, whatever the name is.
   assert.equal(recommendationSourceAccount({name: '推荐源 2', nickname: ''}), '未命名账号')
 })
