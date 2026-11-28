@@ -94,6 +94,43 @@ class PlayerPlugin(private val activity: Activity) : Plugin(activity) {
     private val downloadStorage by lazy { DownloadStorage(activity.applicationContext) }
     private val downloadWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var playbackNotificationPermission: PlaybackNotificationPermission? = null
+    private var neteaseLogin: NeteaseLoginDialog? = null
+
+    // Official login credentials return directly to Rust. Neither login command has a WebView ACL grant.
+    @Command
+    fun netease_web_login(invoke: Invoke) {
+        activity.runOnUiThread {
+            if (neteaseLogin != null || activity.isFinishing || activity.isDestroyed) {
+                invoke.reject("无法打开网易云登录页")
+                return@runOnUiThread
+            }
+            val login = NeteaseLoginDialog(activity) { result ->
+                neteaseLogin = null
+                result.fold(
+                    onSuccess = { session ->
+                        val payload = JSObject()
+                        if (session != null) payload.put("musicU", session.musicU).put("csrf", session.csrf)
+                        invoke.resolve(payload)
+                    },
+                    onFailure = { error -> invoke.reject(error.message ?: "无法打开网易云登录页") },
+                )
+            }
+            neteaseLogin = login
+            login.open()
+        }
+    }
+
+    @Command
+    fun cancel_netease_web_login(invoke: Invoke) {
+        activity.runOnUiThread {
+            neteaseLogin?.cancel()
+            invoke.resolve()
+        }
+    }
+
+    override fun onDestroy(activity: androidx.appcompat.app.AppCompatActivity) {
+        neteaseLogin?.cancel()
+    }
 
     // These storage commands are called by Rust only; they have no WebView ACL grant.
     @Command

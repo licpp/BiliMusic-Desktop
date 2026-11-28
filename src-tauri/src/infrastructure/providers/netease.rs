@@ -39,7 +39,7 @@ pub enum NeteaseError {
     RateLimited { retry_at: Option<u64> },
     #[error("网易云触发了风控验证，请稍后再试")]
     RiskBlocked,
-    #[error("网易云要求安全验证，当前版本无法完成，请稍后再试或更换账号")]
+    #[error("网易云要求在官方登录页完成安全验证")]
     VerificationRequired,
     #[error("网易云返回了无法识别的数据，请稍后重试")]
     Protocol,

@@ -229,6 +229,11 @@ export function qrPollingCanRetry(error: unknown): boolean {
   return !(typeof error === 'object' && error !== null && 'retryable' in error && error.retryable === false)
 }
 
+export function qrLoginFailureState(error: unknown, polling: boolean): 'verify' | 'retrying' | 'error' {
+  if (commandErrorCode(error) === 'netease_verification_required') return 'verify'
+  return polling && qrPollingCanRetry(error) ? 'retrying' : 'error'
+}
+
 /**
  * Closing the embedded login window (or the in-app cancel button) is a normal
  * outcome, not a failure: the view returns to the login intro instead of

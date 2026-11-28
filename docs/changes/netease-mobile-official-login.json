@@ -1,0 +1,12 @@
+{
+  "kind": "fixed",
+  "platforms": [
+    "android",
+    "android-large",
+    "android-large-armv7",
+    "ios",
+    "ohos"
+  ],
+  "summary": "移动端网易云扫码登录可切换到官方网页登录。",
+  "detail": "原生登录页关闭后返回原界面，保留当前播放和推荐源设置。"
+}

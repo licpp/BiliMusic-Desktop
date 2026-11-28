@@ -188,6 +188,7 @@ class PlayerPlugin: Plugin {
     private var interruptedByOtherMedia = false
     private let notificationLyrics = NotificationLyrics()
     private weak var webview: WKWebView?
+    private var neteaseLogin: NeteaseLoginViewController?
     private let artworkCache = NSCache<NSString, UIImage>()
     private var artworkTask: URLSessionDataTask?
     private var artworkURL: String?
@@ -601,6 +602,41 @@ class PlayerPlugin: Plugin {
                 popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
             }
             presenter.present(share, animated: true)
+            invoke.resolve()
+        }
+    }
+
+    // The official login session is passed only to the Rust recommendation provider.
+    @objc public func netease_web_login(_ invoke: Invoke) {
+        onMain { [self] in
+            guard neteaseLogin == nil else { invoke.reject("网易云登录页已打开"); return }
+            guard var presenter = webview?.window?.rootViewController else {
+                invoke.reject("无法打开网易云登录页"); return
+            }
+            while let presented = presenter.presentedViewController { presenter = presented }
+            guard presenter.viewIfLoaded?.window != nil, !presenter.isBeingDismissed else {
+                invoke.reject("请重新打开网易云登录页"); return
+            }
+            let login = NeteaseLoginViewController { [weak self] outcome in
+                self?.neteaseLogin = nil
+                switch outcome {
+                case .authorized(let cookies): invoke.resolve(cookies)
+                case .cancelled: invoke.resolve()
+                case .unavailable: invoke.reject("无法加载网易云登录页")
+                case .timedOut: invoke.reject("网易云登录等待超时，请重新打开登录页")
+                }
+            }
+            let navigation = UINavigationController(rootViewController: login)
+            navigation.modalPresentationStyle = .pageSheet
+            navigation.presentationController?.delegate = login
+            neteaseLogin = login
+            presenter.present(navigation, animated: true)
+        }
+    }
+
+    @objc public func cancel_netease_web_login(_ invoke: Invoke) {
+        onMain { [self] in
+            neteaseLogin?.cancel()
             invoke.resolve()
         }
     }

@@ -8,6 +8,38 @@ use tauri::{
 struct Credentials<R: Runtime>(tauri::plugin::PluginHandle<R>);
 
 #[cfg(target_os = "android")]
+pub async fn netease_web_login<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Option<(String, String)>, String> {
+    let result: serde_json::Value = app
+        .state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("netease_web_login", serde_json::json!({}))
+        .await
+        .map_err(|_| "无法使用网易云登录页")?;
+    Ok(result
+        .get("musicU")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|music_u| {
+            let csrf = result
+                .get("csrf")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            (music_u.to_owned(), csrf.to_owned())
+        }))
+}
+
+#[cfg(target_os = "android")]
+pub async fn cancel_netease_web_login<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    app.state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("cancel_netease_web_login", serde_json::json!({}))
+        .await
+        .map_err(|_| "无法关闭网易云登录页".to_owned())
+}
+
+#[cfg(target_os = "android")]
 pub async fn diagnostic_environment<R: Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Option<serde_json::Value> {

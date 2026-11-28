@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronRight, LoaderCircle, LogIn, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, ChevronRight, LoaderCircle, LogIn, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { CollectionDialog } from '../../shared/CollectionDialog'
-import { isAndroid, isMobile } from '../../services/platform'
+import { isMobile } from '../../services/platform'
 import { commandErrorMessage } from '../../services/userErrors'
-import { commandErrorCode, RECOMMENDATION_SOURCE_NAME_MAX, isNeteaseLoginCancelled, qrPollingCanRetry, recommendationSourceAccount, validateRecommendationSourceName, type RecommendationSource } from '../../domain/recommendation'
+import { RECOMMENDATION_SOURCE_NAME_MAX, isNeteaseLoginCancelled, qrLoginFailureState, recommendationSourceAccount, validateRecommendationSourceName, type RecommendationSource } from '../../domain/recommendation'
 import {
   cancelNeteaseQr,
   cancelNeteaseWebLogin,
@@ -218,32 +218,12 @@ function NeteaseLogin({ onAuthorized, onCancel }: {
   onAuthorized: (source: RecommendationSource) => void
   onCancel: () => void
 }) {
-  // Desktop opens the official page in an isolated window. Android has no
-  // second window, so it keeps the generated QR and only falls back to showing
-  // the official page inside the main webview when the QR endpoint is gated
-  // (business code 8821). iOS and OHOS keep the QR alone: their webviews
-  // cannot return to the app page on their own.
   const [mode, setMode] = useState<'qr' | 'web'>(isMobile ? 'qr' : 'web')
-  if (mode === 'web') {
-    return <NeteaseWebLogin android={isAndroid} onUseQr={isAndroid ? () => setMode('qr') : undefined}
-      onAuthorized={onAuthorized} onCancel={onCancel} />
-  }
-  return <NeteaseQrLogin onUseWeb={isAndroid ? () => setMode('web') : undefined}
-    onAuthorized={onAuthorized} onCancel={onCancel} />
-}
-
-function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
-  android?: boolean
-  onUseQr?: () => void
-  onAuthorized: (source: RecommendationSource) => void
-  onCancel: () => void
-}) {
   const [accepted, setAccepted] = useState(false)
   const [state, setState] = useState<'idle' | 'opening' | 'waiting' | 'error'>('idle')
   const [status, setStatus] = useState('')
   const alive = useRef(true)
   const pending = useRef(false)
-  const finished = useRef(false)
 
   useEffect(() => {
     // StrictMode mounts, unmounts and remounts in development; restore the
@@ -253,28 +233,28 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
       alive.current = false
       // Closing the dialog must not leave a login window waiting in the
       // background with a live session.
-      if (pending.current && !finished.current) void cancelNeteaseWebLogin()
+      if (pending.current) void cancelNeteaseWebLogin().catch(() => {})
     }
   }, [])
 
   const begin = async () => {
     // A double click must not send a second command that would answer
     // `netease_login_in_progress` and clear `pending` for the first attempt.
-    if (pending.current) return
+    if (pending.current || !accepted) return
+    setMode('web')
     setState('opening')
-    setStatus(android ? '正在打开网易云登录页…' : '正在打开网易云登录窗口…')
+    setStatus('正在打开网易云登录页…')
     pending.current = true
     // The command resolves only after login, so switch the copy once the
     // window has had time to appear instead of leaving it on "opening".
     const opened = window.setTimeout(() => {
       if (!alive.current || !pending.current) return
       setState('waiting')
-      setStatus(android ? '请在网易云登录页完成登录，完成后会自动返回' : '请在网易云登录窗口中完成登录')
+      setStatus('请在网易云登录页完成登录')
     }, 1200)
     try {
       const source = await webLoginNetease(true)
       pending.current = false
-      finished.current = true
       if (!alive.current) return
       onAuthorized(source)
     } catch (cause) {
@@ -292,23 +272,30 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
     }
   }
 
+  const useQr = () => {
+    setStatus('')
+    setState('idle')
+    setMode('qr')
+  }
+
+  if (mode === 'qr') {
+    return <NeteaseQrLogin accepted={accepted} onAccept={setAccepted} onUseWeb={() => setMode('web')}
+      onVerify={() => void begin()} onAuthorized={onAuthorized} onCancel={onCancel} />
+  }
+
   if (state === 'idle') {
     return <div className="recommendation-qr">
       <div className="recommendation-qr-intro">
         <span className="eyebrow coral">NETEASE CLOUD MUSIC</span>
         <h4>在应用内登录网易云音乐</h4>
-        <p>{android
-          ? '点击下方按钮后，当前界面会切换为网易云官方登录页；登录成功会自动返回并重新加载应用，当前播放会中断。网易云音乐每天 6:00（北京时间）更新「每日推荐」，登录后只读取这份歌单，播放仍然通过 B 站完成。'
-          : '点击下方按钮会打开网易云官方登录页。网易云音乐每天 6:00（北京时间）更新「每日推荐」，登录后只读取这份歌单，播放仍然通过 B 站完成，不会播放或下载网易云音频。'}</p>
+        <p>在网易云官方页面登录，按页面提示完成验证后会自动返回。</p>
       </div>
       <div className="recommendation-terms">
         <p><strong>请先确认风险</strong></p>
         <ul>
           <li>每日推荐使用网易云非官方接口，可能不符合其服务条款。</li>
           <li>第三方登录与高频请求在极端情况下可能导致账号被限制。</li>
-          <li>{android
-            ? '登录凭据只保存在本机设备数据库，不会上传或同步；登录后的会话还会留在应用内嵌网页里，下次打开网易云网页仍是登录状态。'
-            : '登录凭据（MUSIC_U）仅保存在本机设备数据库，不会上传或同步；登录窗口关闭后不会保留浏览数据。'}</li>
+          <li>登录状态保存在本机，用于读取每日推荐。</li>
         </ul>
         <label>
           <input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} />
@@ -316,11 +303,11 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
         </label>
       </div>
       {status && <p className="recommendation-qr-status" role="status">{status}</p>}
-      {onUseQr && <button type="button" className="recommendation-switch-login" onClick={onUseQr}>改用扫码登录</button>}
+      {isMobile && <button type="button" className="recommendation-switch-login" onClick={useQr}>改用扫码登录</button>}
       <div className="recommendation-dialog-footer">
         <button type="button" onClick={onCancel}>取消</button>
         <button type="button" className="recommendation-primary" disabled={!accepted} onClick={() => void begin()}>
-          {android ? '同意并打开登录页' : '同意并打开登录窗口'}
+          同意并打开登录页
         </button>
       </div>
     </div>
@@ -332,7 +319,7 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
         <span className="recommendation-qr-placeholder"><X size={26} /></span>
       </div>
       <p className="recommendation-qr-status" data-state="error" role="alert">{status}</p>
-      {onUseQr && <button type="button" className="recommendation-switch-login" onClick={onUseQr}>改用扫码登录</button>}
+      {isMobile && <button type="button" className="recommendation-switch-login" onClick={useQr}>改用扫码登录</button>}
       <div className="recommendation-dialog-footer">
         <button type="button" onClick={onCancel}>取消</button>
         <button type="button" className="recommendation-primary" onClick={() => void begin()}><RefreshCw size={15} />重试</button>
@@ -345,26 +332,24 @@ function NeteaseWebLogin({ android, onUseQr, onAuthorized, onCancel }: {
       <span className="recommendation-qr-placeholder"><LoaderCircle size={26} className="spin" /></span>
     </div>
     <p className="recommendation-qr-status" data-state={state} role="status">{status}</p>
-    <small className="recommendation-qr-tip">{android
-      ? '登录页会替换当前界面，按系统返回键可以取消并回到应用；完成登录后应用会自动重新加载。'
-      : '登录页在单独的窗口中打开，可以用手机号、邮箱或网易云 App 扫码。完成登录后登录窗口会自动关闭；关闭登录窗口则取消本次登录。'}</small>
     <div className="recommendation-dialog-footer">
       <button type="button" onClick={onCancel}>取消登录</button>
     </div>
   </div>
 }
 
-function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
-  onUseWeb?: () => void
+function NeteaseQrLogin({ accepted, onAccept, onUseWeb, onVerify, onAuthorized, onCancel }: {
+  accepted: boolean
+  onAccept: (accepted: boolean) => void
+  onUseWeb: () => void
+  onVerify: () => void
   onAuthorized: (source: RecommendationSource) => void
   onCancel: () => void
 }) {
-  const [accepted, setAccepted] = useState(false)
   const [started, setStarted] = useState(false)
   const [qr, setQr] = useState<NeteaseQrGenerate>()
-  const [state, setState] = useState<'idle' | 'loading' | 'waiting' | 'scanned' | 'retrying' | 'expired' | 'error'>('idle')
+  const [state, setState] = useState<'idle' | 'loading' | 'waiting' | 'scanned' | 'retrying' | 'expired' | 'error' | 'verify'>('idle')
   const [status, setStatus] = useState('')
-  const [errorCode, setErrorCode] = useState<string>()
   const [nonce, setNonce] = useState(0)
   const authorized = useRef(false)
   const authorizedHandler = useRef(onAuthorized)
@@ -378,8 +363,13 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
     setQr(undefined)
     setState('loading')
     setStatus('正在生成二维码…')
-    setErrorCode(undefined)
     authorized.current = false
+    const fail = (cause: unknown, polling = false) => {
+      const next = qrLoginFailureState(cause, polling)
+      setState(next)
+      setStatus(commandErrorMessage(cause))
+      return next
+    }
     const begin = async () => {
       try {
         const generated = await generateNeteaseQr(true)
@@ -405,18 +395,13 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
             if (cancelled) return
             // Terminal failures (unknown attempt, account-safety gate) end the
             // attempt; transient ones keep polling and the QR stays valid.
-            const retry = qrPollingCanRetry(cause)
-            setState(retry ? 'retrying' : 'error')
-            setErrorCode(commandErrorCode(cause))
-            setStatus(commandErrorMessage(cause))
-            if (!retry) return
-            timer = window.setTimeout(poll, 3000)
+            if (fail(cause, true) === 'retrying') timer = window.setTimeout(poll, 3000)
           }
         }
         timer = window.setTimeout(poll, 1000)
       } catch (cause) {
         if (cancelled) return
-        setState('error'); setStatus(commandErrorMessage(cause))
+        fail(cause)
       }
     }
     void begin()
@@ -442,11 +427,11 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
           <li>登录凭据（MUSIC_U）仅保存在本机设备数据库，不会上传或同步。</li>
         </ul>
         <label>
-          <input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} />
+          <input type="checkbox" checked={accepted} onChange={event => onAccept(event.target.checked)} />
           <span>我已了解上述风险，并愿意继续使用自己的网易云账号登录</span>
         </label>
       </div>
-      {onUseWeb && <button type="button" className="recommendation-switch-login" onClick={onUseWeb}>扫码被拦截？改用网页登录</button>}
+      <button type="button" className="recommendation-switch-login" onClick={onUseWeb}>使用网页登录</button>
       <div className="recommendation-dialog-footer">
         <button type="button" onClick={onCancel}>取消</button>
         <button type="button" className="recommendation-primary" disabled={!accepted} onClick={() => setStarted(true)}>同意并生成二维码</button>
@@ -454,12 +439,38 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
     </div>
   }
 
+  if (state === 'verify') {
+    return <div className="recommendation-qr recommendation-verification">
+      <div className="recommendation-verification-notice" role="status">
+        <ShieldCheck size={21} aria-hidden />
+        <strong>请在网易云完成安全验证</strong>
+      </div>
+      <div className="recommendation-dialog-footer">
+        <button type="button" onClick={onCancel}>取消</button>
+        <button type="button" className="recommendation-primary" onClick={onVerify}><LogIn size={15} />前往网易云验证</button>
+      </div>
+    </div>
+  }
+
+  if (state === 'error') {
+    return <div className="recommendation-qr recommendation-verification">
+      <div className="recommendation-verification-notice" data-state="error" role="alert">
+        <X size={21} aria-hidden />
+        <strong>{status}</strong>
+      </div>
+      <div className="recommendation-dialog-footer">
+        <button type="button" onClick={onCancel}>取消</button>
+        <button type="button" onClick={() => setNonce(value => value + 1)}><RefreshCw size={15} />重新生成</button>
+        <button type="button" className="recommendation-primary" onClick={onVerify}><LogIn size={15} />使用网页登录</button>
+      </div>
+    </div>
+  }
+
   return <div className="recommendation-qr">
     <div className="recommendation-qr-frame" data-state={state}>
-      {qr && state !== 'error'
+      {qr
         ? <QRCodeSVG value={qr.qrUrl} size={196} level="M" marginSize={2} role="img" aria-label="网易云音乐登录二维码" />
-        : state === 'error' ? <span className="recommendation-qr-placeholder"><X size={26} /></span>
-          : <span className="recommendation-qr-placeholder"><LoaderCircle size={26} className="spin" /></span>}
+        : <span className="recommendation-qr-placeholder"><LoaderCircle size={26} className="spin" /></span>}
       {state === 'expired' && <div className="recommendation-qr-overlay">
         <button type="button" className="recommendation-primary" onClick={() => setNonce(value => value + 1)}>
           <RefreshCw size={15} />刷新二维码
@@ -467,14 +478,10 @@ function NeteaseQrLogin({ onUseWeb, onAuthorized, onCancel }: {
       </div>}
     </div>
     <p className="recommendation-qr-status" data-state={state} role="status">{status || '正在生成二维码…'}</p>
-    <small className="recommendation-qr-tip">在网易云音乐 App 中打开「扫一扫」，扫码后需要在手机上确认登录。</small>
+    {state !== 'expired' && <small className="recommendation-qr-tip">在网易云音乐 App 中打开「扫一扫」，扫码后在手机上确认登录。</small>}
     <div className="recommendation-dialog-footer">
       <button type="button" onClick={onCancel}>取消</button>
-      {/* A safety gate (8821) answers every QR poll the same way, so the
-          fallback is the only action that can still succeed. */}
-      {state === 'error' && onUseWeb && errorCode === 'netease_verification_required'
-        ? <button type="button" className="recommendation-primary" onClick={onUseWeb}><LogIn size={15} />改用网页登录</button>
-        : state === 'error' && <button type="button" className="recommendation-primary" onClick={() => setNonce(value => value + 1)}><RefreshCw size={15} />重新生成</button>}
+      <button type="button" onClick={state === 'expired' ? onVerify : onUseWeb}>使用网页登录</button>
     </div>
   </div>
 }

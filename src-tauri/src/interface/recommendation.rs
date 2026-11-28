@@ -20,25 +20,34 @@ use crate::infrastructure::repositories::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(desktop)]
+use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(desktop)]
 use tauri::webview::NewWindowResponse;
 use tauri::{Manager, State};
+#[cfg(target_os = "android")]
+use tauri_plugin_android_player as native_login;
+#[cfg(target_os = "ios")]
+use tauri_plugin_ios_player as native_login;
+#[cfg(target_env = "ohos")]
+use tauri_plugin_ohos_player as native_login;
 
 const MAX_SOURCE_NAME: usize = 40;
+#[cfg(desktop)]
 const NETEASE_LOGIN_LABEL: &str = "netease-login";
+#[cfg(desktop)]
 const NETEASE_LOGIN_URL: &str = "https://music.163.com/#/login";
+#[cfg(desktop)]
 const NETEASE_LOGIN_COOKIE_URL: &str = "https://music.163.com/";
+#[cfg(desktop)]
 const NETEASE_LOGIN_POLL: Duration = Duration::from_millis(500);
 const NETEASE_LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Centres the QR code in the login view. Re-evaluated on every poll because
 /// the page renders its login box asynchronously; the script is idempotent and
 /// ignores anything outside a 163.com document.
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 const NETEASE_LOGIN_FOCUS_SCRIPT: &str = include_str!("netease_login_focus.js");
-/// Android reuses the main webview, so the first ticks after `navigate` still
-/// report the app URL. The login page counts as unreachable only after this.
-#[cfg(any(target_os = "android", test))]
-const NETEASE_LOGIN_NAVIGATION_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 struct WebLoginSlot {
@@ -50,6 +59,8 @@ pub struct RecommendationState {
     database: Result<RecommendationDatabase, String>,
     provider: Result<NeteaseProvider, String>,
     web_login: Mutex<WebLoginSlot>,
+    #[cfg(any(mobile, test))]
+    web_login_cancel: tokio::sync::Notify,
 }
 
 impl RecommendationState {
@@ -58,6 +69,8 @@ impl RecommendationState {
             database: RecommendationDatabase::open(app).map_err(|error| error.to_string()),
             provider: NeteaseProvider::new().map_err(|error| error.to_string()),
             web_login: Mutex::new(WebLoginSlot::default()),
+            #[cfg(any(mobile, test))]
+            web_login_cancel: tokio::sync::Notify::new(),
         }
     }
 
@@ -104,11 +117,20 @@ impl RecommendationState {
         let mut slot = self.web_login_slot();
         if slot.active {
             slot.cancelled = true;
+            #[cfg(any(mobile, test))]
+            self.web_login_cancel.notify_one();
         }
     }
 
     fn web_login_cancelled(&self) -> bool {
         self.web_login_slot().cancelled
+    }
+
+    #[cfg(any(mobile, test))]
+    async fn wait_web_login_cancel(&self) {
+        while !self.web_login_cancelled() {
+            self.web_login_cancel.notified().await;
+        }
     }
 }
 
@@ -221,7 +243,7 @@ pub async fn netease_qr_login_cancel(
 /// client with business code 8821 on some networks, while a real browser
 /// session works for the account and daily-recommendation endpoints.
 ///
-/// Android has its own main-webview fallback for QR login failures.
+/// Mobile presents the provider page in a separate native view.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn netease_web_login(
@@ -317,7 +339,7 @@ pub async fn netease_web_login(
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 pub async fn netease_web_login(
     app: tauri::AppHandle,
@@ -330,99 +352,34 @@ pub async fn netease_web_login(
         return Err(CommandError::netease_login_in_progress());
     }
     let _guard = WebLoginGuard(state.inner());
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| CommandError::netease_login_window("找不到主窗口"))?;
-    // Android has no second webview, so the app page itself is replaced by the
-    // official login page and put back afterwards. The app document reloads on
-    // the way back; the frontend warns about the interrupted playback first.
-    let app_url = window.url().map_err(CommandError::netease_login_window)?;
-    let login_url = NETEASE_LOGIN_URL
-        .parse::<tauri::Url>()
-        .map_err(CommandError::netease_login_window)?;
-    let cookie_url = NETEASE_LOGIN_COOKIE_URL
-        .parse::<tauri::Url>()
-        .map_err(CommandError::netease_login_window)?;
-    window
-        .navigate(login_url)
-        .map_err(CommandError::netease_login_window)?;
-    let started = Instant::now();
-    let deadline = started + NETEASE_LOGIN_TIMEOUT;
-    let mut reached_login = false;
-    let result = loop {
-        if state.web_login_cancelled() {
-            break Err(CommandError::netease_login_cancelled());
-        }
-        let on_login_page = window.url().ok().as_ref().is_some_and(is_netease_url);
-        match app_login_tick(on_login_page, reached_login, started.elapsed()) {
-            AppLoginTick::OnPage => {
-                reached_login = true;
-                // Same as the desktop window: the mobile login page also opens
-                // with the QR code below the fold.
-                let _ = window.eval(NETEASE_LOGIN_FOCUS_SCRIPT);
-                let cookies = window
-                    .cookies_for_url(cookie_url.clone())
-                    .unwrap_or_default();
-                if let Some((music_u, csrf)) = login_credentials(&cookies) {
-                    let profile = provider.profile(&music_u, &csrf).await;
-                    if !window.url().ok().as_ref().is_some_and(is_netease_url) {
-                        break Err(CommandError::netease_login_cancelled());
-                    }
-                    break profile.map_err(CommandError::netease).and_then(|profile| {
-                        persist_web_login(state.inner(), &music_u, &csrf, &profile)
-                    });
-                }
-            }
-            AppLoginTick::Left => break Err(CommandError::netease_login_cancelled()),
-            AppLoginTick::NotLoaded => {
-                break Err(CommandError::netease_login_window("网易云登录页没有打开"));
-            }
-            AppLoginTick::Wait => {}
-        }
-        if Instant::now() >= deadline {
-            break Err(CommandError::netease_login_timeout());
-        }
-        tokio::time::sleep(NETEASE_LOGIN_POLL).await;
-    };
-    restore_app_page(&window, &app_url);
-    result
-}
-
-/// One decision per poll of the Android main-webview login. `navigate` is
-/// asynchronous, so the first ticks still report the app URL; leaving the page
-/// only counts after the login page was really reached, otherwise every
-/// attempt would cancel itself before the page loads.
-#[cfg(any(target_os = "android", test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppLoginTick {
-    OnPage,
-    Left,
-    NotLoaded,
-    Wait,
-}
-
-#[cfg(any(target_os = "android", test))]
-fn app_login_tick(on_login_page: bool, reached: bool, elapsed: Duration) -> AppLoginTick {
-    if on_login_page {
-        AppLoginTick::OnPage
-    } else if reached {
-        AppLoginTick::Left
-    } else if elapsed >= NETEASE_LOGIN_NAVIGATION_GRACE {
-        AppLoginTick::NotLoaded
-    } else {
-        AppLoginTick::Wait
+    if state.web_login_cancelled() {
+        return Err(CommandError::netease_login_cancelled());
     }
-}
-
-/// iOS and OHOS keep the generated QR code: their webviews cannot return to
-/// the app page on their own, so the main-webview login would trap the user.
-#[cfg(all(not(desktop), not(target_os = "android")))]
-#[tauri::command]
-pub async fn netease_web_login(
-    terms_accepted: bool,
-) -> Result<RecommendationSourceRecord, CommandError> {
-    require_terms(terms_accepted)?;
-    Err(CommandError::netease_login_window("当前平台请使用扫码登录"))
+    let login = native_login::netease_web_login(&app);
+    tokio::pin!(login);
+    let interrupted = tokio::select! {
+        // Queue the native presentation before responding to cancellation.
+        biased;
+        result = &mut login => {
+            let (music_u, csrf) = result
+                .map_err(CommandError::netease_login_window)?
+                .ok_or_else(CommandError::netease_login_cancelled)?;
+            if state.web_login_cancelled() {
+                return Err(CommandError::netease_login_cancelled());
+            }
+            let profile = provider
+                .profile(&music_u, &csrf)
+                .await
+                .map_err(CommandError::netease)?;
+            return persist_web_login(state.inner(), &music_u, &csrf, &profile);
+        }
+        _ = state.wait_web_login_cancel() => CommandError::netease_login_cancelled(),
+        _ = tokio::time::sleep(NETEASE_LOGIN_TIMEOUT) => CommandError::netease_login_timeout(),
+    };
+    let _ = native_login::cancel_netease_web_login(&app).await;
+    // The native bridge must deliver its reply even for a cancelled view.
+    let _ = login.await;
+    Err(interrupted)
 }
 
 #[tauri::command]
@@ -431,13 +388,16 @@ pub fn netease_web_login_cancel(
     state: State<'_, RecommendationState>,
 ) -> Result<(), CommandError> {
     state.cancel_web_login();
+    #[cfg(mobile)]
+    let _ = app;
+    #[cfg(desktop)]
     if let Some(window) = app.get_webview_window(NETEASE_LOGIN_LABEL) {
         let _ = window.close();
     }
     Ok(())
 }
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 fn is_netease_url(url: &tauri::Url) -> bool {
     url.scheme() == "https"
         && url.host_str().is_some_and(|host| {
@@ -446,7 +406,7 @@ fn is_netease_url(url: &tauri::Url) -> bool {
         })
 }
 
-#[cfg(any(desktop, target_os = "android"))]
+#[cfg(desktop)]
 fn login_credentials(
     cookies: &[tauri::webview::cookie::Cookie<'static>],
 ) -> Option<(String, String)> {
@@ -467,7 +427,6 @@ fn login_credentials(
 /// Writes the freshly captured session as the device's recommendation source.
 /// Both embedded-login paths share it so the token and timestamps are created
 /// exactly once per successful login.
-#[cfg(any(desktop, target_os = "android"))]
 fn persist_web_login(
     state: &RecommendationState,
     music_u: &str,
@@ -491,16 +450,6 @@ fn persist_web_login(
         &profile.nickname,
         now,
     )
-}
-
-/// Puts the app back on screen after the main webview showed the login page.
-/// Navigating is skipped when the page never left, so a failed attempt does
-/// not reload the app and drop its in-memory state for nothing.
-#[cfg(target_os = "android")]
-fn restore_app_page(window: &tauri::WebviewWindow, app_url: &tauri::Url) {
-    if window.url().ok().as_ref() != Some(app_url) {
-        let _ = window.navigate(app_url.clone());
-    }
 }
 
 #[cfg(desktop)]
@@ -1456,31 +1405,6 @@ mod tests {
     }
 
     #[test]
-    fn app_login_ignores_the_pre_navigation_url_but_detects_leaving_the_page() {
-        // `navigate` returns before the page loads, so the tick that runs right
-        // after it still reports the app URL; cancelling there would abort
-        // every Android login before the login page had a chance to open.
-        assert_eq!(
-            app_login_tick(false, false, Duration::from_millis(500)),
-            AppLoginTick::Wait
-        );
-        assert_eq!(
-            app_login_tick(true, false, Duration::from_millis(500)),
-            AppLoginTick::OnPage
-        );
-        // Once the official page was reached, the back button is a cancel.
-        assert_eq!(
-            app_login_tick(false, true, Duration::from_secs(20)),
-            AppLoginTick::Left
-        );
-        // A page that never opens fails instead of waiting out the full timeout.
-        assert_eq!(
-            app_login_tick(false, false, NETEASE_LOGIN_NAVIGATION_GRACE),
-            AppLoginTick::NotLoaded
-        );
-    }
-
-    #[test]
     fn web_login_waits_for_music_u_instead_of_any_page_cookie() {
         use tauri::webview::cookie::Cookie;
         let cookies = vec![
@@ -1494,5 +1418,27 @@ mod tests {
         );
         assert_eq!(login_credentials(&cookies[..2]), None);
         assert_eq!(login_credentials(&[Cookie::new("MUSIC_U", " ")]), None);
+    }
+
+    #[test]
+    fn mobile_web_login_keeps_cancellation_until_the_view_has_closed() {
+        use futures_util::FutureExt;
+
+        let state = RecommendationState {
+            database: Err(String::new()),
+            provider: Err(String::new()),
+            web_login: Mutex::default(),
+            web_login_cancel: tokio::sync::Notify::new(),
+        };
+        assert!(state.begin_web_login());
+        assert!(state.wait_web_login_cancel().now_or_never().is_none());
+
+        state.cancel_web_login();
+        assert!(state.wait_web_login_cancel().now_or_never().is_some());
+        assert!(!state.begin_web_login());
+
+        state.finish_web_login();
+        assert!(state.begin_web_login());
+        assert!(state.wait_web_login_cancel().now_or_never().is_none());
     }
 }

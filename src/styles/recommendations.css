@@ -196,6 +196,19 @@
 .recommendation-qr-status[data-state="scanned"] { color: var(--cyan); }
 .recommendation-qr-status[data-state="retrying"], .recommendation-qr-status[data-state="expired"], .recommendation-qr-status[data-state="error"] { color: var(--coral); }
 .recommendation-qr-tip { color: var(--muted); font-size: 10.5px; line-height: 1.6; text-align: center; }
+.recommendation-verification-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--panel-raised);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.recommendation-verification-notice svg { flex: none; color: var(--cyan); }
+.recommendation-verification .recommendation-dialog-footer > button { min-height: 44px; }
 
 @media (max-width: 1180px) {
   .recommendation-list > li { grid-template-columns: 30px 40px minmax(0, 1.4fr) minmax(0, .9fr) 46px 66px; }

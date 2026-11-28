@@ -15,6 +15,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Artwork } from './Artwork';
 import { AutomaticResumePolicy, playbackStartPosition } from './ResumePolicy';
 import { putWebDAV, WebDAVUpload } from './WebDAV';
+import { NeteaseLoginDialog } from './NeteaseLogin';
 import native from 'libbilimusic_lib.so';
 import { NativeQueue, QueueUpdate, QueueTrack, ResolveResult, NotificationLyricLine } from './NativeQueue';
 
@@ -159,6 +160,7 @@ export class PlayerPlugin {
   private sessionActive: boolean = false;
   private sessionActivation: Promise<void> = Promise.resolve();
   private win: window.Window | null = null;
+  private neteaseLogin = new NeteaseLoginDialog();
   private lightTheme: boolean = false;
   private windowAppearanceTasks: Promise<void> = Promise.resolve();
   private tasks: Promise<void> = Promise.resolve();
@@ -331,6 +333,14 @@ export class PlayerPlugin {
 
   dispatch(raw: string): void {
     const request = JSON.parse(raw) as Request;
+    if (request.plugin === 'ohos-player' && request.command === 'netease_web_login') {
+      void this.openNeteaseLogin(request.id);
+      return;
+    }
+    if (request.plugin === 'ohos-player' && request.command === 'netease_web_login_cancel') {
+      this.neteaseLogin.cancel().then(() => native.tauriOhosPluginResponse(request.id, true, '{}'));
+      return;
+    }
     if (request.plugin === 'ohos-player' && request.command === 'diagnostic_environment') {
       const environment: DiagnosticEnvironment = {
         osVersion: deviceInfo.displayVersion,
@@ -385,6 +395,16 @@ export class PlayerPlugin {
         native.tauriOhosPluginResponse(request.id, false, JSON.stringify({ message, code } as BridgeError));
       }
     });
+  }
+
+  private async openNeteaseLogin(request: number): Promise<void> {
+    try {
+      if (!this.win || this.destroyed) throw new Error();
+      const result = await this.neteaseLogin.open(this.win, this.lightTheme);
+      native.tauriOhosPluginResponse(request, true, JSON.stringify(result));
+    } catch (_) {
+      native.tauriOhosPluginResponse(request, false, JSON.stringify({ message: '无法打开网易云登录页' } as BridgeError));
+    }
   }
 
   private async upload(request: Request): Promise<void> {
@@ -977,6 +997,7 @@ export class PlayerPlugin {
   }
 
   async destroy(): Promise<void> {
+    await this.neteaseLogin.cancel();
     this.cancelResolution();
     this.mediaRevision += 1; this.cancelSourceSwitch?.(); this.cancelPreparation?.(); this.artwork.clear();
     clearTimeout(this.outputTimer);

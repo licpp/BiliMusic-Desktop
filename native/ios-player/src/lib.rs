@@ -49,6 +49,38 @@ pub async fn export_download<R: Runtime>(
     Ok(())
 }
 
+pub async fn netease_web_login<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Option<(String, String)>, String> {
+    let response: serde_json::Value = app
+        .state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("netease_web_login", serde_json::json!({}))
+        .await
+        .map_err(|_| "无法打开网易云登录页".to_owned())?;
+    if response.is_null() {
+        return Ok(None);
+    }
+    let music_u = response
+        .get("musicU")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "网易云登录没有返回有效会话".to_owned())?;
+    let csrf = response
+        .get("csrf")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    Ok(Some((music_u.to_owned(), csrf.to_owned())))
+}
+
+pub async fn cancel_netease_web_login<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    app.state::<Credentials<R>>()
+        .0
+        .run_mobile_plugin_async("cancel_netease_web_login", serde_json::json!({}))
+        .await
+        .map_err(|_| "无法关闭网易云登录页".to_owned())
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("ios-player")
         .setup(|app, api| {
