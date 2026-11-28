@@ -177,21 +177,44 @@ test('a platform without a system scheme never enters the system state', () => {
   } finally { restore() }
 })
 
-test('iOS never offers the system state: the player plugin pins the window scheme', () => {
+/** iOS bridge: the player plugin is a Tauri command, so record what the service sends. */
+function iosImports(calls) {
+  return spec => {
+    if (spec === '@tauri-apps/api/core') {
+      return { invoke: async (command, args) => { calls.push({ command, args }) }, isTauri: () => true }
+    }
+    if (spec === '@tauri-apps/api/window') {
+      return { getCurrentWindow: () => ({ setTheme: async () => undefined }) }
+    }
+    return require(spec)
+  }
+}
+
+test('iOS follows the system by handing the window back to the OS', () => {
   try {
-    // The plugin sets overrideUserInterfaceStyle, so the media query reports the
-    // pinned colour rather than the OS; following the system could never work.
-    const env = environment({ stored: 'system', dark: true })
-    const { useThemeStore, systemThemeSupported } = evaluate(iosServiceText)
-    assert.equal(systemThemeSupported(), false)
-    assert.equal(useThemeStore.getState().preference, 'dark')
-    assert.equal(useThemeStore.getState().theme, 'dark')
-    useThemeStore.getState().cycleTheme()
-    assert.equal(useThemeStore.getState().preference, 'light')
-    useThemeStore.getState().cycleTheme()
-    assert.equal(useThemeStore.getState().preference, 'dark')
-    assert.equal(env.storage.get('bilimusic-theme'), 'dark')
+    const env = environment({ stored: 'dark', dark: true })
+    const calls = []
+    const { useThemeStore, systemThemeSupported } = evaluate(iosServiceText, iosImports(calls))
+    assert.equal(systemThemeSupported(), true)
+    useThemeStore.getState().setTheme('system')
+    // The preference, not the resolved colour, lets the plugin unset its override.
+    assert.deepEqual(calls.at(-1), { command: 'plugin:ios-player|control', args: { action: 'theme', value: 0, theme: 'system' } })
+    env.setSystem(false)
+    assert.equal(useThemeStore.getState().preference, 'system')
+    assert.equal(useThemeStore.getState().theme, 'light')
+    assert.equal(env.dataset.theme, 'light')
+    useThemeStore.getState().setTheme('light')
+    assert.deepEqual(calls.at(-1), { command: 'plugin:ios-player|control', args: { action: 'theme', value: 1, theme: 'light' } })
   } finally { restore() }
+})
+
+test('the iOS plugin can unset the window override and survives a cold launch', async () => {
+  const native = await readFile('native/ios-player/ios/Sources/PlayerPlugin.swift', 'utf8')
+  // `.unspecified` is what makes WKWebView report the OS scheme again.
+  assert.match(native, /overrideUserInterfaceStyle = \.unspecified/)
+  // The preference, including `system`, must outlive the WebView.
+  assert.match(native, /bilimusic-theme-preference/)
+  assert.match(native, /let theme: String\?/)
 })
 
 test('a WebView without matchMedia keeps working on an explicit theme', () => {

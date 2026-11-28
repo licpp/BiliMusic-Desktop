@@ -33,12 +33,11 @@ let systemSupported: boolean | undefined
 /** Resolved once: a WebView either understands the media query for its whole life. */
 export function systemThemeSupported(): boolean {
   if (systemSupported === undefined) {
-    // iOS reports the scheme the player plugin pinned on the window
-    // (`overrideUserInterfaceStyle`), not the OS, and the plugin has no way to
-    // hand the window back — so 跟随系统 could never track the OS there and the
-    // option stays hidden.
+    // iOS answers the query too: the player plugin hands the window back to the
+    // OS (`overrideUserInterfaceStyle = .unspecified`) for the `system`
+    // preference, so the media query and its change events report the OS again.
     const query = systemQuery()
-    systemSupported = !isIOS && Boolean(query && query.media !== 'not all')
+    systemSupported = Boolean(query && query.media !== 'not all')
   }
   return systemSupported
 }
@@ -93,7 +92,11 @@ function applyTheme(theme: Theme, preference: ThemePreference) {
   const light = theme === 'light' ? 1 : 0
   if (isOHOS) void invoke('plugin:ohos-player|control', { action: 'theme', value: light }).catch(() => undefined)
   else if (isAndroid) void invoke('plugin:android-player|control', { action: 'theme', value: light }).catch(() => undefined)
-  else if (isIOS) void invoke('plugin:ios-player|control', { action: 'theme', value: light }).catch(() => undefined)
+  else if (isIOS) {
+    // The preference lets the plugin hand the window back to the OS for
+    // `system`; `value` stays for compatibility with older plugin builds.
+    void invoke('plugin:ios-player|control', { action: 'theme', value: light, theme: preference }).catch(() => undefined)
+  }
   else if (isTauri()) {
     // Desktop windows take their frame colour from here; null hands it back to the OS.
     void getCurrentWindow().setTheme(preference === 'system' ? null : theme)
