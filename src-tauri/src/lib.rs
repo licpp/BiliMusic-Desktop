@@ -258,6 +258,8 @@ pub fn run() {
             interface::playback::collection_progress,
             interface::commands::library_toggle_favorite,
             interface::commands::library_update_metadata,
+            interface::commands::library_history_presence,
+            interface::commands::library_remove_history,
             interface::commands::bili_search,
             interface::commands::bili_personalized_feed,
             interface::commands::bili_search_suggestions,

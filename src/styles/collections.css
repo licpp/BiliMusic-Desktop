@@ -123,7 +123,14 @@
 :is(.collection-actions,.playlist-management,.video-parts-toolbar) > button:not(.collection-primary):not(:disabled):hover { background: var(--panel-raised); }
 :is(.collection-actions,.playlist-management,.collection-dialog) button:disabled { opacity: .48; cursor: default; }
 :is(.collection-flat-button,.collection-primary,.collection-icon,.action-menu-trigger,.video-part-select input):focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-.collection-flat-button.action-danger { color: var(--coral); }
+.collection-flat-button.action-danger,
+.collection-actions > button.collection-flat-button.action-danger { color: var(--coral); }
+.history-delete-details > summary { display:flex;align-items:center;gap:5px;width:fit-content;max-width:100%;margin-top:10px;list-style:none;cursor:pointer;color:var(--muted);font-size:12px;line-height:1.7; }
+.history-delete-details > summary::-webkit-details-marker { display:none; }
+.history-delete-details > summary:focus-visible { outline:2px solid var(--cyan);outline-offset:3px;border-radius:4px; }
+.history-delete-details > summary > svg { flex:0 0 auto;transition:transform .15s ease; }
+.history-delete-details[open] > summary > svg { transform:rotate(180deg); }
+.history-delete-details > p { margin:6px 0 0;font-size:12px;line-height:1.7; }
 .import-mode input[type="radio"] { accent-color: var(--coral); }
 
 @media (max-width: 960px) {

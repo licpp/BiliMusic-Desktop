@@ -11,6 +11,7 @@ import { Heart,Library,ListPlus,Play } from 'lucide-react'
 import { useEffect,useMemo,useRef,useState } from 'react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage, FAVORITES_PLAYLIST_ID, listLibraryTracks, listPlaylistTracks, listRecentTracks, removeTracksFromPlaylist, reorderPlaylist, toggleStoredFavorite } from '../../services/desktopApi'
+import { createPortal } from 'react-dom'
 import type { Playlist } from '../../domain/library'
 import { playlistTrackTitle, sortPlaylistTracks, sortTracks } from '../../services/listOrdering'
 import { playlistEntity } from '../../services/listPreferences'
@@ -35,6 +36,7 @@ import { showTrackMenu } from './trackActionStore'
 import { TrackMenuButton } from './TrackMenuButton'
 import { BatchTrackActions,useTrackSelection } from './useTrackSelection'
 import { useImportedPlaylist } from './useImportedPlaylist'
+import { HistoryDeleteDialog } from './HistoryDeleteDialog'
 import { ReplacementDialog } from './ReplacementDialog'
 import { PlaylistDuplicateReview, usePlaylistDuplicateNotice } from './PlaylistDuplicates'
 import { canEditPlaylistTracks } from './playlistEditing'
@@ -90,6 +92,8 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   useListReveal(grid, loadingTracks, visibleTracks.length > 0, active)
   const selection = useTrackSelection(visibleTracks)
   useEffect(() => { setFilter(''); selection.exit() }, [playlist?.id, recent])
+  const [historyDelete, setHistoryDelete] = useState<Track[]>()
+  const [deleteNotice, setDeleteNotice] = useState('')
   const [favoriteError, setFavoriteError] = useState('')
   const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, boolean>>({})
   const [favoritePending, setFavoritePending] = useState<Set<string>>(() => new Set())
@@ -149,7 +153,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
   return <section className={`library-view${playlist ? '' : ' library-tab-content'}`}>
     <header><div><span className="eyebrow">YOUR COLLECTION</span><h2>{playlist?.name || (recent ? '最近播放' : '已收藏')}</h2><p>{playlist ? `${playlist.trackCount} 首歌曲 · ${playlist.isSystem ? '默认歌单，点击红心即可收藏或取消喜欢。' : '本地歌单'}` : recent ? '按最近一次播放整理，播放历史不会自动加入收藏。' : '收藏喜欢的歌曲，或将歌曲加入歌单，统一整理在这里。'}</p></div></header>
 
-    {selection.selecting ? <BatchTrackActions allowAutoMatch selection={selection} total={visibleTracks.length} onMatched={ids => { void duplicates.review(ids).catch(() => undefined) }} onRemove={playlist ? async selected => {
+    {selection.selecting ? <BatchTrackActions allowAutoMatch selection={selection} total={visibleTracks.length} onMatched={ids => { void duplicates.review(ids).catch(() => undefined) }} onDelete={recent ? selected => setHistoryDelete(selected) : undefined} onRemove={playlist ? async selected => {
       await removeTracksFromPlaylist(playlist.id, selected.map(track => track.id))
       if (isFavorites) selected.forEach(track => updatePlayerTrack({ ...track, liked: false }))
       await refresh()
@@ -172,6 +176,7 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
 
     {filter.trim() && !visibleTracks.length && Boolean(tracks.data?.length) && <p className="collection-empty">没有匹配的音乐</p>}
     {favoriteError && <p className="inline-error">{favoriteError}</p>}
+    {deleteNotice && createPortal(<button type="button" className="library-toast" role="status" onClick={() => setDeleteNotice('')}>{deleteNotice}</button>, document.body)}
     {organizer.error && <p className="inline-error" role="alert">{organizer.error}</p>}
     <div>
     {loadingTracks && <ListSkeleton label="正在读取歌曲" />}
@@ -198,6 +203,14 @@ export function LibraryView({ recent = false, active = true, playlist, onPlaylis
     {duplicates.open && active && playlist && <PlaylistDuplicateReview playlistId={playlist.id}
       hidden={lyricsPresent} onPreviewLyrics={onPreviewLyrics} onClose={() => duplicates.setOpen(false)}
       onRemoved={() => { duplicates.clear(); void refresh() }}/>}
+    {historyDelete && active && !playlist && <HistoryDeleteDialog tracks={historyDelete}
+      onClose={() => setHistoryDelete(undefined)}
+      onDeleted={removed => {
+        setHistoryDelete(undefined)
+        selection.exit()
+        setDeleteNotice(`已删除 ${removed} 条播放记录`)
+        void refresh()
+      }}/>}
 
   </section>
 }
