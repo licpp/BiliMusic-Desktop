@@ -84,6 +84,7 @@ import { useSearchHistory } from '../features/search/useSearchHistory'
 import { LibraryView, MusicLibraryView } from '../features/library/LibraryView'
 import { LyricsView } from '../features/lyrics/LyricsView'
 import { formatDuration } from '../shared/time'
+import { HighlightRing } from '../shared/HighlightRing'
 import { commandErrorMessage, createPlaylist, getVideoParts, saveLibraryTrack, FAVORITES_PLAYLIST, inDesktopShell, listPlaylists, listRecentTracks, toggleStoredFavorite } from '../services/desktopApi'
 import { CopyPlaybackDiagnostics, PlaybackErrorText } from '../features/player/PlaybackError'
 import { toTrack } from '../services/collectionTrack'
@@ -144,6 +145,7 @@ export function App() {
   const syncAttention = useSyncAttention(state => state.library || state.statistics)
   const [playlistsExpanded, setPlaylistsExpanded] = useState(() => localStorage.getItem('playlists-expanded') !== 'false')
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
+  const [spotlight, setSpotlight] = useState<'daily' | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const [selectedCollection,setSelectedCollection]=useState<Collection|null>(null)
   const [collectionResume,setCollectionResume]=useState<CollectionResumeRequest>()
@@ -336,6 +338,17 @@ export function App() {
     exploreFocus.current = undefined
     entry.current?.focus({ preventScroll: true })
   }, [exploreLandingActive])
+  useEffect(() => {
+    if (!spotlight) return
+    const timer = window.setTimeout(() => setSpotlight(null), 2800)
+    return () => window.clearTimeout(timer)
+  }, [spotlight])
+  useLayoutEffect(() => {
+    if (spotlight !== 'daily') return
+    // Hand the entry the focus as well as the ring, once the search stage committed.
+    const frame = requestAnimationFrame(() => recommendationEntry.current?.focus({ preventScroll: true }))
+    return () => cancelAnimationFrame(frame)
+  }, [spotlight])
   useLayoutEffect(() => {
     const settings = settingsScroll.current
     if (!settingsActive || !settings || !extensionsReturn.current) return
@@ -497,6 +510,11 @@ export function App() {
   const openExtensions = () => {
     extensionsReturn.current = { preview: stagePreview(), scroll: settingsScroll.current?.scrollTop ?? 0 }
     setActiveNav('扩展')
+  }
+  // A settings preview jumps to the search landing and rings the entry it shows.
+  const openDailyPreview = () => {
+    openSearch('')
+    setSpotlight('daily')
   }
   const runSearch = (value: string) => {
     const normalized = value.trim()
@@ -834,7 +852,7 @@ export function App() {
         <div className="stage-scroll" ref={settingsScroll} hidden={!settingsActive}>
           {settingsActive && <MyView onOpenDownloads={() => { setLibraryTab('downloads'); setActiveNav('音乐库') }} onOpenExtensions={openExtensions}/>}
         </div>
-        {extensionsActive && <div className="stage-scroll"><ExtensionsSettings/></div>}
+        {extensionsActive && <div className="stage-scroll"><ExtensionsSettings onPreviewOpen={openDailyPreview}/></div>}
         </div>
       </main>
 
@@ -907,6 +925,7 @@ export function App() {
       }} onClose={() => {setImportOpen(false);setRematchPlaylist(undefined)}} />}
       {creatingPlaylist && <div ref={createDialog} className="dialog-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setCreatingPlaylist(false)}}><form className="playlist-create-dialog" role="dialog" aria-modal="true" aria-label="新建歌单" onSubmit={e=>{e.preventDefault();if(playlistName.trim())createList.mutate(playlistName)}}><header><h3>新建歌单</h3><button type="button" aria-label="关闭" onClick={()=>setCreatingPlaylist(false)}><X size={18} /></button></header><input autoFocus aria-label="歌单名称" maxLength={createLinked ? 40 : 80} value={playlistName} onChange={e=>setPlaylistName(e.target.value)} placeholder="歌单名称" /><label className="create-linked-option"><input type="checkbox" checked={createLinked} disabled={createList.isPending} onChange={event => setCreateLinked(event.target.checked)}/><span>与 B 站收藏夹同步<small>在 B 站账号下新建私密收藏夹</small></span></label>{createList.isError && <p className="inline-error">{commandErrorMessage(createList.error)}</p>}<button disabled={createList.isPending || !playlistName.trim()}>创建歌单</button></form></div>}
       <TrackActionsHost />
+      <HighlightRing target={recommendationEntry} active={spotlight === 'daily'}/>
     </div>{miniMode&&<MiniPlayer busy={miniBusy} onRestore={(lyrics,queue)=>void changeMiniMode(false,lyrics,queue)} onFavorite={()=>void toggleCurrentFavorite()} favoritePending={favoritePending} onError={cause=>setActionError(commandErrorMessage(cause))}/>}
     {miniMode&&(actionError||playbackError)&&<div className="mini-player-error" role="alert"><span>{actionError||playbackError?.message}</span>{playbackError && !actionError && <CopyPlaybackDiagnostics issue={playbackError} track={current}/>}<button onClick={()=>{setActionError('');usePlayerStore.setState({error:null})}} aria-label="关闭提示"><X size={12}/></button></div>}</>
   )

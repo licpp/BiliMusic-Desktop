@@ -1,0 +1,67 @@
+.highlight-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+}
+/* The huge spread dims everything except the revealed entry; the ring itself
+   has no background, so the card underneath stays fully legible. */
+.highlight-ring {
+  position: fixed;
+  border-radius: 15px;
+  box-shadow:
+    0 0 0 1.5px var(--coral),
+    0 0 0 9999px rgba(3, 11, 17, .58),
+    0 0 26px 4px color-mix(in srgb, var(--coral) 42%, transparent);
+}
+:root[data-theme="light"] .highlight-ring {
+  box-shadow:
+    0 0 0 1.5px var(--coral),
+    0 0 0 9999px rgba(248, 251, 253, .62),
+    0 0 26px 4px color-mix(in srgb, var(--coral) 34%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .highlight-ring {
+    animation: highlight-pulse 900ms ease-in-out infinite alternate;
+  }
+}
+@media (forced-colors: active) {
+  .highlight-ring {
+    box-shadow: none;
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+@keyframes highlight-pulse {
+  from {
+    box-shadow:
+      0 0 0 1.5px var(--coral),
+      0 0 0 9999px rgba(3, 11, 17, .58),
+      0 0 18px 2px color-mix(in srgb, var(--coral) 28%, transparent);
+  }
+  to {
+    box-shadow:
+      0 0 0 1.5px var(--coral),
+      0 0 0 9999px rgba(3, 11, 17, .58),
+      0 0 30px 8px color-mix(in srgb, var(--coral) 58%, transparent);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-theme="light"] .highlight-ring {
+    animation-name: highlight-pulse-light;
+  }
+}
+@keyframes highlight-pulse-light {
+  from {
+    box-shadow:
+      0 0 0 1.5px var(--coral),
+      0 0 0 9999px rgba(248, 251, 253, .62),
+      0 0 18px 2px color-mix(in srgb, var(--coral) 22%, transparent);
+  }
+  to {
+    box-shadow:
+      0 0 0 1.5px var(--coral),
+      0 0 0 9999px rgba(248, 251, 253, .62),
+      0 0 30px 8px color-mix(in srgb, var(--coral) 46%, transparent);
+  }
+}

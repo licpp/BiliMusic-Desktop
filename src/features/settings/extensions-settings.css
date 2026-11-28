@@ -59,6 +59,108 @@
   background: var(--panel-raised);
   background: color-mix(in srgb, var(--cyan) 8%, var(--panel));
 }
+/* The preview sits between the two recommendation rows, so the row after it
+   needs the separator the sibling rule above no longer reaches. */
+.extension-preview + .extension-settings-option {
+  border-top: 1px solid var(--line);
+}
+.extension-settings-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.extension-preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 4px 2px 8px;
+  color: var(--cyan);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.extension-preview-toggle:hover {
+  background: var(--line);
+}
+.extension-preview {
+  padding: 0 13px 13px;
+  background: var(--panel);
+}
+/* An enabled row and its preview read as one tinted block. */
+.extension-preview[data-enabled="true"] {
+  background: color-mix(in srgb, var(--cyan) 8%, var(--panel));
+}
+.extension-preview-caption {
+  margin: 0;
+  padding: 1px 0 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.extension-preview-frame {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--base);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  text-align: left;
+}
+.extension-preview-link {
+  font: inherit;
+  cursor: pointer;
+}
+.extension-preview-link:hover {
+  border-color: var(--coral);
+}
+.extension-preview-link:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+.extension-preview-explain {
+  margin: 7px 2px 0;
+  color: var(--coral);
+  font-size: 12px;
+}
+.extension-preview-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  color: var(--faint);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12px;
+}
+.extension-preview-search > svg {
+  flex: none;
+}
+.extension-preview-search > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extension-preview .explore-landing {
+  padding: 9px 0 1px;
+}
+.extension-preview .explore-recommendations {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .extension-preview-frame {
+    animation: extension-preview-in 160ms ease-out;
+  }
+}
+@keyframes extension-preview-in {
+  from { opacity: 0; transform: translateY(-3px); }
+}
 .extension-option-icon {
   width: 17px;
   height: 17px;
@@ -184,4 +286,12 @@
 [data-layout="large"] .extension-settings-check {
   width: 1.25rem;
   height: 1.25rem;
+}
+[data-layout="large"] .extension-preview-toggle,
+[data-layout="large"] .extension-preview-caption,
+[data-layout="large"] .extension-preview-search {
+  font-size: .875rem;
+}
+[data-layout="large"] .extension-preview-toggle {
+  min-height: var(--large-target);
 }
