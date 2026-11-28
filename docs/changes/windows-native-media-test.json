@@ -1,0 +1,6 @@
+{
+  "kind": "internal",
+  "platforms": ["all"],
+  "summary": "修复 Windows 上原生媒体操作测试找不到 esbuild 构建产物的路径问题，测试在本机也能完整运行。",
+  "pr": 34
+}
