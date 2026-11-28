@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
 import android.window.OnBackInvokedDispatcher
-import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -40,6 +39,8 @@ class CarPlayerActivity : TauriActivity() {
     private var webView: WebView? = null
     /** The app's own page: the first page this WebView commits. */
     private var homeUrl: String? = null
+    /** Set while the press is being passed on, so it cannot come back here. */
+    private var chaining = false
 
     // The app targets API 36, where Android 16 stops calling
     // `Activity.onBackPressed` and stops handing KEYCODE_BACK to the activity
@@ -58,12 +59,15 @@ class CarPlayerActivity : TauriActivity() {
             onBackInvokedDispatcher.registerOnBackInvokedCallback(
                 OnBackInvokedDispatcher.PRIORITY_OVERLAY,
             ) { back() }
-        } else {
-            onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() = back()
-            })
         }
     }
+
+    // Below API 33 the framework calls `onBackPressed` itself, and the app
+    // plugin's dispatcher callback -- registered after this activity -- is
+    // reached first, so this override is where the login page is handled.
+    // Everything else is passed on to the chain.
+    @Suppress("MissingSuperCall")
+    override fun onBackPressed() = back()
 
     override fun onWebViewCreate(webView: WebView) {
         this.webView = webView
@@ -91,21 +95,33 @@ class CarPlayerActivity : TauriActivity() {
     }
 
     // TauriActivity turns wry's back handling off; this is the only back path.
-    // On the app page it leaves the app; on the embedded login it reloads the
-    // app page, because the login can replace the app entry in the WebView's
+    // Anywhere but the app page -- the embedded login -- back reloads the app
+    // page, because the login can replace the app entry in the WebView's
     // back/forward list and `goBack()` then does nothing. The Rust login loop
     // sees the URL change and ends the attempt as a cancel.
+    //
+    // On the app page the app already decides what back does: the player plugin
+    // hands the press to the page, which closes dialogs, full screen, lyrics and
+    // the queue, and otherwise asks for the task to go to the background. This
+    // callback runs before androidx's bridge to the same dispatcher, so the
+    // press is passed on rather than replaced, or those pages would stop
+    // responding.
     private fun back() {
         val webView = webView
-        if (webView == null) {
+        val home = homeUrl
+        if (webView != null && home != null && !sameOrigin(webView.url, home)) {
+            webView.loadUrl(home)
+            return
+        }
+        if (chaining || !onBackPressedDispatcher.hasEnabledCallbacks()) {
             moveTaskToBack(true)
             return
         }
-        val home = homeUrl
-        if (home == null) {
-            if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
-            return
+        chaining = true
+        try {
+            onBackPressedDispatcher.onBackPressed()
+        } finally {
+            chaining = false
         }
-        if (sameOrigin(webView.url, home)) moveTaskToBack(true) else webView.loadUrl(home)
     }
 }

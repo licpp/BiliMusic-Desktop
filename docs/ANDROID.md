@@ -134,13 +134,14 @@ Windows 上 `tauri android build` 会在把编译好的 `.so` 链接进 `jniLibs
 
 ## 应用内网页登录与返回键
 
-Android 只有一个主 WebView，网易云网页登录直接把它换成官方登录页，登录成功、超时或用户按返回键后再换回应用页。整页替换会重载前端，所以登录结束时把结果留在后端，重载后的页面再取回：`netease_web_login_outcome` 带上这次登录的标记，前端据此重新打开「添加推荐源」弹窗并提示结果，而不是把用户丢回首页。换回应用页时先让登录页退回第一条历史（应用页），退不回去再 `location.replace` 覆盖登录页那条历史，最后才 `navigate`：只要登录页那条历史还留着，下一次返回键就会把它翻出来或者白重载一次。
+Android 只有一个主 WebView，网易云网页登录直接把它换成官方登录页，登录成功、超时或用户按返回键后再换回应用页。整页替换会重载前端，所以这次登录在两边各留一份状态：页面在跳走前把「这次登录是从哪个弹窗发起的」写进 `localStorage` 作为标记，重载后据此回到「每日推荐」并重新打开「添加推荐源」弹窗；登录结果由后端保存，`netease_web_login_outcome` 只用 `finishedAt` 和标记对时，避免把上一次登录的结果当成这一次的。取消不是错误：只是重新打开弹窗，结果里是成功才提示「已添加/已重新登录」。换回应用页时先让登录页退回第一条历史（应用页），退不回去再 `location.replace` 覆盖登录页那条历史，最后才 `navigate`：只要登录页那条历史还留着，下一次返回键就会把它翻出来或者白重载一次。
 
 返回键由 `src-tauri/android/phone/MainActivity.kt` 处理，车机版是对应的 `CarPlayerActivity`（`src-tauri/android/large-screen/MainActivity.kt`）。这两个文件在版本控制里，`scripts/android-prepare.mjs` 会把它们复制进生成的工程（`src-tauri/gen` 不进仓库），改完重新构建即生效。
 
 - 应用 `targetSdk` 是 36：Android 16 起不再调用 `Activity.onBackPressed`，也不再以 `KEYCODE_BACK` 把返回交给 Activity，只剩平台的 `OnBackInvokedCallback`。`scripts/android-manifest.mjs` 为此写入 `android:enableOnBackInvokedCallback="true"`，缺了它平台会忽略这个 API。
-- Activity 用 `OnBackInvokedDispatcher.PRIORITY_OVERLAY` 注册回调。androidx 会用默认优先级桥接同一套 API，且注册得比 Activity 晚，同优先级下会先拿到按键；覆盖优先级保证返回键回到持有 WebView 的地方。Android 12 及以下走同一逻辑的 `OnBackPressedCallback`。
-- 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页，在应用页才 `moveTaskToBack(true)`，与系统原本的行为一致。
+- Activity 用 `OnBackInvokedDispatcher.PRIORITY_OVERLAY` 注册回调。androidx 会用默认优先级桥接同一套 API，且注册得比 Activity 晚，同优先级下会先拿到按键；覆盖优先级保证返回键回到持有 WebView 的地方。Android 12 及以下框架直接调用 `onBackPressed`，Activity 覆写它走同一段逻辑——如果把回调加进 androidx 的调度器，应用插件后来注册的回调会因为后进先出先拿到按键，这段判断就永远不会执行。
+- 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页。
+- 只有在应用页时返回值交给应用自己决定。原来这里直接 `moveTaskToBack(true)`，但应用本来就有完整的返回链：`PlayerPlugin` 把按键以 `bilimusic-back` 事件交给页面，页面关掉弹窗、全屏、歌词和播放队列，都没处理才退回后台。覆盖优先级的回调会挡在 androidx 桥接前面，若它自己把按键消费掉，应用内的返回就全部失效（弹窗关不掉，一按就退到桌面）。所以应用页改为 `onBackPressedDispatcher.onBackPressed()`，用 `chaining` 标记避免再次回到自己；没有可调用的回调时才退回后台，与系统原本的行为一致。
 - 按返回键回应用页时，后端轮询要等到下一次 tick（500 ms）才发现网址离开登录页，并把这次登录记成取消、留下结果。前端因此用 `outcomeAfterReload` 短暂等待 `netease_web_login_outcome`，避免重载后抢先读到空结果：结果是取消时不报错，只是重新打开弹窗。
 
 验收（调试包，`BiliMusicLogin` 只记录页面地址、Cookie 名称和账号接口结果）：
