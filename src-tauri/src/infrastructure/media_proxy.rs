@@ -1704,6 +1704,31 @@ fn status_response(status: StatusCode) -> Response<Body> {
 mod tests {
     use super::MediaProxy;
 
+    // Windows refuses to delete a directory while `index.sqlite3` still has an
+    // open handle (ERROR_SHARING_VIOLATION); Unix just unlinks open files, so
+    // the error only shows up on Windows. Dropping the test's own Arcs is not
+    // enough: `MediaProxy::Drop` only aborts the server task asynchronously,
+    // and in-flight block/preload tasks can briefly keep their own
+    // `Arc<PlaybackCache>` (and therefore the sqlite connection) alive. Wait
+    // for them to release it, but still fail if the handle is never released.
+    async fn remove_temp_dir(root: &std::path::Path) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match std::fs::remove_dir_all(root) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "failed to remove temporary directory {}: {error}",
+                        root.display()
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn legacy_avc_route_preserves_byte_ranges_including_splits_inside_the_sps() {
         use super::*;
@@ -2259,7 +2284,9 @@ mod tests {
             );
             assert!(result.status.success());
         }
-        std::fs::remove_dir_all(root).unwrap();
+        drop(audio);
+        drop(proxy);
+        remove_temp_dir(&root).await;
     }
 
     #[tokio::test]
@@ -2357,7 +2384,8 @@ mod tests {
         drop(uncached);
         drop(cache);
         upstream.abort();
-        std::fs::remove_dir_all(root).unwrap();
+        let _ = upstream.await;
+        remove_temp_dir(&root).await;
     }
 
     #[tokio::test]
@@ -2488,6 +2516,7 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         upstream.abort();
         let _ = upstream.await;
+        drop(proxy);
         // Open a new index/route with no provider and no upstream URLs, as after an offline restart.
         let reopened =
             Arc::new(PlaybackCache::open(root.join("media"), root.join("config.json")).unwrap());
@@ -2560,7 +2589,10 @@ mod tests {
         );
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(reopened.clear().unwrap().used_bytes, 0);
-        std::fs::remove_dir_all(root).unwrap();
+        drop(proxy);
+        drop(reopened);
+        drop(cache);
+        remove_temp_dir(&root).await;
     }
 
     #[test]
@@ -2745,8 +2777,12 @@ mod tests {
         }
         assert_eq!(size, CHUNK_SIZE as usize);
         assert_eq!(cache.status().unwrap().used_bytes, CHUNK_SIZE);
+        drop(response);
+        drop(proxy);
+        drop(cache);
         upstream.abort();
-        std::fs::remove_dir_all(root).unwrap();
+        let _ = upstream.await;
+        remove_temp_dir(&root).await;
     }
 
     #[tokio::test]
