@@ -1,4 +1,4 @@
-# 与 .gitattributes 保持一致：所有文本文件使用 LF，UTF-8 编码。
+# 与 .gitattributes 保持一致：文本文件默认使用 LF 和 UTF-8。
 root = true
 
 [*]
@@ -8,6 +8,10 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
 indent_size = 2
+
+# Windows 批处理保留 CRLF。
+[*.{bat,cmd}]
+end_of_line = crlf
 
 # Rust、Kotlin、Swift 和 Python 的现有代码都使用 4 空格缩进。
 [*.{rs,kt,kts,java,swift,py}]
