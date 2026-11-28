@@ -1,0 +1,16 @@
+{
+  "kind": "changed",
+  "platforms": [
+    "mac",
+    "mac-intel",
+    "windows",
+    "windows-arm64",
+    "linux-x64-appimage",
+    "linux-x64-deb",
+    "linux-arm64-appimage",
+    "linux-arm64-deb"
+  ],
+  "summary": "桌面端改用无边框窗口和自定义标题栏，最小化、最大化/还原与关闭由应用绘制。",
+  "detail": "标题栏跟随深浅色主题；Windows / Linux 的控件在右侧，macOS 的红黄绿三点在左侧。",
+  "pr": 37
+}
