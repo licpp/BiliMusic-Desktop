@@ -1,7 +1,13 @@
 package app.bilimusic.player
 
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.nio.file.Files
 import java.io.File
 
@@ -23,6 +29,14 @@ class ApkUpdateInstallerTest {
             try { action(); fail("Must reject invalid package") } catch (_: IllegalArgumentException) { }
         }
     }
+    @Test fun distinguishesMissingSigningInformationFromADifferentCertificate() {
+        fun check(candidate: Set<String>) =
+            ApkUpdateInstaller.validateIdentity("car", "car", 40501, 40602, "0.4.6", "0.4.6", setOf("key"), candidate)
+        assertEquals("无法读取应用签名，请从官网下载并手动安装",
+            assertThrows(IllegalArgumentException::class.java) { check(emptySet()) }.message)
+        assertEquals("安装包签名与当前应用不一致",
+            assertThrows(IllegalArgumentException::class.java) { check(setOf("other")) }.message)
+    }
     @Test fun onlyAcceptsNonemptyApkInOwnCache() {
         val cache = Files.createTempDirectory("apk-test").toFile()
         try {
@@ -33,5 +47,18 @@ class ApkUpdateInstallerTest {
                 try { ApkUpdateInstaller.checkedFile(cache, file.path); fail("Must reject invalid path") } catch (_: IllegalArgumentException) { }
             }
         } finally { cache.deleteRecursively() }
+    }
+}
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28, 29], manifest = Config.NONE)
+class ApkUpdateArchiveSigningTest {
+    @Suppress("DEPRECATION")
+    @Test fun olderAndroidCanPopulateOnlyLegacyArchiveSignatures() {
+        assertEquals(PackageManager.GET_SIGNATURES or PackageManager.GET_SIGNING_CERTIFICATES, ApkUpdateInstaller.signingFlags())
+        val signature = Signature(byteArrayOf(1, 2, 3))
+        val archive = PackageInfo().apply { signatures = arrayOf(signature) }
+        assertEquals(setOf(signature.toCharsString()), ApkUpdateInstaller.signers(archive))
+        assertTrue(ApkUpdateInstaller.signers(PackageInfo()).isEmpty())
     }
 }

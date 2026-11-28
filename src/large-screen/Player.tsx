@@ -179,7 +179,7 @@ export function LargePlayer({ onBack, onQueue, onFavorite, onMore, onSleep, navi
       <ChapterRows items={chapters.items} duration={chapters.duration} autoFocus onSeek={seconds => { chapters.seek(seconds); chapters.close() }}/>
     </LargeDialog>}
     {replacingVideo && <PlayingVideoReplacement track={replacingVideo} onClose={() => setReplacingVideo(null)} renderDialog={body => <LargeDialog title="更换视频" className="import-match-large-dialog" onClose={() => setReplacingVideo(null)}>{body}</LargeDialog>}/>}
-    {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack" data-video={video || undefined}><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting/><CaptionLanguageSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
+    {settings && <LargeDialog className="large-playback-settings" title="播放设置" onClose={() => setSettings(false)}><div className="large-setting-stack" data-video={video || undefined}><PlaybackSettings track={current} kind="audio" onChanged={reloadCurrentAudioSource}/>{video && <PlaybackSettings track={current} kind="video" onChanged={() => setRevision(n => n + 1)}/>}<RateSetting/>{video && <LargeDanmakuSettings state={danmaku}/>}<CaptionSetting inSettings/><CaptionLanguageSetting/><button onClick={() => { setSettings(false); onSleep() }}><Timer/>定时暂停</button></div></LargeDialog>}
   </div>
 }
 function LargeChapterDirectory({ model }: { model: PlaybackChapters }) {
@@ -194,7 +194,12 @@ function LargeChapterDirectory({ model }: { model: PlaybackChapters }) {
 }
 
 function RateSetting() { const rate = usePlayerStore(s => s.rate); return <section className="large-setting-section"><h3>播放速度</h3><div className="large-options">{playbackRates.map(r => <button key={r} aria-pressed={rate === r} onClick={() => void usePlayerStore.getState().setRate(r)}>{r}×</button>)}</div></section> }
-function CaptionSetting() { const subtitles = useBiliSubtitles(); return <button className="large-setting-toggle" aria-pressed={subtitles.active} onClick={subtitles.toggle}><Sparkles/><span>AI字幕</span><small>{subtitles.active ? '已开启' : '未开启'}</small></button> }
+function CaptionSetting({ inSettings = false }: { inSettings?: boolean }) {
+  const { active, toggle } = useBiliSubtitles()
+  return <button type="button" className={inSettings ? 'large-setting-toggle' : 'large-caption-toggle'} aria-pressed={active} onClick={toggle}>
+    <Sparkles/><span>AI字幕</span>{inSettings && <small>{active ? '已开启' : '未开启'}</small>}
+  </button>
+}
 
 function CaptionLanguageSetting() {
   const { active, choices, choice, select } = useBiliSubtitles()
