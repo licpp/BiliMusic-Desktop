@@ -1,0 +1,117 @@
+/* Frameless desktop chrome. The titlebar is a real flex row above the app
+   shell, so every fixed overlay that used to start at the viewport top has to
+   keep clear of it. */
+:root { --desktop-titlebar-height: 0px; }
+:root[data-layout="desktop"] { --desktop-titlebar-height: 40px; }
+
+.desktop-titlebar {
+  position: relative;
+  z-index: 30;
+  flex: 0 0 var(--desktop-titlebar-height);
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: var(--desktop-titlebar-height);
+  color: var(--muted);
+  background: var(--base);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.desktop-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 0 4px 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.desktop-titlebar-brand svg { color: var(--coral); }
+.desktop-titlebar-brand span { white-space: nowrap; }
+.desktop-titlebar-drag { flex: 1 1 auto; min-width: 0; }
+
+.desktop-window-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+}
+.desktop-window-control {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  min-width: 46px;
+  height: 100%;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: default;
+  transition: background 120ms ease, color 120ms ease;
+}
+.desktop-window-control:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.desktop-window-control:active { background: color-mix(in srgb, var(--ink) 13%, transparent); }
+.desktop-window-control:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.desktop-window-control[data-window-control="close"]:hover { color: #fff; background: #e5484d; }
+.desktop-window-control[data-window-control="close"]:active { background: #cf3a3f; }
+.desktop-window-control-glyph { display: grid; place-items: center; pointer-events: none; }
+
+/* macOS: custom traffic lights on the left, native colours and placement. */
+.desktop-titlebar[data-platform="macos"] .desktop-window-controls {
+  order: -1;
+  align-items: center;
+  gap: 0;
+  padding: 0 14px 0 14px;
+}
+.desktop-titlebar[data-platform="macos"] .desktop-titlebar-brand { padding-left: 2px; }
+.desktop-titlebar[data-platform="macos"] .desktop-window-control {
+  position: relative;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+}
+.desktop-titlebar[data-platform="macos"] .desktop-window-control::before {
+  content: '';
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--traffic, #4a4d52);
+}
+.desktop-titlebar[data-platform="macos"] .desktop-window-control:hover,
+.desktop-titlebar[data-platform="macos"] .desktop-window-control:active { background: transparent; }
+.desktop-titlebar[data-platform="macos"] .desktop-window-control-glyph {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  color: rgba(0, 0, 0, .62);
+  transition: opacity 100ms ease;
+}
+.desktop-titlebar[data-platform="macos"] .desktop-window-control-glyph svg { width: 8px; height: 8px; stroke-width: 2.6; }
+.desktop-titlebar[data-platform="macos"] .desktop-window-control[data-window-control="close"] { --traffic: #ff5f57; }
+.desktop-titlebar[data-platform="macos"] .desktop-window-control[data-window-control="minimize"] { --traffic: #febc2e; }
+.desktop-titlebar[data-platform="macos"] .desktop-window-control[data-window-control="toggle-maximize"] { --traffic: #28c840; }
+.desktop-titlebar[data-platform="macos"]:hover .desktop-window-control-glyph,
+.desktop-titlebar[data-platform="macos"] .desktop-window-control:focus-visible .desktop-window-control-glyph {
+  opacity: 1;
+}
+.desktop-titlebar[data-platform="macos"] .desktop-window-control:focus-visible { outline-offset: 2px; }
+
+/* The app shell takes the remaining height; fixed overlays start below the bar. */
+:root[data-layout="desktop"] #root { display: flex; flex-direction: column; }
+:root[data-layout="desktop"] #root > .app-shell { flex: 1 1 auto; min-height: 0; height: auto; }
+:root[data-layout="desktop"] :is(.app-shell, .desktop-lyrics-surface) .lyrics-view { top: var(--desktop-titlebar-height); }
+:root[data-layout="desktop"] .queue-drawer { top: var(--desktop-titlebar-height); }
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-window-control, .desktop-titlebar[data-platform="macos"] .desktop-window-control-glyph { transition: none; }
+}
+
+@media (max-height: 520px) {
+  /* Desktop narrow windows keep the bar compact without shrinking the hit area. */
+  :root[data-layout="desktop"] { --desktop-titlebar-height: 34px; }
+  .desktop-window-control { width: 42px; min-width: 42px; }
+}

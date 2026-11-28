@@ -108,6 +108,8 @@ import { ChapterTrigger } from '../features/chapters/ChapterTrigger'
 import { SidebarResizeHandle } from '../shared/SidebarResizeHandle'
 import { QueueResizeHandle } from '../shared/QueueResizeHandle'
 import { MiniPlayer } from '../features/player/MiniPlayer'
+import { DesktopTitleBar } from '../shared/DesktopTitleBar'
+import { desktopChrome } from '../services/desktopWindow'
 import { getMiniPlayerMode, miniPlayerSupported, setMiniPlayerMode } from '../services/immersiveWindow'
 import { RecommendationView } from '../features/recommendations/RecommendationView'
 import { PictureInPicture2 } from 'lucide-react'
@@ -674,7 +676,8 @@ export function App() {
   }
 
   return (
-    <><div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${desktopLyrics ? 'desktop-lyrics-present' : immersivePresent && !compactPlayer ? 'lyrics-immersive frame-browser' : ''}`}>
+    <>{desktopChrome && !miniMode && <DesktopTitleBar />}
+    <div hidden={miniMode} className={`app-shell ${queueOpen ? 'queue-visible' : ''} ${desktopLyrics ? 'desktop-lyrics-present' : immersivePresent && !compactPlayer ? 'lyrics-immersive frame-browser' : ''}`}>
       {isMobile && immersivePresent && !compactPlayer && <LyricsBackdrop cover={current?.coverUrl} className="immersive-backdrop" open={lyricsOpen} />}
       <aside inert={browseInert || queueSheet && queueOpen} className="rail" aria-label="主导航">
         <button className="brand-mark" aria-label="BiliMusic 首页" onClick={() => { resetCollection(); setActiveNav('此刻') }}>
