@@ -119,23 +119,23 @@
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_arm64.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3-webview91_Android_arm64.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_arm64.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3-webview91_Android_arm64.apk"
         }
       ],
-      "file": "BiliMusic_0.4.6_build3_Android_arm64.apk",
+      "file": "BiliMusic_0.4.6_build3-webview91_Android_arm64.apk",
       "size": 19824852,
-      "sha256": "ec223151e374d8e1fb7d8a7181c51d4569eda1124728a8e464c44c4169554f33",
+      "sha256": "920e9c96f8dc3841621f0067684fac4a18084df201fe7dbfd76039ceecc4bdef",
       "architecture": "ARM64 · 64 位",
       "requirements": "Android 8+ · 下载 APK 后安装",
       "packageFormat": "apk",
       "version": "0.4.6",
       "build": 3,
-      "sourceCommit": "cd6e6a0924bc3eed6a6237d8a0a90e342a0df6ca"
+      "sourceCommit": "474d820f72f417458c9e644978ef71765d64feac"
     },
     {
       "id": "android-large",
@@ -361,6 +361,7 @@
       "publishedAt": "2026-11-27T07:27:08.770614+00:00",
       "kind": "release",
       "changes": [
+        "安卓手机和平板支持 WebView 91 及以上版本。",
         "修复 Android 网易云音乐登录闪退，优化音质切换。",
         "下载支持批量删除，丢失的文件可恢复或重下。",
         "最近搜索占用更少空间，导入歌单支持拖动排序和跨设备同步。",
