@@ -1,0 +1,77 @@
+.collection-dialog.update-confirm-dialog {
+  width: 480px;
+  max-width: 100%;
+}
+.large-dialog.update-confirm-dialog {
+  width: 580px;
+}
+.update-confirm-version {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--base);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.update-confirm-version > svg {
+  margin: 0 9px;
+  color: var(--cyan);
+}
+.update-confirm-version > strong { color: var(--ink); }
+.update-confirm-version > small {
+  margin-left: auto;
+  padding-left: 10px;
+}
+.update-confirm-notes {
+  margin: 14px 0 2px;
+  padding-left: 1.3em;
+  color: var(--ink);
+  font-size: .9rem;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+.update-confirm-notes li + li { margin-top: 5px; }
+.update-confirm-notes li::marker { color: var(--cyan); }
+.update-confirm-empty { margin: 14px 0 0; color: var(--muted); }
+.update-confirm-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--cyan);
+  font: inherit;
+  font-size: .875rem;
+  cursor: pointer;
+}
+.update-confirm-link > svg { margin-left: 6px; }
+.update-confirm-dialog .update-confirm-error {
+  margin: 0;
+  color: var(--coral);
+}
+.update-confirm-actions {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  grid-gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.update-confirm-actions button { min-height: 44px; }
+.large-dialog .update-confirm-actions .collection-flat-button {
+  background: var(--panel-raised);
+  color: var(--ink);
+}
+.large-dialog .update-confirm-link { color: var(--cyan); }
+.update-confirm-dialog button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.collection-dialog.update-confirm-dialog.collection-dialog-mobile-sheet {
+  width: 100%;
+}
+.collection-dialog-mobile-sheet .update-confirm-actions {
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  justify-content: stretch;
+}

@@ -33,6 +33,22 @@ def require(value, message):
         raise ValueError(message)
 
 
+def release_description(plan, existing, document_note):
+    notes = plan['notes']
+    if not plan.get('appendChangelog'):
+        return notes + document_note
+    title, _, changes = notes.partition('\n')
+    marker = f'<!-- BiliMusic changelog: {plan["version"]} {plan["revision"]} -->'
+    existing = existing or ''
+    if marker in existing.splitlines():
+        return existing
+    _, _, rest = existing.partition('\n')
+    if existing.split('\n', 1)[0] == title:
+        existing = rest
+    sections = (title, marker + '\n' + changes.strip() + document_note, existing.strip())
+    return '\n\n'.join(section for section in sections if section) + '\n'
+
+
 def release_content_type(name):
     return {'.apk': 'application/vnd.android.package-archive', '.zip': 'application/zip', '.json': 'application/json', '.txt': 'text/plain', '.md': 'text/markdown'}.get(Path(name).suffix.lower(), 'application/octet-stream')
 
@@ -474,7 +490,8 @@ class Publisher:
                     self.stage_asset(channel, release, asset)
             title = next(line[2:] for line in self.plan['notes'].splitlines() if line.startswith('# '))
             document_note = f'\n许可及独立签名文件收录于 `{documents["name"]}`。\n' if documents else ''
-            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': self.plan['notes'] + document_note, 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': self.plan['notes'], 'prerelease': False, 'make_latest': 'true'})
+            body = release_description(self.plan, release.get('body'), document_note if channel == 'gitee' else '')
+            self.api(channel, f'/releases/{release["id"]}', 'PATCH', {'tag_name': self.plan['tag'], 'name': title, 'body': body, 'prerelease': 'false'} if channel == 'gitee' else {'name': title, 'body': body, 'prerelease': False, 'make_latest': 'true'})
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(upload_metadata, releases))
         self.record('releaseMetadata', {'channels': ['github', 'gitee'], 'assets': len(self.plan['assets'])})

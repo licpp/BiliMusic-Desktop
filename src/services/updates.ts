@@ -5,7 +5,8 @@ import { compareVersions } from '../shared/version'
 
 export const currentRelease = version
 const downloadPage = 'https://bilimusic.cn/#download'
-export type UpdateRelease = { version: string; build?: number; currentBuild?: number; available: boolean; installable?: boolean; requestId?: string; platform?: string; size?: number }
+const releaseNotesPage = 'https://github.com/licpp/BiliMusic-Desktop/releases'
+export type UpdateRelease = { version: string; build?: number; currentBuild?: number; available: boolean; installable?: boolean; requestId?: string; platform?: string; size?: number; updateNotes?: string[] }
 export type UpdateCheck = UpdateRelease & { status: 'available' | 'current' | 'ahead' | 'unsupported' }
 export type UpdateProgress = { phase: 'downloading' | 'verifying' | 'ready'; received: number; total?: number }
 type Phase = 'idle' | 'checking' | 'downloading' | 'verifying' | 'ready' | 'installing'
@@ -21,6 +22,10 @@ export async function checkForUpdate(): Promise<UpdateCheck> {
 export async function openUpdateDownload() {
   if (isTauri()) await invoke('app_open_download_page')
   else window.open(downloadPage, '_blank', 'noopener,noreferrer')
+}
+export async function openUpdateReleaseNotes() {
+  if (isTauri()) await invoke('app_open_release_notes')
+  else window.open(releaseNotesPage, '_blank', 'noopener,noreferrer')
 }
 // Shared by both shells. Downloads survive leaving settings; only one operation runs at a time.
 export const useUpdateStore = create<UpdateState>(() => ({ phase: 'idle', error: '', notice: '', received: 0 }))
@@ -54,6 +59,23 @@ export async function downloadUpdate() {
     await invoke('app_download_update', { requestId, onProgress })
     if (token === operation) useUpdateStore.setState({ phase: 'ready' })
   } catch (cause) { if (token === operation) useUpdateStore.setState({ phase: 'idle', error: errorText(cause) }) }
+}
+export async function confirmUpdate(confirmed: UpdateCheck) {
+  const { phase, result } = useUpdateStore.getState()
+  if (phase !== 'idle') return
+  if (result !== confirmed || result?.status !== 'available') {
+    useUpdateStore.setState({ error: '更新信息已刷新，请重新确认' })
+    return
+  }
+  if (result.installable) {
+    await downloadUpdate()
+  } else {
+    try {
+      await openUpdateDownload()
+    } catch {
+      useUpdateStore.setState({ error: '无法打开官网，请检查网络' })
+    }
+  }
 }
 export async function installUpdate(prepareLocalState: () => Promise<void>) {
   const state = useUpdateStore.getState()
