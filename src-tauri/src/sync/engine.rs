@@ -1949,8 +1949,15 @@ mod tests {
         *a.0.lock().unwrap() = Connection::open(&snapshot).unwrap();
         assert!(run(&a, &cfg, &secret).await.conflicts.is_empty());
         assert_eq!(value(&a, "description"), "after snapshot");
-        for d in [a, b] {
-            std::fs::remove_dir_all(d.1).unwrap();
+        // Both devices now own on-disk connections: `a` was swapped to
+        // before-rollback.sqlite and `b` holds copied.sqlite. Windows refuses to
+        // remove a directory while a file inside it is still open, so release the
+        // connections before deleting; `sync` keeps no background clones of them.
+        let dirs = [a.1.clone(), b.1.clone()];
+        drop(a);
+        drop(b);
+        for dir in dirs {
+            std::fs::remove_dir_all(dir).unwrap();
         }
         server.abort();
     }

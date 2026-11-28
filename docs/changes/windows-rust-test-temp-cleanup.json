@@ -1,0 +1,9 @@
+{
+  "kind": "internal",
+  "platforms": [
+    "windows",
+    "windows-arm64"
+  ],
+  "summary": "修复 Windows Rust 测试清理临时目录时的文件占用。",
+  "pr": 28
+}

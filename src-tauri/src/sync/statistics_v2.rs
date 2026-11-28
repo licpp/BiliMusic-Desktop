@@ -787,8 +787,16 @@ mod tests {
                 .count(),
             put_before
         );
-        for d in [a, b] {
-            std::fs::remove_dir_all(d.1).unwrap();
+        // `a` was swapped to the on-disk restore.sqlite, so its connection now
+        // keeps a file inside the temporary directory open. Windows refuses to
+        // remove such a directory (ERROR_SHARING_VIOLATION) while Unix merely
+        // unlinks open files, so release the connections before deleting;
+        // exchange keeps no background clones of them.
+        let dirs = [a.1.clone(), b.1.clone()];
+        drop(a);
+        drop(b);
+        for dir in dirs {
+            std::fs::remove_dir_all(dir).unwrap();
         }
         server.abort();
     }
