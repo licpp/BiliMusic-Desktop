@@ -1,0 +1,6 @@
+{
+  "kind": "internal",
+  "platforms": ["all"],
+  "summary": "统一仓库换行和编辑器默认设置。",
+  "pr": 24
+}

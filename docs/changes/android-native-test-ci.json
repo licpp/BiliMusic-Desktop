@@ -1,0 +1,6 @@
+{
+  "kind": "internal",
+  "platforms": ["android", "android-large", "android-large-armv7"],
+  "summary": "修复 Android 原生单元测试的 CI 执行。",
+  "pr": 21
+}

@@ -1,0 +1,5 @@
+{
+  "kind": "internal",
+  "platforms": ["windows", "windows-arm64"],
+  "summary": "为 Windows 原生测试补齐系统控件清单。"
+}

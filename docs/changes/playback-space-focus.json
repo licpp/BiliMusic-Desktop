@@ -1,0 +1,7 @@
+{
+  "kind": "fixed",
+  "platforms": ["mac", "mac-intel", "windows", "windows-arm64", "linux-x64-deb", "linux-x64-appimage", "linux-arm64-deb", "linux-arm64-appimage"],
+  "summary": "点击歌词、歌曲或播放控件后，空格仍可控制播放和暂停。",
+  "detail": "保留拖动进度后的播放快捷键和方向键调节，以及输入框、菜单和键盘聚焦控件的操作。",
+  "pr": 27
+}

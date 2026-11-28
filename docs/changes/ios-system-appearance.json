@@ -1,0 +1,6 @@
+{
+  "kind": "changed",
+  "platforms": ["ios"],
+  "summary": "iOS 可以跟随系统切换深浅色主题。",
+  "pr": 25
+}
