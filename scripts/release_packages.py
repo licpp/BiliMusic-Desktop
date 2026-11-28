@@ -289,6 +289,13 @@ def validate_release_scope(build, manifest, previous):
     require(manifest['version'] == version, 'Build and manifest versions differ')
     ids = [key for p in packages for key in package_ids(p)]
     require(ids and len(ids) == len(set(ids)), 'Expected distinct built platforms, including every declared edition')
+    replace_android = build.get('replaceAndroidBuild', False)
+    require(type(replace_android) is bool, 'Invalid Android replacement flag')
+    if replace_android:
+        require(build.get('partialRelease') is True and ids == ['android']
+                and packages[0].get('architecture', 'arm64') == 'arm64'
+                and packages[0]['file'].endswith('.apk'),
+                'Same-build replacement only supports the Android phone/tablet APK')
     manifest_ids = [p['id'] for p in manifest['platforms']]
     require(len(manifest_ids) == len(set(manifest_ids)), 'Duplicate manifest platform')
     if build.get('partialRelease'):
@@ -303,7 +310,13 @@ def validate_release_scope(build, manifest, previous):
             old, new = prior[key], current[key]
             build_number = package.get('build')
             require(old.get('version', version) == version and new.get('version', version) == version, 'Platform patch version mismatch')
-            require(type(build_number) is int and build_number > max(1, old.get('build', 0)) and build_number <= 50, 'Platform build must increase')
+            if replace_android:
+                require(old.get('status') == 'available' and type(old.get('build')) is int
+                        and type(build_number) is int and 1 <= build_number <= 50
+                        and build_number == old['build'],
+                        'Android replacement must use the current published build number')
+            else:
+                require(type(build_number) is int and build_number > max(1, old.get('build', 0)) and build_number <= 50, 'Platform build must increase')
             require(new.get('build') == build_number and new['file'] != old['file'], 'Platform patch must use a new asset name')
         return
     require({'macOS', 'iOS', 'Android', 'Windows'} <= {p['platform'] for p in packages}, 'Expected core release platforms')
@@ -372,6 +385,8 @@ def validate_bundle(bundle, native_verifier=verify_native):
     previous_updater = json.loads((bundle / 'previous-updater.json').read_text()) if build.get('partialRelease') else None
     targets = {target: p.get('build', 0) for p in packages if (target := updater_target(p))}
     updater, extras = updater_assets(bundle, version, targets, previous_updater)
+    if build.get('replaceAndroidBuild'):
+        require(updater == previous_updater, 'Android replacement must preserve the desktop updater feed')
     known = {a['name'] for a in assets}
     assets.extend(a for a in extras if a['name'] not in known)
     notes = (bundle / 'RELEASE_NOTES.md').read_text()

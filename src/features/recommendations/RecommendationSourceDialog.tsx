@@ -150,7 +150,7 @@ export function RecommendationSourceDialog({ sources, selectedId, initialView = 
                       <button type="submit" aria-label="保存名称" disabled={rename.isPending}><Check size={15} /></button>
                       <button type="button" aria-label="取消重命名" onClick={() => setRenaming(undefined)}><X size={15} /></button>
                     </form>
-                    : <><strong>{source.name}</strong>{account && <small> {account}</small>}</>}
+                    : <><strong>{source.name}</strong>{account && <small>{account}</small>}</>}
                   <span className="recommendation-source-state" data-state={source.lastRefreshState}>{refreshLabel(source)}</span>
                 </div>
                 {removing === source.id

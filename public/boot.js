@@ -14,8 +14,8 @@ try {
 document.addEventListener('DOMContentLoaded', function () {
   var entry = document.querySelector('meta[name="bilimusic-android-entry"]')
   if (!entry) return
-  // :has() is part of the standard UI's Chromium 105 capability baseline.
-  if (window.CSS && CSS.supports('selector(:has(*))')) {
+  var chromium = /(?:^|\s)Chrome\/(\d+)\./.exec(navigator.userAgent)
+  if (chromium && Number(chromium[1]) >= 91) {
     var script = document.createElement('script')
     script.type = 'module'
     script.crossOrigin = 'anonymous'

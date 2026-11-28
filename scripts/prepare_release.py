@@ -10,13 +10,17 @@ from pathlib import Path
 from release_packages import checksum_list, digest, require, package_id, package_ids, license_name, validate_release_scope
 
 
-def prepare(build_dir, template, notes_path, output, revision, previous, previous_updater=None, patch_changes=()):
+def prepare(build_dir, template, notes_path, output, revision, previous, previous_updater=None, patch_changes=(), *,
+            replace_android_build=False):
     build_dir, output = Path(build_dir), Path(output)
     require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', revision), 'Use a short lowercase revision, e.g. sync-fix-1')
     require(not output.exists() or not any(output.iterdir()), 'Output must be empty; resume with publish_release.py instead')
     build = json.loads((build_dir / 'build-info.json').read_text())
     version, source = build['version'], build['source']
-    partial = any(p.get('build', 0) > 1 for p in build['platforms'])
+    build.pop('replaceAndroidBuild', None)
+    if replace_android_build:
+        build['replaceAndroidBuild'] = True
+    partial = replace_android_build or any(p.get('build', 0) > 1 for p in build['platforms'])
     if partial:
         require(previous_updater is not None and previous_updater['version'] == version, 'A platform patch requires the current updater feed')
         build['partialRelease'] = True
@@ -91,6 +95,8 @@ if __name__ == '__main__':
     parser.add_argument('--previous-manifest', help='Local baseline manifest for preparing an offline candidate')
     parser.add_argument('--previous-updater', help='Current signed updater feed, required for platform patches')
     parser.add_argument('--patch-change', action='append', default=[], help='Prepend an entry to the current version website changelog')
+    parser.add_argument('--replace-android-build', action='store_true',
+                        help='Replace the current Android phone/tablet APK at the same build number using a new asset name')
     args = parser.parse_args()
     if args.previous_manifest:
         previous = json.loads(Path(args.previous_manifest).read_text())
@@ -98,5 +104,7 @@ if __name__ == '__main__':
         with urllib.request.urlopen('https://bilimusic.cn/api/v1/releases', timeout=20) as response:
             previous = json.load(response)
     updater = json.loads(Path(args.previous_updater).read_text()) if args.previous_updater else None
-    output = prepare(args.build_dir, json.loads(Path(args.manifest).read_text()), args.notes, args.output, args.revision, previous, updater, args.patch_change)
+    output = prepare(args.build_dir, json.loads(Path(args.manifest).read_text()), args.notes, args.output,
+                     args.revision, previous, updater, args.patch_change,
+                     replace_android_build=args.replace_android_build)
     print(json.dumps({'bundle': str(output), 'status': 'prepared'}, ensure_ascii=False))

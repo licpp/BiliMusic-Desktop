@@ -79,7 +79,8 @@ export default defineConfig(({ mode }) => ({
     outDir: mode === 'large-screen' ? 'dist-large-screen' : 'dist',
     // Many car head units have a vendor-pinned Android WebView.
     target: mode === 'large-screen' ? 'chrome66'
-      : ['windows', 'android'].includes(process.env.TAURI_ENV_PLATFORM || '') ? 'chrome105' : 'safari13',
+      : process.env.TAURI_ENV_PLATFORM === 'android' ? 'chrome91'
+        : process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: process.env.TAURI_ENV_DEBUG ? false : 'esbuild',
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
   },
