@@ -144,24 +144,24 @@
       "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.6",
-      "file": "BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk",
+      "file": "BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk",
       "size": 31093085,
-      "sha256": "d91db48a8f2198c10bba1e849485821680850662391888ad9f042720518a3b46",
+      "sha256": "32245676999edf5d66a3a48107e834571b420d1c48875db1697f4a4e9500f121",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk"
         }
       ],
-      "build": 3,
-      "sourceCommit": "cd6e6a0924bc3eed6a6237d8a0a90e342a0df6ca"
+      "build": 4,
+      "sourceCommit": "7ef043ba35aa10d5187200a6f03dc4f31ea97371"
     },
     {
       "id": "android-large-armv7",
@@ -170,24 +170,24 @@
       "architecture": "ARM64 / ARMv7",
       "requirements": "Android 8+ · 支持触控与遥控器",
       "version": "0.4.6",
-      "file": "BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk",
+      "file": "BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk",
       "size": 31093085,
-      "sha256": "d91db48a8f2198c10bba1e849485821680850662391888ad9f042720518a3b46",
+      "sha256": "32245676999edf5d66a3a48107e834571b420d1c48875db1697f4a4e9500f121",
       "channels": [
         {
           "id": "gitee",
           "name": "Gitee",
           "recommended": true,
-          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk"
+          "url": "https://gitee.com/yoaker/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk"
         },
         {
           "id": "github",
           "name": "GitHub",
-          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_build3_Android_LargeScreen_universal.apk"
+          "url": "https://github.com/licpp/BiliMusic-Desktop/releases/download/v0.4.6/BiliMusic_0.4.6_car-build4_Android_LargeScreen_universal.apk"
         }
       ],
-      "build": 3,
-      "sourceCommit": "cd6e6a0924bc3eed6a6237d8a0a90e342a0df6ca"
+      "build": 4,
+      "sourceCommit": "7ef043ba35aa10d5187200a6f03dc4f31ea97371"
     },
     {
       "id": "ios",
@@ -361,6 +361,7 @@
       "publishedAt": "2026-11-27T07:27:08.770614+00:00",
       "kind": "release",
       "changes": [
+        "修复车机版应用内更新误报安装包签名不一致，简化无歌词时的字幕入口。",
         "安卓手机和平板支持 WebView 91 及以上版本。",
         "修复 Android 网易云音乐登录闪退，优化音质切换。",
         "下载支持批量删除，丢失的文件可恢复或重下。",
