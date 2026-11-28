@@ -426,7 +426,11 @@ class BackgroundPlaybackTest {
         assertSame(original, player())
         shadowOf(original).setCurrentPosition(23_000)
         shadowOf(candidate).setSeekDelay(0)
+        // The delayed realign seek completes at the end of the first window.
         shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        // The candidate then plays muted until it has proven real playback progress
+        // before it may replace the audible player.
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
         assertSame(candidate, player())
         assertEquals(listOf<String?>(null), replies)
         assertEquals(23.4, service.snapshot().getDouble("position"), 0.25)
