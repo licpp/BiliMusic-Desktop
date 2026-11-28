@@ -50,15 +50,18 @@ class MainActivity : TauriActivity() {
   // The WebView exists before it has loaded anything, so its URL arrives a
   // moment later. The first page it commits is the app itself -- the embedded
   // login can only start once the app is interactive -- so that URL is the one
-  // back has to return to.
+  // back has to return to. A slow first start is not a reason to stop looking:
+  // without a home the login page press would fall back to the app's chain,
+  // which has no app page to go back to and sends the task to the background.
   private fun rememberHome(webView: WebView, attempt: Int) {
-    if (homeUrl != null || attempt > 40) return
+    if (homeUrl != null) return
     val url = webView.url
     if (url != null && url != "about:blank" && !url.startsWith("chrome-error")) {
       homeUrl = url
       return
     }
-    webView.postDelayed({ rememberHome(webView, attempt + 1) }, 100)
+    val delay = if (attempt < 20) 100L else 1000L
+    webView.postDelayed({ rememberHome(webView, attempt + 1) }, delay)
   }
 
   /** Same page for our purposes: the app is served from one origin. */

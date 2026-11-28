@@ -34,7 +34,10 @@ test('both activities own the single WebView back navigation', async () => {
     // embedded login can replace the app entry in the back/forward list and
     // `canGoBack()` then reports nothing to go back to.
     assert.match(activity, /private fun rememberHome\(webView: WebView, attempt: Int\)/, label)
-    assert.match(activity, /webView\.postDelayed\(\{ rememberHome\(webView, attempt \+ 1\) \}, 100\)/, label)
+    // A slow first start must not leave the activity without a home page: the
+    // press would then fall to the app's chain with nothing to return to.
+    assert.match(activity, /webView\.postDelayed\(\{ rememberHome\(webView, attempt \+ 1\) \}, delay\)/, label)
+    assert.match(activity, /if \(attempt < 20\) 100L else 1000L/, label)
     assert.match(activity, /override fun onWebViewCreate\(webView: WebView\) \{[\s\S]*?rememberHome\(webView, 0\)/, label)
     // Back on the login page reloads the app page, without going through the
     // WebView history that the login replaced.

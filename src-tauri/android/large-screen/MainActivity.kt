@@ -75,15 +75,19 @@ class CarPlayerActivity : TauriActivity() {
     }
 
     // The WebView exists before it has loaded anything, so its URL arrives a
-    // moment later. The first page it commits is the app itself, as on the phone.
+    // moment later. The first page it commits is the app itself, as on the
+    // phone; a slow first start keeps the search going, because a missing home
+    // leaves the login page press on the app's chain, which sends the player to
+    // the background instead of back to its own page.
     private fun rememberHome(webView: WebView, attempt: Int) {
-        if (homeUrl != null || attempt > 40) return
+        if (homeUrl != null) return
         val url = webView.url
         if (url != null && url != "about:blank" && !url.startsWith("chrome-error")) {
             homeUrl = url
             return
         }
-        webView.postDelayed({ rememberHome(webView, attempt + 1) }, 100)
+        val delay = if (attempt < 20) 100L else 1000L
+        webView.postDelayed({ rememberHome(webView, attempt + 1) }, delay)
     }
 
     /** Same page for our purposes: the app is served from one origin. */

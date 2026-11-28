@@ -140,7 +140,7 @@ Android 只有一个主 WebView，网易云网页登录直接把它换成官方�
 
 - 应用 `targetSdk` 是 36：Android 16 起不再调用 `Activity.onBackPressed`，也不再以 `KEYCODE_BACK` 把返回交给 Activity，只剩平台的 `OnBackInvokedCallback`。`scripts/android-manifest.mjs` 为此写入 `android:enableOnBackInvokedCallback="true"`，缺了它平台会忽略这个 API。
 - Activity 用 `OnBackInvokedDispatcher.PRIORITY_OVERLAY` 注册回调。androidx 会用默认优先级桥接同一套 API，且注册得比 Activity 晚，同优先级下会先拿到按键；覆盖优先级保证返回键回到持有 WebView 的地方。Android 12 及以下框架直接调用 `onBackPressed`，Activity 覆写它走同一段逻辑——如果把回调加进 androidx 的调度器，应用插件后来注册的回调会因为后进先出先拿到按键，这段判断就永远不会执行。
-- 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页。
+- 返回键不依赖 WebView 的历史：实测登录页曾经把应用页从 WebView 的后退列表里顶掉（列表里只剩登录页，`canGoBack()` 为 false，按返回键直接退回桌面），而页面里的 `history.length` 仍是 2。Activity 改为记住 WebView 提交的第一个页面（就是应用页），返回时按 origin 比较：不在应用页就 `loadUrl` 回应用页。这个记录不设放弃时限（前 2 秒每 100 ms 查一次，之后每秒一次），冷启动再慢也会在用户能操作之前记下应用页；提前放弃会让登录页的返回落到应用自己的链上，而没有应用页可回时那条链会直接退到后台。
 - 只有在应用页时返回值交给应用自己决定。原来这里直接 `moveTaskToBack(true)`，但应用本来就有完整的返回链：`PlayerPlugin` 把按键以 `bilimusic-back` 事件交给页面，页面关掉弹窗、全屏、歌词和播放队列，都没处理才退回后台。覆盖优先级的回调会挡在 androidx 桥接前面，若它自己把按键消费掉，应用内的返回就全部失效（弹窗关不掉，一按就退到桌面）。所以应用页改为 `onBackPressedDispatcher.onBackPressed()`，用 `chaining` 标记避免再次回到自己；没有可调用的回调时才退回后台，与系统原本的行为一致。
 - 按返回键回应用页时，后端轮询要等到下一次 tick（500 ms）才发现网址离开登录页，并把这次登录记成取消、留下结果。前端因此用 `outcomeAfterReload` 短暂等待 `netease_web_login_outcome`，避免重载后抢先读到空结果：结果是取消时不报错，只是重新打开弹窗。
 
