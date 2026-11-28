@@ -30,7 +30,7 @@ export const FAVORITES_PLAYLIST_ID = 'system:favorites'
 export const FAVORITES_PLAYLIST: Playlist = { id: FAVORITES_PLAYLIST_ID, name: '我喜欢', description: '点击红心收藏的歌曲 · 默认歌单', trackCount: 0, isSystem: true }
 
 export const inDesktopShell = isTauri()
-const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite lyrics_save lyrics_clear lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected search_history_clear download_remove_many'.split(' '))
+const scopedCommands = new Set('library_save_track library_update_metadata library_toggle_favorite library_history_presence library_remove_history lyrics_save lyrics_clear lyrics_save_with_metadata lyric_match_version lyrics_set_bias playlist_create playlist_add_track playlist_add_tracks playlist_remove_track playlist_remove_tracks playlist_delete playlist_rename playlist_reorder playlist_replace_video bili_linked_folder bili_linked_refresh bili_linked_change bili_linked_remove_selected search_history_clear download_remove_many'.split(' '))
 async function scopedInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const epoch = accountEpoch()
   const expectedAccountSession = scopedCommands.has(command) ? await invoke<string>('account_session') : undefined
@@ -114,6 +114,22 @@ export async function listLibraryTracks(favoritesOnly = false, savedOnly = false
 export async function listRecentTracks(): Promise<Track[]> {
   if (!inDesktopShell) return []
   return (await invoke<StoredTrack[]>('library_recent')).map(fromStoredTrack)
+}
+
+export type HistoryCloudPresence = { cloudIds: string[]; historySync: boolean; checked: boolean }
+
+/** Whether the selected recent records also live in the joined cloud vault. */
+export async function checkHistoryCloudPresence(trackIds: string[]): Promise<HistoryCloudPresence> {
+  if (!inDesktopShell) return { cloudIds: [], historySync: false, checked: false }
+  return scopedInvoke<HistoryCloudPresence>('library_history_presence', { trackIds })
+}
+
+/** Deletes play-history rows; `cloud` also queues the matching cloud tombstone for the next sync. */
+export async function removeHistoryRecords(trackIds: string[], cloud: boolean): Promise<number> {
+  if (!inDesktopShell) throw new Error('当前环境不支持删除播放记录')
+  const removed = await write<number>('library_remove_history', { trackIds, cloud })
+  window.dispatchEvent(new Event('bilimusic-recent-changed'))
+  return removed
 }
 
 export async function listSearchHistory(): Promise<string[]> {

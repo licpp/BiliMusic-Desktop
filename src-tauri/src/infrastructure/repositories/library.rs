@@ -132,6 +132,20 @@ impl LibraryRepository {
         Ok(record)
     }
 
+    /// Drops every play-history row for these tracks. The delete leaves resume positions alone:
+    /// removing a song from the recent list is not a request to forget where playback stopped.
+    /// The existing sync cleanup still trims positions that fall outside the top-200 recent list,
+    /// as it does for any track that ages out. Callers own the transaction so the local delete
+    /// and any cloud tombstone commit together.
+    pub fn remove_history(connection: &Connection, ids: &[String]) -> rusqlite::Result<usize> {
+        let mut delete = connection.prepare("DELETE FROM play_history WHERE track_id=?1")?;
+        let mut removed = 0;
+        for id in ids {
+            removed += delete.execute([id])?;
+        }
+        Ok(removed)
+    }
+
     pub fn playback_position(connection: &Connection, id: &str) -> rusqlite::Result<f64> {
         Ok(connection
             .query_row(
@@ -503,6 +517,38 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].id, first.id);
         assert_eq!(recent[1].id, second.id);
+    }
+
+    #[test]
+    fn removing_history_keeps_resume_positions_and_other_records() {
+        let mut connection = database();
+        let removed = track(10);
+        let kept = track(11);
+        for _ in 0..2 {
+            LibraryRepository::record_play(&mut connection, &removed).unwrap();
+        }
+        LibraryRepository::record_play(&mut connection, &kept).unwrap();
+        LibraryRepository::save_playback_position(&connection, &removed.id, 42.0, 10).unwrap();
+        LibraryRepository::save_playback_position(&connection, &kept.id, 12.0, 10).unwrap();
+        assert_eq!(
+            LibraryRepository::remove_history(&connection, &[removed.id.clone()]).unwrap(),
+            2
+        );
+        assert_eq!(
+            LibraryRepository::remove_history(&connection, &["bilibili:missing".into()]).unwrap(),
+            0
+        );
+        let recent = LibraryRepository::recent(&connection, 10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, kept.id);
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &removed.id).unwrap(),
+            42.0
+        );
+        assert_eq!(
+            LibraryRepository::playback_position(&connection, &kept.id).unwrap(),
+            12.0
+        );
     }
 
     #[test]

@@ -867,6 +867,79 @@ pub async fn sync_delete_cloud(
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPresence {
+    /// Selected records the joined vault still holds, so the dialog can stay local-only otherwise.
+    pub cloud_ids: Vec<String>,
+    /// Whether "同步播放记录" is on: a local-only delete can then be restored by the next sync.
+    pub history_sync: bool,
+    /// False when sync is off, paused or not joined, so an empty `cloud_ids` must not be read as
+    /// "the cloud has none of these records".
+    pub checked: bool,
+}
+/// Cloud half of the recent-list delete: which selected records the joined vault still holds.
+/// Read-only and behind the sync gate, so it never races a running synchronization.
+pub(crate) async fn history_presence(
+    app: &AppHandle,
+    database: &Database,
+    state: &SyncState,
+    ids: &[String],
+) -> Result<HistoryPresence, String> {
+    let _gate = state.gate.lock().await;
+    let cfg = config(database)?;
+    if !cfg.enabled || !cfg.initialized || cfg.provider != "webdav" || cfg.uid.is_empty() {
+        return Ok(HistoryPresence {
+            cloud_ids: Vec::new(),
+            history_sync: cfg.history,
+            checked: false,
+        });
+    }
+    active(database, &cfg.uid)?;
+    let credentials = credentials(app, &cfg)?;
+    let cloud_ids = engine::history_presence(database, &cfg, &credentials, ids).await?;
+    let Some(cloud_ids) = cloud_ids else {
+        return Ok(HistoryPresence {
+            cloud_ids: Vec::new(),
+            history_sync: cfg.history,
+            checked: false,
+        });
+    };
+    Ok(HistoryPresence {
+        cloud_ids,
+        history_sync: cfg.history,
+        checked: true,
+    })
+}
+/// Deletes play-history rows and optionally the matching cloud records. The cloud tombstones
+/// join the Progress outbox, so they reach the vault with the next synchronization.
+pub(crate) async fn remove_history(
+    app: &AppHandle,
+    database: &Database,
+    state: &SyncState,
+    ids: &[String],
+    cloud: bool,
+    session: &str,
+) -> Result<usize, String> {
+    let _gate = state.gate.lock().await;
+    if !cloud {
+        let c = database.0.lock().map_err(|_| "数据库正忙")?;
+        return engine::remove_history_local(&c, ids, session);
+    }
+    let cfg = config(database)?;
+    if !cfg.enabled || !cfg.initialized || cfg.provider != "webdav" || cfg.uid.is_empty() {
+        return Err("云同步未连接或已暂停，无法删除云端记录".into());
+    }
+    active(database, &cfg.uid)?;
+    let credentials = credentials(app, &cfg)?;
+    let target = storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &credentials.username)?;
+    engine::remove_history_cloud(database, &cfg, &target, ids, session)
+}
+fn credentials(app: &AppHandle, c: &Config) -> Result<transport::Secret, String> {
+    serde_json::from_str(&secret(app, c, None, false)?.ok_or("请重新连接同步服务")?)
+        .map_err(|_| "凭据无效，请重新连接".into())
+}
+
 #[cfg(test)]
 mod playback_gate_tests {
     #[tokio::test]

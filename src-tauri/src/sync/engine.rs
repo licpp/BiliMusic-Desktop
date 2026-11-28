@@ -883,6 +883,115 @@ async fn publish(
     }
     Ok(())
 }
+/// Which of these play-history records still exist in the joined cloud vault, or `None` when this
+/// device has not joined. Read-only: the remote Progress document is merged on top of this
+/// device's confirmed state and inspected without writing SQLite, so opening the delete dialog
+/// never changes local data.
+pub(super) async fn history_presence(
+    db: &Database,
+    cfg: &Config,
+    secret: &Secret,
+    ids: &[String],
+) -> Result<Option<Vec<String>>, String> {
+    let target = storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &secret.username)?;
+    let joined = with(db, cfg, |c| {
+        Ok(get::<Runtime>(c, &target, "runtime")?.is_some_and(|runtime| runtime.joined))
+    })?;
+    if !joined {
+        return Ok(None);
+    }
+    let known: BTreeMap<String, Head> = with(db, cfg, |c| {
+        Ok(get::<BTreeMap<String, Head>>(c, &target, "heads")?.unwrap_or_default())
+    })?;
+    let local = with(db, cfg, |c| outbox::confirmed(c, &target, Domain::Progress))?;
+    let net = Client::cached(cfg, secret, db.1.join("sync-v2-cache").join(&target))?;
+    let genesis = Genesis::for_config(cfg)?;
+    let remote = heads(&net, &genesis, &known).await?;
+    let doc = receive_domain(&net, local, &remote, &known).await?;
+    let rows = projection::rows(&doc)?;
+    Ok(Some(
+        ids.iter()
+            .filter(|id| rows.contains_key(&format!("history:{id}")))
+            .cloned()
+            .collect(),
+    ))
+}
+/// Removes play-history rows and, when asked, enqueues the matching Progress tombstones in the
+/// same transaction. A local history delete is otherwise deliberately not captured as an edit
+/// (see `capture_edits`), so this explicit tombstone is the only way to delete a cloud record.
+pub(super) fn remove_history_cloud(
+    db: &Database,
+    cfg: &Config,
+    target: &str,
+    ids: &[String],
+    session: &str,
+) -> Result<usize, String> {
+    let mut runtime: Runtime = with(db, cfg, |c| get::<Runtime>(c, target, "runtime"))?
+        .filter(|runtime| runtime.joined)
+        .ok_or("本机尚未加入同步库，请先完成一次同步")?;
+    let mut lease = lease(db, target, &runtime)?;
+    let observed = runtime.contexts.get(&Domain::Progress).cloned();
+    with(db, cfg, |c| {
+        check_session(c, session)?;
+        let tx = c.unchecked_transaction().map_err(err)?;
+        let removed =
+            crate::infrastructure::repositories::library::LibraryRepository::remove_history(c, ids)
+                .map_err(err)?;
+        let changes: Facts = ids
+            .iter()
+            .map(|id| {
+                (
+                    causal::key(&format!("history:{id}"), "__present"),
+                    Cell::Value(false.into()),
+                )
+            })
+            .collect();
+        outbox::mutate_in_transaction(
+            c,
+            target,
+            Domain::Progress,
+            &mut lease,
+            observed.as_ref(),
+            |_| Ok(((), changes)),
+        )?;
+        // Advance the baseline with the tombstone so a replay before the next sync is still a
+        // change: otherwise capture_edits compares "present" with the pre-delete "present" and
+        // never refreshes the history record that this tombstone removes.
+        if let Some(batch) = outbox::pending(c, target, Domain::Progress)
+            .map_err(err)?
+            .last()
+        {
+            let context = runtime.contexts.entry(Domain::Progress).or_default();
+            for (key, register) in &batch.registers {
+                context.insert(key.clone(), register.clone());
+            }
+        }
+        runtime.observed = projection::capture(c, &cfg.uid, cfg.history).map_err(err)?;
+        put(c, target, "runtime", &runtime).map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(removed)
+    })
+}
+/// Local-only deletion: no sync target, so no cloud tombstone.
+pub(super) fn remove_history_local(
+    c: &Connection,
+    ids: &[String],
+    session: &str,
+) -> Result<usize, String> {
+    let tx = c.unchecked_transaction().map_err(err)?;
+    check_session(c, session)?;
+    let removed =
+        crate::infrastructure::repositories::library::LibraryRepository::remove_history(c, ids)
+            .map_err(err)?;
+    tx.commit().map_err(err)?;
+    Ok(removed)
+}
+fn check_session(c: &Connection, expected: &str) -> Result<(), String> {
+    if crate::infrastructure::database::account_session(c).map_err(err)? != expected {
+        return Err("账号已切换，请重试".into());
+    }
+    Ok(())
+}
 fn outcome(view: &View, conflicts: Vec<Conflict>, changed: bool) -> Outcome {
     Outcome {
         skipped: false,
@@ -2052,6 +2161,117 @@ mod tests {
                 .records
                 .contains_key(&format!("favorite:{ID}"))
         );
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+    #[test]
+    fn local_history_delete_is_guarded_by_the_account_session_and_keeps_positions() {
+        let c = Connection::open_in_memory().unwrap();
+        crate::infrastructure::migrations::migrate(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1);
+             INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track');
+             INSERT INTO play_history(track_id) VALUES('bilibili:BV123:1');
+             INSERT INTO playback_positions(track_id,seconds,observed_at) VALUES('bilibili:BV123:1',20,200);",
+        )
+        .unwrap();
+        let count = |sql: &str| c.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+        let session = crate::infrastructure::database::account_session(&c).unwrap();
+        assert_eq!(
+            remove_history_local(&c, &["bilibili:BV123:1".into()], "another").unwrap_err(),
+            "账号已切换，请重试"
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM play_history"), 1);
+        assert_eq!(
+            remove_history_local(&c, &["bilibili:BV123:1".into()], &session).unwrap(),
+            1
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM play_history"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM playback_positions"), 1);
+    }
+    #[tokio::test]
+    async fn recent_history_delete_tombstones_the_cloud_and_other_devices_follow() {
+        const ID: &str = "bilibili:BV123:1";
+        let (mut cfg, secret, _, server) = super::super::test_dav::server().await;
+        cfg.history = true;
+        let a = device(&cfg);
+        let b = device(&cfg);
+        change(
+            &a,
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1); INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track'); INSERT INTO play_history(track_id) VALUES('bilibili:BV123:1');",
+        );
+        run(&a, &cfg, &secret).await;
+        run(&b, &cfg, &secret).await;
+        let histories = |db: &Database| {
+            db.0.lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM play_history", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(histories(&b), 1);
+        let session = {
+            let c = a.0.lock().unwrap();
+            crate::infrastructure::database::account_session(&c).unwrap()
+        };
+        let target =
+            storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &secret.username).unwrap();
+        assert_eq!(
+            remove_history_cloud(&a, &cfg, &target, &[ID.into()], &session).unwrap(),
+            1
+        );
+        // The tombstone only travels with the next sync, so the other device still has it.
+        assert_eq!(histories(&b), 1);
+        run(&a, &cfg, &secret).await;
+        run(&b, &cfg, &secret).await;
+        assert_eq!(histories(&a), 0);
+        assert_eq!(histories(&b), 0);
+        for db in [a, b] {
+            std::fs::remove_dir_all(db.1).unwrap();
+        }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn a_replay_before_the_next_sync_survives_the_pending_history_tombstone() {
+        const ID: &str = "bilibili:BV123:1";
+        let (mut cfg, secret, _, server) = super::super::test_dav::server().await;
+        cfg.history = true;
+        let a = device(&cfg);
+        let b = device(&cfg);
+        change(
+            &a,
+            "INSERT INTO source_items(id,provider,bvid,cid) VALUES('bilibili:BV123:1','bilibili','BV123',1); INSERT INTO tracks(id,source_item_id,title) VALUES('bilibili:BV123:1','bilibili:BV123:1','Track'); INSERT INTO play_history(track_id) VALUES('bilibili:BV123:1');",
+        );
+        run(&a, &cfg, &secret).await;
+        run(&b, &cfg, &secret).await;
+        let session = {
+            let c = a.0.lock().unwrap();
+            crate::infrastructure::database::account_session(&c).unwrap()
+        };
+        let target =
+            storage::target_key(&cfg.provider, &cfg.uid, &cfg.url, &secret.username).unwrap();
+        remove_history_cloud(&a, &cfg, &target, &[ID.into()], &session).unwrap();
+        change(
+            &a,
+            "INSERT INTO play_history(track_id) VALUES('bilibili:BV123:1');",
+        );
+        run(&a, &cfg, &secret).await;
+        run(&b, &cfg, &secret).await;
+        let histories = |db: &Database| {
+            db.0.lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(DISTINCT track_id) FROM play_history",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(histories(&a), 1);
+        assert_eq!(histories(&b), 1);
         for db in [a, b] {
             std::fs::remove_dir_all(db.1).unwrap();
         }

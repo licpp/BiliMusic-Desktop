@@ -2,7 +2,7 @@ import { BatchMatchButton } from './BatchMatchButton'
 import { LinkedMatchButton } from './LinkedMatchControls'
 import { accountEpoch } from '../../services/accountScope'
 import { useEffect, useRef, useState } from 'react'
-import { Download, EyeOff, FolderPlus, ListPlus } from 'lucide-react'
+import { Download, EyeOff, FolderPlus, ListPlus, Trash2 } from 'lucide-react'
 import type { Track } from '../../domain/track'
 import { commandErrorMessage } from '../../services/desktopApi'
 import { useDownloadBatch } from '../downloads/downloadBatch'
@@ -33,7 +33,7 @@ export function useTrackSelection(tracks: Track[]) {
   }
 }
 
-export function BatchTrackActions({ selection, total, onRemove, onHide, onMatched, downloadScope, allowAutoMatch = false, linkedFolderId }: {
+export function BatchTrackActions({ selection, total, onRemove, onDelete, onHide, onMatched, downloadScope, allowAutoMatch = false, linkedFolderId }: {
   selection: ReturnType<typeof useTrackSelection>
   total: number
   allowAutoMatch?: boolean
@@ -41,6 +41,7 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, onMatche
   downloadScope?: string
   onHide?: (tracks: Track[]) => Promise<void>
   onRemove?: (tracks: Track[]) => Promise<void>
+  onDelete?: (tracks: Track[]) => void
   onMatched?: (ids: ReadonlySet<string>) => void
 }) {
   const { selected, all, exit } = selection
@@ -83,6 +84,7 @@ export function BatchTrackActions({ selection, total, onRemove, onHide, onMatche
       {linkedFolderId ? <LinkedMatchButton folderId={linkedFolderId} tracks={selected}/> : allowAutoMatch && <BatchMatchButton tracks={selected} onMatched={onMatched}/>}
       {onHide && <button disabled={!selected.length || removing} onClick={async()=>{setRemoving(true);try{await onHide(selected)}catch(e){setMessage(commandErrorMessage(e))}finally{setRemoving(false)}}}><EyeOff size={16}/>隐藏所选</button>}
       {onRemove && <button disabled={!selected.length || removing} onClick={() => setConfirmRemove(true)}>移除所选</button>}
+      {onDelete && <button disabled={!selected.length || removing} onClick={() => onDelete(selected)}><Trash2 size={16}/>删除</button>}
       <button onClick={exit} disabled={removing}>完成</button>
     </div>
     {confirmRemove && onRemove && <div className="collection-actions batch-actions">

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useCompactLayout } from './useCompactLayout'
 import { X } from 'lucide-react'
 
-export function CollectionDialog({ title, onClose, children, className = '', mobileSheet = false, stacked = false }: {mobileSheet?:boolean;stacked?:boolean;title:string;className?:string;onClose:()=>void;children:ReactNode}) {
+export function CollectionDialog({ title, onClose, children, className = '', mobileSheet = false, stacked = false, canClose }: {mobileSheet?:boolean;stacked?:boolean;title:string;className?:string;canClose?:()=>boolean;onClose:()=>void;children:ReactNode}) {
   const compact = useCompactLayout()
   const sheet = mobileSheet && compact
   const layer = useRef<HTMLDivElement>(null)
@@ -15,8 +15,11 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const canCloseRef = useRef(canClose)
+  canCloseRef.current = canClose
   const requestClose = useCallback(() => {
     if (closeTimer.current !== undefined) return
+    if (canCloseRef.current && !canCloseRef.current()) return
     const reduced = typeof window === 'undefined' || typeof window.matchMedia !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
       onCloseRef.current()
@@ -25,6 +28,12 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
     setClosing(true)
     closeTimer.current = setTimeout(() => {
       closeTimer.current = undefined
+      // A dialog can become busy while the closing animation runs; staying mounted is better than
+      // unmounting after the task is already running and cannot report its result.
+      if (canCloseRef.current && !canCloseRef.current()) {
+        setClosing(false)
+        return
+      }
       onCloseRef.current()
     }, 155)
   }, [])
@@ -38,7 +47,7 @@ export function CollectionDialog({ title, onClose, children, className = '', mob
     const unlock = lockAppForPortal()
     const keyboard = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || !isTopOverlay(layer.current)) return
-      const controls = Array.from(layer.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)'))
+      const controls = Array.from(layer.current!.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary'))
       const index = controls.indexOf(document.activeElement as HTMLElement)
       if ((event.shiftKey && index <= 0) || (!event.shiftKey && index === controls.length - 1)) {
         event.preventDefault()
