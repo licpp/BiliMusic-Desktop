@@ -13,8 +13,13 @@ test('Mac 和 Windows 快捷键区分切歌、快进与音量，保留其他组�
  assert.equal(playerShortcut({...event,metaKey:true,shiftKey:true}),undefined)
  assert.equal(playerShortcut(event),undefined)
 })
-const {defaultShortcuts,shortcutFromEvent,resolveShortcut,shortcutProblem,shortcutLabel,readShortcuts,globalShortcutBinding}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
+const {defaultShortcuts,shortcutFromEvent,resolveShortcut,shortcutProblem,shortcutLabel,readShortcuts,globalShortcutBinding,customControlActivation}=await import(`data:text/javascript;base64,${Buffer.from(r.outputFiles[0].text).toString('base64')}`)
 const keyEvent=(code,modifiers={})=>({code,key:code.startsWith('Key')?code.slice(3).toLowerCase():code,ctrlKey:false,metaKey:false,altKey:false,shiftKey:false,...modifiers})
+test('non-native controls activate on Enter and leave Space to the playback shortcut',()=>{
+ assert.equal(customControlActivation({key:'Enter'}),true)
+ assert.equal(customControlActivation({key:' '}),false,'lyrics, song rows and chart bars must not swallow the global Space toggle')
+ assert.equal(customControlActivation({key:'Space'}),false)
+})
 test('custom shortcuts support single keys and exact modifier combinations without triggering on composition',()=>{
  const bindings=defaultShortcuts(false)
  bindings.toggle=shortcutFromEvent(keyEvent('KeyJ'))
