@@ -1,0 +1,34 @@
+# 仓库统一使用 LF：索引和检出内容都保持 LF，Windows 上也不例外。
+# 这里显式覆盖 core.autocrlf，避免不同机器检出出不同的换行。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换，避免图片、图标、音频和打包产物被改写。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.svg text
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp3 binary
+*.m4a binary
+*.wav binary
+*.flac binary
+*.zip binary
+*.jar binary
+*.aar binary
+*.so binary
+*.dylib binary
+*.dll binary
+*.node binary
+*.keystore binary
+*.jks binary
+
+# Windows 批处理需要 CRLF，否则部分命令解释器会读错行。
+*.bat text eol=crlf
+*.cmd text eol=crlf

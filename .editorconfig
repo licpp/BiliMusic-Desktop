@@ -1,0 +1,18 @@
+# 与 .gitattributes 保持一致：所有文本文件使用 LF，UTF-8 编码。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Rust、Kotlin、Swift 和 Python 的现有代码都使用 4 空格缩进。
+[*.{rs,kt,kts,java,swift,py}]
+indent_size = 4
+
+# Markdown 用行尾空格表示换行，不做清理。
+[*.md]
+trim_trailing_whitespace = false
