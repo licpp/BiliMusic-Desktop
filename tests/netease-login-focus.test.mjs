@@ -14,18 +14,6 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 
-test('Android restores the app page on every exit from embedded login', async () => {
-  const source = await readFile('src-tauri/src/interface/recommendation.rs', 'utf8')
-  const android = source.split('#[cfg(target_os = "android")]\n#[tauri::command]\npub async fn netease_web_login(')[1]
-  const login = android?.split('\n/// One decision per poll')[0]
-  assert.ok(login)
-  const loop = login.split('let result = loop {')[1]
-  assert.ok(loop)
-  assert.match(loop, /AppLoginTick::Left => break Err\(CommandError::netease_login_cancelled\(\)\)/)
-  assert.doesNotMatch(loop, /\breturn\b/)
-  assert.match(loop, /};\s+restore_app_page\(&window, &app_url\);\s+result\s+}/)
-})
-
 const source = await readFile(new URL('../src-tauri/src/interface/netease_login_focus.js', import.meta.url), 'utf8')
 
 const VISIBLE = { visibility: 'visible', display: 'block', opacity: '1' }

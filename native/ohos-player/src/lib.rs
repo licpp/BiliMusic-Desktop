@@ -43,6 +43,40 @@ pub async fn diagnostic_environment<R: Runtime>(
         .ok()
 }
 
+// Called from Rust only so the authenticated session never crosses the web IPC.
+pub async fn netease_web_login<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Option<(String, String)>, String> {
+    let result: Value = app
+        .state::<Native<R>>()
+        .0
+        .run_mobile_plugin_async("netease_web_login", serde_json::json!({}))
+        .await
+        .map_err(|_| "无法打开网易云登录页".to_owned())?;
+    match result["status"].as_str() {
+        Some("cancelled") => Ok(None),
+        Some("timeout") => Err("网易云登录等待超时，请重试".into()),
+        Some("authorized") => {
+            let music_u = result["musicU"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "网易云未返回登录状态".to_owned())?;
+            let csrf = result["csrf"].as_str().unwrap_or_default();
+            Ok(Some((music_u.to_owned(), csrf.to_owned())))
+        }
+        _ => Err("无法打开网易云登录页".into()),
+    }
+}
+
+pub async fn cancel_netease_web_login<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    app.state::<Native<R>>()
+        .0
+        .run_mobile_plugin_async::<Value>("netease_web_login_cancel", serde_json::json!({}))
+        .await
+        .map(|_| ())
+        .map_err(|_| "无法关闭网易云登录页".to_owned())
+}
+
 pub fn secret<R: Runtime>(
     app: &tauri::AppHandle<R>,
     key: &str,

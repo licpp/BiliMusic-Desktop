@@ -180,7 +180,7 @@ impl CommandError {
             ),
             NeteaseError::VerificationRequired => Self::new(
                 "netease_verification_required",
-                "网易云要求安全验证，请稍后重试或改用网页登录",
+                "网易云要求安全验证，请在网易云登录页完成验证",
                 false,
             ),
             NeteaseError::Protocol => Self::new(

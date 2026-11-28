@@ -2,6 +2,7 @@
 
 ## 待发布
 
+- 移动端网易云扫码登录可切换到官方网页登录。
 - 支持从 Spotify 导出的歌单文件导入歌曲。
 - 补齐合并、构建和正式发布的交付收尾清单。
 - 修复 Windows Rust 测试清理临时目录时的文件占用。感谢 @Sunsy30。 [PR #28](https://github.com/licpp/BiliMusic-Desktop/pull/28)

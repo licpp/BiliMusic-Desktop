@@ -10,7 +10,7 @@ const {
   validateRecommendationSourceName, canApplyAutomaticMatch, bindRecommendationSong,
   playableRecommendationTracks, recommendationPlaybackNotice,
   recommendationMatchSummary, recommendationPendingSongs, replaceRecommendationSong,
-  recommendationRetryDelay, qrPollingCanRetry, isNeteaseLoginCancelled, commandErrorCode,
+  recommendationRetryDelay, qrPollingCanRetry, qrLoginFailureState, isNeteaseLoginCancelled, commandErrorCode,
   recommendationPlaylistName, folderPlayableTracks,
 } = await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`)
 
@@ -188,10 +188,14 @@ test('closing the embedded login window returns to the login intro rather than a
   assert.equal(isNeteaseLoginCancelled(undefined), false)
 })
 
-test('only the safety gate offers the official-page login as a fallback', () => {
-  // 8821 answers every QR poll the same way, so switching login method is the
-  // one action that can still succeed on Android.
-  assert.equal(commandErrorCode({code: 'netease_verification_required', retryable: false}), 'netease_verification_required')
+test('a verification gate during either QR generation or polling offers the official page', () => {
+  const blocked = {code: 'netease_verification_required', retryable: false}
+  const unavailable = {code: 'netease_unavailable', retryable: true}
+  assert.equal(qrLoginFailureState(blocked, false), 'verify')
+  assert.equal(qrLoginFailureState(blocked, true), 'verify')
+  assert.equal(qrLoginFailureState(unavailable, false), 'error')
+  assert.equal(qrLoginFailureState(unavailable, true), 'retrying')
+  assert.equal(qrLoginFailureState({code: 'netease_login_attempt_unknown', retryable: false}, true), 'error')
   assert.equal(commandErrorCode({code: 'netease_login_timeout', retryable: true}), 'netease_login_timeout')
   // Anything without a stable command code must not open the fallback.
   assert.equal(commandErrorCode(new Error('boom')), undefined)
