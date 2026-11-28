@@ -20,3 +20,5 @@
 合并 PR 或直接向主分支提交时，把更新日志放在同一批代码里。内部维护同样记录。发布检查会逐平台比较当前提交和该端上次发布时的源码，把待发布改动写到 GitHub Actions 的运行摘要。
 
 本机可以运行 `python3 scripts/release_changelog.py --check` 校验格式，或用 `--pending` 查看当前已提交源码的待发布记录。
+
+发布准备及应用内更新见[应用内更新](../APPLICATION_UPDATES.md#生成发布说明)。

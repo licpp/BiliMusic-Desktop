@@ -84,7 +84,18 @@ impl UpdateState {
                         installable: true,
                         request_id: Some(uuid::Uuid::new_v4().to_string()),
                         platform: platform.map(str::to_owned),
-                        size: None,
+                        size: update
+                            .raw_json
+                            .get("platforms")
+                            .and_then(|platforms| platforms.get(target))
+                            .and_then(|entry| entry.get("size"))
+                            .and_then(serde_json::Value::as_u64)
+                            .filter(|size| (1..=updates::MAX_PACKAGE_BYTES).contains(size)),
+                        update_notes: checked
+                            .as_ref()
+                            .ok()
+                            .map(|(catalog, _)| catalog.update_notes.clone())
+                            .unwrap_or_default(),
                     };
                     session.plan = Some(Plan::Desktop(update));
                     session.release = Some(release.clone());

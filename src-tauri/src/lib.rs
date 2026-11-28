@@ -245,6 +245,7 @@ pub fn run() {
             infrastructure::update_install::app_download_update,
             infrastructure::update_install::app_install_update,
             interface::commands::app_open_download_page,
+            interface::commands::app_open_release_notes,
             interface::commands::bili_open_verification_page,
             interface::commands::library_summary,
             interface::commands::library_record_play,

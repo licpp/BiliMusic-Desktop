@@ -1088,6 +1088,11 @@ pub async fn app_open_download_page(app: tauri::AppHandle) -> Result<(), Command
 }
 
 #[tauri::command]
+pub async fn app_open_release_notes(app: tauri::AppHandle) -> Result<(), CommandError> {
+    open_external_page(&app, crate::infrastructure::updates::RELEASE_NOTES_PAGE).await
+}
+
+#[tauri::command]
 pub async fn bili_open_verification_page(app: tauri::AppHandle) -> Result<(), CommandError> {
     open_external_page(&app, "https://www.bilibili.com/").await
 }

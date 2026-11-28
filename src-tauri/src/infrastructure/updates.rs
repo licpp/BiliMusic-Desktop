@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, time::Duration};
+use std::{cmp::Ordering, collections::HashSet, time::Duration};
 pub const DOWNLOAD_PAGE: &str = "https://bilimusic.cn/#download";
+pub const RELEASE_NOTES_PAGE: &str = "https://github.com/licpp/BiliMusic-Desktop/releases";
 pub const RELEASE_ENDPOINTS: [&str; 3] = [
     "https://bilimusic.cn/api/v1/releases",
     "https://gitee.com/yoaker/BiliMusic-Desktop/raw/main/website/releases.json",
@@ -17,6 +18,8 @@ pub const MAX_PACKAGE_BYTES: u64 = 256 * 1024 * 1024;
 struct Manifest {
     version: String,
     platforms: Vec<Platform>,
+    #[serde(default, rename = "updateNotes")]
+    update_notes: serde_json::Value,
 }
 #[derive(Deserialize)]
 struct Platform {
@@ -47,6 +50,8 @@ pub struct UpdateRelease {
     pub request_id: Option<String>,
     pub platform: Option<String>,
     pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub update_notes: Vec<String>,
 }
 #[derive(Clone, Debug)]
 pub struct DownloadPackage {
@@ -103,6 +108,62 @@ pub fn platform_id(os: &str, arch: &str, large: bool) -> Option<&'static str> {
         _ => None,
     }
 }
+
+fn applicable_notes(
+    notes: &serde_json::Value,
+    platform: &str,
+    current: (&str, u32),
+    target: (&str, u32),
+) -> Vec<String> {
+    let (Ok(installed), Ok(available), Some(groups)) = (
+        current.0.parse::<semver::Version>(),
+        target.0.parse::<semver::Version>(),
+        notes.as_array(),
+    ) else {
+        return Vec::new();
+    };
+    let mut applicable = groups
+        .iter()
+        .take(32)
+        .filter_map(|group| {
+            let version: semver::Version = group.get("version")?.as_str()?.parse().ok()?;
+            let build = group.get("builds")?.get(platform)?.as_u64()?;
+            if !(1..=50).contains(&build) || !version.pre.is_empty() || !version.build.is_empty() {
+                return None;
+            }
+            let build = build as u32;
+            let since_installed = version
+                .cmp_precedence(&installed)
+                .then(build.cmp(&current.1));
+            let through_target = version
+                .cmp_precedence(&available)
+                .then(build.cmp(&target.1));
+            if !since_installed.is_gt() || through_target.is_gt() {
+                return None;
+            }
+            Some((version, build, group.get("changes")?.as_array()?))
+        })
+        .collect::<Vec<_>>();
+    applicable.sort_by(|a, b| b.0.cmp_precedence(&a.0).then(b.1.cmp(&a.1)));
+    let mut seen = HashSet::new();
+    applicable
+        .into_iter()
+        .flat_map(|(_, _, changes)| changes.iter().take(12))
+        .filter_map(|change| {
+            let id = change.get("id")?.as_str()?;
+            let text = change.get("text")?.as_str()?.trim();
+            (!id.is_empty()
+                && id.len() <= 128
+                && !text.is_empty()
+                && text.chars().count() <= 160
+                && !text.chars().any(char::is_control)
+                && seen.insert(id))
+            .then(|| text.to_owned())
+        })
+        .take(16)
+        .collect()
+}
+
 fn parse_selection(
     bytes: &[u8],
     platform: Option<&'static str>,
@@ -129,6 +190,16 @@ fn parse_selection(
             .iter()
             .any(|c| c.url.as_deref().is_some_and(allowed_download))
     });
+    let update_notes = if let Some(platform) = platform.filter(|_| available) {
+        applicable_notes(
+            &manifest.update_notes,
+            platform,
+            (env!("CARGO_PKG_VERSION"), current_build()),
+            (&version, build),
+        )
+    } else {
+        Vec::new()
+    };
     let mut release = UpdateRelease {
         version: version.clone(),
         build,
@@ -138,6 +209,7 @@ fn parse_selection(
         request_id: None,
         platform: platform.map(str::to_owned),
         size: None,
+        update_notes,
     };
     let package = selected.and_then(|p| {
         let (file, size, sha256) = (p.file?, p.size?, p.sha256?);
@@ -439,6 +511,42 @@ mod tests {
                 .unwrap()
                 .1
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn update_notes_follow_the_selected_platform_and_build_range() {
+        let notes = serde_json::json!([
+            {"version":"0.4.6","builds":{"android":2},"changes":[{"id":"installed","text":"已经安装"}]},
+            {"version":"0.4.6","builds":{"android":3},"changes":[{"id":"shared","text":"较早修复"}]},
+            {"version":"0.4.6","builds":{"android-large":4,"android-large-armv7":4},"changes":[{"id":"car","text":"车机修复"}]},
+            {"version":"0.4.7","builds":{"android":1},"changes":[{"id":"shared","text":"新版本修复"},{"id":false,"text":"格式无效"}]},
+            {"version":"0.4.7","builds":{"android":2},"changes":[{"id":"future","text":"高于已选目标"}]},
+            {"version":false,"builds":{"android":3},"changes":[]}
+        ]);
+        assert_eq!(
+            applicable_notes(&notes, "android", ("0.4.6", 2), ("0.4.7", 1)),
+            ["新版本修复"]
+        );
+        assert_eq!(
+            applicable_notes(&notes, "android", ("0.4.6", 2), ("0.4.6", 4)),
+            ["较早修复"]
+        );
+        assert!(applicable_notes(&notes, "android", ("0.4.6", 3), ("0.4.6", 3)).is_empty());
+        for platform in ["android-large", "android-large-armv7"] {
+            assert_eq!(
+                applicable_notes(&notes, platform, ("0.4.6", 2), ("0.4.6", 4)),
+                ["车机修复"]
+            );
+        }
+        assert!(
+            applicable_notes(
+                &serde_json::Value::Bool(false),
+                "android",
+                ("0.4.6", 1),
+                ("0.4.6", 2)
+            )
+            .is_empty()
         );
     }
 }

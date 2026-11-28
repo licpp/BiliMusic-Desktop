@@ -48,6 +48,35 @@ test('legacy releases without an OTA artifact retain the website fallback',async
  await a.checkUpdates();await a.downloadUpdate();await a.installUpdate();assert.deepEqual(calls,['app_check_update'])
 })
 
+test('confirmation rejects a replaced plan and starts the selected download only once', async () => {
+ let offered = newer
+ const calls = []
+ const a = setup(async (cmd, args) => { calls.push([cmd, args]); if (cmd === 'app_check_update') return offered })
+ await a.checkUpdates()
+ const oldPlan = a.useUpdateStore.getState().result
+ assert.equal(calls.length, 1)
+ offered = { ...newer, requestId: 'plan-two' }
+ await a.checkUpdates()
+ await a.confirmUpdate(oldPlan)
+ assert.match(a.useUpdateStore.getState().error, /重新确认/)
+ assert.equal(calls.length, 2)
+ const plan = a.useUpdateStore.getState().result
+ await Promise.all([a.confirmUpdate(plan), a.confirmUpdate(plan)])
+ assert.equal(calls.length, 3)
+ assert.equal(calls[2][0], 'app_download_update')
+ assert.equal(calls[2][1].requestId, 'plan-two')
+})
+
+test('external download and full release notes use different commands', async () => {
+ const calls = []
+ const a = setup(async cmd => { calls.push(cmd); if (cmd === 'app_check_update') return { version: '9.0.0', available: true, platform: 'ios' } })
+ await a.checkUpdates()
+ await a.openUpdateReleaseNotes()
+ assert.deepEqual(calls, ['app_check_update', 'app_open_release_notes'])
+ await a.confirmUpdate(a.useUpdateStore.getState().result)
+ assert.deepEqual(calls, ['app_check_update', 'app_open_release_notes', 'app_open_download_page'])
+})
+
 test('a larger build of the installed version is offered only when the selected platform changed', async () => {
  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
  const result = { version, available: true, currentBuild: 1 }

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from release_changelog import validate_note_history
 
 ANDROID_CERTIFICATE = 'fda2fb923f07c11e93f36f1bba1d1fc6036d67b382b1a64e5f22da51ec756bc2'
 
@@ -296,12 +297,17 @@ def validate_release_scope(build, manifest, previous):
                 and packages[0].get('architecture', 'arm64') == 'arm64'
                 and packages[0]['file'].endswith('.apk'),
                 'Same-build replacement only supports the Android phone/tablet APK')
+    prior_notes = previous.get('updateNotes', [])
+    note_targets = {} if replace_android else {
+        key: p.get('build', 0) for p in packages for key in package_ids(p)
+    }
+    validate_note_history(manifest.get('updateNotes', []), prior_notes, note_targets, version)
     manifest_ids = [p['id'] for p in manifest['platforms']]
     require(len(manifest_ids) == len(set(manifest_ids)), 'Duplicate manifest platform')
     if build.get('partialRelease'):
         prior = {p['id']: p for p in previous['platforms']}
         require(version == previous['version'] and set(prior) == set(manifest_ids) and set(ids) <= set(prior), 'Platform patches must preserve the release and platform list')
-        shared_keys_excluded = {'platforms', 'history'}
+        shared_keys_excluded = {'platforms', 'history', 'updateNotes'}
         require({k: v for k, v in manifest.items() if k not in shared_keys_excluded} == {k: v for k, v in previous.items() if k not in shared_keys_excluded}, 'Platform patches must preserve shared release information')
         require(preserves_release_history(manifest.get('history', []), previous.get('history', []), version), 'Platform patches may only add notes to the current release history')
         current = {p['id']: p for p in manifest['platforms']}
@@ -355,6 +361,8 @@ def validate_bundle(bundle, native_verifier=verify_native):
             require(entry['file'] == name and entry['size'] == package['bytes'] and entry['sha256'] == package['sha256'] and entry['status'] == 'available', 'Manifest does not match package: ' + name)
             require({c['id'] for c in entry['channels']} == {'github', 'gitee'} and len(entry['channels']) == 2, 'Expected both download channels')
             require(entry.get('build', 0) == number, 'Manifest build does not match package')
+            if build.get('generatedChangelog'):
+                require(entry.get('sourceCommit') == package['source'], 'Changelog source does not match package')
         if len(entries) == 2:
             require(all(p.get('architecture') == 'ARM64 / ARMv7' for p in entries) and
                     {c['id']: c['url'] for c in entries[0]['channels']} == {c['id']: c['url'] for c in entries[1]['channels']}, 'Universal APK entries must share both download channels')
@@ -394,4 +402,5 @@ def validate_bundle(bundle, native_verifier=verify_native):
     return {'version': version, 'source': source, 'tag': 'v' + version, 'manifest': manifest, 'previous': previous,
             'assets': assets, 'notes': notes, **({'updater': updater} if updater is not None else {}),
             **({'previousUpdater': previous_updater} if previous_updater is not None else {}),
+            **({'appendChangelog': True} if build.get('generatedChangelog') and build.get('partialRelease') else {}),
             'ciRuns': build.get('ciRuns', {}), 'platformSources': {**{p['platform']: p['source'] for p in build['platforms']}, **{package_id(p): p['source'] for p in build['platforms']}}, 'revision': build.get('packageRevision', source[:7])}
